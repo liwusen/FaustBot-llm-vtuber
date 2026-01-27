@@ -1,0 +1,77 @@
+html,body{
+  height:100%;
+  margin:0;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+#app{
+  position:relative;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+}
+#overlay{
+  position:absolute;
+  left:12px;
+  top:12px;
+  background: rgba(0,0,0,0.45);
+  color:#fff;
+  padding:8px 10px;
+  border-radius:6px;
+  z-index:1000;
+}
+#controls{
+  position:absolute;
+  left:12px;
+  bottom:12px;
+  z-index:1000;
+  background: rgba(255,255,255,0.9);
+  padding:8px;
+  border-radius:6px;
+}
+#controls input{ padding:6px; font-size:14px }
+#controls button{ margin-left:6px; padding:6px 8px }
+
+canvas{ display:block; }
+
+/* click-through support:
+   - when the body has class `click-through`, the bulk of the window will ignore mouse
+     events (so clicks pass through to underlying windows).
+   - interactive HUD elements (controls, overlay) keep pointer events enabled so they
+     remain clickable even when overall window is set to ignore mouse events.
+*/
+body.click-through, body.click-through #app, body.click-through canvas {
+  pointer-events: none; /* default: let clicks pass through */
+}
+
+/* keep these interactive even in click-through mode */
+body.click-through #controls,
+body.click-through #overlay {
+  pointer-events: auto;
+}
+
+/* allow hiding controls via a body class; toggled by hotkey */
+body.controls-hidden #controls {
+  display: none !important;
+}
+
+/* small styling for model scale control */
+#modelScaleSlider { vertical-align: middle; width: 160px }
+#modelScaleValue { font-weight: 600; }
+
+/* ASR result bubble above model */
+#asrText{
+  transition: transform 0.08s linear, opacity 0.12s;
+  white-space: nowrap;
+}
+
+/* VAD probability meter styling */
+#vadProb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(0,0,0,0.12);
+  border-radius: 6px;
+  overflow: hidden;
+}
+#vadProb::-webkit-progress-value { background: linear-gradient(90deg,#4caf50,#ff9800); }
+#vadProbLabel { font-weight:600; }

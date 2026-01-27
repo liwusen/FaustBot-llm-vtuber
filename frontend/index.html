@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Faust Live2d</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    
+    <div id="overlay">将 Live2D 模型放入 <code>2D/</code> 目录，并将 <code>model3.json</code> 路径写入下方输入框后点击加载。</div>
+    <div id="controls">
+      <h2>Faust Live2D 控制面板</h2>
+      <hr>
+      <h3>使用Ctrl-Shift-H来切换这个窗口的可见性</h3>
+      <hr>
+      <h4>Live2D 模型管理</h4>
+      <input id="modelPath" placeholder="2D/your_model.model3.json" style="width:320px" />
+      <button id="loadBtn">加载模型</button>
+      <button id="resetBtn">重置位置</button>
+      <label style="margin-left:8px"><input type="checkbox" id="clickThrough" value="true"/> 鼠标穿透（点击穿透）</label>
+      <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+        <label for="modelScaleSlider">模型大小</label>
+        <input type="range" id="modelScaleSlider" min="0.1" max="2.0" step="0.05" value="0.3" />
+        <span id="modelScaleValue">1.00x</span>
+      </div>
+      <hr>
+      <h4>音频播放</h4>
+      <div style="margin-top:8px">
+        <input type="file" id="audioFile" accept="audio/*" />
+        <button id="playAudio">播放并同步嘴部</button>
+        <button id="stopAudio">停止</button>
+      <hr>
+      <h4>麦克风语音识别 (ASR)</h4>
+      <div>
+        <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+          <button id="startAsrBtn">开始麦克风识别</button>
+          <button id="stopAsrBtn" disabled>停止麦克风识别</button>
+            <span id="asrStatus" style="margin-left:8px;font-weight:600;color:#333">未启动</span>
+            <span id="chatStatus" style="margin-left:8px;font-weight:600;color:#333">聊天未连接</span>
+        </div>
+        <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+          <progress id="vadProb" value="0" max="1" style="width:160px; height:8px; display:inline-block"></progress>
+          <span id="vadProbLabel" style="min-width:40px; text-align:left; font-size:12px; color:#333">0%</span>
+        </div>
+        <hr>
+        <h4>文字转语音合成 (TTS)</h4>
+        <div style="margin-top:8px">
+          <textarea id="ttsText" placeholder="输入要合成的文本" style="width:320px; height:80px; display:block"></textarea>
+          <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+            <select id="ttsLang">
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+            </select>
+            <button id="ttsBtn">合成并播放 (TTS)</button>
+            <span id="ttsStatus" style="margin-left:8px;font-weight:600;color:#333">未合成</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ASR 文字显示在模型头顶 -->
+  <div id="asrText" style="position:absolute; left:0; top:0; z-index:2000; pointer-events:none; display:none; background: rgba(0,0,0,0.6); color:#fff; padding:6px 8px; border-radius:6px; font-weight:600; font-size:40px; line-height:1; white-space:nowrap;"></div>
+  </div>
+
+      <!-- 引入 Live2D 依赖 -->
+    <script src="libs/live2d.min.js"></script>
+    <script src="libs/live2dcubismcore.min.js"></script>
+    <script src="libs/pixi.min.js"></script>
+    <script src="libs/pixi-live2d-display.min.js"></script>
+    <script src="libs/pixi-live2d-display-extra.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
