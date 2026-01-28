@@ -11,7 +11,7 @@ from faust_backend.searchapi_patched import SearchApiAPIWrapper
 from langchain_community.utilities import WikipediaAPIWrapper
 import winsound
 toollist=[]
-
+DIARY_DIR="data/faust_diary/"
 HumanInTheLoopConfig={  
                 "pythonExecTool": {  
                     "allowed_decisions": ["approve", "edit", "reject"]  
@@ -118,6 +118,70 @@ def sysExecTool(command: str) -> str:
         return f"命令执行出错: {str(e)}"
 @add_to_tool_list
 @tool
+def listDiaryFilesTool() -> str:
+    """
+    Description:
+        列出日记目录下的所有文件。
+        你可以自行决定何时使用此工具。
+    Args:
+        None
+    Returns:
+        str: 日记目录下的文件列表，或者错误信息。
+    """
+    try:
+        print("[Faust.backend.llm_tools.listDiaryFilesTool] Listing diary files in directory:", DIARY_DIR)
+        files = os.listdir(DIARY_DIR)
+        files=[f for f in files if f.endswith('.txt')]
+        return "\n".join(files) if files else "日记目录为空。"
+    except Exception as e:
+        return f"列出日记文件出错: {str(e)}"
+@add_to_tool_list
+@tool
+def readDiaryFileTool(filename: str) -> str:
+    """
+    Description:
+        读取指定日记文件的内容。
+        你可以自行决定何时使用此工具。
+    Args:
+        filename (str): 需要读取的日记文件名。
+    Returns:
+        str: 文件内容的字符串表示，或者错误信息。
+    """
+    file_path=os.path.join(DIARY_DIR,filename)
+    try:
+        print("[Faust.backend.llm_tools.readDiaryFileTool] Reading diary file:", file_path)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content
+    except Exception as e:
+        return f"读取日记文件出错: {str(e)}"
+@add_to_tool_list
+@tool
+def writeDiaryFileTool(content: str) -> str:
+    """
+    Description:
+        将指定内容写入日记文件，使用UTF-8编码。
+        文件名根据当前日期时间生成，格式为YYYYMMDD_HHMMSS.txt
+        你可以自行决定何时使用此工具。
+    Args:
+        content (str): 需要写入文件的内容字符串。
+    Returns:
+        str: 写入成功的确认信息，或者错误信息。
+    """    
+    from datetime import datetime
+    now = datetime.now()
+    filename = now.strftime("%Y%m%d_%H%M%S") + ".txt"
+    file_path=os.path.join(DIARY_DIR,filename)
+    try:
+        print("[Faust.backend.llm_tools.writeDiaryFileTool] Writing to diary file:", file_path)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return f"日记文件写入成功，文件名为: {filename}"
+    except Exception as e:
+        return f"写入日记文件出错: {str(e)}"
+
+@add_to_tool_list
+@tool
 def listDirectoryTool(path: str) -> str:
     """
     Description:
@@ -212,6 +276,7 @@ def wikiSearchTool(query: str) -> str:
     """
     print("[Faust.backend.llm_tools.wikiSearchTool] Searching Wikipedia for query:", query)
     return wwrapper.run(query=query)
+
 @add_to_tool_list
 @tool
 def beepTool(frequency: int, duration: int) -> str:
@@ -230,6 +295,24 @@ def beepTool(frequency: int, duration: int) -> str:
         return "蜂鸣声已发出。"
     else:
         return "蜂鸣声工具仅在Windows系统上可用。"
+# @add_to_tool_list
+# @tool
+# def getUserFullScreenOCRResultTool() -> str:
+#     """
+#     Description:
+#         获取用户全屏截图的OCR识别结果。
+#         这个工具只应该在用户需要时执行。
+#     Returns:
+#         str: OCR识别结果的字符串表示，或者错误信息。
+#     """
+#     try:
+#         print("[Faust.backend.llm_tools.getUserFullScreenOCRResultTool] Getting full screen OCR result.")
+#         # 这里调用实际的OCR处理逻辑
+#         ocr_result = "模拟的OCR识别结果"
+#         return ocr_result
+#     except Exception as e:
+#         return f"获取全屏OCR结果出错: {str(e)}"
+
 if __name__ == "__main__":
     for tool in toollist:
         print(f"Tool name: {tool.name},\nDescription: {tool.description}")
