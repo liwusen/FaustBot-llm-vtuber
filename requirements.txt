@@ -39,3 +39,6 @@ langchain-deepseek==1.0.1
 langchain-community==0.4.1
 wikipedia==1.4.0
 langgraph-checkpoint-sqlite==3.0.3
+
+#qwen-vl 依赖
+qwen-vl-utils==0.0.14

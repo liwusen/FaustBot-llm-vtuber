@@ -43,10 +43,14 @@ function createWindow(){
   });
 
   mainWindow.on('closed', ()=>{ mainWindow = null });
+
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');
 }
 
 app.whenReady().then(()=>{
   createWindow();
+  // Start WebSocket command client (main process)
+  startCommandWS();
   app.on('activate', ()=>{ if (BrowserWindow.getAllWindows().length === 0) createWindow(); })
 });
 
@@ -67,6 +71,7 @@ ipcMain.handle('model-state-load', async () => {
   try{
     if (!fs.existsSync(MODEL_STATE_FILE)) return null;
     const raw = await fs.promises.readFile(MODEL_STATE_FILE, 'utf8');
+    console.log('Loaded model state:', raw);
     return JSON.parse(raw);
   }catch(e){
     console.error('读取 model state 失败', e);
@@ -95,6 +100,63 @@ try {
 } catch (e) {
   console.warn('Package "ws" not found in main process. To enable main-process WebSocket, run `npm install ws` in the frontend folder.');
   WSImpl = null;
+}
+
+// WS client to receive commands from backend and forward to renderer
+function startCommandWS(){
+  if (!WSImpl){
+    console.warn('WebSocket client not available in main process; faust commands will not be received. Install "ws" in frontend.');
+    return;
+  }
+  const url = 'ws://127.0.0.1:13900/faust/command';
+  let ws = null;
+  let reconnectTimer = null;
+
+  function doConnect(){
+    try{
+      //ws = new WSImpl(url, { headers: { Origin: 'http://127.0.0.1:13900' } });
+      ws = new WSImpl(url);
+    }catch(e){
+      console.error('Failed to create WS client', e);
+      scheduleReconnect();
+      return;
+    }
+
+    ws.on('open', ()=>{
+      console.log('[faust-ws] connected to', url);
+    });
+
+    ws.on('message', (data) => {
+      const text = data && data.toString ? data.toString() : String(data);
+      console.log('[faust-ws] message:', text);
+      try{
+        // forward raw text to renderer
+        if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('faust-command', text);
+      }catch(e){
+        console.error('Failed to forward faust command to renderer', e);
+      }
+    });
+
+    ws.on('close', (code, reason) => {
+      console.warn('[faust-ws] closed', code, reason && reason.toString ? reason.toString() : reason);
+      scheduleReconnect();
+    });
+
+    ws.on('error', (err) => {
+      console.error('[faust-ws] error', err);
+      // let close handler schedule reconnect
+    });
+  }
+
+  function scheduleReconnect(){
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(()=>{
+      reconnectTimer = null;
+      doConnect();
+    }, 2000);
+  }
+
+  doConnect();
 }
 
 // --- Chat WebSocket in main process (optional, falls back to renderer if 'ws' not installed) --

@@ -9,8 +9,9 @@
 <body>
   <div id="app">
     
-    <div id="overlay">将 Live2D 模型放入 <code>2D/</code> 目录，并将 <code>model3.json</code> 路径写入下方输入框后点击加载。</div>
+    
     <div id="controls">
+      <div id="overlay">将 Live2D 模型放入 <code>2D/</code> 目录，并将 <code>model3.json</code> 路径写入下方输入框后点击加载。</div>
       <h2>Faust Live2D 控制面板</h2>
       <hr>
       <h3>使用Ctrl-Shift-H来切换这个窗口的可见性</h3>
@@ -35,8 +36,8 @@
       <h4>麦克风语音识别 (ASR)</h4>
       <div>
         <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-          <button id="startAsrBtn">开始麦克风识别</button>
-          <button id="stopAsrBtn" disabled>停止麦克风识别</button>
+          <button id="startAsrBtn">开始语音助手</button>
+          <button id="stopAsrBtn" disabled>停止语音助手</button>
             <span id="asrStatus" style="margin-left:8px;font-weight:600;color:#333">未启动</span>
             <span id="chatStatus" style="margin-left:8px;font-weight:600;color:#333">聊天未连接</span>
         </div>
@@ -60,7 +61,7 @@
       </div>
     </div>
     <!-- ASR 文字显示在模型头顶 -->
-  <div id="asrText" style="position:absolute; left:0; top:0; z-index:2000; pointer-events:none; display:none; background: rgba(0,0,0,0.6); color:#fff; padding:6px 8px; border-radius:6px; font-weight:600; font-size:40px; line-height:1; white-space:nowrap;"></div>
+  <div id="asrText" style="position:absolute; left:0; top:0; z-index:2000; pointer-events:none; display:none; background: rgba(0,0,0,0.6); color:#fff; padding:6px 8px; border-radius:6px; font-weight:600; font-size:20px; line-height:1; white-space:nowrap;"></div>
   </div>
 
       <!-- 引入 Live2D 依赖 -->

@@ -1,4 +1,7 @@
 @echo off
 cd %~dp0
-rm -f faust_checkpoints.db
-echo Checkpoint database 'faust_checkpoints.db' has been cleared.
+del faust_checkpoint.db
+if exist faust_checkpoint.db-shm del faust_checkpoint.db-shm
+if exist faust_checkpoint.db-wal del faust_checkpoint.db-wal
+echo Checkpoint database 'faust_checkpoint.db' has been cleared.
+pause

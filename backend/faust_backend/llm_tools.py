@@ -3,12 +3,15 @@ import os
 
 import faust_backend.config_loader as conf
 os.environ["SEARCHAPI_API_KEY"]=conf.SEARCH_API_KEY
+import faust_backend.backend2front as backend2frontend
+
 
 import functools,inspect,os,sys
 import socket
 import io
 from faust_backend.searchapi_patched import SearchApiAPIWrapper
 from langchain_community.utilities import WikipediaAPIWrapper
+import faust_backend.gui_llm_lib as gui_llm_lib
 import winsound
 toollist=[]
 DIARY_DIR="data/faust_diary/"
@@ -295,6 +298,59 @@ def beepTool(frequency: int, duration: int) -> str:
         return "蜂鸣声已发出。"
     else:
         return "蜂鸣声工具仅在Windows系统上可用。"
+@add_to_tool_list
+@tool
+def musicPlayTool(url: str) -> str:
+    """
+    Description:
+        播放指定URL的音乐。
+        会同步口型。
+        请注意 如果使用这个工具，则请在正文中一字不差的输出 <NO_TTS_OUTPUT>
+    Args:
+        url (str): 音乐的URL地址,支持file://和http(s)://等协议。
+    Returns:
+        str: 结果信息。
+    """
+    print("[Faust.backend.llm_tools.musicPlayTool] Playing music from URL:", url)
+    backend2frontend.FrontEndPlayMusic(url)
+    return "音乐播放命令已发送到前端。"
+@add_to_tool_list
+@tool
+def bgPlayTool(url: str) -> str:
+    """
+    Description:
+        播放指定URL的背景音乐。
+        播放一次。
+        不会同步口型。
+    Args:
+        url (str): 背景音乐的URL地址,支持file://和http(s)://等协议。
+    Returns:
+        str: 结果信息。
+    """
+    print("[Faust.backend.llm_tools.bgPlayTool] Playing background music from URL:", url)
+    backend2frontend.FrontEndPlayBG(url)
+    return "背景音乐播放命令已发送到前端。"
+@add_to_tool_list
+@tool
+def guiOpTool(command: str) -> str:
+    """
+    Description:
+        执行语言形式的GUI操作命令，并返回结果。
+        这个工具只应该在用户需要时执行。
+        这会调用一个专用LLM来处理GUI操作。
+        你只需清晰描述你的需求即可。
+        如 “关闭VSCode软件”
+    Args:
+        command (str): 需要执行的GUI操作命令字符串。
+    Returns:
+        str: GUI操作的结果字符串，或者错误信息。
+    """
+    try:
+        print("[Faust.backend.llm_tools.guiOpTool] Executing GUI operation command:", command)
+        result_str=gui_llm_lib.gui_op(command)
+        return result_str
+    except Exception as e:
+        return f"执行GUI操作出错: {str(e)}"
 # @add_to_tool_list
 # @tool
 # def getUserFullScreenOCRResultTool() -> str:

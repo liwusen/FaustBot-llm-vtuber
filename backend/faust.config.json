@@ -1,0 +1,5 @@
+{
+    "GUI_OPERATOR_LLM_MODEL": "gui-plus",
+    "GUI_OPERATOR_LLM_BASE": "https://www.dmxapi.cn/v1/chat/completions"
+    
+}

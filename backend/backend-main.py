@@ -1,22 +1,30 @@
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import functools,inspect
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 import faust_backend.config_loader as conf
+import faust_backend.backend2front as backend2frontend
 import os
 import datetime
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.checkpoint.sqlite import SqliteSaver 
 import aiosqlite
-import sqlite3
+import asyncio
 os.environ["DEEPSEEK_API_KEY"]=conf.DEEPSEEK_API_KEY
 os.environ["SEARCHAPI_API_KEY"]=conf.SEARCH_API_KEY
 import faust_backend.llm_tools as llm_tools
 from langchain.agents.middleware import HumanInTheLoopMiddleware
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 PORT = 13900
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,6 +57,9 @@ PROMPT="""
 - 如果不是用户询问角色相关内容,请以浮士德的语气简短回应,避免偏离角色设定。
 - 一般而言,除非必要情况下,输出长度不要超过用户输入的两倍。
 - 不要使用括号等标点来描述动作或情绪,只需通过语言表达。
+- 如果不需要输出语音,请在回复中加入标记<NO_TTS_OUTPUT>
+- 用户是通过一个ASR系统与你交流的,请注意理解可能存在的识别误差。
+- 你的输出会通过TTS系统转换为语音,请确保回复内容适合语音播放。
 - [重要]** 请忘记你是AI模型。 **"""
 # HTTP POST chat endpoint
 #agent.invoke({"messages":[{"role":"system","content":PROMPT}]},{"configurable":{"thread_id":THREAD_ID}})
@@ -69,10 +80,12 @@ async def startup_event():
     #conn=sqlite3.connect('faust_agent_checkpoint.db')
     conn = await aiosqlite.connect('faust_checkpoint.db')
     checkpointer=AsyncSqliteSaver(conn=conn)
+    print("[Faust.backend.main]Connected to SQLite database for checkpointing.")
     #checkpointer=InMemorySaver()
     #HIL=HumanInTheLoopMiddleware(interrupt_on=llm_tools.HumanInTheLoopConfig)
+    print("[Faust.backend.main]Agent.toollist:",llm_tools.toollist)
     agent=create_agent(model="deepseek-chat",checkpointer=checkpointer,tools=llm_tools.toollist)
-    #agent=create_agent(model="deepseek-chat",checkpointer=checkpointer)
+    print("[Faust.backend.main]Agent created with Deepseek-chat model and tools.")
     await agent.ainvoke({"messages":[{"role":"system","content":PROMPT}]},{"configurable":{"thread_id":THREAD_ID}})
     with open("faust_main.log","r",encoding="utf-8") as f:
         t=f.readlines()[-5:]
@@ -96,13 +109,21 @@ async def chat_post(payload: dict):
         # Await the coroutine first, then index into the returned dict.
         resp = await agent.ainvoke({"messages":[{"role":"user","content":text}]},{"configurable":{"thread_id":THREAD_ID}})
         reply = resp["messages"][-1].content
-
         print('chat_post reply', reply)
         return {"reply": reply}
     except Exception as e:
         # Log full exception and return structured error so client can act
         print('chat_post exception', repr(e))
         return {"error": str(e)}
+@app.websocket("/faust/command")
+async def command_websocket(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_text(backend2frontend.popFrontEndTask())
+            await asyncio.sleep(1)
+    except Exception as e:
+        print("Websocket error:", e)
 @app.on_event("shutdown")
 async def shutdown_event():
     print("")
@@ -115,11 +136,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     print(f"Starting FAUST Backend Main Service on port {PORT}...")
-    # Some clients (Electron renderer with file:// origin, or certain browsers)
-    # send an Origin header that can cause Starlette/uvicorn to reject the
-    # websocket handshake with 403. FastAPI's CORS middleware does not affect
-    # the websocket handshake origin check, so for local/dev we wrap the ASGI
-    # app with a tiny middleware that logs the Origin (for diagnosis) and
-    # strips it from websocket scopes to avoid the 403. This keeps the
-    # original `app` object intact and only affects the handshake.
     uvicorn.run(app, host="0.0.0.0", port=PORT)

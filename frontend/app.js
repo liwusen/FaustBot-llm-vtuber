@@ -242,6 +242,64 @@
   const CHAT_PORT = 13900;
   const CHAT_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/chat`;
 
+  // --- handle incoming faust commands forwarded from main process ---
+  // Commands are simple text payloads like:
+  //   PLAYMUSIC <filename>
+  //   PLAYBG <filename>
+  //   SAY <text>
+  //   STOP
+  let bgAudio = null;
+
+  async function handleFaustCommand(raw){
+    if (!raw || typeof raw !== 'string') return;
+    const parts = raw.trim().split(' ');
+    const cmd = parts[0].toUpperCase();
+    const arg = parts.slice(1).join(' ').trim();
+    console.log('Faust command received:', cmd, arg);
+    try{
+      if (cmd === 'PLAYMUSIC'){
+        if (!arg) return;
+        // fetch the file (relative or absolute) and play with mouth-sync
+        try{
+          const r = await fetch(arg);
+          const blob = await r.blob();
+          startMouthSyncFromFile(blob);
+        }catch(e){
+          console.error('PLAYMUSIC fetch/play failed', e);
+        }
+      } else if (cmd === 'PLAYBG'){
+        if (!arg) return;
+        try{
+          if (bgAudio){ bgAudio.pause(); bgAudio.src = ''; bgAudio = null; }
+          bgAudio = new Audio(arg);
+          // play once in background (no looping)
+          bgAudio.loop = false;
+          bgAudio.crossOrigin = 'anonymous';
+          bgAudio.onended = () => { try{ bgAudio = null; }catch(e){} };
+          await bgAudio.play().catch(e=>{console.warn('bg play error',e)});
+        }catch(e){ console.error('PLAYBG failed', e); }
+      } else if (cmd === 'SAY'){
+        if (!arg) return;
+        // use existing synthesizeAndPlay TTS function; prefer UI-selected lang
+        const lang = (ttsLang && ttsLang.value) ? ttsLang.value : 'zh-CN';
+        useVAD=false; // disable VAD during TTS playback
+        await synthesizeAndPlay(arg, lang);
+        useVAD=true; // re-enable VAD after TTS playback
+      } else if (cmd === 'STOP'){
+        // stop audio and optionally stop asr
+        try{ stopAudio(); }catch(e){}
+        try{ stopMicAsr(); }catch(e){}
+      } else {
+        console.warn('Unknown faust command', raw);
+      }
+    }catch(e){ console.error('handleFaustCommand error', e); }
+  }
+
+  // register handler from preload-exposed API
+  if (window.faust && window.faust.onCommand){
+    window.faust.onCommand((cmd)=>{ handleFaustCommand(cmd); });
+  }
+
   async function sendToChat(text){
     if (!text) return;
     try{
@@ -266,7 +324,12 @@
         // pause ASR if running and not in voice-barge-in mode
         let resumeAfter = true;
         if (asrRunning && !voiceBargeInEnabled){ pauseRecording(); resumeAfter = true; }
-        synthesizeAndPlay(reply, 'zh');
+        //if <NO_TTS_OUTPUT> in output, skip TTS playback
+        if (reply.includes('<NO_TTS_OUTPUT>')){
+          chatStatusEl && (chatStatusEl.textContent = '聊天完成（无语音输出）');
+        }else{
+          synthesizeAndPlay(reply, 'zh');
+        }
         if (resumeAfter){
           startMicAsr(); // simpler to just restart ASR
           // Prefer event-driven resume when audio ends. startMouthSyncFromFile
