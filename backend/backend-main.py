@@ -1,6 +1,7 @@
 print("[Faust.backend.main]Starting")
 import requests
-from fastapi import FastAPI,WebSocket
+from fastapi import FastAPI,WebSocket, WebSocketDisconnect
+import json
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from langchain.agents import create_agent
@@ -17,6 +18,7 @@ os.environ["DEEPSEEK_API_KEY"]=conf.DEEPSEEK_API_KEY
 os.environ["SEARCHAPI_API_KEY"]=conf.SEARCH_API_KEY
 import faust_backend.llm_tools as llm_tools
 from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langgraph.store.sqlite import AsyncSqliteStore
 import faust_backend.trigger_manager as trigger_manager
 import faust_backend.events as events
 import faust_backend.nimble as nimble
@@ -25,10 +27,12 @@ import subprocess
 import tqdm
 argparser = argparse.ArgumentParser(description="FAUST Backend Main Service")
 argparser.add_argument("--agent",type=str,default="faust",help="Agent name to use (default: faust)")
-argparser.add_argument("--run-other-backend-services",action="store_true",help="Whether to run other backend services like trigger manager (default: False)")
+argparser.add_argument("--run-other-backend-services",action="store_true",help="Whether to run other backend services as subprocess like ASR/TTS (default: False)")
+argparser.add_argument("--save-in-memory",action="store_true",help="Whether to run in debug mode with more verbose logging (default: False)")
 args = argparser.parse_args()
 #Shared Events
 app = FastAPI()
+uvicorn_server = None
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -88,18 +92,24 @@ def startServices():
     if args.run_other_backend_services:
         print("[Faust.backend.main] Starting other backend services...")
         for service in tqdm.tqdm(["ASR.bat", "TTS.bat"]):
-            subprocess.run([service],check=False)
+            print("[Faust.backend.service_manager] Starting service:", service)
+            process=subprocess.run([service],check=False)
+            process.stdout=subprocess.DEVNULL
+        print("[Faust.backend.main] Other backend services started.")
+        
 startServices()
 @app.on_event("startup")
 async def startup_event():
-    global agent,checkpointer,conn
+    global agent,checkpointer,conn,storer
     #conn=sqlite3.connect('faust_agent_checkpoint.db')
     conn = await aiosqlite.connect('faust_checkpoint.db')
     checkpointer=AsyncSqliteSaver(conn=conn)
+    conn_for_store = await aiosqlite.connect('storer.db')
+    storer=AsyncSqliteStore(conn=conn_for_store)
     print("[Faust.backend.main]Connected to SQLite database for checkpointing.")
     #checkpointer=InMemorySaver()
     print("[Faust.backend.main]Agent.toollist:",str(llm_tools.toollist).replace("\\n","\n"))
-    agent=create_agent(model="deepseek-chat",checkpointer=checkpointer,tools=llm_tools.toollist)
+    agent=create_agent(model="deepseek-chat",checkpointer=checkpointer,tools=llm_tools.toollist,store=storer)
     print("[Faust.backend.main]Agent created with Deepseek-chat model and tools.")
     await agent.ainvoke({"messages":[{"role":"system","content":PROMPT}]},{"configurable":{"thread_id":THREAD_ID}})
     with open("faust_main.log","r",encoding="utf-8") as f:
@@ -112,11 +122,14 @@ async def startup_event():
     trigger_manager.start_trigger_watchdog_thread()
     llm_tools.STARTED=True
 @app.post("/faust/chat")
+#@deprecated(reason="This endpoint is kept for compatibility and development but the primary chat interface is now the websocket /faust/chat for frontend streaming.")
 async def chat_post(payload: dict):
-    """Accepts JSON {'text': '<user message>'} and returns JSON {'reply': '<assistant reply>'}.
-
-    This replaces the earlier websocket-based chat. The endpoint calls the
-    configured chat completion API and returns the assistant reply.
+    """
+     Post方式的聊天接口
+        兼容性HTTP端点。内部仍然返回完整回复。
+        已经弃用
+        请使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。
+        保留原因：方便调试,参见debug_console.py对此的使用
     """
     text = None
     if isinstance(payload, dict):
@@ -125,15 +138,54 @@ async def chat_post(payload: dict):
         return {"error": "no text provided"}
     try:
         events.ignore_trigger_event.set()
-        # Await the coroutine first, then index into the returned dict.
         resp = await agent.ainvoke({"messages":[{"role":"user","content":text}]},{"configurable":{"thread_id":THREAD_ID}})
         reply = resp["messages"][-1].content
         print('Chat post reply', reply)
         events.ignore_trigger_event.clear()
-        return {"reply": reply}
+        return {"reply": reply,"warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
     except Exception as e:
         print("Chat post error:", e)
-        return {"error": str(e)}
+        return {"error": str(e), "warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
+
+@app.websocket("/faust/chat")
+async def chat_websocket(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                payload = {"text": raw}
+            text = None
+            if isinstance(payload, dict):
+                text = payload.get("text") or payload.get("message")
+            if not text:
+                await websocket.send_text(json.dumps({"type": "error", "error": "no text provided"}, ensure_ascii=False))
+                continue
+
+            try:
+                events.ignore_trigger_event.set()
+                await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
+                reply = ""
+                print("[Faust.backend.main] Received chat message:", text)
+                async for message_chunk, metadata in agent.astream(
+                        {"messages":[{"role":"user","content":text}]},{"configurable":{"thread_id":THREAD_ID}},
+                        stream_mode="messages",
+                    ):
+                        if message_chunk.content:
+                            reply += message_chunk.content
+                            print(message_chunk.content, end="|", flush=True)
+                            await websocket.send_text(json.dumps({"type": "delta", "content": message_chunk.content}, ensure_ascii=False))
+                            #await asyncio.sleep(0.005)
+                await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
+                events.ignore_trigger_event.clear()
+            except Exception as e:
+                events.ignore_trigger_event.clear()
+                print("Chat websocket error:", e)
+                await websocket.send_text(json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False))
+    except WebSocketDisconnect:
+        print("[Faust.backend.main] chat websocket disconnected")
 
 @app.websocket("/faust/command")
 async def command_websocket(websocket: WebSocket):
@@ -262,10 +314,21 @@ async def status_post():
     """Returns JSON {'status': 'ok'} to indicate the service is running."""
     active_tasks = trigger_manager.get_trigger_information()
     return {"status": "ok", "active_tasks": active_tasks}
-@app.get("/faust/shutdown")
-async def shutdown_get():
-    """Handles shutdown requests."""
-    server.should_exit = True
+
+async def _graceful_shutdown_task():
+    global uvicorn_server
+    print("[Faust.backend.main] Graceful shutdown requested.")
+    await asyncio.sleep(0.1)
+
+    uvicorn_server.should_exit = True
+    print("[Faust.backend.main] Uvicorn shutdown flag set.")
+
+@app.post("/faust/shutdown")
+async def shutdown_post():
+    """Triggers a graceful shutdown for the FAUST backend process."""
+    asyncio.create_task(_graceful_shutdown_task())
+    return {"status": "shutting_down"}
+
 @app.on_event("shutdown")
 async def shutdown_event():
     print("")
@@ -279,4 +342,6 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     print(f"Starting FAUST Backend Main Service on port {PORT}...")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    config = uvicorn.Config(app, host="0.0.0.0", port=PORT)
+    uvicorn_server = uvicorn.Server(config)
+    uvicorn_server.run()

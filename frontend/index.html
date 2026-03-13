@@ -61,8 +61,14 @@
       </div>
     </div>
     <!-- ASR 文字显示在模型头顶 -->
+  
   <div id="asrText" style="position:absolute; left:0; top:0; z-index:2000; pointer-events:none; display:none; background: rgba(0,0,0,0.6); color:#fff; padding:6px 8px; border-radius:6px; font-weight:600; font-size:20px; line-height:1; white-space:nowrap;"></div>
+  <div id="textChatBar" style="position:absolute; left:50%; bottom:28px; transform:translateX(-50%); z-index:1800; display:flex; align-items:center; gap:8px; background:rgba(20,24,30,0.72); border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:10px 12px; backdrop-filter:blur(8px); box-shadow:0 8px 24px rgba(0,0,0,0.28); min-width:360px; max-width:min(72vw, 780px);">
+    <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" style="flex:1; min-width:220px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:10px; padding:10px 12px; outline:none;" />
+    <button id="textChatSendBtn" style="background:#5865f2; color:#fff; border:none; border-radius:10px; padding:10px 16px; cursor:pointer; font-weight:600;">发送</button>
+    <span id="textChatStatus" style="font-size:12px; color:rgba(255,255,255,0.8); white-space:nowrap;">文字待命</span>
   </div>
+</div>
 
       <!-- 引入 Live2D 依赖 -->
     <script src="libs/live2d.min.js"></script>

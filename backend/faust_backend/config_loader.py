@@ -29,7 +29,6 @@ with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
     config = json.load(f)
     GUI_OPERATOR_LLM_MODEL = config.get('GUI_OPERATOR_LLM_MODEL', 'gui-plus')
     GUI_OPERATOR_LLM_BASE = config.get('GUI_OPERATOR_LLM_BASE', 'https://www.dmxapi.cn/v1/chat/completions')
-    TRIGGER_ENABLED=config.get('TRIGGER_ENABLED', True)
     PT_EVAL_TRIGGER_ENABLED=config.get('PY_EVAL_TRIGGER_ENABLED', False)
 def print_globals():
     print("Current Global Configuration Variables Of Faust:")

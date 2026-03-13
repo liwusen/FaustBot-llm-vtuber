@@ -24,9 +24,13 @@
   const asrTextEl = document.getElementById('asrText');
   const vadProbEl = document.getElementById('vadProb');
   const vadProbLabel = document.getElementById('vadProbLabel');
+  const textChatInput = document.getElementById('textChatInput');
+  const textChatSendBtn = document.getElementById('textChatSendBtn');
+  const textChatStatus = document.getElementById('textChatStatus');
 
   let nimbleWindows = new Map();
   let activeNimbleContext = null;
+  let textChatSending = false;
 
   function ensureNimbleHost(){
     let host = document.getElementById('nimble-host');
@@ -361,12 +365,21 @@
   }
   //console.log("ASR Result:", asrResult);
   //return;
-  // --- Chat via HTTP POST to backend (/faust/chat) ---
+  // --- Chat via WebSocket to backend (/faust/chat) ---
   const CHAT_HOST = '127.0.0.1';
   const CHAT_PORT = 13900;
-  const CHAT_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/chat`;
+  const CHAT_ENDPOINT = `ws://${CHAT_HOST}:${CHAT_PORT}/faust/chat`;
   const NIMBLE_CALLBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/callback`;
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
+  let chatWs = null;
+  let chatWsReady = null;
+  let currentChatRequest = null;
+  let streamTtsDrainPromise = null;
+  let streamTtsSentenceId = 0;
+  let streamTtsNextPlayId = 0;
+  const streamTtsPending = new Map();
+  let streamTtsPlaybackPromise = null;
+  const streamTtsSentenceEndRe = /[。！？!?；;]+$/;
 
   // --- handle incoming faust commands forwarded from main process ---
   // Commands are simple text payloads like:
@@ -375,8 +388,6 @@
   //   SAY <text>
   //   STOP
   let bgAudio = null;
-  // expressions supported by current model (populated when model loads)
-  let supportedExpressions = [];
 
   async function handleFaustCommand(raw){
     if (!raw || typeof raw !== 'string') return;
@@ -428,15 +439,6 @@
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_CLOSE payload', e, arg); return; }
         if (payload && payload.callback_id) closeNimbleWindow(payload.callback_id, false);
       } else {
-        // support EXPR <name> [value]
-        if (cmd === 'EXPR'){
-          if (!arg) return;
-          const parts = arg.split(' ');
-          const name = parts[0];
-          const val = parts[1] ? parseFloat(parts[1]) : undefined;
-          applyExpression(name, val);
-          return;
-        }
         console.warn('Unknown faust command', raw);
       }
     }catch(e){ console.error('handleFaustCommand error', e); }
@@ -447,219 +449,238 @@
     window.faust.onCommand((cmd)=>{ handleFaustCommand(cmd); });
   }
 
-  // Apply an expression by name. Try multiple Live2D APIs for compatibility.
-  function applyExpression(name, value){
-    if (!currentModel) { console.warn('No model loaded to apply expression'); return; }
-    let applied = false;
+  function resetStreamTtsState(){
+    streamTtsDrainPromise = null;
+    streamTtsSentenceId = 0;
+    streamTtsNextPlayId = 0;
+    streamTtsPending.clear();
+    streamTtsPlaybackPromise = null;
+  }
+
+  async function waitForStreamTtsDrain(){
+    if (streamTtsDrainPromise) return streamTtsDrainPromise;
+    streamTtsDrainPromise = (async ()=>{
+      while (streamTtsPending.size > 0){
+        await flushStreamTtsQueue();
+        if (streamTtsPending.size > 0){
+          await new Promise((resolve)=> setTimeout(resolve, 50));
+        }
+      }
+    })();
     try{
-      const core = currentModel.internalModel && currentModel.internalModel.coreModel;
-      // 1) expressionManager.setExpression(name)
+      await streamTtsDrainPromise;
+    }finally{
+      streamTtsDrainPromise = null;
+    }
+  }
+
+  function extractCompletedSentences(buffer){
+    const results = [];
+    let start = 0;
+    for (let i = 0; i < buffer.length; i++){
+      const ch = buffer[i];
+      if ('。！？!?；;'.includes(ch)){
+        const sentence = buffer.slice(start, i + 1).trim();
+        if (sentence) results.push(sentence);
+        start = i + 1;
+      }
+    }
+    console.log('extractCompletedSentences', { buffer, completed: results, rest: buffer.slice(start) });
+    return { completed: results, rest: buffer.slice(start) };
+  }
+
+  function openChatWs(){
+    if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)){
+      return chatWsReady || Promise.resolve();
+    }
+    chatWsReady = new Promise((resolve, reject)=>{
       try{
-        if (core && core.expressionManager && typeof core.expressionManager.setExpression === 'function'){
-          core.expressionManager.setExpression(name);
-          applied = true;
-        }
-      }catch(e){}
-      // 2) motionManager.startMotion('expressions', name)
-      if (!applied){
-        try{
-          const mm = currentModel.internalModel && currentModel.internalModel.motionManager;
-          if (mm && typeof mm.startMotion === 'function'){
-            // try by group 'expressions' then 'motions'
-            try{ mm.startMotion('expressions', name); applied = true; }catch(e){}
-            if (!applied){ try{ mm.startMotion('motions', name); applied = true; }catch(e){} }
-          }
-        }catch(e){}
-      }
-      // 3) model.setExpression(name)
-      if (!applied && typeof currentModel.setExpression === 'function'){
-        try{ currentModel.setExpression(name); applied = true; }catch(e){}
-      }
-      // 4) fallback: try mapping common expressions to parameters (best-effort)
-      if (!applied){
-        const coreSet = core && typeof core.setParameterValueById === 'function';
-        const map = {
-          smile: { ParamMouthForm: (typeof value === 'number' ? value : 1) },
-          sad: { ParamMouthForm: (typeof value === 'number' ? -value : -1) }
-        };
-        if (map[name]){
-          for (const pid in map[name]){
-            try{
-              const v = map[name][pid];
-              if (coreSet) core.setParameterValueById(pid, v);
-              else if (core && core.parameters && core.parameters[pid] && typeof core.parameters[pid].setValue === 'function') core.parameters[pid].setValue(v);
-              applied = true;
-            }catch(e){}
-          }
-        }
-      }
-    }catch(e){ console.warn('applyExpression error', e); }
-    if (!applied) console.warn('Expression not applied (unsupported):', name);
-    else console.log('Expression applied:', name, value);
-    return applied;
+        chatWs = new WebSocket(CHAT_ENDPOINT);
+        chatWs.onopen = ()=> resolve();
+        chatWs.onerror = (e)=> reject(e);
+        chatWs.onmessage = handleChatWsMessage;
+        chatWs.onclose = ()=>{ chatWs = null; chatWsReady = null; };
+      }catch(e){ reject(e); }
+    });
+    return chatWsReady;
   }
 
-  // helper: when model loads, probe available expressions and print them
-  function probeExpressionsForModel(model){
-    const list = [];
-    try{
-      const core = model.internalModel && model.internalModel.coreModel;
-      if (core){
-        if (Array.isArray(core.expressions) && core.expressions.length){
-          for (const e of core.expressions){ if (e && e.name) list.push(e.name); }
-        }
-        if (core.expressionManager && core.expressionManager._expressions){
-          try{ list.push(...Object.keys(core.expressionManager._expressions || {})); }catch(e){}
-        }
-      }
-      if (model.expressions && typeof model.expressions === 'object'){
-        try{ list.push(...Object.keys(model.expressions)); }catch(e){}
-      }
-      // try motion groups as a hint
-      const mm = model.internalModel && model.internalModel.motionManager;
-      if (mm && mm._motions){
-        try{ list.push(...Object.keys(mm._motions)); }catch(e){}
-      }
-    }catch(e){ /* ignore probing errors */ }
-    // dedupe
-    const uniq = Array.from(new Set(list)).filter(Boolean);
-    supportedExpressions = uniq;
-    // print supported expressions to renderer console and forward to main
-    try{ console.log('Supported expressions:', supportedExpressions); }catch(e){}
-    try{ if (window.logToMain && window.logToMain.info) window.logToMain.info('Supported expressions: ' + JSON.stringify(supportedExpressions)); }catch(e){}
-    try{ renderExpressionsUI(); }catch(e){}
-  }
-
-  // Probe the model3.json by fetching the JSON at the same path used to load the model.
-  // This extracts motion group names and motion file basenames as candidate expressions.
-  async function probeExpressionsFromModelJson(modelJsonPath){
-    if (!modelJsonPath) return;
-    try{
-      // try fetch; works for relative paths in electron renderer
-      const r = await fetch(modelJsonPath);
-      if (!r.ok) return;
-      const j = await r.json();
-      const list = [];
-      // collect explicit expressions if present
-      if (j.Expressions && Array.isArray(j.Expressions)){
-        for (const e of j.Expressions){ if (e && e.Name) list.push(e.Name); }
-      }
-      // collect motion group names and motion filenames
-      const mref = j.FileReferences && j.FileReferences.Motions;
-      if (mref && typeof mref === 'object'){
-        for (const groupName of Object.keys(mref)){
-          // include the group name
-          list.push(groupName);
-          const group = mref[groupName];
-          if (Array.isArray(group)){
-            for (const entry of group){
-              if (entry && entry.File){
-                // basename without extension
-                const fn = entry.File.replace(/^.*[\\/]/, '');
-                const base = fn.replace(/\.motion3\.json$/i, '').replace(/\.json$/i, '');
-                if (base) list.push(base);
-              }
-            }
-          }
-        }
-      }
-      // dedupe and merge with existing supportedExpressions
-      const uniq = Array.from(new Set((supportedExpressions || []).concat(list))).filter(Boolean);
-      supportedExpressions = uniq;
-      try{ console.log('Supported expressions (from model json):', supportedExpressions); }catch(e){}
-      try{ if (window.logToMain && window.logToMain.info) window.logToMain.info('Supported expressions (from model json): ' + JSON.stringify(supportedExpressions)); }catch(e){}
-      try{ renderExpressionsUI(); }catch(e){}
-    }catch(err){ console.warn('probeExpressionsFromModelJson failed', err); }
-  }
-
-  // Render supportedExpressions into a small UI list (click to trigger EXPR)
-  function renderExpressionsUI(){
-    let parent = document.getElementById('controls') || document.body;
-    let container = document.getElementById('expression-controls');
-    if (!container){
-      container = document.createElement('div');
-      container.id = 'expression-controls';
-      container.style.cssText = 'position:relative; max-width:320px; padding:8px; background:rgba(0,0,0,0.35); color:#fff; font-size:14px; overflow:auto; max-height:220px;';
-      // try to insert into controls if exists
-      if (document.getElementById('controls')) document.getElementById('controls').appendChild(container);
-      else document.body.appendChild(container);
+  async function requestTtsBlob(text, lang){
+    if (!text || !text.trim()) return null;
+    const endpoint = (window.location && window.location.hostname) ? `http://${window.location.hostname}:5000/` : 'http://127.0.0.1:5000/';
+    const payload = { text, text_language: lang || 'zh' };
+    const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!r.ok){
+      const txt = await r.text();
+      throw new Error(`TTS服务错误: ${r.status} ${txt}`);
     }
-    // header
-    container.innerHTML = '';
-    const h = document.createElement('div');
-    h.textContent = 'Expressions';
-    h.style.cssText = 'font-weight:bold; margin-bottom:6px;';
-    container.appendChild(h);
-    if (!supportedExpressions || supportedExpressions.length === 0){
-      const p = document.createElement('div'); p.textContent = '(none)'; p.style.opacity = '0.7'; container.appendChild(p); return; }
-    const list = document.createElement('div');
-    list.style.display = 'flex'; list.style.flexWrap = 'wrap'; list.style.gap = '6px';
-    for (const name of supportedExpressions){
-      const btn = document.createElement('button');
-      btn.textContent = name;
-      btn.style.cssText = 'padding:6px 8px; background:#222; color:#fff; border:1px solid #444; border-radius:4px; cursor:pointer;';
-      btn.addEventListener('click', async ()=>{
-        console.log('EXPR click:', name);
-        try{
-          const ok = applyExpression(name);
-          console.log(`EXPR ${name} -> ${ok ? 'OK' : 'FAILED'}`);
-        }catch(e){ console.error('EXPR handler error', e); }
-      });
-      list.appendChild(btn);
+    const contentType = r.headers.get('content-type') || 'audio/wav';
+    const ab = await r.arrayBuffer();
+    return new Blob([ab], { type: contentType });
+  }
+
+  function playSingleBlobOrdered(blob){
+    return new Promise((resolve)=>{
+      try{ stopAudio(); }catch(e){}
+      startMouthSyncFromFile(blob);
+      if (ttsStatus) ttsStatus.textContent = '播放中';
+      try{
+        if (audioEl && typeof audioEl.addEventListener === 'function'){
+          const onEnd = ()=>{ try{ audioEl.removeEventListener('ended', onEnd); }catch(e){} resolve(); };
+          audioEl.addEventListener('ended', onEnd);
+        } else {
+          const waiter = setInterval(()=>{
+            if (!audioEl || audioEl.ended){ clearInterval(waiter); resolve(); }
+          }, 200);
+        }
+      }catch(e){ resolve(); }
+    });
+  }
+
+  async function flushStreamTtsQueue(){
+    if (streamTtsPlaybackPromise) return streamTtsPlaybackPromise;
+    streamTtsPlaybackPromise = (async ()=>{
+      while (streamTtsPending.has(streamTtsNextPlayId)){
+      const item = streamTtsPending.get(streamTtsNextPlayId);
+        if (!item) break;
+        if (item.status === 'pending') break;
+        streamTtsPending.delete(streamTtsNextPlayId);
+        if (item.status === 'ready' && item.blob){
+          await playSingleBlobOrdered(item.blob);
+        }
+        streamTtsNextPlayId += 1;
+      }
+    })();
+    try{
+      await streamTtsPlaybackPromise;
+    }finally{
+      streamTtsPlaybackPromise = null;
     }
-    container.appendChild(list);
+  }
+
+  async function enqueueStreamTtsSentence(sentence, lang){
+    const id = streamTtsSentenceId++;
+    streamTtsPending.set(id, { status: 'pending', text: sentence, blob: null });
+    void flushStreamTtsQueue();
+    try{
+      const blob = await requestTtsBlob(sentence, lang);
+      if (!blob){
+        streamTtsPending.set(id, { status: 'failed', text: sentence, blob: null });
+        await flushStreamTtsQueue();
+        return;
+      }
+      streamTtsPending.set(id, { status: 'ready', blob, text: sentence });
+      await flushStreamTtsQueue();
+    }catch(e){
+      console.warn('stream TTS sentence failed', sentence, e);
+      streamTtsPending.set(id, { status: 'failed', text: sentence, blob: null });
+      await flushStreamTtsQueue();
+    }
+  }
+
+  async function handleChatWsMessage(ev){
+    if (!currentChatRequest) return;
+    let msg = null;
+    try{ msg = JSON.parse(ev.data); }catch(e){ msg = { type: 'error', error: String(e) }; }
+    if (!msg) return;
+
+    if (msg.type === 'start'){
+      currentChatRequest.replyText = '';
+      currentChatRequest.pendingBuffer = '';
+      if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
+      return;
+    }
+
+    if (msg.type === 'delta'){
+      const chunk = msg.content || '';
+      currentChatRequest.replyText += chunk;
+      currentChatRequest.pendingBuffer += chunk;
+      showAsrText(currentChatRequest.replyText);
+      const split = extractCompletedSentences(currentChatRequest.pendingBuffer);
+      currentChatRequest.pendingBuffer = split.rest;
+      console.log("收到增量回复，当前累计文本：", currentChatRequest.replyText);
+      for (const sentence of split.completed){
+        if (!sentence.includes('<NO_TTS_OUTPUT>')){
+          enqueueStreamTtsSentence(sentence, 'zh');
+        }
+      }
+      return;
+    }
+
+    if (msg.type === 'done'){
+      const reply = msg.reply || currentChatRequest.replyText || '';
+      const request = currentChatRequest;
+      currentChatRequest.replyText = reply;
+      if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim() && !reply.includes('<NO_TTS_OUTPUT>')){
+        await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), 'zh');
+      }
+      currentChatRequest.pendingBuffer = '';
+      if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
+      if (textChatStatus) textChatStatus.textContent = '文字已发送';
+      currentChatRequest = null;
+      request.resolve(reply);
+      if (request.resumeAfter){
+        waitForStreamTtsDrain()
+          .then(()=>{ resumeRecording(); })
+          .catch((e)=>{ console.warn('stream TTS drain failed', e); resumeRecording(); });
+      }
+      return;
+    }
+
+    if (msg.type === 'error'){
+      if (chatStatusEl) chatStatusEl.textContent = '聊天错误';
+      if (textChatStatus) textChatStatus.textContent = '聊天错误';
+      if (currentChatRequest.resumeAfter){
+        resumeRecording();
+      }
+      currentChatRequest.reject(new Error(msg.error || '未知聊天错误'));
+      currentChatRequest = null;
+    }
   }
 
   async function sendToChat(text){
     if (!text) return;
     try{
-      if (chatStatusEl) chatStatusEl.textContent = '聊天请求中...';
-      const r = await fetch(CHAT_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+      if (textChatStatus) textChatStatus.textContent = '发送中...';
+      if (chatStatusEl) chatStatusEl.textContent = '正在连接聊天流...';
+      await openChatWs();
+      resetStreamTtsState();
+      const resumeAfter = !!(asrRunning && !voiceBargeInEnabled);
+      if (resumeAfter) pauseRecording();
+      const reply = await new Promise((resolve, reject)=>{
+        currentChatRequest = {
+          resolve,
+          reject,
+          text,
+          replyText: '',
+          pendingBuffer: '',
+          resumeAfter,
+        };
+        chatWs.send(JSON.stringify({ text }));
       });
-      const raw = await r.text();
-      let j = null;
-      try{ j = JSON.parse(raw); }catch(e){ j = null }
-      if (!r.ok){
-        chatStatusEl && (chatStatusEl.textContent = '聊天服务错误');
-        console.warn('chat POST failed', r.status, raw);
-        return;
-      }
-      if (j && j.reply){
-        const reply = j.reply;
-        console.log('chat reply:', reply);
-        showAsrText(reply);
-  // pause ASR if running and not in voice-barge-in mode
-  let resumeAfter = false;
-  if (asrRunning && !voiceBargeInEnabled){ pauseRecording(); resumeAfter = true; }
-        //if <NO_TTS_OUTPUT> in output, skip TTS playback
-        if (reply.includes('<NO_TTS_OUTPUT>')){
-          chatStatusEl && (chatStatusEl.textContent = '聊天完成（无语音输出）');
-        }else{
-          try{
-            // synthesizeAndPlay now returns a promise that resolves when all
-            // playback (possibly chunked) has finished — await it so we can
-            // reliably resume ASR afterwards.
-            await synthesizeAndPlay(reply, 'zh');
-          }catch(e){ console.warn('TTS playback error', e); }
-          if (resumeAfter){
-            // restart ASR capture after playback finished
-            resumeRecording();
-          }
-        }
-        chatStatusEl && (chatStatusEl.textContent = '聊天完成');
-      } else if (j && j.error){
-        chatStatusEl && (chatStatusEl.textContent = '聊天错误');
-        console.warn('chat returned error', j.error);
-      } else {
-        chatStatusEl && (chatStatusEl.textContent = '聊天未知响应');
-        console.warn('chat unknown response', raw);
-      }
+      return reply;
     }catch(e){
       console.warn('sendToChat err', e);
       chatStatusEl && (chatStatusEl.textContent = '聊天网络错误');
+      if (textChatStatus) textChatStatus.textContent = '网络错误';
+      throw e;
+    }
+  }
+
+  async function sendTextChatMessage(){
+    if (!textChatInput || !textChatSendBtn) return;
+    const text = (textChatInput.value || '').trim();
+    if (!text || textChatSending) return;
+    textChatSending = true;
+    textChatSendBtn.disabled = true;
+    try{
+      showAsrText(text);
+      await sendToChat(text);
+      textChatInput.value = '';
+    }finally{
+      textChatSending = false;
+      textChatSendBtn.disabled = false;
+      if (textChatStatus && textChatStatus.textContent === '发送中...') textChatStatus.textContent = '文字待命';
     }
   }
 
@@ -683,6 +704,21 @@
       asrTextEl.style.left = Math.round(clientX - asrTextEl.offsetWidth/2) + 'px';
       asrTextEl.style.top = Math.round(clientY + offsetY) + 'px';
       asrTextEl.style.fontSize=30
+    }catch(e){/*ignore*/}
+  }
+
+  function updateTextChatBarPosition(){
+    const textChatBar = document.getElementById('textChatBar');
+    if (!textChatBar || !currentModel || !app || !app.renderer) return;
+    try{
+      const canvasRect = app.renderer.view.getBoundingClientRect();
+      const b = currentModel.getBounds();
+      const clientX = canvasRect.left + (b.x + b.width / 2) * (canvasRect.width / app.renderer.width);
+      const waistY = canvasRect.top + (b.y + b.height * 0.58) * (canvasRect.height / app.renderer.height);
+      textChatBar.style.left = Math.round(clientX) + 'px';
+      textChatBar.style.top = Math.round(waistY) + 'px';
+      textChatBar.style.bottom = 'auto';
+      textChatBar.style.transform = 'translate(-50%, -50%)';
     }catch(e){/*ignore*/}
   }
 
@@ -918,10 +954,18 @@
   // wire up buttons (use the ASRController-like API)
   if (startAsrBtn) startAsrBtn.addEventListener('click', ()=> startRecording());
   if (stopAsrBtn) stopAsrBtn.addEventListener('click', ()=> stopRecording());
+  if (textChatSendBtn) textChatSendBtn.addEventListener('click', ()=>{ sendTextChatMessage(); });
+  if (textChatInput) textChatInput.addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter' && !e.shiftKey){
+      e.preventDefault();
+      sendTextChatMessage();
+    }
+  });
 
   // update asrText position each frame if visible
   function rafUpdate(){
     if (asrTextEl && asrTextEl.style.display !== 'none') updateAsrTextPosition();
+    updateTextChatBarPosition();
     requestAnimationFrame(rafUpdate);
   }
   requestAnimationFrame(rafUpdate);
@@ -1000,17 +1044,7 @@
       // keep reference for mouth sync
       model._faustLive2D = { mouthValue: 0 };
 
-      // ensure model is advanced by PIXI ticker if plugin expects window.PIXI.Ticker
-      try{
-        // some builds auto-register, but ensure update loop
-        if (app && app.ticker && typeof model.update === 'function'){
-          app.ticker.add(()=>{ try{ model.update(); }catch(e){} });
-        }
-      }catch(e){}
-      // probe model for supported expressions and print them
-      try{ probeExpressionsForModel(model); }catch(e){}
-      // also try to read the model3.json next to the path to extract motions
-      try{ probeExpressionsFromModelJson(path); }catch(e){}
+      updateTextChatBarPosition();
     }).catch(err => {
       showOverlay('加载模型失败：' + err);
       console.error(err);
@@ -1197,6 +1231,15 @@
     if (audioEl){
       try{ audioEl.pause(); audioEl.currentTime = 0; }catch(e){}
     }
+    if (currentModel){
+      try{
+        if (currentModel.internalModel && currentModel.internalModel.coreModel && typeof currentModel.internalModel.coreModel.setParameterValueById === 'function'){
+          currentModel.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
+        } else if (typeof currentModel.setMouthOpenY === 'function'){
+          currentModel.setMouthOpenY(0);
+        }
+      }catch(e){}
+    }
     if (rafId) cancelAnimationFrame(rafId);
     if (sourceNode){ try{ sourceNode.disconnect(); }catch(e){} sourceNode=null }
     if (analyser){ analyser.disconnect(); analyser=null }
@@ -1335,12 +1378,22 @@
     audioEl = new Audio(URL.createObjectURL(file));
     audioEl.crossOrigin = 'anonymous';
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    try{ audioCtx.resume && audioCtx.resume(); }catch(e){}
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
     dataArray = new Uint8Array(analyser.fftSize);
     sourceNode = audioCtx.createMediaElementSource(audioEl);
     sourceNode.connect(analyser);
     analyser.connect(audioCtx.destination);
+    audioEl.onended = ()=>{
+      try{
+        if (currentModel && currentModel.internalModel && currentModel.internalModel.coreModel && typeof currentModel.internalModel.coreModel.setParameterValueById === 'function'){
+          currentModel.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
+        } else if (currentModel && typeof currentModel.setMouthOpenY === 'function'){
+          currentModel.setMouthOpenY(0);
+        }
+      }catch(e){}
+    };
     audioEl.play().catch(()=>{ /* autoplay may be blocked */ });
 
     function tick(){

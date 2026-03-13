@@ -417,6 +417,7 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
         - 需要用户填写文本/路径/参数；
         - 需要用户确认安装、危险操作、批量操作细节；
         - 纯语音交互效率低、歧义大、确认轮次过多时。
+        - 其他需要更丰富的交互方式的任何场景
 
         前端窗口中的 HTML 可以包含自定义 UI 元素，例如：按钮、复选框、输入框、选择器等。
         你写入的 HTML 中可以直接调用前端注入的 JavaScript API：
@@ -533,160 +534,159 @@ def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent") -> 
     except Exception as e:
         return f"关闭灵动窗口失败: {str(e)}"
 
-if conf.TRIGGER_ENABLED:
-    print("[Faust.backend.llm_tools] Trigger system is enabled.")
-    @add_to_tool_list
-    @tool
-    def triggerListTool() -> str:
-        """
-        Description:
-            列出当前所有已注册的触发器。
-            触发器触发时，会唤醒你。
-        Returns:
-            str: 触发器列表的字符串表示，或者错误信息。
-        """
-        if not STARTED:
-            return "系统尚未完全启动，无法列出触发器。"
-        try:
-            print("[Faust.backend.llm_tools.triggerListTool] Listing all triggers.")
-            
-            triggers = trigger_manager.get_trigger_information()
-            if not triggers:
-                return "当前没有已注册的触发器。"
-            result_lines = []
-            for trig in triggers:
-                result_lines.append(f"ID: {trig.id}, Type: {trig.type}, Recall Description: {trig.recall_description or 'N/A'}")
-            return "\n".join(result_lines)
-        except Exception as e:
-            return f"列出触发器出错: {str(e)}"
-    @add_to_tool_list
-    @tool
-    def triggerAddTool(trigger_json: str) -> str:
-        """
-        Description:
-            添加一个新的触发器。
-            触发器触发时，会唤醒你。
-            触发器 JSON 格式说明
 
-            每个 trigger 对象必须满足下列几类之一的模式（多余字段会被拒绝）。
+@add_to_tool_list
+@tool
+def triggerListTool() -> str:
+    """
+    Description:
+        列出当前所有已注册的触发器。
+        触发器触发时，会唤醒你。
+    Returns:
+        str: 触发器列表的字符串表示，或者错误信息。
+    """
+    if not STARTED:
+        return "系统尚未完全启动，无法列出触发器。"
+    try:
+        print("[Faust.backend.llm_tools.triggerListTool] Listing all triggers.")
+        
+        triggers = trigger_manager.get_trigger_information()
+        if not triggers:
+            return "当前没有已注册的触发器。"
+        result_lines = []
+        for trig in triggers:
+            result_lines.append(f"ID: {trig.id}, Type: {trig.type}, Recall Description: {trig.recall_description or 'N/A'}")
+        return "\n".join(result_lines)
+    except Exception as e:
+        return f"列出触发器出错: {str(e)}"
+@add_to_tool_list
+@tool
+def triggerAddTool(trigger_json: str) -> str:
+    """
+    Description:
+        添加一个新的触发器。
+        触发器触发时，会唤醒你。
+        触发器 JSON 格式说明
 
-            通用字段（所有类型）
+        每个 trigger 对象必须满足下列几类之一的模式（多余字段会被拒绝）。
 
-            - id (string) — 触发器唯一标识（用于删除/覆盖）。必须存在且在 store 中唯一。
-            - type (string) — 触发器类型，取值："datetime" | "interval" | "py-eval" | "event" | "nimble-reminder" | "nimble-expire"
-            - recall_description (string, optional) — 可选的描述/提示，用于回忆或展示
-            - lifespan (int, optional) — 生命周期（秒）。超过后触发器自动删除。
+        通用字段（所有类型）
 
-            类型一：DateTimeTrigger（一次性时间触发器）
+        - id (string) — 触发器唯一标识（用于删除/覆盖）。必须存在且在 store 中唯一。
+        - type (string) — 触发器类型，取值："datetime" | "interval" | "py-eval" | "event" | "nimble-reminder" | "nimble-expire"
+        - recall_description (string, optional) — 可选的描述/提示，用于回忆或展示
+        - lifespan (int, optional) — 生命周期（秒）。超过后触发器自动删除。
 
-            - type: "datetime"
-            - target: datetime 字符串或 ISO 格式（必填）
-            - 支持格式示例：
-                - "2024-02-28 15:30:00" （"YYYY-MM-DD HH:MM:SS"）
-                - "2024-02-28T15:30:00" 或者带时区："2024-02-28T15:30:00+08:00"（ISO）
-                行为：
-            - 当系统时间 >= target 时触发，触发后自动从 store 中移除（一次性）。
+        类型一：DateTimeTrigger（一次性时间触发器）
 
-            示例：
-
-            ```json
-            {
-            "id": "buy_coffee_reminder",
-            "type": "datetime",
-            "target": "2026-01-31 09:00:00",
-            "recall_description": "上午买咖啡"
-            }
-            ```
-
-            类型二：IntervalTrigger（周期触发器）
-
-            - type: "interval"
-            - interval_seconds: integer >= 1（必填） — 周期秒数
-            - last_triggered: float（可选） — 上次触发的时间戳（UNIX 时间，秒）。若缺失，系统会使用默认值（创建时设置为当前时间）。
+        - type: "datetime"
+        - target: datetime 字符串或 ISO 格式（必填）
+        - 支持格式示例：
+            - "2024-02-28 15:30:00" （"YYYY-MM-DD HH:MM:SS"）
+            - "2024-02-28T15:30:00" 或者带时区："2024-02-28T15:30:00+08:00"（ISO）
             行为：
-            - 当 (now - last_triggered) >= interval_seconds 时触发，触发后会更新 last_triggered 并保存到文件以保证下次计算正确。
+        - 当系统时间 >= target 时触发，触发后自动从 store 中移除（一次性）。
 
-            示例：
+        示例：
 
-            ```json
-            {
-            "id": "hourly_status_check",
-            "type": "interval",
-            "interval_seconds": 3600,
-            "recall_description": "每小时检查状态"
-            }
-            ```
+        ```json
+        {
+        "id": "buy_coffee_reminder",
+        "type": "datetime",
+        "target": "2026-01-31 09:00:00",
+        "recall_description": "上午买咖啡"
+        }
+        ```
 
-            类型三：PyEvalTrigger（基于表达式的触发器）
+        类型二：IntervalTrigger（周期触发器）
 
-            - type: "py-eval"
-            - eval_code: string（必填） — Python 表达式或语句，返回值用于决定是否触发（truthy 则触发）
-            行为与风险：
-            - 每轮轮询会 eval(eval_code)。如果表达式结果为 True（或 truthy），触发一次（每轮会继续评估，未改变 last_triggered 行为）。
+        - type: "interval"
+        - interval_seconds: integer >= 1（必填） — 周期秒数
+        - last_triggered: float（可选） — 上次触发的时间戳（UNIX 时间，秒）。若缺失，系统会使用默认值（创建时设置为当前时间）。
+        行为：
+        - 当 (now - last_triggered) >= interval_seconds 时触发，触发后会更新 last_triggered 并保存到文件以保证下次计算正确。
 
-            示例：
+        示例：
 
-            ```json
-            {
-            "id": "disk_space_low_check",
-            "type": "py-eval",
-            "eval_code": "import shutil; shutil.disk_usage('/').free < 10 * 1024 * 1024 * 1024",
-            "recall_description": "磁盘可用空间低于 10GB 时触发"
-            }
-            ```
-            类型四：EventTrigger（事件触发器）
+        ```json
+        {
+        "id": "hourly_status_check",
+        "type": "interval",
+        "interval_seconds": 3600,
+        "recall_description": "每小时检查状态"
+        }
+        ```
 
-            - type: "event"
-            - event_name: string（必填）
-            - callback_id: string（可选，nimble 常用）
-            - payload: object（可选）
+        类型三：PyEvalTrigger（基于表达式的触发器）
 
-            类型五：NimbleRemindTrigger（灵动窗口提醒触发器）
+        - type: "py-eval"
+        - eval_code: string（必填） — Python 表达式或语句，返回值用于决定是否触发（truthy 则触发）
+        行为与风险：
+        - 每轮轮询会 eval(eval_code)。如果表达式结果为 True（或 truthy），触发一次（每轮会继续评估，未改变 last_triggered 行为）。
 
-            - type: "nimble-reminder"
-            - callback_id: string（必填）
-            - interval_seconds: integer >= 1（必填）
+        示例：
 
-            类型六：NimbleExpireTrigger（灵动窗口过期触发器）
+        ```json
+        {
+        "id": "disk_space_low_check",
+        "type": "py-eval",
+        "eval_code": "import shutil; shutil.disk_usage('/').free < 10 * 1024 * 1024 * 1024",
+        "recall_description": "磁盘可用空间低于 10GB 时触发"
+        }
+        ```
+        类型四：EventTrigger（事件触发器）
 
-            - type: "nimble-expire"
-            - callback_id: string（必填）
-            - target: datetime 字符串（必填）
+        - type: "event"
+        - event_name: string（必填）
+        - callback_id: string（可选，nimble 常用）
+        - payload: object（可选）
 
-            请严格遵守上述格式添加触发器，确保字段完整且类型正确。
-        Args:
-            trigger_json (str): 触发器的JSON字符串表示。
-        Returns:
-            str: 添加结果的确认信息，或者错误信息。
-        """
-        if not STARTED:
-            return "系统尚未完全启动，无法操作触发器。"
-        try:
-            print("[Faust.backend.llm_tools.triggerAddTool] Adding new trigger with JSON:", trigger_json)
-            trigger_manager.append_trigger(trigger_json)
-            return f"触发器添加成功"
-        except Exception as e:
-            return f"添加触发器出错: {str(e)}"
-    @add_to_tool_list
-    @tool
-    def triggerRemoveTool(trigger_id: str) -> str:
-        """
-        Description:
-            移除指定ID的触发器。
-        Args:
-            trigger_id (str): 需要移除的触发器ID。
-        Returns:
-            str: 移除结果的确认信息，或者错误信息。
-        """
-        if not STARTED:
-            return "系统尚未完全启动，无法操作触发器。"
-        try:
-            print("[Faust.backend.llm_tools.triggerRemoveTool] Removing trigger with ID:", trigger_id)
+        类型五：NimbleRemindTrigger（灵动窗口提醒触发器）
 
-            trigger_manager.delete_trigger(trigger_id)
-            return f"触发器移除成功，ID: {trigger_id}"
-        except Exception as e:
-            return f"移除触发器出错: {str(e)}"
+        - type: "nimble-reminder"
+        - callback_id: string（必填）
+        - interval_seconds: integer >= 1（必填）
+
+        类型六：NimbleExpireTrigger（灵动窗口过期触发器）
+
+        - type: "nimble-expire"
+        - callback_id: string（必填）
+        - target: datetime 字符串（必填）
+
+        请严格遵守上述格式添加触发器，确保字段完整且类型正确。
+    Args:
+        trigger_json (str): 触发器的JSON字符串表示。
+    Returns:
+        str: 添加结果的确认信息，或者错误信息。
+    """
+    if not STARTED:
+        return "系统尚未完全启动，无法操作触发器。"
+    try:
+        print("[Faust.backend.llm_tools.triggerAddTool] Adding new trigger with JSON:", trigger_json)
+        trigger_manager.append_trigger(trigger_json)
+        return f"触发器添加成功"
+    except Exception as e:
+        return f"添加触发器出错: {str(e)}"
+@add_to_tool_list
+@tool
+def triggerRemoveTool(trigger_id: str) -> str:
+    """
+    Description:
+        移除指定ID的触发器。
+    Args:
+        trigger_id (str): 需要移除的触发器ID。
+    Returns:
+        str: 移除结果的确认信息，或者错误信息。
+    """
+    if not STARTED:
+        return "系统尚未完全启动，无法操作触发器。"
+    try:
+        print("[Faust.backend.llm_tools.triggerRemoveTool] Removing trigger with ID:", trigger_id)
+
+        trigger_manager.delete_trigger(trigger_id)
+        return f"触发器移除成功，ID: {trigger_id}"
+    except Exception as e:
+        return f"移除触发器出错: {str(e)}"
 if __name__ == "__main__":
     for tool in toollist:
         print(f"Tool name: {tool.name},\nDescription: {tool.description}")
