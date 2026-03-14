@@ -56,7 +56,7 @@ def create_nimble_session(
         "expire_trigger_id": f"nimble_expire::{callback_id}",
     }
     _nimble_sessions[callback_id] = session
-    print(f"[Nimble] Session created: {callback_id}")
+    print(f"[faust.backend.nimble] Session created: {callback_id}")
     return session
 
 
@@ -76,7 +76,7 @@ def touch_nimble_session(callback_id: str) -> Optional[Dict[str, Any]]:
 def set_nimble_result(callback_id: str, data: Any, *, closed: bool = False) -> Optional[Dict[str, Any]]:
     session = _nimble_sessions.get(callback_id)
     if not session:
-        print(f"[Nimble] Warning: Received result for unknown callback_id: {callback_id}")
+        print(f"[faust.backend.nimble] Warning: Received result for unknown callback_id: {callback_id}")
         return None
     session["result"] = data
     session["updated_at"] = _now()
@@ -84,7 +84,7 @@ def set_nimble_result(callback_id: str, data: Any, *, closed: bool = False) -> O
     if closed:
         session["closed"] = True
         session["status"] = "closed"
-    print(f"[Nimble] Result stored for: {callback_id}")
+    print(f"[faust.backend.nimble] Result stored for: {callback_id}")
     return session
 
 
@@ -95,7 +95,7 @@ def close_nimble_session(callback_id: str, reason: str = "closed") -> Optional[D
     session["closed"] = True
     session["status"] = reason
     session["updated_at"] = _now()
-    print(f"[Nimble] Session closed: {callback_id}, reason={reason}")
+    print(f"[faust.backend.nimble] Session closed: {callback_id}, reason={reason}")
     return session
 
 
@@ -135,7 +135,7 @@ def export_window_payload(callback_id: str) -> Optional[Dict[str, Any]]:
 def cleanup_nimble_session(callback_id: str) -> Optional[Dict[str, Any]]:
     session = _nimble_sessions.pop(callback_id, None)
     if session:
-        print(f"[Nimble] Session cleaned: {callback_id}")
+        print(f"[faust.backend.nimble] Session cleaned: {callback_id}")
     return session
 
 
