@@ -8,9 +8,45 @@
 
 模仿Neuro Sama
 
+**仍然处于早期开发阶段**
+
 ---
 
-### 功能计划
+### 功能列表
+
+# 
+
+- [x] 多AGENT支持
+
+- [x] ASR 语音识别
+
+- [x] TTS 人声输出
+
+- [x] 音乐播放（唱歌）
+
+- [x] 模型记忆系统
+
+- [x] Agent单独的Workspace
+
+- [x] 灵动交互系统(前端HTML小窗口交互)
+
+- [x] 编辑文件，文件读写等基本工具
+
+- [x] 调用VLM操作用户电脑
+
+- [x] 在线搜索
+
+- [ ] 操作网页 (Agent Browser)
+
+- [ ] 给予AI单独的一个可交互Console
+
+- [ ] MCP协议支持
+
+- [ ] 安全系统，限制Agent的访问权限，并对模型命令进行审核
+
+---
+
+### 功能计划(长期)
 
 | 大饼          | 解释                                               | 预计时间 |
 | ----------- | ------------------------------------------------ | ---- |
@@ -20,7 +56,7 @@
 | MCP 游览器     |                                                  |      |
 | OCR         |                                                  |      |
 | 前端优化        |                                                  |      |
-| 灵动交互        | 允许AI编写HTML实现交互                                   | NOW  |
+| 灵动交互        | 允许AI编写HTML实现交互                                   | 已经完成 |
 
 ---
 
@@ -34,9 +70,10 @@
 
 ### 技术实现
 
-Backend的一部分代码来源于 [morettt/my-neuro](https://github.com/morettt/my-neuro)
+~~Backend的一部分代码来源于 [morettt/my-neuro](https://github.com/morettt/my-neuro)~~
+现在已经不再有来源于[morettt/my-neuro](https://github.com/morettt/my-neuro)的内容了
 
-| 部分       |                                                                       |
-| -------- | --------------------------------------------------------------------- |
-| Backend  | 参考[morettt/my-neuro](https://github.com/morettt/my-neuro),基于langchain |
-| Frontend | Electron                                                              |
+| 部分       |             |
+| -------- | ----------- |
+| Backend  | 基于langchain |
+| Frontend | Electron    |
