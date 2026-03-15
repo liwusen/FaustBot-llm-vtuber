@@ -321,8 +321,9 @@ async def shutdown_event():
     #only add to checkpoint
     with open("faust_main.log","a",encoding="utf-8") as f:
         f.write(f"{datetime.datetime.now()} Shutting down agent...\n")
-    await conn.commit()
-    await conn.close()
+    if not args.save_in_memory:
+        await conn.commit()
+        await conn.close()
     trigger_manager.stop_trigger_watchdog_thread()
     print("Shutting down FAUST Backend Main Service...")
 

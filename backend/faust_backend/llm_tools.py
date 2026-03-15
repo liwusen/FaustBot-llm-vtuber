@@ -112,8 +112,10 @@ def pythonExecTool(code: str) -> str:
         sio = io.StringIO()
         print("[Faust.backend.llm_tools.pythonExecTool] Executing code:", code)
         sys.stdout = sio
-        exec(code, {}, local_namespace)
-        sys.stdout = sys.__stdout__
+        try:
+            exec(code, {}, local_namespace)
+        finally:
+            sys.stdout = sys.__stdout__
         # 获取所有局部变量的字符串表示
         result = "\n".join(f"{key} = {value}" for key, value in local_namespace.items())
         # 获取stdout的内容
@@ -575,14 +577,7 @@ def triggerListTool() -> str:
         return "系统尚未完全启动，无法列出触发器。"
     try:
         print("[Faust.backend.llm_tools.triggerListTool] Listing all triggers.")
-        
-        triggers = trigger_manager.get_trigger_information()
-        if not triggers:
-            return "当前没有已注册的触发器。"
-        result_lines = []
-        for trig in triggers:
-            result_lines.append(f"ID: {trig.id}, Type: {trig.type}, Recall Description: {trig.recall_description or 'N/A'}")
-        return "\n".join(result_lines)
+        return trigger_manager.get_trigger_information()
     except Exception as e:
         return f"列出触发器出错: {str(e)}"
 @add_to_tool_list
