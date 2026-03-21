@@ -41,7 +41,7 @@ app.add_middleware(
 )
 PORT = 13900
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-backend2frontend.frontendGetMotions()
+asyncio.run(backend2frontend.frontendGetMotions())
 forward_queue=queue.Queue()
 agent=None
 agent_lock = asyncio.Lock()
@@ -94,7 +94,7 @@ async def stream_agent_locked(target_agent, payload, config=None):
 startServices()
 @app.on_event("startup")
 async def startup_event():
-    global agent,checkpointer,conn,storer
+    global agent,checkpointer,conn,storer,conn_for_store
     #--- Initialize the agent and its tools&middleware, including setting up the checkpoint saver and store.
     if not os.path.exists(pjoin(AGENT_ROOT,'faust_checkpoint.db')):
         NOT_INITIALIZED = True
@@ -117,10 +117,11 @@ async def startup_event():
         await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
     else:
         await invoke_agent_locked(agent,{"messages":[{"role":"user","content":"对话重新开始了"}]})
-    with open("faust_main.log","r",encoding="utf-8") as f:
-        t=f.readlines()[-5:]
-    print("[main]日志内容：",t)
-    await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"这是你自上次对话以来后的日志：{' '.join(t)}"}]})
+    if os.path.exists("faust_main.log"):
+        with open("faust_main.log","r",encoding="utf-8") as f:
+            t=f.readlines()[-5:]
+        print("[Faust.backend.main]日志内容：",t)
+        await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"这是你自上次对话以来后的日志：{' '.join(t)}"}]})
     
     #--- Start the trigger watchdog thread to monitor and activate triggers.
     print("[main] Trigger Watchdog Thread starting...")
@@ -371,6 +372,8 @@ async def shutdown_event():
     if not args.save_in_memory:
         await conn.commit()
         await conn.close()
+        await conn_for_store.commit()
+        await conn_for_store.close()
     trigger_manager.stop_trigger_watchdog_thread()
     print("Shutting down FAUST Backend Main Service...")
 

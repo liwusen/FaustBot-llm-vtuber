@@ -334,9 +334,9 @@ async def demo(basic_test:bool=False):
     await test_doc_tracker.clear_not_exist_docs()
 
 
-    docTracker.new_chat_history_part("这是第一条聊天记录。")
-    docTracker.new_chat_history_part("这是第二条聊天记录。")
-    docTracker.new_chat_history_part("这是第三条聊天记录。")
+    await test_doc_tracker.new_chat_history_part("这是第一条聊天记录。")
+    await test_doc_tracker.new_chat_history_part("这是第二条聊天记录。")
+    await test_doc_tracker.new_chat_history_part("这是第三条聊天记录。")
 
     print("\nTesting chat history tracking...")
     print("RAG result for '聊天记录':", await rag_query("聊天记录", only_need_context=True))
