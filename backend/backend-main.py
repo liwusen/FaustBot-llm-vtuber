@@ -89,7 +89,8 @@ async def stream_agent_locked(target_agent, payload, config=None):
         config = {"configurable": {"thread_id": THREAD_ID}}
     async with agent_lock:
         async for message_chunk, metadata in target_agent.astream(payload, config, stream_mode="messages"):
-            yield message_chunk, metadata
+            if message_chunk.content and metadata.get("langgraph_node")!="tools":
+                yield message_chunk, metadata
         
 startServices()
 @app.on_event("startup")
@@ -186,7 +187,7 @@ async def chat_websocket(websocket: WebSocket):
                 reply = ""
                 print("[main] Received chat message:", text)
                 async for message_chunk, metadata in stream_agent_locked(agent,{"messages":[{"role":"user","content":text}]}):
-                    if message_chunk.content:
+                    if message_chunk.content and metadata.get("langgraph_node")!="tools":
                         reply += message_chunk.content
                         print(message_chunk.content, end="|", flush=True)
                         await websocket.send_text(json.dumps({"type": "delta", "content": message_chunk.content}, ensure_ascii=False))
@@ -362,7 +363,6 @@ async def shutdown_post():
     """Triggers a graceful shutdown for the FAUST backend process."""
     asyncio.create_task(_graceful_shutdown_task())
     return {"status": "shutting_down"}
-
 @app.on_event("shutdown")
 async def shutdown_event():
     print("")
@@ -379,6 +379,6 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     print(f"Starting FAUST Backend Main Service on port {PORT}...")
-    config = uvicorn.Config(app, host="0.0.0.0", port=PORT)
+    config = uvicorn.Config(app, host="127.0.0.1", port=PORT)
     uvicorn_server = uvicorn.Server(config)
     uvicorn_server.run()

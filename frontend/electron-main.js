@@ -91,6 +91,18 @@ ipcMain.handle('set-ignore-mouse-events', (evt, ignore) => {
   }
 });
 
+ipcMain.handle('focus-main-window', () => {
+  if (!mainWindow) return false;
+  try{
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    if (typeof mainWindow.focus === 'function') mainWindow.focus();
+    return true;
+  }catch(e){
+    console.error('focus-main-window failed', e);
+    return false;
+  }
+});
+
 // allow renderer to send log messages to main process console
 ipcMain.handle('faust-log', async (evt, msg) => {
   try{

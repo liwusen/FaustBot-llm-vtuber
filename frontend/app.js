@@ -3,7 +3,7 @@
 // 简单的 Live2D 展示 demo，依赖 PIXI 和 pixi-live2d-display
 (() => {
 
-  const defaultModel = '2D/hiyori_pro_mic.model3.json';
+  const defaultModel = '2D/hiyori_pro_zh/hiyori_pro_t11.model3.json';
 
   const modelPathInput = document.getElementById('modelPath');
   const loadBtn = document.getElementById('loadBtn');
@@ -28,10 +28,21 @@
   const textChatInput = document.getElementById('textChatInput');
   const textChatSendBtn = document.getElementById('textChatSendBtn');
   const textChatStatus = document.getElementById('textChatStatus');
+  const quickController = document.getElementById('modelQuickController');
+  const quickToggleAsrBtn = document.getElementById('quickToggleAsr');
+  const quickStopMediaBtn = document.getElementById('quickStopMedia');
+  const quickRandomMotionBtn = document.getElementById('quickRandomMotion');
+  const quickScaleUpBtn = document.getElementById('quickScaleUp');
+  const quickScaleDownBtn = document.getElementById('quickScaleDown');
   let Live2DModel=null;
   let nimbleWindows = new Map();
   let activeNimbleContext = null;
   let textChatSending = false;
+  let availableMotions = [];
+  let hoverModel = false;
+  let hoverQuickController = false;
+  let interactionLocked = false;
+  let clickThroughController = null;
 
   function ensureNimbleHost(){
     let host = document.getElementById('nimble-host');
@@ -176,7 +187,128 @@
     try{
       const s = Math.max(0.1, baseScale * scaleFactor);
       currentModel.scale.set(s);
+      if (modelScaleSlider) modelScaleSlider.value = String(scaleFactor);
+      if (modelScaleValue) modelScaleValue.textContent = scaleFactor.toFixed(2) + 'x';
+      updateQuickControllerPosition();
     }catch(e){console.warn('applyModelScale err', e);}
+  }
+
+  function setScaleFactor(nextScale){
+    const parsed = Number(nextScale);
+    scaleFactor = Math.max(0.1, Math.min(2.0, Number.isFinite(parsed) ? parsed : scaleFactor));
+    applyModelScale();
+    try{ saveModelState(); }catch(e){}
+  }
+
+  function nudgeScale(step){
+    setScaleFactor(Math.round((scaleFactor + step) * 100) / 100);
+  }
+
+  async function readModelDefinition(path){
+    if (!path) return null;
+    try{
+      const r = await fetch(path);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    }catch(e){
+      console.warn('读取 model3.json 失败', path, e);
+      return null;
+    }
+  }
+
+  function extractMotionNames(modelDef){
+    const motions = (((modelDef || {}).FileReferences || {}).Motions) || {};
+    return Object.keys(motions);
+  }
+
+  function updateQuickAsrButton(){
+    if (!quickToggleAsrBtn) return;
+    const labelEl = quickToggleAsrBtn.querySelector('.qc-label');
+    if (labelEl) labelEl.textContent = asrRunning ? '停听' : 'ASR';
+    quickToggleAsrBtn.classList.toggle('active', !!asrRunning);
+    quickToggleAsrBtn.title = asrRunning ? '停止语音识别' : '启动语音识别';
+  }
+
+  function updateQuickControllerPosition(){
+    if (!quickController || !currentModel || !app || !app.renderer) return;
+    try{
+      const canvasRect = app.renderer.view.getBoundingClientRect();
+      const b = currentModel.getBounds();
+      const scaleX = canvasRect.width / app.renderer.width;
+      const scaleY = canvasRect.height / app.renderer.height;
+      const left = canvasRect.left + b.x * scaleX+300;
+      const top = canvasRect.top + b.y * scaleY;
+      const height = b.height * scaleY;
+      quickController.style.left = Math.round(left - 12) + 'px';
+      quickController.style.top = Math.round(top + height * 0.45) + 'px';
+      quickController.style.transform = 'translate(-50%, -50%)';
+      quickController.style.scale= String(1 * scaleX);
+    }catch(e){/* ignore */}
+  }
+
+  function setQuickControllerVisible(visible){
+    if (!quickController) return;
+    quickController.classList.toggle('visible', !!visible);
+  }
+
+  function refreshQuickControllerVisibility(){
+    setQuickControllerVisible(!!currentModel && (hoverModel || hoverQuickController || dragging || interactionLocked));
+    updateQuickControllerPosition();
+  }
+
+  function isPointOverQuickController(clientX, clientY){
+    if (!quickController) return false;
+    const rect = quickController.getBoundingClientRect();
+    return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+  }
+
+  function isPointerOnModel(clientX, clientY){
+    if (!currentModel || !app || !app.renderer) return false;
+    try{
+      const canvasRect = app.renderer.view.getBoundingClientRect();
+      const rx = (clientX - canvasRect.left) * (app.renderer.width / canvasRect.width);
+      const ry = (clientY - canvasRect.top) * (app.renderer.height / canvasRect.height);
+      const b = currentModel.getBounds();
+      const inBounds = rx >= b.x && rx <= b.x + b.width && ry >= b.y && ry <= b.y + b.height;
+      if (!inBounds) return false;
+      if (typeof currentModel.hitTest === 'function'){
+        const hits = currentModel.hitTest(rx, ry);
+        if (Array.isArray(hits) && hits.length > 0) return true;
+      }
+      return !!(currentModel.containsPoint && currentModel.containsPoint(new PIXI.Point(rx, ry)));
+    }catch(e){
+      return false;
+    }
+  }
+
+  function setInteractionLock(locked){
+    interactionLocked = !!locked;
+    if (clickThroughController) clickThroughController.setInteractiveLock(interactionLocked);
+    refreshQuickControllerVisibility();
+  }
+
+  function stopBackgroundAudio(){
+    if (!bgAudio) return;
+    try{ bgAudio.pause(); }catch(e){}
+    try{ bgAudio.currentTime = 0; }catch(e){}
+    bgAudio = null;
+  }
+
+  function playMotionByName(name){
+    if (!currentModel || !name) return false;
+    try{
+      currentModel.motion(name);
+      return true;
+    }catch(e){
+      console.warn('播放 motion 失败', name, e);
+      return false;
+    }
+  }
+
+  function playRandomMotion(){
+    const pool = availableMotions.length ? availableMotions : ['Idle'];
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    return playMotionByName(picked);
   }
 
   function loadSavedModelState(){
@@ -429,6 +561,7 @@
         // stop audio and optionally stop asr
         try{ stopAudio(); }catch(e){}
         try{ stopMicAsr(); }catch(e){}
+        try{ stopBackgroundAudio(); }catch(e){}
       } else if (cmd === 'NIMBLE_SHOW'){
         if (!arg) return;
         let payload = null;
@@ -441,7 +574,32 @@
         if (payload && payload.callback_id) closeNimbleWindow(payload.callback_id, false);
       } else if (cmd=="SET_MOTION"){
         if (!arg) return;
-        Live2DModel.motion(arg);
+        playMotionByName(arg);
+      } else if (cmd === 'LOAD_MODEL' || cmd === 'SET_MODEL_PATH'){
+        if (!arg) return;
+        if (modelPathInput) modelPathInput.value = arg;
+        loadModel(arg);
+      } else if (cmd === 'SET_MODEL_SCALE'){
+        if (!arg) return;
+        setScaleFactor(parseFloat(arg));
+      } else if (cmd === 'SET_MODEL_POSITION'){
+        if (!currentModel || !arg) return;
+        const [xRaw, yRaw] = arg.split(/\s+/);
+        const x = Number(xRaw);
+        const y = Number(yRaw);
+        if (Number.isFinite(x)) currentModel.x = x;
+        if (Number.isFinite(y)) currentModel.y = y;
+        updateQuickControllerPosition();
+        saveModelState();
+      } else if (cmd === 'START_ASR'){
+        startRecording();
+      } else if (cmd === 'STOP_ASR'){
+        stopRecording();
+      } else if (cmd === 'STOP_AUDIO'){
+        stopAudio();
+        stopBackgroundAudio();
+      } else if (cmd === 'RANDOM_MOTION'){
+        playRandomMotion();
       }
       else {
         console.warn('Unknown faust command', raw);
@@ -718,12 +876,16 @@
     try{
       const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      const clientX = canvasRect.left + (b.x + b.width / 2) * (canvasRect.width / app.renderer.width);
-      const waistY = canvasRect.top + (b.y + b.height * 0.58) * (canvasRect.height / app.renderer.height);
-      textChatBar.style.left = Math.round(clientX) + 'px';
+      const scaleX = canvasRect.width / app.renderer.width;
+      const scaleY = canvasRect.height / app.renderer.height;
+      const clientX = canvasRect.left + (b.x + b.width * 0.5) * scaleX;
+      const waistY = canvasRect.top + (b.y + b.height * 0.62) * scaleY;
+      const horizontalOffset = Math.min(150, Math.max(0, b.width * scaleX * 0.55));
+      textChatBar.style.left = Math.round(clientX + horizontalOffset) + 'px';
       textChatBar.style.top = Math.round(waistY) + 'px';
       textChatBar.style.bottom = 'auto';
-      textChatBar.style.transform = 'translate(-50%, -50%)';
+      textChatBar.style.transform = 'translate(-50%, -42%)';
+      updateQuickControllerPosition();
     }catch(e){/*ignore*/}
   }
 
@@ -794,6 +956,7 @@
       asrStatusEl.textContent = '正在监听...';
       startAsrBtn.disabled = true;
       stopAsrBtn.disabled = false;
+  updateQuickAsrButton();
       // try to open VAD websocket if enabled
       noVoiceCnt=0;
       if (true){
@@ -895,6 +1058,7 @@
     asrStatusEl.textContent = '已停止';
     startAsrBtn.disabled = false;
     stopAsrBtn.disabled = true;
+    updateQuickAsrButton();
   }
 
   // --- ASRController-like API (start/stop/pause/resume) ---
@@ -936,6 +1100,7 @@
       pausedStopped = false;
     }
     asrStatusEl.textContent = asrRunning ? '正在监听...' : '未启动';
+    updateQuickAsrButton();
   }
 
   function setVoiceBargeIn(enabled){
@@ -994,7 +1159,10 @@
       return;
     }
     showOverlay('加载模型: ' + path);
-    Live2DModel.from(path).then(model => {
+    readModelDefinition(path).then((modelDef)=>{
+      availableMotions = extractMotionNames(modelDef);
+      return Live2DModel.from(path);
+    }).then(model => {
       // 移除上个模型
       if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
       currentModel = model;
@@ -1005,16 +1173,28 @@
       model.y = app.renderer.height - 10;
       model.interactive = true;
       model.buttonMode = true;
+      model.cursor = 'grab';
 
       // 基本拖拽
       model.on('pointerdown', (e) => {
+        if (clickThroughController) clickThroughController.forceInteractive();
+        setInteractionLock(true);
         dragging = true;
+        model.cursor = 'grabbing';
         const pos = e.data.global;
         dragOffset.x = pos.x - model.x;
         dragOffset.y = pos.y - model.y;
       });
-      model.on('pointerup', () => { dragging = false; });
-      model.on('pointerupoutside', () => { dragging = false; });
+      model.on('pointerup', () => {
+        dragging = false;
+        model.cursor = 'grab';
+        setInteractionLock(false);
+      });
+      model.on('pointerupoutside', () => {
+        dragging = false;
+        model.cursor = 'grab';
+        setInteractionLock(false);
+      });
       // save state after dragging ends
       model.on('pointerup', () => { saveModelState(); });
       model.on('pointermove', (e) => {
@@ -1022,6 +1202,7 @@
         const pos = e.data.global;
         model.x = pos.x - dragOffset.x;
         model.y = pos.y - dragOffset.y;
+        updateQuickControllerPosition();
       });
 
       // 官方示例支持的 hit 事件（例如点击 body 区域触发动作）
@@ -1043,21 +1224,23 @@
       model._faustLive2D = { mouthValue: 0 };
 
       updateTextChatBarPosition();
+      refreshQuickControllerVisibility();
     }).catch(err => {
       showOverlay('加载模型失败：' + err);
       console.error(err);
     });
   }
 
-  loadBtn.addEventListener('click', () => {
+  if (loadBtn) loadBtn.addEventListener('click', () => {
     const p = modelPathInput.value.trim() || defaultModel;
     loadModel(p);
   });
 
-  resetBtn.addEventListener('click', () => {
+  if (resetBtn) resetBtn.addEventListener('click', () => {
     if (!currentModel) return;
     currentModel.x = app.renderer.width - 200;
     currentModel.y = app.renderer.height - 10;
+    updateQuickControllerPosition();
   });
 
   // 自动尝试加载默认或保存的模型路径/状态
@@ -1091,116 +1274,96 @@
     // disable ignore so clicks are delivered to the window; when it leaves we
     // re-enable ignore after a short debounce.
 
-    let clickThroughEnabled = false;
-    let interactiveActive = false; // whether ignore is currently false due to hover
-    let pendingTimeout = null;
-    const INTERACTIVE_SELECTORS = ['#controls', '#overlay'];
+    function createClickThroughController(){
+      let clickThroughEnabled = false;
+      let interactiveActive = false;
+      let pendingTimeout = null;
 
-    function anyInteractiveContains(clientX, clientY){
-      // check DOM interactive selectors first
-      for (const sel of INTERACTIVE_SELECTORS){
-        const el = document.querySelector(sel);
-        if (!el) continue;
-        const r = el.getBoundingClientRect();
-        if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) return true;
+      function setIgnore(ignore){
+        try{ app.renderer.view.style.pointerEvents = ignore ? 'none' : 'auto'; }catch(e){}
+        window.api.setIgnoreMouseEvents(ignore).catch(()=>{});
       }
 
-      // check model hit area (if model exists)
-      if (currentModel && app && app.renderer && app.renderer.view){
-        try{
-          const canvasRect = app.renderer.view.getBoundingClientRect();
-          // map client coords to renderer space
-          const rx = (clientX - canvasRect.left) * (app.renderer.width / canvasRect.width);
-          const ry = (clientY - canvasRect.top) * (app.renderer.height / canvasRect.height);
-          // model bounds in renderer coordinates
-          const b = currentModel.getBounds();
-          if (rx >= b.x && rx <= b.x + b.width && ry >= b.y && ry <= b.y + b.height) return true;
-        }catch(e){
-          // swallow errors and fall through
-        }
+      function scheduleEnableIgnore(){
+        if (pendingTimeout) clearTimeout(pendingTimeout);
+        pendingTimeout = setTimeout(()=>{
+          pendingTimeout = null;
+          if (clickThroughEnabled && !interactiveActive && !interactionLocked){
+            setIgnore(true);
+          }
+        }, 140);
       }
 
-      return false;
-    }
-
-    // debounce helper to avoid rapid IPC toggles
-    function scheduleEnableIgnore(){
-      if (pendingTimeout) clearTimeout(pendingTimeout);
-      pendingTimeout = setTimeout(()=>{
-        pendingTimeout = null;
-        if (clickThroughEnabled && !interactiveActive){
-          window.api.setIgnoreMouseEvents(true).catch(()=>{});
-        }
-      }, 180);
-    }
-
-    function enableClickThroughRenderer(){
-      document.body.classList.add('click-through');
-      clickThroughEnabled = true;
-      interactiveActive = false;
-      // set ignore with forward so we still get mousemove events
-      window.api.setIgnoreMouseEvents(true).catch(()=>{});
-      window.addEventListener('mousemove', onGlobalMouseMove, { passive: true });
-    }
-
-    function disableClickThroughRenderer(){
-      document.body.classList.remove('click-through');
-      clickThroughEnabled = false;
-      interactiveActive = false;
-      if (pendingTimeout) { clearTimeout(pendingTimeout); pendingTimeout = null; }
-      window.removeEventListener('mousemove', onGlobalMouseMove);
-      // ensure window receives events
-      window.api.setIgnoreMouseEvents(false).catch(()=>{});
-    }
-
-    function onGlobalMouseMove(e){
-      const x = e.clientX;
-      const y = e.clientY;
-      const over = anyInteractiveContains(x, y);
-      if (over){
-        if (!interactiveActive){
-          interactiveActive = true;
-          // enable pointer events on canvas so PIXI can receive clicks when needed
-          try{ app.renderer.view.style.pointerEvents = 'auto'; }catch(e){}
-          // disable ignore so clicks are delivered to the page
-          window.api.setIgnoreMouseEvents(false).catch(()=>{});
-        }
-      } else {
-        if (interactiveActive){
+      function onGlobalMouseMove(e){
+        hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);
+        hoverModel = isPointerOnModel(e.clientX, e.clientY);
+        const overInteractive = hoverQuickController || hoverModel || dragging || interactionLocked;
+        if (overInteractive){
+          if (!interactiveActive){
+            interactiveActive = true;
+            setIgnore(false);
+          }
+        } else if (interactiveActive) {
           interactiveActive = false;
-          // disable pointer events on canvas so clicks pass through
-          try{ app.renderer.view.style.pointerEvents = 'none'; }catch(e){}
-          // schedule re-enable of ignore so we don't toggle on tiny movements
           scheduleEnableIgnore();
         }
+        refreshQuickControllerVisibility();
       }
+
+      return {
+        enable(){
+          clickThroughEnabled = true;
+          document.body.classList.add('click-through');
+          setIgnore(true);
+          window.addEventListener('mousemove', onGlobalMouseMove, { passive: true });
+        },
+        disable(){
+          clickThroughEnabled = false;
+          interactiveActive = false;
+          if (pendingTimeout) { clearTimeout(pendingTimeout); pendingTimeout = null; }
+          document.body.classList.remove('click-through');
+          window.removeEventListener('mousemove', onGlobalMouseMove);
+          setIgnore(false);
+        },
+        setInteractiveLock(locked){
+          if (!clickThroughEnabled) return;
+          if (locked){
+            interactiveActive = true;
+            setIgnore(false);
+          } else {
+            scheduleEnableIgnore();
+          }
+        },
+        forceInteractive(){
+          if (!clickThroughEnabled) return;
+          interactiveActive = true;
+          setIgnore(false);
+        }
+      };
     }
+
+    clickThroughController = createClickThroughController();
 
     function setClickThroughOnRenderer(val){
-      if (val) enableClickThroughRenderer();
-      else disableClickThroughRenderer();
+      if (val) clickThroughController.enable();
+      else clickThroughController.disable();
     }
 
-    clickThrough.addEventListener('change', (e)=>{
+    if (clickThrough) clickThrough.addEventListener('change', (e)=>{
       const val = !!e.target.checked;
       setClickThroughOnRenderer(val);
     });
 
-    // ensure initial state
-    if (clickThrough.checked) setClickThroughOnRenderer(true);
+    if (clickThrough && clickThrough.checked) setClickThroughOnRenderer(true);
     else setClickThroughOnRenderer(false);
   } else {
-    // hide control if API not present
-    clickThrough.parentElement.style.display = 'inline-block';
+    console.warn('未找到鼠标穿透 IPC API');
   }
 
   // --- model scale slider handling ---
   if (modelScaleSlider){
     modelScaleSlider.addEventListener('input', (e)=>{
-      scaleFactor = parseFloat(e.target.value) || 1.0;
-      if (modelScaleValue) modelScaleValue.textContent = scaleFactor.toFixed(2) + 'x';
-      applyModelScale();
-      try{ saveModelState(); }catch(e){}
+      setScaleFactor(parseFloat(e.target.value) || 1.0);
     });
     // initialize display
     if (modelScaleValue) modelScaleValue.textContent = scaleFactor.toFixed(2) + 'x';
@@ -1421,12 +1584,12 @@
     rafId = requestAnimationFrame(tick);
   }
 
-  playAudioBtn.addEventListener('click', ()=>{
+  if (playAudioBtn) playAudioBtn.addEventListener('click', ()=>{
     const f = audioFile.files && audioFile.files[0];
     if (!f){ alert('请选择音频文件'); return }
     startMouthSyncFromFile(f);
   });
-  stopAudioBtn.addEventListener('click', ()=>{ stopAudio(); });
+  if (stopAudioBtn) stopAudioBtn.addEventListener('click', ()=>{ stopAudio(); });
   // TTS button
   if (ttsBtn){
     ttsBtn.addEventListener('click', ()=>{
@@ -1439,4 +1602,28 @@
   window.addEventListener('beforeunload', ()=>{
     try{ saveModelState(); }catch(e){}
   });
+
+  if (quickToggleAsrBtn) quickToggleAsrBtn.addEventListener('click', ()=>{
+    if (asrRunning) stopRecording();
+    else startRecording();
+  });
+  if (quickStopMediaBtn) quickStopMediaBtn.addEventListener('click', ()=>{
+    stopAudio();
+    stopBackgroundAudio();
+  });
+  if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ playRandomMotion(); });
+  if (quickScaleUpBtn) quickScaleUpBtn.addEventListener('click', ()=>{ nudgeScale(0.05); });
+  if (quickScaleDownBtn) quickScaleDownBtn.addEventListener('click', ()=>{ nudgeScale(-0.05); });
+  if (quickController){
+    quickController.addEventListener('mouseenter', ()=>{
+      hoverQuickController = true;
+      refreshQuickControllerVisibility();
+      if (clickThroughController) clickThroughController.forceInteractive();
+    });
+    quickController.addEventListener('mouseleave', ()=>{
+      hoverQuickController = false;
+      refreshQuickControllerVisibility();
+    });
+  }
+  updateQuickAsrButton();
 })();

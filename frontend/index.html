@@ -8,65 +8,58 @@
 </head>
 <body>
   <div id="app">
-    
-    
-    <div id="controls">
-      <div id="overlay">将 Live2D 模型放入 <code>2D/</code> 目录，并将 <code>model3.json</code> 路径写入下方输入框后点击加载。</div>
-      <h2>Faust Live2D 控制面板</h2>
-      <hr>
-      <h3>使用Ctrl-Shift-H来切换这个窗口的可见性</h3>
-      <hr>
-      <h4>Live2D 模型管理</h4>
-      <input id="modelPath" placeholder="2D/your_model.model3.json" style="width:320px" />
-      <button id="loadBtn">加载模型</button>
-      <button id="resetBtn">重置位置</button>
-      <label style="margin-left:8px"><input type="checkbox" id="clickThrough" value="true"/> 鼠标穿透（点击穿透）</label>
-      <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-        <label for="modelScaleSlider">模型大小</label>
-        <input type="range" id="modelScaleSlider" min="0.1" max="2.0" step="0.05" value="0.3" />
-        <span id="modelScaleValue">1.00x</span>
-      </div>
-      <hr>
-      <h4>音频播放</h4>
-      <div style="margin-top:8px">
-        <input type="file" id="audioFile" accept="audio/*" />
-        <button id="playAudio">播放并同步嘴部</button>
-        <button id="stopAudio">停止</button>
-      <hr>
-      <h4>麦克风语音识别 (ASR)</h4>
-      <div>
-        <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-          <button id="startAsrBtn">开始语音助手</button>
-          <button id="stopAsrBtn" disabled>停止语音助手</button>
-            <span id="asrStatus" style="margin-left:8px;font-weight:600;color:#333">未启动</span>
-            <span id="chatStatus" style="margin-left:8px;font-weight:600;color:#333">聊天未连接</span>
-        </div>
-        <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
-          <progress id="vadProb" value="0" max="1" style="width:160px; height:8px; display:inline-block"></progress>
-          <span id="vadProbLabel" style="min-width:40px; text-align:left; font-size:12px; color:#333">0%</span>
-        </div>
-        <hr>
-        <h4>文字转语音合成 (TTS)</h4>
-        <div style="margin-top:8px">
-          <textarea id="ttsText" placeholder="输入要合成的文本" style="width:320px; height:80px; display:block"></textarea>
-          <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
-            <select id="ttsLang">
-              <option value="zh">中文</option>
-              <option value="en">英文</option>
-            </select>
-            <button id="ttsBtn">合成并播放 (TTS)</button>
-            <span id="ttsStatus" style="margin-left:8px;font-weight:600;color:#333">未合成</span>
-          </div>
-        </div>
-      </div>
+    <div id="overlay">正在初始化 Live2D…</div>
+    <input id="modelPath" type="hidden" value="2D/hiyori_pro_zh/hiyori_pro_t11.model3.json" />
+    <input id="clickThrough" type="checkbox" hidden checked />
+    <input id="modelScaleSlider" type="range" min="0.1" max="2.0" step="0.05" value="0.3" hidden />
+    <span id="modelScaleValue" hidden>0.30x</span>
+    <input id="audioFile" type="file" accept="audio/*" hidden />
+    <textarea id="ttsText" hidden></textarea>
+    <select id="ttsLang" hidden>
+      <option value="zh" selected>中文</option>
+      <option value="en">英文</option>
+    </select>
+    <button id="loadBtn" hidden>加载模型</button>
+    <button id="resetBtn" hidden>重置位置</button>
+    <button id="playAudio" hidden>播放</button>
+    <button id="stopAudio" hidden>停止</button>
+    <button id="ttsBtn" hidden>TTS</button>
+    <button id="startAsrBtn" hidden>启动ASR</button>
+    <button id="stopAsrBtn" hidden disabled>停止ASR</button>
+    <div id="statusDock" aria-hidden="true">
+      <span id="asrStatus">未启动</span>
+      <span id="chatStatus">聊天未连接</span>
+      <span id="ttsStatus">未合成</span>
+      <progress id="vadProb" value="0" max="1"></progress>
+      <span id="vadProbLabel">0%</span>
     </div>
-    <!-- ASR 文字显示在模型头顶 -->
-  
-  <div id="asrText"></div>
-  <div id="textChatBar" style="position:absolute; left:50%; bottom:28px; transform:translateX(-50%); z-index:1800; display:flex; align-items:center; gap:8px; background:rgba(20,24,30,0.72); border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:10px 12px; backdrop-filter:blur(8px); box-shadow:0 8px 24px rgba(0,0,0,0.28); min-width:360px; max-width:min(72vw, 780px);">
-    <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" style="flex:1; min-width:220px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:10px; padding:10px 12px; outline:none;" />
-    <button id="textChatSendBtn" style="background:#5865f2; color:#fff; border:none; border-radius:10px; padding:10px 16px; cursor:pointer; font-weight:600;">发送</button>
-    <span id="textChatStatus" style="font-size:12px; color:rgba(255,255,255,0.8); white-space:nowrap;">文字待命</span>
+    <div id="asrText"></div>
+    <div id="modelQuickController" aria-label="模型快捷控制器">
+      <button id="quickToggleAsr" type="button" title="启动/停止语音识别">
+        <span class="qc-icon" aria-hidden="true">🎤</span>
+        <span class="qc-label">ASR</span>
+      </button>
+      <button id="quickStopMedia" type="button" title="停止当前语音或音乐">
+        <span class="qc-icon" aria-hidden="true">⏹</span>
+        <span class="qc-label">停播</span>
+      </button>
+      <button id="quickRandomMotion" type="button" title="随机播放动作">
+        <span class="qc-icon" aria-hidden="true">✨</span>
+        <span class="qc-label">动作</span>
+      </button>
+      <button id="quickScaleUp" type="button" title="放大模型">
+        <span class="qc-icon" aria-hidden="true">＋</span>
+        <span class="qc-label">放大</span>
+      </button>
+      <button id="quickScaleDown" type="button" title="缩小模型">
+        <span class="qc-icon" aria-hidden="true">－</span>
+        <span class="qc-label">缩小</span>
+      </button>
+    </div>
+  <div id="textChatBar">
+    <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" />
+    <button id="textChatSendBtn">发送</button>
+    <span id="textChatStatus">文字待命</span>
   </div>
 </div>
 

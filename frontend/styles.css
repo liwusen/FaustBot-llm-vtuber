@@ -19,18 +19,8 @@ html,body{
   padding:8px 10px;
   border-radius:6px;
   z-index:1000;
+  pointer-events:none;
 }
-#controls{
-  position:absolute;
-  left:12px;
-  bottom:12px;
-  z-index:1000;
-  background: rgba(255,255,255,0.9);
-  padding:8px;
-  border-radius:6px;
-}
-#controls input{ padding:6px; font-size:14px }
-#controls button{ margin-left:6px; padding:6px 8px }
 
 canvas{ display:block; }
 
@@ -45,19 +35,177 @@ body.click-through, body.click-through #app, body.click-through canvas {
 }
 
 /* keep these interactive even in click-through mode */
-body.click-through #controls,
-body.click-through #overlay {
+body.click-through #modelQuickController,
+body.click-through #textChatBar {
   pointer-events: auto;
 }
 
-/* allow hiding controls via a body class; toggled by hotkey */
-body.controls-hidden #controls {
-  display: none !important;
+#statusDock {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 1650;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(17, 20, 27, 0.55);
+  color: rgba(255,255,255,0.78);
+  font-size: 12px;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 
-/* small styling for model scale control */
-#modelScaleSlider { vertical-align: middle; width: 160px }
-#modelScaleValue { font-weight: 600; }
+#statusDock progress {
+  width: 84px;
+  height: 7px;
+}
+
+#modelQuickController {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  z-index: 1900;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 10px;
+  min-width: 94px;
+  opacity: 0;
+  transform: translateY(-50%) translateX(-10px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(27, 31, 41, 0.92), rgba(14, 17, 24, 0.88));
+  border: 1px solid rgba(255,255,255,0.16);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+
+#modelQuickController.visible {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+#modelQuickController button {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0 12px;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+  transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+#modelQuickController .qc-icon {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+#modelQuickController .qc-label {
+  flex: 1;
+  text-align: left;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#modelQuickController button:hover {
+  background: linear-gradient(180deg, rgba(126, 139, 255, 0.92), rgba(88, 101, 242, 0.9));
+  border-color: rgba(166, 175, 255, 0.6);
+  box-shadow: 0 10px 18px rgba(58, 72, 190, 0.32);
+  transform: translateY(-2px) scale(1.02);
+}
+
+#modelQuickController button.active {
+  background: linear-gradient(180deg, rgba(58, 205, 114, 0.95), rgba(24, 161, 86, 0.92));
+  border-color: rgba(110, 240, 164, 0.45);
+  box-shadow: 0 10px 18px rgba(17, 122, 67, 0.34);
+}
+
+#modelQuickController button.active .qc-icon {
+  background: rgba(255,255,255,0.2);
+}
+
+#textChatBar {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  z-index: 1800;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 320px;
+  max-width: min(54vw, 620px);
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(24, 29, 37, 0.88), rgba(15, 18, 24, 0.8));
+  border: 1px solid rgba(255,255,255,0.13);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(14px);
+  transform: translate(-50%, -50%);
+}
+
+#textChatInput {
+  flex: 1;
+  min-width: 180px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff;
+  border-radius: 12px;
+  padding: 11px 14px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+#textChatInput:focus {
+  border-color: rgba(120, 144, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.18);
+  background: rgba(255,255,255,0.12);
+}
+
+#textChatSendBtn {
+  background: linear-gradient(180deg, #7484ff, #5865f2);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 700;
+  box-shadow: 0 10px 18px rgba(63, 78, 212, 0.28);
+  transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+#textChatSendBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 24px rgba(63, 78, 212, 0.36);
+  filter: brightness(1.04);
+}
+
+#textChatStatus {
+  font-size: 12px;
+  color: rgba(255,255,255,0.78);
+  white-space: nowrap;
+}
 
 /* ASR result bubble above model */
 #asrText{
