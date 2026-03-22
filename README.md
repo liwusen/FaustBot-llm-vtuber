@@ -1,10 +1,8 @@
-# Faust
-
-## 浮士德
+# FaustBot-llm-vtuber
 
 ---
 
-### 一个Vtuber/桌宠
+### 一个AI驱动的 Vtuber/桌宠
 
 模仿Neuro Sama
 
@@ -22,11 +20,11 @@
 
 - [x] 音乐播放（唱歌）
 
-- [x] 模型记忆系统
+- [x] 模型记忆系统(基于RAG系统)
 
 - [x] Agent单独的Workspace
 
-- [x] 灵动交互系统(前端HTML小窗口交互)
+- [x] (独创)灵动交互系统 (前端HTML小窗口交互)
 
 - [x] 编辑文件，文件读写等基本工具
 
@@ -35,6 +33,8 @@
 - [x] 在线搜索
 
 - [x] AI 玩 Minecraft (基于Mineflyer构建，无缝体验)
+
+- [x] 高速响应 平均时间<1s
 
 - [ ] 操作网页 (Agent Browser)
 
@@ -48,15 +48,15 @@
 
 ### 功能计划(长期)
 
-| 大饼          | 解释               | 预计时间 |
-| ----------- | ---------------- | ---- |
-| Minecraft   | 使用Mineflyer从底层重写 | 完成   |
-| 原创Live 2d形象 | 无                | 待定   |
-| TTS 歌曲转换    |                  |      |
-| 游览器 操作      |                  |      |
-| OCR/VLLM支持  |                  |      |
-| 前端优化        |                  |      |
-| 灵动交互        | 允许AI编写HTML实现交互   | 已经完成 |
+| 大饼          | 解释                 | 预计时间 |
+| ----------- | ------------------ | ---- |
+| Minecraft   | 使用Mineflyer，从底层完成  | 完成   |
+| 原创Live 2d形象 |                    | 待定   |
+| TTS 歌曲转换    |                    |      |
+| 游览器 操作      | Agent Browser 能力接入 |      |
+| OCR/VLLM支持  |                    |      |
+| 前端优化        |                    | 完成   |
+| 灵动交互        | 允许AI编写HTML实现交互     | 完成   |
 
 ---
 
@@ -72,10 +72,9 @@
 
 ~~Backend的一部分代码来源于 [morettt/my-neuro](https://github.com/morettt/my-neuro)~~
 
-
 现在已经不再有来源于[morettt/my-neuro](https://github.com/morettt/my-neuro)的内容了
 
-| 部分       |             |
-| -------- | ----------- |
-| Backend  | 基于langchain |
-| Frontend | Electron    |
+| 部分       | 实现                    |
+| -------- | --------------------- |
+| Backend  | Python为主体,基于langchain |
+| Frontend | Electron+Qt           |
