@@ -11,6 +11,36 @@ class PluginContext:
     plugin_dir: Path
     config: dict[str, Any] = field(default_factory=dict)
 
+    def trigger_create(self, payload: dict | str) -> Any:
+        fn = self.config.get("trigger_create")
+        if not callable(fn):
+            raise RuntimeError("trigger_create is not available")
+        return fn(payload)
+
+    def trigger_list(self) -> list[dict]:
+        fn = self.config.get("trigger_list")
+        if not callable(fn):
+            raise RuntimeError("trigger_list is not available")
+        return fn()
+
+    def trigger_get(self, trigger_id: str) -> dict | None:
+        fn = self.config.get("trigger_get")
+        if not callable(fn):
+            raise RuntimeError("trigger_get is not available")
+        return fn(trigger_id)
+
+    def trigger_update(self, trigger_id: str, payload: dict | str) -> Any:
+        fn = self.config.get("trigger_update")
+        if not callable(fn):
+            raise RuntimeError("trigger_update is not available")
+        return fn(trigger_id, payload)
+
+    def trigger_delete(self, trigger_id: str) -> Any:
+        fn = self.config.get("trigger_delete")
+        if not callable(fn):
+            raise RuntimeError("trigger_delete is not available")
+        return fn(trigger_id)
+
 
 @dataclass
 class ToolSpec:

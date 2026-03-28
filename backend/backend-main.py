@@ -52,6 +52,7 @@ agent_lock = asyncio.Lock()
 plugin_manager = PluginManager()
 plugin_hot_reload_task = None
 plugin_hot_reload_busy = False
+plugin_heartbeat_task = None
 AGENT_NAME=conf.AGENT_NAME
 PROMPT = ""
 if not os.path.exists(os.path.join("agents",f"{AGENT_NAME}")):
@@ -161,6 +162,20 @@ async def _plugin_hot_reload_loop():
             await asyncio.sleep(1.0)
 
 
+async def _plugin_heartbeat_loop():
+    while True:
+        try:
+            await asyncio.sleep(10.0)
+            summary = plugin_manager.heartbeat_tick()
+            if summary.get("errors"):
+                print(f"[plugin.heartbeat] errors: {summary.get('errors')}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[plugin.heartbeat] loop error: {e}")
+            await asyncio.sleep(1.0)
+
+
 def _create_agent_with_extensions(*, model: str, checkpointer, store):
     tools, middlewares = _compose_runtime_extensions()
     kwargs = {
@@ -240,7 +255,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False):
 
 @app.on_event("startup")
 async def startup_event():
-    global agent,checkpointer,conn,storer,conn_for_store,plugin_hot_reload_task
+    global agent,checkpointer,conn,storer,conn_for_store,plugin_hot_reload_task,plugin_heartbeat_task
     #--- Initialize the agent and its tools&middleware, including setting up the checkpoint saver and store.
     if not os.path.exists(pjoin(AGENT_ROOT,'faust_checkpoint.db')):
         print(f"[main] Checkpoint database not found at {pjoin(AGENT_ROOT,'faust_checkpoint.db')}. Starting with a fresh checkpoint.")
@@ -284,6 +299,8 @@ async def startup_event():
     llm_tools.STARTED=True# 声明启动完成
     if plugin_hot_reload_task is None:
         plugin_hot_reload_task = asyncio.create_task(_plugin_hot_reload_loop())
+    if plugin_heartbeat_task is None:
+        plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
     print("[main]FAUST Backend Main Service started.")
 
 
@@ -444,9 +461,10 @@ async def admin_reload_plugins(payload: dict | None = None):
     summary = plugin_manager.reload()
     _sync_plugin_trigger_filters()
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {
         "status": "ok",
         "reload": summary,
@@ -459,6 +477,11 @@ async def admin_reload_plugins(payload: dict | None = None):
 @app.get("/faust/admin/plugins/hot-reload")
 async def admin_plugins_hot_reload_status():
     return {"status": "ok", "hot_reload": plugin_manager.hot_reload_status()}
+
+
+@app.post("/faust/admin/plugins/heartbeat")
+async def admin_plugins_heartbeat_once():
+    return {"status": "ok", "result": plugin_manager.heartbeat_tick()}
 
 
 @app.post("/faust/admin/plugins/hot-reload/start")
@@ -478,9 +501,10 @@ async def admin_plugins_hot_reload_stop():
 async def admin_enable_plugin(plugin_id: str, payload: dict | None = None):
     plugin_manager.set_plugin_enabled(plugin_id, True)
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {"status": "ok", "plugin_id": plugin_id, "enabled": True, "runtime": runtime_info}
 
 
@@ -488,9 +512,10 @@ async def admin_enable_plugin(plugin_id: str, payload: dict | None = None):
 async def admin_disable_plugin(plugin_id: str, payload: dict | None = None):
     plugin_manager.set_plugin_enabled(plugin_id, False)
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {"status": "ok", "plugin_id": plugin_id, "enabled": False, "runtime": runtime_info}
 
 
@@ -499,9 +524,10 @@ async def admin_enable_plugin_trigger_control(plugin_id: str, payload: dict | No
     plugin_manager.set_trigger_control_enabled(plugin_id, True)
     _sync_plugin_trigger_filters()
     apply_runtime = bool((payload or {}).get("apply_runtime", False))
+    reset_dialog = bool((payload or {}).get("reset_dialog", False))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {"status": "ok", "plugin_id": plugin_id, "trigger_control": True, "runtime": runtime_info}
 
 
@@ -510,9 +536,10 @@ async def admin_disable_plugin_trigger_control(plugin_id: str, payload: dict | N
     plugin_manager.set_trigger_control_enabled(plugin_id, False)
     _sync_plugin_trigger_filters()
     apply_runtime = bool((payload or {}).get("apply_runtime", False))
+    reset_dialog = bool((payload or {}).get("reset_dialog", False))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {"status": "ok", "plugin_id": plugin_id, "trigger_control": False, "runtime": runtime_info}
 
 
@@ -520,9 +547,10 @@ async def admin_disable_plugin_trigger_control(plugin_id: str, payload: dict | N
 async def admin_enable_plugin_tool(plugin_id: str, tool_name: str, payload: dict | None = None):
     plugin_manager.set_tool_enabled(plugin_id, tool_name, True)
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {
         "status": "ok",
         "plugin_id": plugin_id,
@@ -536,9 +564,10 @@ async def admin_enable_plugin_tool(plugin_id: str, tool_name: str, payload: dict
 async def admin_disable_plugin_tool(plugin_id: str, tool_name: str, payload: dict | None = None):
     plugin_manager.set_tool_enabled(plugin_id, tool_name, False)
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {
         "status": "ok",
         "plugin_id": plugin_id,
@@ -552,9 +581,10 @@ async def admin_disable_plugin_tool(plugin_id: str, tool_name: str, payload: dic
 async def admin_enable_plugin_middleware(plugin_id: str, middleware_name: str, payload: dict | None = None):
     plugin_manager.set_middleware_enabled(plugin_id, middleware_name, True)
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {
         "status": "ok",
         "plugin_id": plugin_id,
@@ -568,9 +598,10 @@ async def admin_enable_plugin_middleware(plugin_id: str, middleware_name: str, p
 async def admin_disable_plugin_middleware(plugin_id: str, middleware_name: str, payload: dict | None = None):
     plugin_manager.set_middleware_enabled(plugin_id, middleware_name, False)
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    reset_dialog = bool((payload or {}).get("reset_dialog", True))
     runtime_info = None
     if apply_runtime:
-        runtime_info = await rebuild_runtime(reset_dialog=False)
+        runtime_info = await rebuild_runtime(reset_dialog=reset_dialog)
     return {
         "status": "ok",
         "plugin_id": plugin_id,
@@ -912,7 +943,7 @@ async def shutdown_post():
     return {"status": "shutting_down"}
 @app.on_event("shutdown")
 async def shutdown_event():
-    global plugin_hot_reload_task
+    global plugin_hot_reload_task, plugin_heartbeat_task
     print("")
     #only add to checkpoint
     with open("faust_main.log","a",encoding="utf-8") as f:
@@ -930,6 +961,13 @@ async def shutdown_event():
         except Exception:
             pass
         plugin_hot_reload_task = None
+    if plugin_heartbeat_task is not None:
+        plugin_heartbeat_task.cancel()
+        try:
+            await plugin_heartbeat_task
+        except Exception:
+            pass
+        plugin_heartbeat_task = None
     print("Shutting down FAUST Backend Main Service...")
 
 if __name__ == "__main__":

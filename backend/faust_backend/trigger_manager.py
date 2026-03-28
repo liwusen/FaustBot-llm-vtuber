@@ -360,6 +360,38 @@ def delete_trigger(trigger_id: str):
             print(f"[trigger_manager] Failed to save after delete: {e}")
 
 
+def list_triggers() -> list[dict]:
+    """Return all persisted triggers as plain dicts."""
+    try:
+        return [t.model_dump() for t in _store.watchdog]
+    except Exception as e:
+        print(f"[trigger_manager] Failed to list triggers: {e}")
+        return []
+
+
+def get_trigger(trigger_id: str) -> dict | None:
+    """Get one trigger by id."""
+    try:
+        for t in _store.watchdog:
+            if t.id == trigger_id:
+                return t.model_dump()
+    except Exception as e:
+        print(f"[trigger_manager] Failed to get trigger {trigger_id}: {e}")
+    return None
+
+
+def update_trigger(trigger_id: str, trigger: dict | str) -> None:
+    """Update (upsert) one trigger by id."""
+    if isinstance(trigger, str):
+        trigger = json.loads(trigger)
+    if not isinstance(trigger, dict):
+        raise ValueError("trigger must be dict or JSON string")
+
+    payload = dict(trigger)
+    payload["id"] = trigger_id
+    append_trigger(payload)
+
+
 def get_trigger_information() -> str:
     # return formatted JSON of current store
     try:

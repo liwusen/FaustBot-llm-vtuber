@@ -36,6 +36,9 @@ Python 依赖列表。主要对应后端运行所需的库。
 - `ui.md`：UI 相关说明文档。
 - `code_introduce.md`：当前这份代码结构说明文档。
 
+#### `document/plugin.md`
+插件系统完整编写指南，包含插件目录规范、Tool/Middleware 注册、热重载、Heartbeat、Trigger CRUD 与管理 API。
+
 ---
 
 ## 三、后端目录 `backend/` 说明
@@ -70,8 +73,19 @@ Python 依赖列表。主要对应后端运行所需的库。
   - `POST /faust/admin/runtime/reload-all`
   - `GET/POST/DELETE /faust/admin/agents*`
   - `GET /faust/admin/live2d/models`
+- 提供插件系统管理接口：
+  - `GET /faust/admin/plugins`
+  - `POST /faust/admin/plugins/reload`
+  - `POST /faust/admin/plugins/{plugin_id}/enable|disable`
+  - `POST /faust/admin/plugins/{plugin_id}/tools/{tool_name}/enable|disable`
+  - `POST /faust/admin/plugins/{plugin_id}/middlewares/{middleware_name}/enable|disable`
+  - `POST /faust/admin/plugins/{plugin_id}/trigger-control/enable|disable`
+  - `GET /faust/admin/plugins/hot-reload`
+  - `POST /faust/admin/plugins/hot-reload/start|stop`
+  - `POST /faust/admin/plugins/heartbeat`
 - 支持在**不重启 FastAPI 进程**时重新加载配置并重建 Agent runtime
 - 启动触发器 watchdog 线程
+- 启动插件热重载与插件心跳调度（默认 10 秒调用一次插件心跳）
 
 可以把它理解成：
 
@@ -294,8 +308,45 @@ Faust 对 LightRAG 服务的客户端封装与本地文档追踪器。
 - 支持 watchdog 线程
 - 支持时间触发、提醒触发等
 - 提供触发器状态查询
+- 提供 Trigger CRUD 能力（增删查改）
+- 支持插件挂载 append/fire 两阶段过滤钩子
 
 它是项目定时/召回逻辑的基础设施。
+
+---
+
+#### `faust_backend/plugin_system/`
+插件系统核心目录。
+
+主要职责：
+
+- 发现并加载 `backend/plugins/*` 插件
+- 维护插件状态持久化（`backend/plugins/plugins.state.json`）
+- 组合插件 Tool 与 Middleware 注入 Agent runtime
+- 提供 Trigger 控制钩子（append/fire 过滤）
+- 提供插件热重载检测与自动应用
+- 提供插件 Heartbeat 调度入口
+
+关键文件：
+
+- `faust_backend/plugin_system/interfaces.py`
+  - 定义 `PluginContext`、`PluginManifest`、`ToolSpec`、`MiddlewareSpec`
+  - `PluginContext` 内置 Trigger CRUD 方法
+- `faust_backend/plugin_system/manager.py`
+  - `PluginManager` 实现插件生命周期、状态控制、组合注入
+  - 提供 `hot_reload_tick` 与 `heartbeat_tick`
+
+---
+
+#### `backend/plugins/`
+插件目录，每个插件一个子目录（至少包含 `plugin.json` 与 `main.py`）。
+
+当前示例插件：
+
+- `backend/plugins/example_echo/`
+  - 示例 Tool
+  - 示例 Trigger 过滤钩子
+  - 可作为新插件开发模板
 
 ---
 
@@ -597,11 +648,13 @@ Faust 的角色人格与任务通过 `backend/agents/<agent_name>/` 目录中的
 5. `backend/faust_backend/llm_tools.py`
 6. `backend/faust_backend/backend2front.py`
 7. `backend/faust_backend/trigger_manager.py`
-8. `frontend/electron-main.js`
-9. `frontend/config-window.html` + `config-window.js`
-10. `frontend/app.js`
-11. `frontend/index.html` + `styles.css`
-12. `backend/agents/<agent_name>/` 下的 Prompt 文件
+8. `backend/faust_backend/plugin_system/manager.py`
+9. `document/plugin.md`
+10. `frontend/electron-main.js`
+11. `frontend/configer_pyside6.py`
+12. `frontend/app.js`
+13. `frontend/index.html` + `styles.css`
+14. `backend/agents/<agent_name>/` 下的 Prompt 文件
 
 ---
 
@@ -613,4 +666,5 @@ Faust 的角色人格与任务通过 `backend/agents/<agent_name>/` 目录中的
 - **前端**：一个基于 Electron + Live2D 的桌宠/虚拟形象界面，负责展示、语音、文本交互和动态窗口渲染；同时包含一个独立配置中心窗口。
 - **工具层**：通过 `llm_tools.py` 将本地文件、系统命令、搜索、RAG、GUI 控制等能力暴露给 Agent。
 - **配置控制层**：通过 `admin_runtime.py`、`/faust/admin/*` 接口和独立配置窗口，实现配置编辑、Agent 管理和运行时动态重载。
+- **插件扩展层**：通过 `plugin_system` + `backend/plugins/` 提供 Tool/Middleware 扩展、Trigger 控制、热重载与心跳机制。
 - **Prompt 层**：通过 `agents/<agent_name>/` 中的 Markdown 文件定义 Agent 的人格、记忆和任务。

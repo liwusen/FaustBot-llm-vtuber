@@ -74,6 +74,8 @@ class Plugin:
         payload["plugin_trace"]["example_echo"] = "fired"
         return payload
 
+    def Heartbeat(self, ctx):
+        print("Heartbeat received in example_echo plugin",type(ctx))
 
 def get_plugin() -> Plugin:
     return Plugin()

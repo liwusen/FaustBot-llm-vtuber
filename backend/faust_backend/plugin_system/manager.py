@@ -7,6 +7,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import faust_backend.trigger_manager as trigger_manager
+
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 
 
@@ -75,6 +77,19 @@ class PluginManager:
             entry=str(raw.get("entry") or "main.py"),
             permissions=list(raw.get("permissions") or []),
             priority=int(raw.get("priority") or 100),
+        )
+
+    def _build_plugin_context(self, plugin_id: str, plugin_dir: Path) -> PluginContext:
+        return PluginContext(
+            plugin_id=plugin_id,
+            plugin_dir=plugin_dir,
+            config={
+                "trigger_create": trigger_manager.append_trigger,
+                "trigger_list": trigger_manager.list_triggers,
+                "trigger_get": trigger_manager.get_trigger,
+                "trigger_update": trigger_manager.update_trigger,
+                "trigger_delete": trigger_manager.delete_trigger,
+            },
         )
 
     def _load_module(self, plugin_id: str, entry_file: Path) -> ModuleType:
@@ -180,7 +195,7 @@ class PluginManager:
                 continue
 
             manifest = self._load_manifest(plugin_dir)
-            ctx = PluginContext(plugin_id=manifest.plugin_id, plugin_dir=plugin_dir, config={})
+            ctx = self._build_plugin_context(manifest.plugin_id, plugin_dir)
 
             try:
                 module = self._load_module(manifest.plugin_id, plugin_dir / manifest.entry)
@@ -406,3 +421,38 @@ class PluginManager:
             )
 
         return out
+
+    def heartbeat_tick(self) -> dict[str, Any]:
+        called = 0
+        errors: list[dict[str, str]] = []
+        for plugin_id, record in self._plugins.items():
+            manifest: PluginManifest = record["manifest"]
+            if not self._plugin_enabled(plugin_id, manifest.enabled):
+                continue
+
+            plugin = record.get("plugin")
+            ctx = record.get("ctx")
+            if plugin is None:
+                continue
+
+            hb = None
+            if hasattr(plugin, "Heartbeat"):
+                hb = getattr(plugin, "Heartbeat")
+            elif hasattr(plugin, "heartbeat"):
+                hb = getattr(plugin, "heartbeat")
+            elif hasattr(plugin, "on_heartbeat"):
+                hb = getattr(plugin, "on_heartbeat")
+
+            if not callable(hb):
+                continue
+
+            try:
+                try:
+                    hb(ctx)
+                except TypeError:
+                    hb()
+                called += 1
+            except Exception as e:
+                errors.append({"plugin": plugin_id, "error": str(e)})
+
+        return {"called": called, "errors": errors}
