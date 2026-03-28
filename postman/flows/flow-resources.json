@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "flows": {
+    "4d09f473-d20e-40f5-8ccf-adc34f956094": {
+      "path": "D:/my-neuro/my-neuro-main/faust/postman/flows/New flow.flow",
+      "dependencies": [
+        {
+          "local": {
+            "collectionId": "dc4DAfb35c2E86Bb7e2b81C4",
+            "requestId": "8E39fC0fF1c5746f54CB58FD",
+            "filePath": ""
+          },
+          "cloud": {
+            "collectionId": null,
+            "requestId": null
+          }
+        }
+      ]
+    }
+  }
+}

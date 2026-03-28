@@ -25,6 +25,8 @@ import threading
 import time
 import uuid
 from pathlib import Path
+import faust_backend.utils as utils
+clipboard=utils.CrossPlatformClipboard()
 toollist=[]
 DIARY_DIR=Path("agents") / Path(conf.AGENT_NAME) / "diary" 
 STARTED=False
@@ -996,7 +998,39 @@ def minecraftDisconnectTool(reason: str = "disconnect requested") -> str:
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
-
+@add_to_tool_list
+@tool
+@record_func_name
+def getClipboardContent() -> str:
+    """
+    Description:
+        获取系统剪贴板的文本内容。
+    Args:
+        None
+    Returns:
+        str: 剪贴板文本内容，或者错误信息。
+    """
+    try:
+        return clipboard.paste()
+    except Exception as e:
+        return f"获取剪贴板内容出错: {str(e)}"
+@add_to_tool_list
+@tool
+@record_func_name
+def setClipboardContent(text: str) -> str:
+    """
+    Description:
+        设置系统剪贴板的文本内容。
+    Args:
+        text (str): 要设置到剪贴板的文本内容。
+    Returns:
+        str: 操作结果信息。
+    """
+    try:
+        clipboard.copy(text)
+        return "剪贴板内容已更新。"
+    except Exception as e:
+        return f"设置剪贴板内容出错: {str(e)}"
 if __name__ == "__main__":
     for tool in toollist:
         print(f"Tool name: {tool.name},\nDescription: {tool.description}")

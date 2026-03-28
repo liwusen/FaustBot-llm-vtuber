@@ -1,9 +1,9 @@
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
 let mainWindow = null;
-let configWindow = null;
 let tray = null;
 
 function decodeWsTextMessage(data, isBinary = false) {
@@ -109,31 +109,35 @@ function createWindow(){
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
 }
 
-function createConfigWindow(){
-  if (configWindow && !configWindow.isDestroyed()) {
-    configWindow.show();
-    configWindow.focus();
-    return configWindow;
+function launchPySideConfiger(){
+  const scriptPath = path.join(__dirname, 'configer_pyside6.py');
+  if (!fs.existsSync(scriptPath)) {
+    return { ok: false, error: `Configer 脚本不存在: ${scriptPath}` };
   }
 
-  configWindow = new BrowserWindow({
-    width: 1240,
-    height: 860,
-    minWidth: 980,
-    minHeight: 700,
-    title: 'Faust 配置中心',
-    backgroundColor: '#0b1020',
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    }
-  });
+  const candidates = [
+    process.env.PYTHON ? { cmd: process.env.PYTHON, args: [scriptPath] } : null,
+    { cmd: 'python', args: [scriptPath] },
+    { cmd: 'py', args: ['-3', scriptPath] },
+  ].filter(Boolean);
 
-  configWindow.loadFile(path.join(__dirname, 'config-window.html'));
-  configWindow.on('closed', ()=>{ configWindow = null; });
-  return configWindow;
+  let lastError = null;
+  for (const c of candidates) {
+    try {
+      const child = spawn(c.cmd, c.args, {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+      return { ok: true, launcher: c.cmd };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  return { ok: false, error: String(lastError || '未找到可用 Python 解释器') };
 }
 
 function getTrayIconPath(){
@@ -183,7 +187,7 @@ function createTray(){
   tray.setToolTip('Faust Live2D');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示前端', click: ()=> showMainWindow() },
-    { label: '打开配置中心', click: ()=> createConfigWindow() },
+    { label: '打开配置中心(PySide6)', click: ()=> launchPySideConfiger() },
     { label: '隐藏到托盘', click: ()=> hideMainWindowToTray() },
     { type: 'separator' },
     { label: '退出', click: ()=> app.quit() },
@@ -260,8 +264,11 @@ ipcMain.handle('show-from-tray', () => {
 });
 
 ipcMain.handle('open-config-window', () => {
-  createConfigWindow();
-  return true;
+  const result = launchPySideConfiger();
+  if (!result.ok) {
+    throw new Error(result.error || '打开 PySide6 Configer 失败');
+  }
+  return result;
 });
 
 // allow renderer to send log messages to main process console

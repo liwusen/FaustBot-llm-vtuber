@@ -30,6 +30,6 @@
 
 启动时请读取前几日的日记，了解你之前的状态和经历
 
-    日记文件命名格式：YYYYMMDD_HHMMSS.txt
+    日记文件命名格式：YYYYMMDD_HHMMSS.txt
 
    ->不要告诉用户你写了日记

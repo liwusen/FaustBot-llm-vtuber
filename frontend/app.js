@@ -535,6 +535,13 @@
   let streamTtsPlaybackPromise = null;
   const streamTtsSentenceEndRe = /[。！？!?；;]+$/;
 
+  function normalizeTtsText(text){
+    return String(text ?? '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\\n/g, '\n');
+  }
+
   function decodeWsPayload(data){
     if (typeof data === 'string') return data;
     try{
@@ -590,6 +597,7 @@
         // use existing synthesizeAndPlay TTS function; prefer UI-selected lang
         const lang = (ttsLang && ttsLang.value) ? ttsLang.value : 'zh-CN';
         useVAD=false; // disable VAD during TTS playback
+        showResultBubble('ai', arg);
         await synthesizeAndPlay(arg, lang);
         useVAD=true; // re-enable VAD after TTS playback
       } else if (cmd === 'STOP'){
@@ -680,11 +688,12 @@
   }
 
   function extractCompletedSentences(buffer){
+    buffer = normalizeTtsText(buffer);
     const results = [];
     let start = 0;
     for (let i = 0; i < buffer.length; i++){
       const ch = buffer[i];
-      if ('。！？!?；;'.includes(ch)){
+      if ('。！？!?；;\n'.includes(ch)){
         const sentence = buffer.slice(start, i + 1).trim();
         if (sentence) results.push(sentence);
         start = i + 1;
@@ -764,6 +773,8 @@
   }
 
   async function enqueueStreamTtsSentence(sentence, lang){
+    sentence = normalizeTtsText(sentence).trim();
+    if (!sentence) return;
     const id = streamTtsSentenceId++;
     streamTtsPending.set(id, { status: 'pending', text: sentence, blob: null });
     void flushStreamTtsQueue();
@@ -801,7 +812,7 @@
     }
 
     if (msg.type === 'delta'){
-      const chunk = msg.content || '';
+      const chunk = normalizeTtsText(msg.content || '');
       currentChatRequest.replyText += chunk;
       currentChatRequest.pendingBuffer += chunk;
       showResultBubble('ai', currentChatRequest.replyText);
@@ -1522,7 +1533,7 @@
 
     // helper: split text into chunks trying to respect sentence boundaries
     function splitText(input, maxLen){
-      input = input.trim();
+      input = normalizeTtsText(input).trim();
       const out = [];
       if (input.length <= maxLen) return [input];
       // prefer splitting on Chinese/Japanese/English sentence punctuation or commas/space

@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "name": "New flow",
+  "description": "",
+  "flow": {
+    "description": "",
+    "nodes": {
+      "wYRjySEx": {
+        "type": "ev/endpoint@3",
+        "pos": {
+          "x": 0,
+          "y": 0
+        },
+        "config": {
+          "inputs": [],
+          "data": "",
+          "language": "json",
+          "allowAnyType": false
+        },
+        "ui": {
+          "data": {
+            "triggerType": "ev/endpoint@3"
+          },
+          "namedInputsExpanded": true
+        }
+      },
+      "Y_KftKye": {
+        "type": "task/http-request@1",
+        "pos": {
+          "x": 376,
+          "y": -80
+        },
+        "config": {
+          "element": {
+            "id": "8E39fC0fF1c5746f54CB58FD",
+            "collection": "dc4DAfb35c2E86Bb7e2b81C4",
+            "inExtensibleCollection": true,
+            "name": "RAG health",
+            "method": "GET"
+          },
+          "environment": null,
+          "parseBody": "auto",
+          "requestVariables": [],
+          "scriptsModifyEnvVars": true,
+          "trackGlobalEnvironment": true,
+          "requestVariables__expanded": true
+        },
+        "ui": {
+          "data": {},
+          "namedInputsExpanded": true
+        }
+      }
+    },
+    "connections": {
+      "-VvktzES": {
+        "source": "wYRjySEx",
+        "target": "Y_KftKye",
+        "sourcePort": "data",
+        "targetPort": "AI"
+      }
+    },
+    "annotations": {},
+    "groups": {},
+    "webhook": {
+      "payloadContent": "body-only",
+      "responseType": "default"
+    },
+    "forms": {},
+    "modules": {},
+    "io": {},
+    "ports": {},
+    "meta": {},
+    "scenes": {},
+    "scenarios": {},
+    "config": {
+      "definitions": {},
+      "constants": {}
+    }
+  },
+  "lockbox": {},
+  "info": {
+    "_postman_id": "4d09f473-d20e-40f5-8ccf-adc34f956094"
+  },
+  "_postman_exported_at": "2026-03-28T06:40:36.718Z",
+  "_postman_exported_using": "Postman/Local Mode"
+}

@@ -1,0 +1,18 @@
+{
+  "plugins": {
+    "example_echo": {
+      "enabled": true
+    }
+  },
+  "tools": {
+    "example_echo:plugin_echo_tool": {
+      "enabled": true
+    }
+  },
+  "middlewares": {
+    "example_echo:EchoTraceMiddleware": {}
+  },
+  "trigger_controls": {
+    "example_echo": {}
+  }
+}

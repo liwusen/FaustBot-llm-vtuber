@@ -20,5 +20,6 @@
     "LIVE2D_MODEL_X": "",
     "LIVE2D_MODEL_Y": "",
     "FRONTEND_CLICK_THROUGH": true,
-    "FRONTEND_DEFAULT_TTS_LANG": "zh"
+    "FRONTEND_DEFAULT_TTS_LANG": "zh",
+    "TEMP_DIR": "temp"
 }

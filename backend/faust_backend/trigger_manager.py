@@ -21,6 +21,56 @@ print(f"[trigger_manager] Using triggers file: {TRIGGERS_FILE}")
 print(f"[trigger_manager] Trigger file content: {TRIGGERS_FILE.read_text(encoding='utf-8') if TRIGGERS_FILE.exists() else 'File does not exist'}")
 exitflag=False
 trigger_queue: "queue.Queue[dict]" = queue.Queue()
+_append_filters = []
+_fire_filters = []
+
+
+def set_append_filters(filters):
+    global _append_filters
+    _append_filters = list(filters or [])
+
+
+def set_fire_filters(filters):
+    global _fire_filters
+    _fire_filters = list(filters or [])
+
+
+def _apply_append_filters(trigger_payload: dict):
+    payload = dict(trigger_payload or {})
+    for f in _append_filters:
+        try:
+            payload = f(payload)
+            if payload is None:
+                return None
+            if not isinstance(payload, dict):
+                raise ValueError("append filter must return dict or None")
+        except Exception as e:
+            print(f"[trigger_manager] append filter error: {e}")
+            return None
+    return payload
+
+
+def _apply_fire_filters(trigger_payload: dict):
+    payload = dict(trigger_payload or {})
+    for f in _fire_filters:
+        try:
+            payload = f(payload)
+            if payload is None:
+                return None
+            if not isinstance(payload, dict):
+                raise ValueError("fire filter must return dict or None")
+        except Exception as e:
+            print(f"[trigger_manager] fire filter error: {e}")
+            return None
+    return payload
+
+
+def _emit_trigger(trigger_payload: dict):
+    payload = _apply_fire_filters(trigger_payload)
+    if payload is None:
+        return False
+    trigger_queue.put(payload)
+    return True
 
 class BaseTrigger(BaseModel):
     id: str
@@ -147,7 +197,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                     continue
                 if trig.type == "datetime":
                     if now >= trig.target:
-                        trigger_queue.put(trig.model_dump())
+                        _emit_trigger(trig.model_dump())
                         # remove one-time datetime trigger after firing
                         try:
                             _store.watchdog.remove(trig)
@@ -157,7 +207,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                 elif trig.type == "interval":
                     # trig is IntervalTrigger
                     if time.time() - trig.last_triggered >= trig.interval_seconds:
-                        trigger_queue.put(trig.model_dump())
+                        _emit_trigger(trig.model_dump())
                         # update last_triggered
                         trig.last_triggered = time.time()
                         _store.save()
@@ -165,14 +215,14 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                     try:
                         # evaluate; keep original behavior but catch exceptions
                         if eval(trig.eval_code):
-                            trigger_queue.put(trig.model_dump())
+                            _emit_trigger(trig.model_dump())
                     except Exception as e:
                         print(f"[trigger_manager] Error evaluating trigger {trig.id}: {e}")
                 elif trig.type == "event":
                     if trig.event_name == "nimble_result" and trig.callback_id:
                         session = nimble.get_nimble_session(trig.callback_id)
                         if session and session.get("result") is not None:
-                            trigger_queue.put(trig.model_dump())
+                            _emit_trigger(trig.model_dump())
                             try:
                                 _store.watchdog.remove(trig)
                                 _store.save()
@@ -181,7 +231,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                     else:
                         # for other events, just trigger and let backend-main decide if it matches
                         print("[trigger_manager] Event trigger fired:", trig.event_name, "with payload:", trig.payload)
-                        trigger_queue.put(trig.model_dump())
+                        _emit_trigger(trig.model_dump())
                         _store.watchdog.remove(trig) # remove event trigger after firing once
                         _store.save()
                 elif trig.type == "nimble-reminder":
@@ -193,12 +243,12 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                             pass
                         continue
                     if time.time() - trig.last_triggered >= trig.interval_seconds:
-                        trigger_queue.put(trig.model_dump())
+                        _emit_trigger(trig.model_dump())
                         trig.last_triggered = time.time()
                         _store.save()
                 elif trig.type == "nimble-expire":
                     if now >= trig.target:
-                        trigger_queue.put(trig.model_dump())
+                        _emit_trigger(trig.model_dump())
                         try:
                             _store.watchdog.remove(trig)
                             _store.save()
@@ -265,6 +315,9 @@ def append_trigger(trigger: dict | str):
         except Exception as e:
             print(f"[trigger_manager] Invalid trigger JSON string: {e}")
             raise
+    trigger = _apply_append_filters(trigger)
+    if trigger is None:
+        raise ValueError("Trigger blocked by append filters")
     global _store
     try:
         ttype = trigger.get("type")

@@ -1,0 +1,21 @@
+$kind: http-request
+name: Forward Command
+description: |-
+  ``` json
+  {
+   "command":"<command>"
+  }
+
+   ```
+url: http://localhost:13900/faust/command/forward
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \ \"command\":\"SAY
+    666\\n888888888888888888888888888888888888888888999999999787675676756775675\
+    678\\n\"\r
+
+    }\r\n"
+order: 1774613672435

@@ -1,6 +1,6 @@
 # mc-operator
 
-这是 Faust 的 Minecraft 操作执行器，基于 `mineflayer` 实现。
+这是 FaustBot 的 Minecraft 操作执行器，基于 `mineflayer` 实现。
 
 ## 作用
 
@@ -17,12 +17,12 @@ WebSocket 默认监听：`ws://127.0.0.1:18901`
 
 ```json
 {
-	"type": "command",
-	"request_id": "uuid",
-	"name": "look-at-player",
-	"args": {
-		"player_name": "Steve"
-	}
+    "type": "command",
+    "request_id": "uuid",
+    "name": "look-at-player",
+    "args": {
+        "player_name": "Steve"
+    }
 }
 ```
 
@@ -30,13 +30,13 @@ WebSocket 默认监听：`ws://127.0.0.1:18901`
 
 ```json
 {
-	"type": "command_result",
-	"request_id": "uuid",
-	"ok": true,
-	"name": "look-at-player",
-	"data": {
-		"looked_at": "Steve"
-	}
+    "type": "command_result",
+    "request_id": "uuid",
+    "ok": true,
+    "name": "look-at-player",
+    "data": {
+        "looked_at": "Steve"
+    }
 }
 ```
 
@@ -44,12 +44,12 @@ WebSocket 默认监听：`ws://127.0.0.1:18901`
 
 ```json
 {
-	"type": "event",
-	"event_name": "hurted",
-	"payload": {
-		"health": 16,
-		"position": [1, 64, 2]
-	}
+    "type": "event",
+    "event_name": "hurted",
+    "payload": {
+        "health": 16,
+        "position": [1, 64, 2]
+    }
 }
 ```
 
@@ -77,8 +77,6 @@ WebSocket 默认监听：`ws://127.0.0.1:18901`
 - `dig-block`
 - `place-block`
 - `collect-item-drop`
-
-以下命令已预留，但当前先返回未实现错误：
 
 - `craft-item`
 - `smelt-item`

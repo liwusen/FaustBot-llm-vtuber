@@ -3,6 +3,7 @@ import json
 import hashlib
 from typing import Any, Dict
 from urllib import request
+from urllib.parse import urlencode
 from pathlib import Path
 try:
     import config_loader as conf
@@ -16,6 +17,7 @@ DEFAULT_RAG_BASE_URL = "http://127.0.0.1:18080"
 import fnmatch
 import os
 import datetime
+import httpx
 
 
 def _ensure_text_payload(text: str) -> str:
@@ -214,7 +216,17 @@ class docTracker():
 def create_tracker(agent_root: str | Path | None = None, base_url: str | None = None) -> docTracker:
     return docTracker(agent_root=agent_root, base_url=base_url)
 
-async def _json_request(method: str, url: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+async def _json_request(
+    method: str,
+    url: str,
+    payload: Dict[str, Any] | None = None,
+    params: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    if params:
+        query = urlencode({k: v for k, v in params.items() if v is not None and v != ""})
+        if query:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}{query}"
     if aiohttp is not None:
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, json=payload) as response:
@@ -240,6 +252,8 @@ async def rag_health(base_url: str = DEFAULT_RAG_BASE_URL) -> Dict[str, Any]:
 async def rag_insert(text: str, base_url: str = DEFAULT_RAG_BASE_URL) -> Dict[str, Any]:
     return await _json_request("POST", f"{base_url}/insert", {"text": _ensure_text_payload(text)})
 
+async def rag_get_document_content(doc_id: str, base_url: str = DEFAULT_RAG_BASE_URL) -> Dict[str, Any]:
+    return await _json_request("GET", f"{base_url}/documents/{doc_id}/content")
 
 async def rag_insert_document(
     text: str,
@@ -258,6 +272,46 @@ async def rag_insert_document(
 
 async def rag_list_documents(base_url: str = DEFAULT_RAG_BASE_URL) -> Dict[str, Any]:
     return await _json_request("GET", f"{base_url}/documents")
+
+
+async def rag_list_documents_paginated(
+    base_url: str,
+    page: int = 1,
+    page_size: int = 10,
+    search: str | None = None,
+    time_from: str | None = None,
+    time_to: str | None = None,
+) -> dict:
+    """从 RAG 服务分页列出文档"""
+    async with httpx.AsyncClient(timeout=20) as client:
+        params = {"page": page, "page_size": page_size}
+        if search:
+            params["search"] = search
+        if time_from:
+            params["time_from"] = time_from
+        if time_to:
+            params["time_to"] = time_to
+
+        resp = await client.get(f"{base_url}/documents", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def rag_get_document_detail(doc_id: str, base_url: str) -> dict:
+    return await _json_request("GET", f"{base_url}/documents/{doc_id}")
+
+
+async def rag_update_document(
+    doc_id: str,
+    *,
+    text: str,
+    file_path: str | None = None,
+    base_url: str = DEFAULT_RAG_BASE_URL,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"text": _ensure_text_payload(text)}
+    if file_path is not None:
+        payload["file_path"] = file_path
+    return await _json_request("PUT", f"{base_url}/documents/{doc_id}", payload)
 
 
 async def rag_get_documents_by_track_id(track_id: str, base_url: str = DEFAULT_RAG_BASE_URL) -> Dict[str, Any]:

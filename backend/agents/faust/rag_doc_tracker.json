@@ -1,9 +1,30 @@
 {
     "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\AGENT.md": {
-        "doc_id": "AGENT.md_1774611652",
+        "doc_id": "AGENT.md_1774682490",
         "file_path": "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\AGENT.md",
-        "md5": "70bf6914ef5413e9cea05bcea680eab7",
+        "md5": "a6ce401ab1b55860b2157874d5f753e4",
         "create_time": 1774611652.8527226,
-        "update_time": 1774611652.8527226
+        "update_time": 1774682490.354356
+    },
+    "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\ROLE.md": {
+        "doc_id": "ROLE.md_1774682493",
+        "file_path": "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\ROLE.md",
+        "md5": "e0f4fae8dfc6be4be6754978eb77cf63",
+        "create_time": 1774682493.6830215,
+        "update_time": 1774682493.6830215
+    },
+    "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\COREMEMORY.md": {
+        "doc_id": "COREMEMORY.md_1774682496",
+        "file_path": "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\COREMEMORY.md",
+        "md5": "8818f10338cea30b5bf3bfda48f21637",
+        "create_time": 1774682496.883373,
+        "update_time": 1774682496.883373
+    },
+    "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\TASK.md": {
+        "doc_id": "TASK.md_1774682499",
+        "file_path": "D:\\my-neuro\\my-neuro-main\\faust\\backend\\agents\\faust\\TASK.md",
+        "md5": "995211142da5a1d43ea2396cb1770587",
+        "create_time": 1774682499.4836397,
+        "update_time": 1774682499.4836397
     }
 }

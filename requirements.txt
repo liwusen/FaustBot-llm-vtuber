@@ -24,6 +24,7 @@ watchdog
 
 #打包exe
 PyQt5
+PySide6
 requests
 pyinstaller
 

@@ -3,11 +3,12 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from hashlib import md5
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 import uvicorn
@@ -131,6 +132,17 @@ class DocumentsResponse(BaseModel):
     documents: list[DocumentRecord]
 
 
+class DocumentDetailResponse(BaseModel):
+    status: str = "ok"
+    document: DocumentRecord
+    content: str = ""
+
+
+class UpdateRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="更新后的文档正文")
+    file_path: Optional[str] = Field(default=None, description="可选，文档来源路径")
+
+
 class StatusResponse(BaseModel):
     status: str
     working_dir: str
@@ -196,6 +208,98 @@ def make_doc_id(text: str, doc_id: str | None = None) -> str:
     if doc_id:
         return doc_id
     return f"doc-{md5(text.encode('utf-8')).hexdigest()}"
+
+
+def get_doc_content_store_path() -> Path:
+    return get_working_dir() / "_doc_content_store.json"
+
+
+def load_doc_content_store() -> dict[str, dict[str, Any]]:
+    store_path = get_doc_content_store_path()
+    if not store_path.exists():
+        return {}
+    try:
+        data = json.loads(store_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_doc_content_store(store: dict[str, dict[str, Any]]) -> None:
+    store_path = get_doc_content_store_path()
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def upsert_doc_content(doc_id: str, content: str, file_path: str | None = None) -> None:
+    store = load_doc_content_store()
+    now = datetime.now().isoformat()
+    prev = store.get(doc_id, {}) if isinstance(store.get(doc_id), dict) else {}
+    store[doc_id] = {
+        "content": content,
+        "file_path": file_path,
+        "created_at": prev.get("created_at") or now,
+        "updated_at": now,
+    }
+    save_doc_content_store(store)
+
+
+def delete_doc_content(doc_id: str) -> None:
+    store = load_doc_content_store()
+    if doc_id in store:
+        del store[doc_id]
+        save_doc_content_store(store)
+
+
+def get_doc_content(doc_id: str) -> str:
+    store = load_doc_content_store()
+    payload = store.get(doc_id)
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("content") or "")
+
+
+def parse_datetime_like(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value))
+        except Exception:
+            return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    candidates = [raw, raw.replace("Z", "+00:00")]
+    for item in candidates:
+        try:
+            return datetime.fromisoformat(item)
+        except Exception:
+            continue
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def get_doc_status_map(rag: LightRAG) -> dict[str, Any]:
+    storage = getattr(rag.doc_status, "_data", None)
+    return storage if isinstance(storage, dict) else {}
+
+
+def document_matches_search(record: DocumentRecord, keyword: str, content: str = "") -> bool:
+    if not keyword:
+        return True
+    needle = keyword.lower()
+    haystack = "\n".join([
+        record.doc_id,
+        record.file_path or "",
+        record.content_summary or "",
+        content,
+    ]).lower()
+    return needle in haystack
 
 
 def _doc_record_from_status(doc_id: str, doc_status: object) -> DocumentRecord:
@@ -453,6 +557,7 @@ async def insert_text(payload: InsertRequest):
         ids=doc_id,
         file_paths=payload.file_path,
     )
+    upsert_doc_content(doc_id, payload.text, payload.file_path)
     return InsertResponse(
         doc_id=doc_id,
         track_id=track_id,
@@ -460,11 +565,68 @@ async def insert_text(payload: InsertRequest):
     )
 
 
-@app.get("/documents", response_model=DocumentsResponse)
-async def list_documents():
+@app.get("/documents")
+async def list_documents(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: Optional[str] = Query(default=None),
+    time_from: Optional[str] = Query(default=None),
+    time_to: Optional[str] = Query(default=None),
+):
     rag = await get_rag()
-    documents = await list_documents_from_rag(rag)
-    return DocumentsResponse(documents=documents)
+    all_documents = await list_documents_from_rag(rag)
+    from_dt = parse_datetime_like(time_from)
+    to_dt = parse_datetime_like(time_to)
+    search_text = (search or "").strip()
+
+    filtered: list[tuple[DocumentRecord, Optional[datetime]]] = []
+    for item in all_documents:
+        created_dt = parse_datetime_like(item.created_at) or parse_datetime_like(item.updated_at)
+        if from_dt and (not created_dt or created_dt < from_dt):
+            continue
+        if to_dt and (not created_dt or created_dt > to_dt):
+            continue
+        if search_text:
+            content = get_doc_content(item.doc_id)
+            if not document_matches_search(item, search_text, content=content):
+                continue
+        filtered.append((item, created_dt))
+
+    filtered.sort(key=lambda pair: pair[1] or datetime.min, reverse=True)
+    total = len(filtered)
+    total_pages = max((total + page_size - 1) // page_size, 1)
+    if page > total_pages:
+        page = total_pages
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_items = [pair[0] for pair in filtered[start:end]]
+
+    return {
+        "status": "ok",
+        "documents": [item.model_dump() for item in page_items],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        },
+        "filters": {
+            "search": search_text,
+            "time_from": time_from,
+            "time_to": time_to,
+        },
+    }
+
+
+@app.get("/documents/{doc_id}", response_model=DocumentDetailResponse)
+async def get_document_detail(doc_id: str):
+    rag = await get_rag()
+    status_map = get_doc_status_map(rag)
+    doc_status = status_map.get(doc_id)
+    if doc_status is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    record = _doc_record_from_status(doc_id, doc_status)
+    return DocumentDetailResponse(document=record, content=get_doc_content(doc_id))
 
 
 @app.get("/documents/track/{track_id}", response_model=DocumentsResponse)
@@ -481,6 +643,7 @@ async def delete_document(doc_id: str):
     result = await rag.adelete_by_doc_id(doc_id)
     result_status = getattr(result, "status", "fail")
     if result_status == "not_found":
+        delete_doc_content(doc_id)
         return DeleteResponse(
             status="ok",
             doc_id=doc_id,
@@ -489,12 +652,51 @@ async def delete_document(doc_id: str):
         )
     if result_status != "success":
         raise HTTPException(status_code=getattr(result, "status_code", 500), detail=getattr(result, "message", "删除失败"))
+    delete_doc_content(doc_id)
     return DeleteResponse(
         status=result.status,
         doc_id=result.doc_id,
         message=result.message,
         file_path=getattr(result, "file_path", None),
     )
+
+
+@app.put("/documents/{doc_id}")
+async def update_document(doc_id: str, payload: UpdateRequest):
+    rag = await get_rag()
+    status_map = get_doc_status_map(rag)
+    old_status = status_map.get(doc_id)
+    if old_status is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    old_record = _doc_record_from_status(doc_id, old_status)
+
+    deleted = await rag.adelete_by_doc_id(doc_id)
+    deleted_status = getattr(deleted, "status", "fail")
+    if deleted_status not in ("success", "not_found"):
+        raise HTTPException(status_code=getattr(deleted, "status_code", 500), detail=getattr(deleted, "message", "更新前删除旧文档失败"))
+
+    track_id = await rag.ainsert(
+        payload.text,
+        ids=doc_id,
+        file_paths=payload.file_path or old_record.file_path,
+    )
+    upsert_doc_content(doc_id, payload.text, payload.file_path or old_record.file_path)
+
+    refreshed_map = get_doc_status_map(rag)
+    refreshed_status = refreshed_map.get(doc_id)
+    record = _doc_record_from_status(doc_id, refreshed_status or {
+        "status": "processed",
+        "file_path": payload.file_path or old_record.file_path,
+        "content_summary": payload.text[:120],
+        "content_length": len(payload.text),
+        "track_id": track_id,
+    })
+    return {
+        "status": "ok",
+        "message": "文档已更新",
+        "track_id": track_id,
+        "document": record.model_dump(),
+    }
 
 @app.post("/query", response_model=QueryResponse)
 async def query_text(payload: QueryRequest):

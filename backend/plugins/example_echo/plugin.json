@@ -1,0 +1,13 @@
+{
+  "id": "example_echo",
+  "name": "Example Echo Plugin",
+  "version": "1.0.0",
+  "enabled": false,
+  "entry": "main.py",
+  "permissions": [
+    "tool:echo",
+    "agent:middleware",
+    "trigger:control"
+  ],
+  "priority": 200
+}

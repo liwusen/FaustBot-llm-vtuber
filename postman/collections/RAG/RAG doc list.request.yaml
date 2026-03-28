@@ -1,5 +1,5 @@
 $kind: http-request
 name: RAG doc list
-url: ""
+url: http://localhost:18080/documents
 method: GET
 order: 3132830904649578

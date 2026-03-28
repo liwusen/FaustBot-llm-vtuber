@@ -1,5 +1,5 @@
 print("[main]Starting")
-from fastapi import FastAPI,WebSocket, WebSocketDisconnect
+from fastapi import FastAPI,WebSocket, WebSocketDisconnect, HTTPException, Query
 import json
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -25,10 +25,13 @@ import faust_backend.nimble as nimble
 import faust_backend.minecraft_client as minecraft_client
 import faust_backend.admin_runtime as admin_runtime
 import faust_backend.service_manager as service_manager
+import faust_backend.rag_client as rag_client
+from faust_backend.plugin_system import PluginManager
 import tqdm
 from os.path import join as pjoin
 from faust_backend.config_loader import args
 import time
+import inspect
 print("[main]Libs Loaded")
 #Shared Events
 app = FastAPI()
@@ -46,6 +49,9 @@ asyncio.run(backend2frontend.frontendGetMotions())
 forward_queue=queue.Queue()
 agent=None
 agent_lock = asyncio.Lock()
+plugin_manager = PluginManager()
+plugin_hot_reload_task = None
+plugin_hot_reload_busy = False
 AGENT_NAME=conf.AGENT_NAME
 PROMPT = ""
 if not os.path.exists(os.path.join("agents",f"{AGENT_NAME}")):
@@ -122,6 +128,59 @@ async def stream_agent_locked(target_agent, payload, config=None):
 startServices()
 
 
+def _compose_runtime_extensions():
+    base_tools = list(llm_tools.toollist)
+    tools = plugin_manager.compose_tools(base_tools=base_tools, agent_name=AGENT_NAME)
+    middlewares = plugin_manager.compose_middlewares(agent_name=AGENT_NAME)
+    return tools, middlewares
+
+
+def _sync_plugin_trigger_filters():
+    trigger_manager.set_append_filters([plugin_manager.filter_trigger_on_append])
+    trigger_manager.set_fire_filters([plugin_manager.filter_trigger_on_fire])
+
+
+async def _plugin_hot_reload_loop():
+    global plugin_hot_reload_busy
+    while True:
+        try:
+            status = plugin_manager.hot_reload_status()
+            await asyncio.sleep(float(status.get("interval_sec") or 2.0))
+            tick = plugin_manager.hot_reload_tick()
+            if tick.get("changed") and not plugin_hot_reload_busy:
+                plugin_hot_reload_busy = True
+                try:
+                    _sync_plugin_trigger_filters()
+                    await rebuild_runtime(reset_dialog=False)
+                finally:
+                    plugin_hot_reload_busy = False
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[plugin.hot-reload] loop error: {e}")
+            await asyncio.sleep(1.0)
+
+
+def _create_agent_with_extensions(*, model: str, checkpointer, store):
+    tools, middlewares = _compose_runtime_extensions()
+    kwargs = {
+        "model": model,
+        "checkpointer": checkpointer,
+        "tools": tools,
+        "store": store,
+    }
+
+    sig = inspect.signature(create_agent)
+    if "middlewares" in sig.parameters:
+        kwargs["middlewares"] = middlewares
+    elif "middleware" in sig.parameters:
+        kwargs["middleware"] = middlewares
+    elif middlewares:
+        print("[plugin] create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
+
+    return create_agent(**kwargs)
+
+
 async def rebuild_runtime(*, reset_dialog: bool = False):
     print("[main] Rebuilding runtime with reset_dialog =", reset_dialog)
     global agent, checkpointer, conn, storer, conn_for_store, AGENT_NAME, AGENT_ROOT
@@ -136,6 +195,9 @@ async def rebuild_runtime(*, reset_dialog: bool = False):
 
     makeup_init_prompt()
     llm_tools.refresh_runtime_paths()
+    plugin_reload = plugin_manager.reload()
+    print(f"[plugin] reload summary: {plugin_reload}")
+    _sync_plugin_trigger_filters()
     if not args.save_in_memory:
         try:
             if 'conn' in globals() and conn:
@@ -160,7 +222,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False):
         checkpointer=InMemorySaver()
         storer=InMemoryStore()
     print("[main] Checkpoint and store initialized for rebuild.")
-    agent = create_agent(model="deepseek-chat",checkpointer=checkpointer,tools=llm_tools.toollist,store=storer)
+    agent = _create_agent_with_extensions(model="deepseek-chat", checkpointer=checkpointer, store=storer)
     try:
         await admin_runtime.align_rag_agent(AGENT_NAME)
     except Exception as e:
@@ -169,7 +231,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False):
     if reset_dialog:
         await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
     else:
-        await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"配置已重载，请继续当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。"}]})
+        await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
     print("[main] Runtime rebuild completed.")
     return {
         "agent_name": AGENT_NAME,
@@ -178,7 +240,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False):
 
 @app.on_event("startup")
 async def startup_event():
-    global agent,checkpointer,conn,storer,conn_for_store
+    global agent,checkpointer,conn,storer,conn_for_store,plugin_hot_reload_task
     #--- Initialize the agent and its tools&middleware, including setting up the checkpoint saver and store.
     if not os.path.exists(pjoin(AGENT_ROOT,'faust_checkpoint.db')):
         print(f"[main] Checkpoint database not found at {pjoin(AGENT_ROOT,'faust_checkpoint.db')}. Starting with a fresh checkpoint.")
@@ -195,16 +257,19 @@ async def startup_event():
     else:
         checkpointer=InMemorySaver()
         storer=InMemoryStore()
+    plugin_reload = plugin_manager.reload()
+    print(f"[plugin] reload summary: {plugin_reload}")
+    _sync_plugin_trigger_filters()
     middlewares=[]
     #--- End of checkpoint middleware and store setup
     #--- Create the agent with the specified model, tools, and checkpoint/store.
-    agent=create_agent(model="deepseek-chat",checkpointer=checkpointer,tools=llm_tools.toollist,store=storer)
+    agent=_create_agent_with_extensions(model="deepseek-chat", checkpointer=checkpointer, store=storer)
     print("[main]Agent created with Deepseek-chat model and tools.")
     llm_tools.refresh_runtime_paths()
     if NOT_INITIALIZED:
         await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
     else:
-        await invoke_agent_locked(agent,{"messages":[{"role":"user","content":"对话重新开始了"}]})
+        await invoke_agent_locked(agent,{"messages":[{"role":"user","content":"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
     try:
         await admin_runtime.align_rag_agent(AGENT_NAME)
     except Exception as e:
@@ -217,6 +282,8 @@ async def startup_event():
     except Exception as e:
         print(f"[main] Minecraft bridge not connected on startup: {e}")
     llm_tools.STARTED=True# 声明启动完成
+    if plugin_hot_reload_task is None:
+        plugin_hot_reload_task = asyncio.create_task(_plugin_hot_reload_loop())
     print("[main]FAUST Backend Main Service started.")
 
 
@@ -361,7 +428,256 @@ async def admin_switch_agent(payload: dict):
 @app.get("/faust/admin/live2d/models")
 async def admin_list_live2d_models():
     return {"items": admin_runtime.list_available_models()}
-    
+
+
+@app.get("/faust/admin/plugins")
+async def admin_list_plugins():
+    return {
+        "status": "ok",
+        "items": plugin_manager.list_plugins(),
+        "hot_reload": plugin_manager.hot_reload_status(),
+    }
+
+
+@app.post("/faust/admin/plugins/reload")
+async def admin_reload_plugins(payload: dict | None = None):
+    summary = plugin_manager.reload()
+    _sync_plugin_trigger_filters()
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {
+        "status": "ok",
+        "reload": summary,
+        "runtime": runtime_info,
+        "items": plugin_manager.list_plugins(),
+        "hot_reload": plugin_manager.hot_reload_status(),
+    }
+
+
+@app.get("/faust/admin/plugins/hot-reload")
+async def admin_plugins_hot_reload_status():
+    return {"status": "ok", "hot_reload": plugin_manager.hot_reload_status()}
+
+
+@app.post("/faust/admin/plugins/hot-reload/start")
+async def admin_plugins_hot_reload_start(payload: dict | None = None):
+    interval_sec = (payload or {}).get("interval_sec")
+    state = plugin_manager.configure_hot_reload(enabled=True, interval_sec=interval_sec)
+    return {"status": "ok", "hot_reload": state}
+
+
+@app.post("/faust/admin/plugins/hot-reload/stop")
+async def admin_plugins_hot_reload_stop():
+    state = plugin_manager.configure_hot_reload(enabled=False)
+    return {"status": "ok", "hot_reload": state}
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/enable")
+async def admin_enable_plugin(plugin_id: str, payload: dict | None = None):
+    plugin_manager.set_plugin_enabled(plugin_id, True)
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {"status": "ok", "plugin_id": plugin_id, "enabled": True, "runtime": runtime_info}
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/disable")
+async def admin_disable_plugin(plugin_id: str, payload: dict | None = None):
+    plugin_manager.set_plugin_enabled(plugin_id, False)
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {"status": "ok", "plugin_id": plugin_id, "enabled": False, "runtime": runtime_info}
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/trigger-control/enable")
+async def admin_enable_plugin_trigger_control(plugin_id: str, payload: dict | None = None):
+    plugin_manager.set_trigger_control_enabled(plugin_id, True)
+    _sync_plugin_trigger_filters()
+    apply_runtime = bool((payload or {}).get("apply_runtime", False))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {"status": "ok", "plugin_id": plugin_id, "trigger_control": True, "runtime": runtime_info}
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/trigger-control/disable")
+async def admin_disable_plugin_trigger_control(plugin_id: str, payload: dict | None = None):
+    plugin_manager.set_trigger_control_enabled(plugin_id, False)
+    _sync_plugin_trigger_filters()
+    apply_runtime = bool((payload or {}).get("apply_runtime", False))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {"status": "ok", "plugin_id": plugin_id, "trigger_control": False, "runtime": runtime_info}
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/tools/{tool_name}/enable")
+async def admin_enable_plugin_tool(plugin_id: str, tool_name: str, payload: dict | None = None):
+    plugin_manager.set_tool_enabled(plugin_id, tool_name, True)
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {
+        "status": "ok",
+        "plugin_id": plugin_id,
+        "tool_name": tool_name,
+        "enabled": True,
+        "runtime": runtime_info,
+    }
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/tools/{tool_name}/disable")
+async def admin_disable_plugin_tool(plugin_id: str, tool_name: str, payload: dict | None = None):
+    plugin_manager.set_tool_enabled(plugin_id, tool_name, False)
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {
+        "status": "ok",
+        "plugin_id": plugin_id,
+        "tool_name": tool_name,
+        "enabled": False,
+        "runtime": runtime_info,
+    }
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/middlewares/{middleware_name}/enable")
+async def admin_enable_plugin_middleware(plugin_id: str, middleware_name: str, payload: dict | None = None):
+    plugin_manager.set_middleware_enabled(plugin_id, middleware_name, True)
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {
+        "status": "ok",
+        "plugin_id": plugin_id,
+        "middleware_name": middleware_name,
+        "enabled": True,
+        "runtime": runtime_info,
+    }
+
+
+@app.post("/faust/admin/plugins/{plugin_id}/middlewares/{middleware_name}/disable")
+async def admin_disable_plugin_middleware(plugin_id: str, middleware_name: str, payload: dict | None = None):
+    plugin_manager.set_middleware_enabled(plugin_id, middleware_name, False)
+    apply_runtime = bool((payload or {}).get("apply_runtime", True))
+    runtime_info = None
+    if apply_runtime:
+        runtime_info = await rebuild_runtime(reset_dialog=False)
+    return {
+        "status": "ok",
+        "plugin_id": plugin_id,
+        "middleware_name": middleware_name,
+        "enabled": False,
+        "runtime": runtime_info,
+    }
+
+@app.delete("/faust/admin/agents/{agent_name}/checkpoint")
+async def admin_delete_agent_checkpoint(agent_name: str):
+    if agent_name == AGENT_NAME:
+        raise HTTPException(status_code=400, detail=f"不能删除当前正在使用的 Agent '{AGENT_NAME}' 的 checkpoint")
+    os.remove(pjoin("agents", agent_name, "faust_checkpoint.db"))
+    if os.path.exists(pjoin("agents", agent_name, "faust_store.db")):
+        os.remove(pjoin("agents", agent_name, "faust_store.db"))
+    if os.path.exists(pjoin("agents", agent_name, "faust_checkpoint.db-shm")):
+        os.remove(pjoin("agents", agent_name, "faust_checkpoint.db-shm"))
+    if os.path.exists(pjoin("agents", agent_name, "faust_checkpoint.db-wal")):
+        os.remove(pjoin("agents", agent_name, "faust_checkpoint.db-wal"))
+    return {
+        "status": "ok",
+        "detail": f"Agent '{agent_name}' 的 checkpoint 已删除，下一次重启或切换 Agent 将会重新创建一个新的 checkpoint 文件。",
+    }
+
+def _rag_base_url() -> str:
+    return getattr(conf, "RAG_API_URL", "http://127.0.0.1:18080")
+
+
+@app.get("/faust/admin/rag/documents")
+async def admin_list_rag_documents(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: str | None = None,
+    time_from: str | None = None,
+    time_to: str | None = None,
+):
+    try:
+        data = await rag_client.rag_list_documents_paginated(
+            base_url=_rag_base_url(),
+            page=page,
+            page_size=page_size,
+            search=search,
+            time_from=time_from,
+            time_to=time_to,
+        )
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG 文档列表查询失败: {e}")
+
+
+@app.get("/faust/admin/rag/documents/{doc_id}")
+async def admin_get_rag_document(doc_id: str):
+    try:
+        data = await rag_client.rag_get_document_detail(doc_id, base_url=_rag_base_url())
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG 文档详情查询失败: {e}")
+
+
+
+@app.post("/faust/admin/rag/documents")
+async def admin_create_rag_document(payload: dict):
+    text = (payload or {}).get("text")
+    doc_id = (payload or {}).get("doc_id")
+    file_path = (payload or {}).get("file_path")
+    try:
+        data = await rag_client.rag_insert_document(
+            text,
+            doc_id=doc_id,
+            file_path=file_path,
+            base_url=_rag_base_url(),
+        )
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG 文档创建失败: {e}")
+
+
+@app.put("/faust/admin/rag/documents/{doc_id}")
+async def admin_update_rag_document(doc_id: str, payload: dict):
+    text = (payload or {}).get("text")
+    file_path = (payload or {}).get("file_path")
+    try:
+        data = await rag_client.rag_update_document(
+            doc_id,
+            text=text,
+            file_path=file_path,
+            base_url=_rag_base_url(),
+        )
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG 文档更新失败: {e}")
+
+
+@app.delete("/faust/admin/rag/documents/{doc_id}")
+async def admin_delete_rag_document(doc_id: str):
+    try:
+        data = await rag_client.rag_delete_document(doc_id, base_url=_rag_base_url())
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG 文档删除失败: {e}")
+@app.get("/faust/admin/rag/documents/{doc_id}/content")
+async def admin_get_rag_document_content(doc_id: str):
+    try:
+        data = await rag_client.rag_get_document_content(doc_id, base_url=_rag_base_url())
+        return {"status": "ok", "content": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG 文档内容查询失败: {e}")
 @app.post("/faust/chat")
 #@deprecated(reason="This endpoint is kept for compatibility and development but the primary chat interface is now the websocket /faust/chat for frontend streaming.")
 async def chat_post(payload: dict):
@@ -596,6 +912,7 @@ async def shutdown_post():
     return {"status": "shutting_down"}
 @app.on_event("shutdown")
 async def shutdown_event():
+    global plugin_hot_reload_task
     print("")
     #only add to checkpoint
     with open("faust_main.log","a",encoding="utf-8") as f:
@@ -606,6 +923,13 @@ async def shutdown_event():
         await conn_for_store.commit()
         await conn_for_store.close()
     trigger_manager.stop_trigger_watchdog_thread()
+    if plugin_hot_reload_task is not None:
+        plugin_hot_reload_task.cancel()
+        try:
+            await plugin_hot_reload_task
+        except Exception:
+            pass
+        plugin_hot_reload_task = None
     print("Shutting down FAUST Backend Main Service...")
 
 if __name__ == "__main__":

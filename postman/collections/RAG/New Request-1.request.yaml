@@ -1,0 +1,5 @@
+$kind: http-request
+name: New Request
+url: http://localhost:18080/documents//content
+method: GET
+order: 4198775802131345

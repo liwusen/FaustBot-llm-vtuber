@@ -78,6 +78,31 @@ def utc_now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
 
+def parse_time_like(value: str | None) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # 支持前端常见格式："YYYY-MM-DD HH:mm:ss"
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            pass
+
+    # 支持 ISO 格式（含 Z）
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.fromisoformat(text)
+        # 转成 naive UTC 语义便于和存储值比较
+        return dt.replace(tzinfo=None)
+    except Exception:
+        return None
+
+
 def _load_runtime_defaults():
     if conf is not None:
         try:
@@ -171,6 +196,24 @@ class DocumentRecord(BaseModel):
 class DocumentsResponse(BaseModel):
     status: str = "ok"
     documents: list[DocumentRecord]
+
+
+class Pagination(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class DocumentsPageResponse(BaseModel):
+    status: str = "ok"
+    documents: list[DocumentRecord]
+    pagination: Pagination
+
+
+class DocumentDetailResponse(BaseModel):
+    status: str = "ok"
+    document: dict[str, Any]
 
 
 class StatusResponse(BaseModel):
@@ -301,6 +344,24 @@ class AgentStorage:
             )
             for doc_id, item in self.docs.items()
         ]
+
+    def get_document_text(self, doc_id: str) -> str:
+        parts: list[tuple[int, str]] = []
+        for chunk_id, item in self.chunks_meta.items():
+            if item.get("doc_id") != doc_id:
+                continue
+            idx = item.get("chunk_index", 0)
+            try:
+                idx = int(idx)
+            except Exception:
+                idx = 0
+            text = str(item.get("text", "") or "")
+            parts.append((idx, text))
+
+        if not parts:
+            return ""
+        parts.sort(key=lambda x: x[0])
+        return "".join(chunk for _, chunk in parts)
 
     def documents_by_track(self, track_id: str) -> list[DocumentRecord]:
         result = []
@@ -616,6 +677,52 @@ async def rebuild_runtime_for_agent(agent_name: str | None = None):
     return True
 
 
+def _safe_match_text(value: Any, needle: str) -> bool:
+    if not needle:
+        return True
+    return needle in str(value or "").lower()
+
+
+def _filter_documents(
+    docs: list[DocumentRecord],
+    search: str | None,
+    time_from: str | None,
+    time_to: str | None,
+) -> list[DocumentRecord]:
+    q = (search or "").strip().lower()
+    dt_from = parse_time_like(time_from)
+    dt_to = parse_time_like(time_to)
+
+    out: list[DocumentRecord] = []
+    for doc in docs:
+        if q:
+            hit = (
+                _safe_match_text(doc.doc_id, q)
+                or _safe_match_text(doc.file_path, q)
+                or _safe_match_text(doc.content_summary, q)
+            )
+            if not hit:
+                continue
+
+        created = parse_time_like(doc.created_at)
+        if dt_from and created and created < dt_from:
+            continue
+        if dt_to and created and created > dt_to:
+            continue
+
+        out.append(doc)
+
+    # 新到旧排序（created_at优先，其次updated_at）
+    out.sort(
+        key=lambda x: (
+            parse_time_like(x.created_at) or datetime.min,
+            parse_time_like(x.updated_at) or datetime.min,
+        ),
+        reverse=True,
+    )
+    return out
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await rebuild_runtime_for_agent()
@@ -717,12 +824,43 @@ async def insert_text(payload: InsertRequest):
         )
 
 
-@app.get("/documents", response_model=DocumentsResponse)
-async def list_documents():
+@app.get("/documents", response_model=DocumentsPageResponse)
+async def list_documents(
+    page: int = 1,
+    page_size: int = 10,
+    search: str | None = None,
+    time_from: str | None = None,
+    time_to: str | None = None,
+):
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 10
+    if page_size > 100:
+        page_size = 100
+
     storage = get_storage()
-    return DocumentsResponse(
+    docs = storage.all_documents()
+    filtered = _filter_documents(docs, search=search, time_from=time_from, time_to=time_to)
+
+    total = len(filtered)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    sliced = filtered[start:end]
+
+    return DocumentsPageResponse(
         status="ok",
-        documents=storage.all_documents(),
+        documents=sliced,
+        pagination=Pagination(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        ),
     )
 
 
@@ -734,7 +872,69 @@ async def list_documents_by_track(track_id: str):
         documents=storage.documents_by_track(track_id),
     )
 
+@app.get("/documents/{doc_id}", response_model=DocumentDetailResponse)
+async def get_document_detail(doc_id: str):
+    storage = get_storage()
+    existing = storage.docs.get(doc_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {doc_id}")
 
+    document = {
+        "doc_id": doc_id,
+        "status": str(existing.get("status", "processed")),
+        "content_summary": str(existing.get("content_summary", "") or ""),
+        "content_length": int(existing.get("content_length", 0) or 0),
+        "created_at": existing.get("created_at"),
+        "updated_at": existing.get("updated_at"),
+        "file_path": existing.get("file_path"),
+        "track_id": str(existing.get("track_id", "") or ""),
+        "chunks_count": int(existing.get("chunks_count", 0) or 0),
+        "text": storage.get_document_text(doc_id),
+    }
+    return DocumentDetailResponse(status="ok", document=document)
+
+
+@app.get("/documents/{doc_id}/content")
+async def get_document_content(doc_id: str):
+    storage = get_storage()
+    existing = storage.docs.get(doc_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {doc_id}")
+    return {
+        "status": "ok",
+        "doc_id": doc_id,
+        "text": storage.get_document_text(doc_id),
+        "content_length": int(existing.get("content_length", 0) or 0),
+    }
+
+
+@app.put("/documents/{doc_id}")
+async def update_document(doc_id: str, payload: InsertRequest):
+    async with rag_lock:
+        storage = get_storage()
+        existing = storage.docs.get(doc_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"文档不存在: {doc_id}")
+
+        text = normalize_text(payload.text)
+        if not text:
+            raise HTTPException(status_code=400, detail="text 不能为空")
+
+        file_path = payload.file_path if payload.file_path is not None else existing.get("file_path")
+        result = await insert_document(
+            storage=storage,
+            text=text,
+            doc_id=doc_id,
+            file_path=file_path,
+        )
+
+        return {
+            "status": "ok",
+            "doc_id": result.doc_id,
+            "track_id": result.track_id,
+            "inserted_length": result.inserted_length,
+            "message": "updated",
+        }
 @app.delete("/documents/{doc_id}", response_model=DeleteResponse)
 async def delete_document(doc_id: str):
     async with rag_lock:

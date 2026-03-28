@@ -1,0 +1,5 @@
+$kind: http-request
+name: New Request
+url: http://localhost:1000/v1/hibernate
+method: POST
+order: 4001714926652532
