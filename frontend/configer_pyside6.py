@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 import os
 import requests
 from PySide6.QtCore import Qt, QDateTime, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -41,6 +42,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 API_BASE = "http://127.0.0.1:13900"
 TIME_DISPLAY = "yyyy-MM-dd HH:mm:ss"
 FRONTEND_ROOT = Path(__file__).resolve().parent
+APP_ICON_PATH = FRONTEND_ROOT / "FaustBot.icon.tiny.png"
 
 PUBLIC_PROVIDER_KEYS = [
     "GUI_OPERATOR_LLM_MODEL",
@@ -295,7 +297,9 @@ class TriggerDetailDialog(QDialog):
 class ConfigerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FaustBot Configer")
+        self.setWindowTitle("FaustBot")
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1300, 900)
 
         self.state: Dict[str, Any] = {
@@ -2306,7 +2310,9 @@ class ConfigerWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setApplicationName("Faust Configer")
+    app.setApplicationName("FaustBot")
+    if APP_ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     window = ConfigerWindow()
     window.show()
     sys.exit(app.exec())

@@ -476,9 +476,11 @@ function registerGlobalShortcuts() {
 }
 
 function createWindow(){
+  const windowIconPath = path.join(getFrontendAppDir(), 'FaustBot.icon.tiny.png');
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
+    title: 'FaustBot',
     fullscreen: true,
     fullscreenable: true,
     transparent: true,
@@ -487,6 +489,7 @@ function createWindow(){
     hasShadow: false,
     resizable: false,
     alwaysOnTop: true,
+    icon: fs.existsSync(windowIconPath) ? windowIconPath : undefined,
     webPreferences: {
       preload: path.join(getFrontendAppDir(), 'preload.js'),
       contextIsolation: true,
@@ -599,6 +602,7 @@ async function launchPySideConfiger(){
 
 function getTrayIconPath(){
   const candidates = [
+    path.join(getFrontendResourceDir(), 'FaustBot.icon.tiny.png'),
     path.join(getFrontendResourceDir(), 'fake_neuro.ico'),
     path.join(getFrontendResourceDir(), 'dmx1.png'),
     path.join(__dirname, '..', '..', 'live-2d', 'fake_neuro.ico'),
@@ -647,7 +651,7 @@ function createTray(){
   }
 
   tray = new Tray(trayIconPath);
-  tray.setToolTip('Faust Live2D');
+  tray.setToolTip('FaustBot');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示前端', click: ()=> showMainWindow() },
     { label: '打开配置中心(PySide6)', click: async ()=> {
