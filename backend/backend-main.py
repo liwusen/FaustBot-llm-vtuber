@@ -31,7 +31,8 @@ import faust_backend.nimble as nimble
 import faust_backend.minecraft_client as minecraft_client
 import faust_backend.admin_runtime as admin_runtime
 import faust_backend.service_manager as service_manager
-import faust_backend.rag_client as rag_client
+import faust_backend.kb_manager as kb_manager
+import faust_backend.kb_api as kb_api
 import faust_backend.plugin_market as plugin_market
 import faust_backend.skill_manager as skill_manager
 import faust_backend.speech_runtime as speech_runtime
@@ -46,6 +47,7 @@ print("[main]Libs Loaded")
 #Shared Events
 app = FastAPI()
 uvicorn_server = None
+kb_api.register_kb_routes(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -144,19 +146,20 @@ def startServices():
         print("[main] Other backend services started.")
 
 
-def schedule_rag_record_sync(user_text: str, assistant_text: str) -> None:
-    if not getattr(conf, "RAG_ENABLED", True):
+def schedule_kb_record_sync(user_text: str, assistant_text: str) -> None:
+    if not getattr(conf, "KB_ENABLED", True):
         return
     if not str(user_text).strip() or not str(assistant_text).strip():
         return
-    print("[main] Scheduling RAG record sync for new chat history part.")
+    print("[main] Scheduling KB record sync for new chat history part.")
     async def _job():
         try:
             llm_tools.refresh_runtime_paths()
-            record_path = await llm_tools.RAG_TRACKER.new_chat_history_part(user_text, assistant_text)
-            print(f"[main] Chat record synced into RAG[增量更新模式]: {record_path}")
+            manager = kb_manager.get_kb_manager(refresh=True)
+            result = await manager.add_chat_record(user_text, assistant_text, {"agent": conf.AGENT_NAME})
+            print(f"[main] Chat record synced into KB[异步索引模式]: {result.get('path')}")
         except Exception as exc:
-            print(f"[main] Failed to sync chat record into RAG: {exc}")
+            print(f"[main] Failed to sync chat record into KB: {exc}")
 
     asyncio.create_task(_job())
 
@@ -437,10 +440,6 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             storer=InMemoryStore()
         print("[main] Checkpoint and store initialized for rebuild.")
         agent = _create_agent_with_extensions(model_name=conf.CHAT_MODEL, checkpointer=checkpointer, store=storer)
-        try:
-            await admin_runtime.align_rag_agent(AGENT_NAME)
-        except Exception as e:
-            print(f"[main] RAG agent align skipped: {e}")
         print("[main] Agent recreated for rebuild.")
         checkpoint_exists = (not args.save_in_memory) and _has_checkpoint_db(AGENT_ROOT)
         if no_initial_chat and checkpoint_exists:
@@ -485,6 +484,9 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
 async def startup_event():
     global agent,checkpointer,conn,storer,conn_for_store,plugin_heartbeat_task
     try:
+        kb_runtime = kb_manager.get_kb_manager(refresh=True)
+        kb_runtime.ensure_vdb_initialized()
+        await kb_runtime.ensure_worker_started()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(conf.args.no_startup_chat))
         print(f"[main] Startup runtime summary: {startup_info}")
     except Exception as e:
@@ -1055,89 +1057,6 @@ async def admin_delete_agent_checkpoint(agent_name: str):
         "detail": f"Agent '{agent_name}' 的 checkpoint 已删除，下一次重启或切换 Agent 将会重新创建一个新的 checkpoint 文件。",
     }
 
-def _rag_base_url() -> str:
-    return getattr(conf, "RAG_API_URL", "http://127.0.0.1:18080")
-
-
-@app.get("/faust/admin/rag/documents")
-async def admin_list_rag_documents(
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=100),
-    search: str | None = None,
-    time_from: str | None = None,
-    time_to: str | None = None,
-):
-    try:
-        data = await rag_client.rag_list_documents_paginated(
-            base_url=_rag_base_url(),
-            page=page,
-            page_size=page_size,
-            search=search,
-            time_from=time_from,
-            time_to=time_to,
-        )
-        return {"status": "ok", **data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 文档列表查询失败: {e}")
-
-
-@app.get("/faust/admin/rag/documents/{doc_id}")
-async def admin_get_rag_document(doc_id: str):
-    try:
-        data = await rag_client.rag_get_document_detail(doc_id, base_url=_rag_base_url())
-        return {"status": "ok", **data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 文档详情查询失败: {e}")
-
-
-
-@app.post("/faust/admin/rag/documents")
-async def admin_create_rag_document(payload: dict):
-    text = (payload or {}).get("text")
-    doc_id = (payload or {}).get("doc_id")
-    file_path = (payload or {}).get("file_path")
-    try:
-        data = await rag_client.rag_insert_document(
-            text,
-            doc_id=doc_id,
-            file_path=file_path,
-            base_url=_rag_base_url(),
-        )
-        return {"status": "ok", **data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 文档创建失败: {e}")
-
-
-@app.put("/faust/admin/rag/documents/{doc_id}")
-async def admin_update_rag_document(doc_id: str, payload: dict):
-    text = (payload or {}).get("text")
-    file_path = (payload or {}).get("file_path")
-    try:
-        data = await rag_client.rag_update_document(
-            doc_id,
-            text=text,
-            file_path=file_path,
-            base_url=_rag_base_url(),
-        )
-        return {"status": "ok", **data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 文档更新失败: {e}")
-
-
-@app.delete("/faust/admin/rag/documents/{doc_id}")
-async def admin_delete_rag_document(doc_id: str):
-    try:
-        data = await rag_client.rag_delete_document(doc_id, base_url=_rag_base_url())
-        return {"status": "ok", **data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 文档删除失败: {e}")
-@app.get("/faust/admin/rag/documents/{doc_id}/content")
-async def admin_get_rag_document_content(doc_id: str):
-    try:
-        data = await rag_client.rag_get_document_content(doc_id, base_url=_rag_base_url())
-        return {"status": "ok", "content": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 文档内容查询失败: {e}")
 @app.post("/faust/chat")
 #@deprecated(reason="This endpoint is kept for compatibility and development but the primary chat interface is now the websocket /faust/chat for frontend streaming.")
 async def chat_post(payload: dict):
@@ -1159,7 +1078,7 @@ async def chat_post(payload: dict):
         events.ignore_trigger_event.set()
         resp = await invoke_agent_locked(agent,{"messages":[{"role":"user","content":text}]})
         reply = _message_content_to_text(resp["messages"][-1].content)
-        schedule_rag_record_sync(text, reply)
+        schedule_kb_record_sync(text, reply)
         print('Chat post reply', reply)
         events.ignore_trigger_event.clear()
         return {"reply": reply,"warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
@@ -1209,7 +1128,7 @@ async def chat_websocket(websocket: WebSocket):
                         continue
                     if event.get("type") in {"tool_start", "tool_result"}:
                         await websocket.send_text(json.dumps(event, ensure_ascii=False))
-                schedule_rag_record_sync(text, reply)
+                schedule_kb_record_sync(text, reply)
                 await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
                 print()
                 events.ignore_trigger_event.clear()

@@ -55,14 +55,6 @@ SERVICES: List[Dict[str, Any]] = [
         'script': 'minecraft/mc-operator/mc.bat',
         'log_file': 'minecraft/mc-operator/log.log'
     },
-    {
-        'key': 'rag',
-        'name': 'RAG Service',
-        'description': 'LightRAG 检索增强服务',
-        'port': 18080,
-        'script': 'RAG.bat',
-        'log_file': 'rag.log'
-    }
 ]
 
 def get_service_keys():
@@ -213,7 +205,7 @@ def print_service_status():
 
 def ensure_core_services_started():
     results = []
-    for service_key in ('asr', 'tts', 'rag'):
+    for service_key in ('asr', 'tts'):
         try:
             results.append(start_service(service_key, wait=False))
         except Exception as exc:

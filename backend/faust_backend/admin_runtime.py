@@ -36,14 +36,9 @@ PUBLIC_CONFIG_DEFAULTS = {
     "SECURITY_VERIFIER_API_ENDPOINT": "https://www.dmxapi.cn/v1",
     "SECURITY_VERIFIER_LLM_MODEL": "qwen3.5-flash",
     "SECURITY_SYS_ENABLED": False,
-    "RAG_ENABLED": True,
-    "RAG_API_URL": "http://127.0.0.1:18080",
-    "RAG_LLM_BASE_URL": "https://www.dmxapi.cn/v1",
-    "RAG_CHAT_MODEL": "qwen3.5-27b",
-    "RAG_EMBED_MODEL": "text-embedding-3-small",
-    "RAG_EMBED_DIM": 1536,
-    "RAG_EMBED_MAX_TOKEN_SIZE": 8192,
-    "RAG_AUTO_INDEX_RECORD": True,
+    "KB_ENABLED": True,
+    "KB_EMBED_MODEL": "text-embedding-3-small",
+    "KB_ASYNC_INDEX_ON_WRITE": True,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,
     "LIVE2D_MODEL_PATH": "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json",
@@ -79,7 +74,7 @@ PRIVATE_CONFIG_DEFAULTS = {
     "SEARCH_API_KEY": "",
     "GUI_OPERATOR_LLM_KEY": "",
     "SECURITY_VERIFIER_LLM_KEY": "",
-    "RAG_OPENAI_API_KEY": "",
+    "KB_OPENAI_API_KEY": "",
     "OPENAI_TTS_API_KEY": "",
     "OPENAI_ASR_API_KEY": "",
 }
@@ -136,9 +131,6 @@ def get_private_config(mask_secrets: bool = True) -> Dict[str, Any]:
     legacy_chat = data.get("DEEPSEEK_API_KEY")
     if legacy_chat and not data.get("CHAT_API_KEY"):
         data["CHAT_API_KEY"] = legacy_chat
-    legacy_rag = data.get("RAG_OPENAI_KEY")
-    if legacy_rag and not data.get("RAG_OPENAI_API_KEY"):
-        data["RAG_OPENAI_API_KEY"] = legacy_rag
     if not mask_secrets:
         return data
     masked = {}
@@ -192,8 +184,6 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
             skey = "CHAT_API_KEY"
         private_cfg[skey] = value
 
-    if "RAG_OPENAI_API_KEY" in private_cfg:
-        private_cfg.pop("RAG_OPENAI_KEY", None)
     private_cfg.pop("DEEPSEEK_API_KEY", None)
 
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
@@ -221,6 +211,9 @@ def _ensure_agent_core_files(agent_dir: Path, template: Dict[str, str] | None = 
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / "diary").mkdir(parents=True, exist_ok=True)
     (agent_dir / "record").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "kb").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "kb_meta").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "kb_index").mkdir(parents=True, exist_ok=True)
     for filename in AGENT_CORE_FILES:
         path = agent_dir / filename
         if path.exists():
@@ -313,14 +306,6 @@ def get_agent_detail(agent_name: str) -> Dict[str, Any]:
     }
 
 
-async def align_rag_agent(agent_name: str) -> Dict[str, Any]:
-    try:
-        import faust_backend.rag_client as rag_client
-        return await rag_client.rag_set_agent_id(agent_name)
-    except Exception as exc:
-        return {"status": "skipped", "reason": str(exc)}
-
-
 def runtime_summary() -> Dict[str, Any]:
     public_cfg = get_public_config()
     return {
@@ -373,8 +358,7 @@ async def switch_agent(agent_name: str) -> Dict[str, Any]:
     public_cfg = get_public_config()
     public_cfg["AGENT_NAME"] = agent_name
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
-    rag_info = await align_rag_agent(agent_name)
-    return {"agent_name": agent_name, "rag": rag_info}
+    return {"agent_name": agent_name, "kb": {"status": "ok"}}
 
 
 async def get_agent_diary(agent_name: str) -> List[Dict[str, Any]]:
@@ -401,28 +385,37 @@ async def get_agent_records(agent_name: str, date_limit: Optional[datetime] = No
     record_dir = agent_dir / "record"
     if not record_dir.exists():
         return []
-    if date_limit:
-        # 转换为 YYYYMMDD 格式的整数，方便比较
-        date_limit = int(datetime.now().strftime("%Y%m%d"))
-        with open(record_dir/(date_limit+".md"),"r",encoding="utf-8") as f:
-            return [{
-                "date": date_limit,
-                "content": f.read(),
-                "path": str(record_dir/(date_limit+".md")),
-            }]
-    else:
-        records = []
-        for file in sorted(record_dir.glob("*.md"), key=lambda p: p.name, reverse=True):
-            try:
-                date_str = file.stem
-                date_int = int(date_str)
-                with open(file, "r", encoding="utf-8") as f:
-                    content = f.read()
-                records.append({
-                    "date": date_int,
-                    "content": content,
-                    "path": str(file),
-                })
-            except Exception:
-                continue
-        return records
+    records = []
+    for file in sorted(record_dir.glob("*.md"), key=lambda p: p.name, reverse=True):
+        try:
+            stem = file.stem
+            date_value = None
+            timestamp_value = None
+            if len(stem) >= 15 and "_" in stem:
+                prefix = stem.split("_", 2)
+                if len(prefix) >= 2:
+                    date_part = prefix[0]
+                    time_part = prefix[1]
+                    if len(date_part) == 8 and len(time_part) == 6:
+                        timestamp_value = f"{date_part} {time_part}"
+                        date_value = int(date_part)
+            elif len(stem) == 8 and stem.isdigit():
+                date_value = int(stem)
+                timestamp_value = stem
+
+            if date_limit and isinstance(date_value, int):
+                limit_day = int(date_limit.strftime("%Y%m%d"))
+                if date_value != limit_day:
+                    continue
+
+            with open(file, "r", encoding="utf-8") as f:
+                content = f.read()
+            records.append({
+                "date": date_value,
+                "timestamp": timestamp_value,
+                "content": content,
+                "path": str(file),
+            })
+        except Exception:
+            continue
+    return records

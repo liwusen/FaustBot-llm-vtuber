@@ -27,7 +27,7 @@ watchdog
 PySide6
 requests
 
-# rag nano api Required
+# KB vector index Required
 nano-vectordb
 
 #Langchain

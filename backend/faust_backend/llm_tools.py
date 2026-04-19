@@ -2,49 +2,50 @@ from langchain.tools import tool
 import os
 
 import faust_backend.config_loader as conf
-os.environ["SEARCHAPI_API_KEY"]=conf.SEARCH_API_KEY
+os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
 import faust_backend.backend2front as backend2frontend
 from faust_backend.utils import *
 
-import functools,inspect,os,sys
-import socket
-import io
-import datetime
-import re
-import tempfile
-import zipfile
-import shutil
-import requests
-import faust_backend.gui_llm_lib as gui_llm_lib
-import faust_backend.trigger_manager as trigger_manager
-import faust_backend.nimble as nimble
-import faust_backend.rag_client as rag_client
-import faust_backend.minecraft_client as minecraft_client
-import winsound
 import asyncio
-import faust_backend.events as events
+import datetime
+import functools
+import inspect
+import io
 import json
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
+
+import requests
+import winsound
+
+import faust_backend.events as events
+import faust_backend.gui_llm_lib as gui_llm_lib
+import faust_backend.kb_manager as kb_manager
+import faust_backend.minecraft_client as minecraft_client
+import faust_backend.nimble as nimble
+import faust_backend.trigger_manager as trigger_manager
 import faust_backend.utils as utils
-toollist=[]
-DIARY_DIR=Path("agents") / Path(conf.AGENT_NAME) / "diary" 
-STARTED=False
-ORIGINAL_TOOL_FUNCS={}
-RAG_ASYNC_RESULTS: dict[str, dict] = {}
-RAG_ASYNC_LOCK = threading.Lock()
-RAG_TRACKER = rag_client.create_tracker()
+
+toollist = []
+DIARY_DIR = Path("agents") / Path(conf.AGENT_NAME) / "diary"
+STARTED = False
+ORIGINAL_TOOL_FUNCS = {}
+KB_MANAGER = kb_manager.get_kb_manager()
 
 
 def refresh_runtime_paths() -> None:
-    global DIARY_DIR, RAG_TRACKER
+    global DIARY_DIR, KB_MANAGER
     DIARY_DIR = Path("agents") / Path(conf.AGENT_NAME) / "diary"
-    if hasattr(RAG_TRACKER, "refresh_runtime"):
-        RAG_TRACKER.refresh_runtime(conf.AGENT_ROOT, getattr(conf, "RAG_API_URL", None))
-    else:
-        RAG_TRACKER = rag_client.create_tracker(conf.AGENT_ROOT, getattr(conf, "RAG_API_URL", None))
+    KB_MANAGER = kb_manager.get_kb_manager(refresh=True)
 
 
 def _safe_read_file_range(file_path: str, start_line: int, end_line: int) -> str:
@@ -81,12 +82,12 @@ def _extract_section_chunks(patch_text: str) -> list[tuple[str, str, list[str]]]
 
     header_re = re.compile(r"^\*\*\*\s+(Add|Update|Delete)\s+File:\s+(.+?)\s*$")
     for line in body:
-        m = header_re.match(line)
-        if m:
+        match = header_re.match(line)
+        if match:
             if current_action and current_path is not None:
                 chunks.append((current_action, current_path, current_lines))
-            current_action = m.group(1)
-            current_path = m.group(2).strip()
+            current_action = match.group(1)
+            current_path = match.group(2).strip()
             current_lines = []
         else:
             current_lines.append(line)
@@ -123,7 +124,6 @@ def _apply_update_hunks(original: str, section_lines: list[str]) -> str:
                     raise ValueError(f"更新失败，未在文件中找到旧代码块:\n{old_chunk[:200]}")
                 content = content.replace(old_chunk, new_chunk, 1)
             elif new_chunk:
-                # 无旧块时，退化为追加
                 if content and not content.endswith("\n"):
                     content += "\n"
                 content += new_chunk
@@ -243,27 +243,22 @@ def _install_skill_from_slug(slug: str, overwrite: bool = False) -> dict:
             "path": str(target_dir.resolve()),
             "source": api,
         }
-#define add to TOOLLIST wrapper
+
+
 def __init__():
     print("[llm_tools] Initializing llm_tools module...")
+
+
 def add_to_tool_list(func):
     toollist.append(func)
     return func
+
+
 def record_func_name(func):
-    func_name=func.__name__
-    ORIGINAL_TOOL_FUNCS[func_name]=func
+    func_name = func.__name__
+    ORIGINAL_TOOL_FUNCS[func_name] = func
     print(f"[llm_tools] Registered tool: {func_name}")
     return func
-
-
-def _store_rag_async_result(callback_id: str, data: dict) -> None:
-    with RAG_ASYNC_LOCK:
-        RAG_ASYNC_RESULTS[callback_id] = data
-
-
-def _get_rag_async_result(callback_id: str) -> dict | None:
-    with RAG_ASYNC_LOCK:
-        return RAG_ASYNC_RESULTS.get(callback_id)
 
 
 def _run_async_in_thread(coro) -> None:
@@ -280,46 +275,6 @@ def _run_async_in_thread(coro) -> None:
 
     threading.Thread(target=runner, daemon=True).start()
 
-
-async def _rag_query_async_job(callback_id: str, query: str, mode: str, only_need_context: bool) -> None:
-    started_at = time.time()
-    try:
-        result = await rag_client.rag_query(
-            query,
-            mode=mode,
-            only_need_context=only_need_context,
-            enable_rerank=False,
-        )
-        payload = {
-            "status": "done",
-            "callback_id": callback_id,
-            "query": query,
-            "mode": mode,
-            "only_need_context": only_need_context,
-            "result": result,
-            "started_at": started_at,
-            "finished_at": time.time(),
-        }
-    except Exception as e:
-        payload = {
-            "status": "error",
-            "callback_id": callback_id,
-            "query": query,
-            "mode": mode,
-            "only_need_context": only_need_context,
-            "error": str(e),
-            "started_at": started_at,
-            "finished_at": time.time(),
-        }
-
-    _store_rag_async_result(callback_id, payload)
-    trigger_manager.append_trigger({
-        "id": f"rag_async_result_{callback_id}",
-        "type": "datetime",
-        "target": datetime.datetime.now().isoformat(),
-        "recall_description": f"RAG 异步查询已完成。请使用 ragQueryAsyncGetTool 获取结果，callback_id={callback_id}",
-        "lifespan": 600,
-    })
 async def HILRequest(id, title, summary, timeout_seconds: int = 120, severity: str = "warning"):
     if not STARTED:
         return False, "cannot call HILRequest before the system is fully started."
@@ -475,9 +430,19 @@ def listDiaryFilesTool() -> str:
         str: 日记目录下的文件列表，或者错误信息。
     """
     try:
-        print("[llm_tools.listDiaryFilesTool] Listing diary files in directory:", DIARY_DIR)
-        files = os.listdir(DIARY_DIR)
-        files=[f for f in files if f.endswith('.txt')]
+        tree = KB_MANAGER.list_tree("diary")
+        files = []
+
+        def _walk(node):
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "file":
+                files.append(str(node.get("path") or ""))
+                return
+            for child in node.get("children") or []:
+                _walk(child)
+
+        _walk(tree)
         return "\n".join(files) if files else "日记目录为空。"
     except Exception as e:
         return f"列出日记文件出错: {str(e)}"
@@ -494,12 +459,11 @@ def readDiaryFileTool(filename: str) -> str:
     Returns:
         str: 文件内容的字符串表示，或者错误信息。
     """
-    file_path=os.path.join(DIARY_DIR,filename)
     try:
-        print("[llm_tools.readDiaryFileTool] Reading diary file:", file_path)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        return content
+        diary_path = str(filename or "").strip().replace("\\", "/").lstrip("/")
+        if not diary_path.startswith("diary/"):
+            diary_path = f"diary/{diary_path}"
+        return str(KB_MANAGER.read_node(diary_path).get("content") or "")
     except Exception as e:
         return f"读取日记文件出错: {str(e)}"
 @add_to_tool_list
@@ -516,15 +480,9 @@ def writeDiaryFileTool(content: str) -> str:
     Returns:
         str: 写入成功的确认信息，或者错误信息。
     """    
-    from datetime import datetime
-    now = datetime.now()
-    filename = now.strftime("%Y%m%d_%H%M%S") + ".txt"
-    file_path=os.path.join(DIARY_DIR,filename)
     try:
-        print("[llm_tools.writeDiaryFileTool] Writing to diary file:", file_path)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        return f"日记文件写入成功，文件名为: {filename}"
+        result = asyncio.run(KB_MANAGER.write_diary(content))
+        return f"日记已写入知识库: {result.get('path')}"
     except Exception as e:
         return f"写入日记文件出错: {str(e)}"
 @add_to_tool_list
@@ -1073,121 +1031,87 @@ def triggerRemoveTool(trigger_id: str) -> str:
     except Exception as e:
         return f"移除触发器出错: {str(e)}"
 
-
 @add_to_tool_list
 @tool
 @record_func_name
-def ragQueryTool(query: str, mode: str = "hybrid", only_need_context: bool = True) -> str:
+def kbListTool(scope: str = "") -> str:
     """
     Description:
-        同步（阻塞式）执行一次 RAG 查询(查询目标：你的对话记录和相关文档)，并直接返回结果。
-        默认只返回检索到的相关内容，不让模型总结。
-        本工具会接入文档管理器，用于确保 RAG 文档跟踪器已初始化并可用。
-            
+        列出知识库中某个目录范围下的树结构。
+        例如 scope 可为 /reactor/core/ 或 diary/。
     Args:
-        query (str): 要查询的问题或关键词。
-        mode (str): 检索模式，可选 naive/local/global/hybrid/mix。（默认 hybrid）
-        only_need_context (bool): 是否只返回检索上下文。默认 True。
+        scope (str): 检索范围路径。
     Returns:
-        str: RAG 查询结果，或错误信息。
+        str(json): 目录树 JSON。
     """
     try:
-        _ = RAG_TRACKER
-        return asyncio.run(
-            rag_client.rag_query(
-                query,
-                mode=mode,
-                only_need_context=only_need_context,
-                enable_rerank=False,
-            )
-        )
+        return json.dumps(KB_MANAGER.list_tree(scope), ensure_ascii=False)
     except Exception as e:
-        return f"RAG 同步查询失败: {str(e)}"
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
 @add_to_tool_list
 @tool
 @record_func_name
-async def ragQueryAsyncStartTool(query: str, mode: str = "hybrid", only_need_context: bool = True) -> str:
+def kbReadTool(path: str) -> str:
     """
     Description:
-        启动一个异步 RAG 查询任务，立即返回 rag_callback_id，不阻塞当前对话。
-        查询完成后会通过 Trigger System 再次唤醒你。
-        被唤醒后，请调用 ragQueryAsyncGetTool(callback_id) 获取实际查询结果。
-        默认只返回检索到的相关内容，不让模型总结。
+        读取知识库中某个文件节点的完整内容。
     Args:
-        query (str): 要查询的问题或关键词。
-        mode (str): 检索模式，可选 naive/local/global/hybrid/mix。
-        only_need_context (bool): 是否只返回检索上下文。默认 True。
+        path (str): 知识库相对路径。
     Returns:
-        str: 启动结果说明，包含 rag_callback_id。
+        str(json): 包含 content 和 meta。
     """
     try:
-        _ = RAG_TRACKER
-        callback_id = f"ragcb_{uuid.uuid4().hex}"
-        _store_rag_async_result(callback_id, {
-            "status": "running",
-            "callback_id": callback_id,
-            "query": query,
-            "mode": mode,
-            "only_need_context": only_need_context,
-            "started_at": time.time(),
-        })
-        _run_async_in_thread(_rag_query_async_job(callback_id, query, mode, only_need_context))
-        return (
-            f"RAG 异步查询已启动，rag_callback_id={callback_id}。"
-            f"完成后会通过 Trigger System 唤醒你；届时请调用 ragQueryAsyncGetTool 获取结果。"
-        )
+        return json.dumps(KB_MANAGER.read_node(path), ensure_ascii=False)
     except Exception as e:
-        return f"启动 RAG 异步查询失败: {str(e)}"
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
 @add_to_tool_list
 @tool
 @record_func_name
-def ragQueryAsyncGetTool(rag_callback_id: str) -> str:
+def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True) -> str:
     """
     Description:
-        获取一个已启动的异步 RAG 查询结果。
-        当 ragQueryAsyncStartTool 启动异步查询后，会先返回 rag_callback_id；
-        查询完成并通过 trigger 唤醒你后，请使用本工具按 callback_id 获取结果。
+        将内容写入知识库文件节点，并创建后台索引任务。
     Args:
-        rag_callback_id (str): 异步 RAG 查询的回调 ID。
+        path (str): 知识库相对路径。
+        content (str): 写入内容。
+        declared_by (str): 写入声明来源。
+        index (bool): 是否创建后台索引任务。
     Returns:
-        str: 查询结果、运行中状态或错误信息。
+        str(json): 写入结果和 task 信息。
     """
     try:
-        result = _get_rag_async_result(rag_callback_id)
-        if result is None:
-            return f"未找到 rag_callback_id={rag_callback_id} 对应的异步查询任务。"
-        status = result.get("status", "unknown")
-        if status == "running":
-            return f"RAG 异步查询仍在运行中，rag_callback_id={rag_callback_id}。请稍后再试。"
-        if status == "error":
-            return f"RAG 异步查询失败，rag_callback_id={rag_callback_id}，错误：{result.get('error', 'unknown error')}"
-        return str(result.get("result", ""))
+        return json.dumps(asyncio.run(KB_MANAGER.write_node(path, content, declared_by=declared_by, index=index)), ensure_ascii=False)
     except Exception as e:
-        return f"获取 RAG 异步查询结果失败: {str(e)}"
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
 @add_to_tool_list
 @tool
 @record_func_name
-def ragDeclareFileUpdateTool(file_path:str)->str:
-    """用于将一个文件加入RAG系统的更新声明工具。当你修改了某个文件的内容，并希望 RAG 系统能够尽快地将这个更新纳入检索范围时，可以调用此工具声明文件已更新。
-
+def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets") -> str:
+    """
+    Description:
+        在知识库指定范围内做向量检索。
+        范围示例：/reactor/core/。
     Args:
-        file_path (str): 要加入RAG系统的文件绝对路径。
-
+        query (str): 查询文本。
+        scope (str): 限定目录范围。
+        top_k (int): 返回数量。
+        return_mode (str): paths/snippets/full。
     Returns:
-        str: 结果说明
-
-    注意：
-        这个工具是非阻塞工具。调用后你不应假设文件已经被处理完成；
-    """    
+        str(json): 搜索结果列表。
+    """
     try:
-        _run_async_in_thread(RAG_TRACKER.declareUpdateDoc(file_path))
-        return f"已声明文件更新，路径: {file_path}。\nRAG系统会尽快处理这个更新，但请注意这是一个非阻塞操作，文件可能尚未被完全处理。"
+        items = asyncio.run(KB_MANAGER.search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode))
+        if return_mode == "paths":
+            return json.dumps([item.get("path") for item in items], ensure_ascii=False)
+        return json.dumps(items, ensure_ascii=False)
     except Exception as e:
-        return f"声明文件更新失败: {str(e)}"
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
 @add_to_tool_list

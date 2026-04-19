@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QDateTime, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDateTimeEdit,
     QDialog,
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
     QInputDialog,
@@ -50,7 +53,7 @@ PUBLIC_PROVIDER_KEYS = [
     "SECURITY_VERIFIER_API_ENDPOINT",
     "SECURITY_VERIFIER_LLM_MODEL",
     "SECURITY_SYS_ENABLED",
-    "RAG_ENABLED",
+    "KB_ENABLED",
     "MC_OPERATOR_URL",
     "MC_EVENT_TRIGGER_ENABLED",
 ]
@@ -59,7 +62,7 @@ PRIVATE_PROVIDER_KEYS = [
     "SEARCH_API_KEY",
     "GUI_OPERATOR_LLM_KEY",
     "SECURITY_VERIFIER_LLM_KEY",
-    "RAG_OPENAI_API_KEY",
+    "KB_OPENAI_API_KEY",
 ]
 LIVE2D_KEYS = [
     "LIVE2D_MODEL_PATH",
@@ -137,14 +140,9 @@ FIELD_METADATA: Dict[str, Dict[str, str]] = {
     "SECURITY_VERIFIER_API_ENDPOINT": {"label": "安全校验接口地址", "tooltip": "安全审查模型使用的 API Base URL。"},
     "SECURITY_VERIFIER_LLM_MODEL": {"label": "安全校验模型", "tooltip": "用于高风险操作前校验的模型名称。"},
     "SECURITY_SYS_ENABLED": {"label": "启用安全系统", "tooltip": "开启后，部分高风险调用会先经过安全审查。"},
-    "RAG_ENABLED": {"label": "启用 RAG", "tooltip": "开启后允许使用检索增强记忆与文档问答能力。"},
-    "RAG_API_URL": {"label": "RAG 服务地址", "tooltip": "LightRAG 或 Nano RAG 服务的访问地址。"},
-    "RAG_LLM_BASE_URL": {"label": "RAG 模型接口地址", "tooltip": "RAG 内部调用聊天模型时使用的 API Base URL。"},
-    "RAG_CHAT_MODEL": {"label": "RAG 对话模型", "tooltip": "RAG 检索后生成回答时使用的模型名称。"},
-    "RAG_EMBED_MODEL": {"label": "RAG 向量模型", "tooltip": "用于文本向量化的 embedding 模型名称。"},
-    "RAG_EMBED_DIM": {"label": "向量维度", "tooltip": "embedding 模型输出的向量维度，必须与模型一致。"},
-    "RAG_EMBED_MAX_TOKEN_SIZE": {"label": "向量最大 Token", "tooltip": "单次向量化请求允许的最大 token 数。"},
-    "RAG_AUTO_INDEX_RECORD": {"label": "自动索引记录", "tooltip": "开启后会自动把部分记录写入 RAG 存储。"},
+    "KB_ENABLED": {"label": "启用 KB", "tooltip": "开启后允许使用树形知识库与向量检索能力。"},
+    "KB_EMBED_MODEL": {"label": "KB 向量模型", "tooltip": "知识库文本向量化使用的 embedding 模型名称。"},
+    "KB_ASYNC_INDEX_ON_WRITE": {"label": "KB 异步索引", "tooltip": "开启后知识库写入会以后台任务方式异步索引。"},
     "MC_OPERATOR_URL": {"label": "Minecraft 操作地址", "tooltip": "Minecraft 桥接服务的 WebSocket 地址。"},
     "MC_EVENT_TRIGGER_ENABLED": {"label": "启用 Minecraft 事件触发", "tooltip": "开启后 Minecraft 事件可以触发 Faust 行为。"},
     "LIVE2D_MODEL_PATH": {"label": "Live2D 模型路径", "tooltip": "前端加载的 Live2D 模型文件路径。"},
@@ -176,7 +174,7 @@ FIELD_METADATA: Dict[str, Dict[str, str]] = {
     "SEARCH_API_KEY": {"label": "搜索密钥", "tooltip": "联网搜索工具使用的 API Key。"},
     "GUI_OPERATOR_LLM_KEY": {"label": "GUI 操作密钥", "tooltip": "GUI 自动操作模型使用的 API Key。"},
     "SECURITY_VERIFIER_LLM_KEY": {"label": "安全校验密钥", "tooltip": "安全校验模型使用的 API Key。"},
-    "RAG_OPENAI_API_KEY": {"label": "RAG 密钥", "tooltip": "RAG 服务访问模型或向量接口时使用的 API Key。"},
+    "KB_OPENAI_API_KEY": {"label": "KB 密钥", "tooltip": "知识库 embedding 使用的 API Key；为空时回退到主对话密钥。"},
     "TTS_REFER_WAV_PATH": {"label": "TTS 参考音频路径", "tooltip": "本地 TTS 的参考音频文件路径，仅 local TTS 模式有效。"},
     "TTS_PROMPT_TEXT": {"label": "TTS 参考文本", "tooltip": "参考音频对应的原始文本内容，仅 local TTS 模式有效。"},
     "TTS_PROMPT_LANGUAGE": {"label": "TTS 参考语言", "tooltip": "参考音频文本的语言，仅 local TTS 模式有效。"},
@@ -208,33 +206,6 @@ class FieldWidget:
 
 class ApiError(Exception):
     pass
-
-
-class RagDetailDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("RAG 详情")
-        self.resize(860, 620)
-
-        root = QVBoxLayout(self)
-        self.meta_view = QPlainTextEdit()
-        self.meta_view.setReadOnly(True)
-        self.content_edit = QPlainTextEdit()
-
-        root.addWidget(QLabel("元信息"))
-        root.addWidget(self.meta_view, 2)
-        root.addWidget(QLabel("正文"))
-        root.addWidget(self.content_edit, 3)
-
-        btn_row = QHBoxLayout()
-        self.close_btn = QPushButton("关闭")
-        self.delete_btn = QPushButton("删除")
-        self.save_btn = QPushButton("保存")
-        btn_row.addStretch(1)
-        btn_row.addWidget(self.close_btn)
-        btn_row.addWidget(self.delete_btn)
-        btn_row.addWidget(self.save_btn)
-        root.addLayout(btn_row)
 
 
 class TriggerDetailDialog(QDialog):
@@ -297,7 +268,7 @@ class TriggerDetailDialog(QDialog):
 class ConfigerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FaustBot")
+        self.setWindowTitle("FaustBot Configer")
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1300, 900)
@@ -309,21 +280,16 @@ class ConfigerWindow(QMainWindow):
             "selected_agent": None,
             "services": [],
             "selected_service": None,
-            "rag": {
-                "page": 1,
-                "page_size": 10,
-                "total": 0,
-                "total_pages": 1,
-                "search": "",
-                "time_from": "",
-                "time_to": "",
-                "items": [],
-                "detail": None,
-            },
             "plugins": {
                 "items": [],
                 "selected_id": None,
                 "hot_reload": {},
+            },
+            "kb": {
+                "scope": "",
+                "selected_path": None,
+                "tree": {},
+                "tasks": [],
             },
             "triggers": {
                 "items": [],
@@ -398,7 +364,7 @@ class ConfigerWindow(QMainWindow):
         self._build_agent_tab()
         self._build_live2d_tab()
         self._build_speech_tab()
-        self._build_rag_tab()
+        self._build_kb_tab()
         self._build_runtime_tab()
         self._build_trigger_tab()
         self._build_skills_tab()
@@ -792,74 +758,95 @@ class ConfigerWindow(QMainWindow):
         self.trigger_detail_dialog.close_btn.clicked.connect(self.trigger_detail_dialog.close)
         self._on_trigger_type_changed(self.trigger_type_combo.currentText())
 
-    def _build_rag_tab(self):
+    def _build_kb_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        filter_row = QHBoxLayout()
-        self.rag_search_input = QLineEdit()
-        self.rag_search_input.setPlaceholderText("关键词")
-        self.rag_time_from = QDateTimeEdit()
-        self.rag_time_to = QDateTimeEdit()
-        self.rag_time_from.setDisplayFormat(TIME_DISPLAY)
-        self.rag_time_to.setDisplayFormat(TIME_DISPLAY)
-        self.rag_time_from.setSpecialValueText("不限")
-        self.rag_time_to.setSpecialValueText("不限")
-        self.rag_time_from.clear()
-        self.rag_time_to.clear()
+        top = QHBoxLayout()
+        self.kb_scope_input = QLineEdit()
+        self.kb_scope_input.setPlaceholderText("范围，例如 /reactor/core/")
+        self.kb_refresh_btn = QPushButton("刷新")
+        self.kb_new_file_btn = QPushButton("新建文件")
+        self.kb_new_folder_btn = QPushButton("新建文件夹")
+        self.kb_delete_btn = QPushButton("删除")
+        self.kb_reindex_btn = QPushButton("全量重建索引")
+        top.addWidget(QLabel("范围"))
+        top.addWidget(self.kb_scope_input, 1)
+        top.addWidget(self.kb_refresh_btn)
+        top.addWidget(self.kb_new_file_btn)
+        top.addWidget(self.kb_new_folder_btn)
+        top.addWidget(self.kb_delete_btn)
+        top.addWidget(self.kb_reindex_btn)
+        layout.addLayout(top)
 
-        self.rag_page_size = QComboBox()
-        self.rag_page_size.addItems(["10", "20", "50"])
+        split = QSplitter(Qt.Horizontal)
 
-        self.rag_search_btn = QPushButton("搜索")
-        self.rag_reset_btn = QPushButton("重置")
-        self.rag_search_btn.clicked.connect(lambda: self.load_rag_documents(reset_page=True))
-        self.rag_reset_btn.clicked.connect(self.reset_rag_filters)
+        left = QVBoxLayout()
+        self.kb_tree = QTreeWidget()
+        self.kb_tree.setHeaderLabels(["知识库路径"])
+        self.kb_tree.itemSelectionChanged.connect(self._on_kb_selected)
+        left.addWidget(self.kb_tree, 1)
 
-        filter_row.addWidget(QLabel("搜索"))
-        filter_row.addWidget(self.rag_search_input, 2)
-        filter_row.addWidget(QLabel("开始"))
-        filter_row.addWidget(self.rag_time_from)
-        filter_row.addWidget(QLabel("结束"))
-        filter_row.addWidget(self.rag_time_to)
-        filter_row.addWidget(QLabel("每页"))
-        filter_row.addWidget(self.rag_page_size)
-        filter_row.addWidget(self.rag_search_btn)
-        filter_row.addWidget(self.rag_reset_btn)
-        layout.addLayout(filter_row)
+        left_holder = QWidget()
+        left_holder.setLayout(left)
 
-        self.rag_table = QTableWidget(0, 5)
-        self.rag_table.setHorizontalHeaderLabels(["doc_id", "status", "时间", "chunks", "file_path"])
-        self.rag_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.rag_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.rag_table.itemDoubleClicked.connect(lambda _: self.open_rag_detail())
-        layout.addWidget(self.rag_table, 1)
+        right = QVBoxLayout()
+        self.kb_path_input = QLineEdit()
+        self.kb_path_input.setPlaceholderText("知识库路径")
+        self.kb_index_checkbox = QCheckBox("保存后加入后台索引")
+        self.kb_index_checkbox.setChecked(True)
+        self.kb_editor = QPlainTextEdit()
+        self.kb_search_input = QLineEdit()
+        self.kb_search_input.setPlaceholderText("在当前 scope 中搜索")
+        self.kb_search_btn = QPushButton("搜索")
+        self.kb_save_btn = QPushButton("保存当前节点")
+        self.kb_declare_btn = QPushButton("Declare Update 导入外部文件")
+        self.kb_search_result = QPlainTextEdit()
+        self.kb_search_result.setReadOnly(True)
+        self.kb_tasks_view = QPlainTextEdit()
+        self.kb_tasks_view.setReadOnly(True)
 
-        pager = QHBoxLayout()
-        self.rag_page_info = QLabel("-")
-        self.rag_prev_btn = QPushButton("上一页")
-        self.rag_next_btn = QPushButton("下一页")
-        self.rag_open_detail_btn = QPushButton("详情")
-        self.rag_delete_btn = QPushButton("删除")
-        self.rag_prev_btn.clicked.connect(self.rag_prev_page)
-        self.rag_next_btn.clicked.connect(self.rag_next_page)
-        self.rag_open_detail_btn.clicked.connect(self.open_rag_detail)
-        self.rag_delete_btn.clicked.connect(self.delete_selected_rag)
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("路径"))
+        path_row.addWidget(self.kb_path_input, 1)
+        path_row.addWidget(self.kb_index_checkbox)
+        right.addLayout(path_row)
+        right.addWidget(QLabel("内容"))
+        right.addWidget(self.kb_editor, 3)
 
-        pager.addWidget(self.rag_page_info)
-        pager.addStretch(1)
-        pager.addWidget(self.rag_prev_btn)
-        pager.addWidget(self.rag_next_btn)
-        pager.addWidget(self.rag_open_detail_btn)
-        pager.addWidget(self.rag_delete_btn)
-        layout.addLayout(pager)
+        save_row = QHBoxLayout()
+        save_row.addWidget(self.kb_save_btn)
+        save_row.addWidget(self.kb_declare_btn)
+        save_row.addStretch(1)
+        right.addLayout(save_row)
 
-        self.tabs.addTab(tab, "RAG 记忆库")
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("搜索"))
+        search_row.addWidget(self.kb_search_input, 1)
+        search_row.addWidget(self.kb_search_btn)
+        right.addLayout(search_row)
+        right.addWidget(QLabel("搜索结果"))
+        right.addWidget(self.kb_search_result, 1)
+        right.addWidget(QLabel("后台索引任务"))
+        right.addWidget(self.kb_tasks_view, 1)
 
-        self.rag_detail_dialog = RagDetailDialog(self)
-        self.rag_detail_dialog.close_btn.clicked.connect(self.rag_detail_dialog.close)
-        self.rag_detail_dialog.save_btn.clicked.connect(self.save_rag_detail)
-        self.rag_detail_dialog.delete_btn.clicked.connect(self.delete_rag_detail)
+        right_holder = QWidget()
+        right_holder.setLayout(right)
+        split.addWidget(left_holder)
+        split.addWidget(right_holder)
+        split.setSizes([420, 860])
+        layout.addWidget(split, 1)
+
+        self.kb_refresh_btn.clicked.connect(self.load_kb_tree)
+        self.kb_new_file_btn.clicked.connect(self.create_kb_file)
+        self.kb_new_folder_btn.clicked.connect(self.create_kb_folder)
+        self.kb_delete_btn.clicked.connect(self.delete_kb_node)
+        self.kb_reindex_btn.clicked.connect(self.reindex_kb)
+        self.kb_save_btn.clicked.connect(self.save_kb_node)
+        self.kb_search_btn.clicked.connect(self.search_kb)
+        self.kb_declare_btn.clicked.connect(self.declare_update_to_kb)
+
+        self.tabs.addTab(tab, "KB 记忆库")
 
     # ---------- Helpers ----------
     def notify(self, text: str):
@@ -1631,50 +1618,13 @@ class ConfigerWindow(QMainWindow):
         except Exception as e:
             self.fail("删除 Skill 失败", e)
 
-    def load_rag_documents(self, reset_page: bool = False):
-        rag = self.state["rag"]
-        if reset_page:
-            rag["page"] = 1
-
-        rag["search"] = self.rag_search_input.text().strip()
-        rag["page_size"] = int(self.rag_page_size.currentText())
-        rag["time_from"] = self.rag_time_from.text().strip()
-        rag["time_to"] = self.rag_time_to.text().strip()
-
-        params = {
-            "page": rag["page"],
-            "page_size": rag["page_size"],
-            "search": rag["search"] or None,
-            "time_from": rag["time_from"] or None,
-            "time_to": rag["time_to"] or None,
-        }
-        data = self.api_request("GET", "/faust/admin/rag/documents", params=params)
-
-        rag["items"] = data.get("documents") or []
-        p = data.get("pagination") or {}
-        rag["page"] = int(p.get("page") or rag["page"])
-        rag["page_size"] = int(p.get("page_size") or rag["page_size"])
-        rag["total"] = int(p.get("total") or 0)
-        rag["total_pages"] = int(p.get("total_pages") or 1)
-
-        self.rag_table.setRowCount(len(rag["items"]))
-        for i, doc in enumerate(rag["items"]):
-            self.rag_table.setItem(i, 0, QTableWidgetItem(str(doc.get("doc_id", ""))))
-            self.rag_table.setItem(i, 1, QTableWidgetItem(str(doc.get("status", ""))))
-            self.rag_table.setItem(i, 2, QTableWidgetItem(str(doc.get("updated_at") or doc.get("created_at") or "")))
-            self.rag_table.setItem(i, 3, QTableWidgetItem(str(doc.get("chunks_count", 0))))
-            self.rag_table.setItem(i, 4, QTableWidgetItem(str(doc.get("file_path") or "")))
-
-        self.rag_page_info.setText(
-            f"第 {rag['page']}/{max(rag['total_pages'], 1)} 页 · 每页 {rag['page_size']} · 共 {rag['total']} 条"
-        )
-
     def refresh_all(self):
         try:
             self.load_config_view()
             self.load_runtime_summary()
             self.load_services()
-            self.load_rag_documents(reset_page=False)
+            self.load_kb_tree()
+            self.load_kb_tasks()
             self.load_triggers()
             self.load_skills()
             self.load_plugins()
@@ -1857,6 +1807,178 @@ class ConfigerWindow(QMainWindow):
         text = item.text()
         return text.replace("（当前）", "").strip()
 
+    def load_kb_tree(self):
+        scope = self.kb_scope_input.text().strip()
+        self.state["kb"]["scope"] = scope
+        data = self.api_request("GET", "/faust/kb/tree", params={"scope": scope or None})
+        tree = data.get("tree") or {}
+        self.state["kb"]["tree"] = tree
+        selected_path = self.state["kb"].get("selected_path")
+
+        self.kb_tree.blockSignals(True)
+        self.kb_tree.clear()
+
+        def add_item(node: Dict[str, Any], parent=None):
+            name = str(node.get("name") or node.get("path") or "/")
+            item = QTreeWidgetItem([name])
+            item.setData(0, Qt.UserRole, str(node.get("path") or ""))
+            item.setData(0, Qt.UserRole + 1, str(node.get("type") or "dir"))
+            if parent is None:
+                self.kb_tree.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+            for child in node.get("children") or []:
+                add_item(child, item)
+            if selected_path and str(node.get("path") or "") == selected_path:
+                self.kb_tree.setCurrentItem(item)
+            return item
+
+        if tree:
+            add_item(tree)
+            self.kb_tree.expandAll()
+        self.kb_tree.blockSignals(False)
+
+    def load_kb_tasks(self):
+        data = self.api_request("GET", "/faust/kb/tasks")
+        items = data.get("items") or []
+        self.state["kb"]["tasks"] = items
+        lines = []
+        for item in items[:20]:
+            lines.append(
+                f"[{item.get('status')}] {item.get('type')} | {item.get('task_id')} | {item.get('updated_at')}"
+                + (f" | {item.get('error')}" if item.get("error") else "")
+            )
+        self.kb_tasks_view.setPlainText("\n".join(lines))
+
+    def _on_kb_selected(self):
+        item = self.kb_tree.currentItem()
+        if not item:
+            return
+        path = str(item.data(0, Qt.UserRole) or "")
+        node_type = str(item.data(0, Qt.UserRole + 1) or "dir")
+        self.state["kb"]["selected_path"] = path
+        self.kb_path_input.setText(path)
+        if node_type != "file":
+            self.kb_editor.setPlainText("")
+            return
+        try:
+            data = self.api_request("GET", "/faust/kb/get", params={"path": path})
+            self.kb_editor.setPlainText(str(data.get("content") or ""))
+        except Exception as e:
+            self.fail("读取 KB 节点失败", e)
+
+    def save_kb_node(self):
+        path = self.kb_path_input.text().strip()
+        if not path:
+            QMessageBox.warning(self, "路径为空", "请先填写知识库路径")
+            return
+        try:
+            data = self.api_request(
+                "POST",
+                "/faust/kb/save",
+                payload={
+                    "path": path,
+                    "content": self.kb_editor.toPlainText(),
+                    "declared_by": "configer_pyside6",
+                    "index": self.kb_index_checkbox.isChecked(),
+                },
+            )
+            task = data.get("task") or {}
+            self.state["kb"]["selected_path"] = path
+            self.load_kb_tree()
+            self.load_kb_tasks()
+            self.notify(f"KB 节点已保存: {path} | task={task.get('task_id') or '-'}")
+        except Exception as e:
+            self.fail("保存 KB 节点失败", e)
+
+    def create_kb_file(self):
+        path, ok = QInputDialog.getText(self, "新建知识库文件", "请输入相对路径，例如 reactor/core/control.md")
+        if not ok or not path.strip():
+            return
+        self.kb_path_input.setText(path.strip())
+        self.kb_editor.setPlainText("")
+        self.save_kb_node()
+
+    def create_kb_folder(self):
+        path, ok = QInputDialog.getText(self, "新建知识库文件夹", "请输入相对路径，例如 reactor/core")
+        if not ok or not path.strip():
+            return
+        try:
+            self.api_request("POST", "/faust/kb/mkdir", payload={"path": path.strip()})
+            self.load_kb_tree()
+            self.notify(f"KB 文件夹已创建: {path.strip()}")
+        except Exception as e:
+            self.fail("创建 KB 文件夹失败", e)
+
+    def delete_kb_node(self):
+        path = self.kb_path_input.text().strip() or self.state["kb"].get("selected_path")
+        if not path:
+            return
+        if QMessageBox.question(self, "删除 KB 节点", f"确定删除 {path} 吗？") != QMessageBox.Yes:
+            return
+        try:
+            self.api_request("POST", "/faust/kb/delete", payload={"path": path})
+            self.state["kb"]["selected_path"] = None
+            self.kb_path_input.setText("")
+            self.kb_editor.setPlainText("")
+            self.load_kb_tree()
+            self.load_kb_tasks()
+            self.notify(f"KB 节点已删除: {path}")
+        except Exception as e:
+            self.fail("删除 KB 节点失败", e)
+
+    def reindex_kb(self):
+        try:
+            data = self.api_request("POST", "/faust/kb/reindex", payload={})
+            task = data.get("task") or {}
+            self.load_kb_tasks()
+            self.notify(f"已提交 KB 重建索引任务: {task.get('task_id') or '-'}")
+        except Exception as e:
+            self.fail("重建 KB 索引失败", e)
+
+    def search_kb(self):
+        query = self.kb_search_input.text().strip()
+        if not query:
+            return
+        try:
+            data = self.api_request(
+                "POST",
+                "/faust/kb/search",
+                payload={
+                    "query": query,
+                    "scope": self.kb_scope_input.text().strip() or None,
+                    "top_k": 8,
+                    "return": "snippets",
+                },
+            )
+            items = data.get("items") or []
+            lines = []
+            for item in items:
+                lines.append(f"{item.get('path')} | score={item.get('score')}")
+                lines.append(str(item.get("snippet") or ""))
+                lines.append("")
+            self.kb_search_result.setPlainText("\n".join(lines))
+        except Exception as e:
+            self.fail("搜索 KB 失败", e)
+
+    def declare_update_to_kb(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择外部文件导入知识库", "", "All Files (*.*)")
+        if not file_path:
+            return
+        kb_path, ok = QInputDialog.getText(self, "知识库路径", "请输入导入后的知识库路径（可留空使用 imports/文件名）")
+        if not ok:
+            return
+        payload: Dict[str, Any] = {"file_path": file_path}
+        if kb_path.strip():
+            payload["kb_path"] = kb_path.strip()
+        try:
+            data = self.api_request("POST", "/faust/kb/declare-update", payload=payload)
+            self.load_kb_tree()
+            self.load_kb_tasks()
+            self.notify(f"外部文件已导入 KB: {data.get('path') or '-'}")
+        except Exception as e:
+            self.fail("Declare Update 失败", e)
+
     def _on_agent_selected(self):
         name = self._selected_agent_name()
         if not name:
@@ -1988,45 +2110,6 @@ class ConfigerWindow(QMainWindow):
         except Exception as e:
             self.fail("服务操作失败", e)
 
-    # ---------- RAG ----------
-    def reset_rag_filters(self):
-        self.rag_search_input.clear()
-        self.rag_page_size.setCurrentText("10")
-        self.rag_time_from.clear()
-        self.rag_time_to.clear()
-        self.state["rag"]["page"] = 1
-        try:
-            self.load_rag_documents(reset_page=True)
-        except Exception as e:
-            self.fail("重置 RAG 过滤失败", e)
-
-    def rag_prev_page(self):
-        rag = self.state["rag"]
-        if rag["page"] <= 1:
-            return
-        rag["page"] -= 1
-        try:
-            self.load_rag_documents(reset_page=False)
-        except Exception as e:
-            self.fail("分页失败", e)
-
-    def rag_next_page(self):
-        rag = self.state["rag"]
-        if rag["page"] >= max(rag["total_pages"], 1):
-            return
-        rag["page"] += 1
-        try:
-            self.load_rag_documents(reset_page=False)
-        except Exception as e:
-            self.fail("分页失败", e)
-
-    def _current_rag_doc_id(self) -> Optional[str]:
-        row = self.rag_table.currentRow()
-        if row < 0:
-            return None
-        item = self.rag_table.item(row, 0)
-        return item.text().strip() if item else None
-
     def del_agent_checkpoint(self):
         name = self.state.get("selected_agent")
         if not name:
@@ -2038,94 +2121,6 @@ class ConfigerWindow(QMainWindow):
             self.notify(f"{name} 的 Agent Checkpoint 已删除，对话上下文已重置")
         except Exception as e:
             self.fail("删除 Agent Checkpoint 失败", e)
-    def open_rag_detail(self):
-        doc_id = self._current_rag_doc_id()
-        if not doc_id:
-            return
-        try:
-            encoded_doc_id = requests.utils.quote(doc_id, safe='')
-            meta_data = self.api_request("GET", f"/faust/admin/rag/documents/{encoded_doc_id}")
-            content_data = self.api_request("GET", f"/faust/admin/rag/documents/{encoded_doc_id}/content")
-
-            meta = meta_data.get("document") if isinstance(meta_data, dict) else None
-            if not isinstance(meta, dict):
-                # 兼容旧结构
-                meta = meta_data if isinstance(meta_data, dict) else {"doc_id": doc_id}
-
-            content = ""
-            if isinstance(content_data, dict):
-                # backend-main 当前会包装成: {"status":"ok", "content": {"text": "..."}}
-                wrapped = content_data.get("content")
-                if isinstance(wrapped, dict):
-                    content = str(wrapped.get("text") or "")
-                else:
-                    content = str(content_data.get("text") or "")
-
-            detail = {"document": meta, "content": content}
-            self.state["rag"]["detail"] = detail
-
-            self.rag_detail_dialog.setWindowTitle(f"RAG 详情 · {meta.get('doc_id', doc_id)}")
-            self.rag_detail_dialog.meta_view.setPlainText(json.dumps(meta, ensure_ascii=False, indent=2))
-            self.rag_detail_dialog.content_edit.setPlainText(str(content))
-            self.rag_detail_dialog.show()
-            self.rag_detail_dialog.raise_()
-            self.rag_detail_dialog.activateWindow()
-        except Exception as e:
-            self.fail("打开 RAG 详情失败", e)
-
-    def save_rag_detail(self):
-        detail = self.state["rag"].get("detail")
-        if not detail:
-            return
-        doc = detail.get("document") or {}
-        doc_id = doc.get("doc_id")
-        if not doc_id:
-            return
-        text = self.rag_detail_dialog.content_edit.toPlainText().strip()
-        if not text:
-            QMessageBox.warning(self, "提示", "正文不能为空")
-            return
-        try:
-            self.api_request(
-                "PUT",
-                f"/faust/admin/rag/documents/{requests.utils.quote(str(doc_id), safe='')}",
-                payload={"text": text, "file_path": doc.get("file_path")},
-            )
-            self.notify(f"RAG 记录已保存: {doc_id}")
-            self.open_rag_detail()
-            self.load_rag_documents(reset_page=False)
-        except Exception as e:
-            self.fail("保存 RAG 失败", e)
-
-    def delete_selected_rag(self):
-        doc_id = self._current_rag_doc_id()
-        if not doc_id:
-            return
-        if QMessageBox.question(self, "删除 RAG", f"确定删除 {doc_id} 吗？") != QMessageBox.Yes:
-            return
-        self._delete_rag(doc_id, close_dialog=False)
-
-    def delete_rag_detail(self):
-        detail = self.state["rag"].get("detail") or {}
-        doc = detail.get("document") or {}
-        doc_id = doc.get("doc_id")
-        if not doc_id:
-            return
-        if QMessageBox.question(self, "删除 RAG", f"确定删除 {doc_id} 吗？") != QMessageBox.Yes:
-            return
-        self._delete_rag(str(doc_id), close_dialog=True)
-
-    def _delete_rag(self, doc_id: str, close_dialog: bool):
-        try:
-            self.api_request("DELETE", f"/faust/admin/rag/documents/{requests.utils.quote(doc_id, safe='')}")
-            if close_dialog:
-                self.rag_detail_dialog.close()
-            self.state["rag"]["detail"] = None
-            self.load_rag_documents(reset_page=False)
-            self.notify(f"RAG 记录已删除: {doc_id}")
-        except Exception as e:
-            self.fail("删除 RAG 失败", e)
-
     # ---------- Trigger ----------
     def _allowed_trigger_types(self) -> set[str]:
         return {"interval", "datetime", "py-eval"}
@@ -2310,7 +2305,7 @@ class ConfigerWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setApplicationName("FaustBot")
+    app.setApplicationName("FaustBot Configer")
     if APP_ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     window = ConfigerWindow()

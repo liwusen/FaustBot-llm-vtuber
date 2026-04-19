@@ -2,7 +2,7 @@
     <img src="./document/assets/FaustBot.icon.tiny.png" alt="FaustBot icon" />
 </p>
 
-<h1 align="center">FaustBot-llm-vtuber</h1>
+<h1 align="center">FaustBot</h1>
 
 ---
 
@@ -22,11 +22,11 @@
 
 - [x] 音乐播放（唱歌）
 
-- [x] 模型记忆系统(基于RAG)
+- [x] 模型记忆系统(基于向量查找)
 
 - [x] 每个Agent单独的Workspace
 
-- [x] (独创)灵动交互系统 (前端HTML小窗口交互)
+- [x] 灵动交互系统 (前端HTML小窗口交互)
 
 - [x] 编辑文件，文件读写等基本工具
 
