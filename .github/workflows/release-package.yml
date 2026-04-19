@@ -25,6 +25,14 @@ jobs:
         shell: cmd
         run: setup-runtime.bat --mode cloud --source official --install-python yes --install-node yes
 
+      - name: Remove embedded Python zip
+        shell: pwsh
+        run: |
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE '.runtime/python-embed.zip'
+          if (Test-Path $zipPath) {
+            Remove-Item -LiteralPath $zipPath -Force
+          }
+
       - name: Download VAD model
         shell: cmd
         run: .runtime\python.exe embedded_python_bootstrap.py backend\faust_backend\download_vad.py
