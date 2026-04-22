@@ -6,7 +6,21 @@ contextBridge.exposeInMainWorld('api', {
   hideToTray: () => ipcRenderer.invoke('hide-to-tray'),
   showFromTray: () => ipcRenderer.invoke('show-from-tray'),
   openConfigWindow: () => ipcRenderer.invoke('open-config-window'),
-  resolveFrontendAssetPath: (relativePath) => ipcRenderer.invoke('resolve-frontend-asset-path', String(relativePath || ''))
+  resolveFrontendAssetPath: (relativePath) => ipcRenderer.invoke('resolve-frontend-asset-path', String(relativePath || '')),
+  configRequest: (method, path, payload, query) => ipcRenderer.invoke('config-api', {
+    method: String(method || 'GET'),
+    path: String(path || ''),
+    payload: payload ?? null,
+    query: query ?? null,
+  }),
+  configOpenFile: (options) => ipcRenderer.invoke('config-dialog-open-file', options || {}),
+  configOpenDirectory: (options) => ipcRenderer.invoke('config-dialog-open-directory', options || {}),
+  configOpenPath: (targetPath) => ipcRenderer.invoke('config-open-path', String(targetPath || '')),
+  configHttpRequest: (method, url, payload) => ipcRenderer.invoke('config-http-request', {
+    method: String(method || 'GET'),
+    url: String(url || ''),
+    payload: payload ?? null,
+  })
 });
 
 // Listen for faust commands forwarded from the main process

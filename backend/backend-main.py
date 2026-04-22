@@ -33,6 +33,8 @@ import faust_backend.admin_runtime as admin_runtime
 import faust_backend.service_manager as service_manager
 import faust_backend.kb_manager as kb_manager
 import faust_backend.kb_api as kb_api
+import faust_backend.araya_api as araya_api
+import faust_backend.araya_runtime as araya_runtime
 import faust_backend.plugin_market as plugin_market
 import faust_backend.skill_manager as skill_manager
 import faust_backend.speech_runtime as speech_runtime
@@ -48,6 +50,7 @@ print("[main]Libs Loaded")
 app = FastAPI()
 uvicorn_server = None
 kb_api.register_kb_routes(app)
+araya_api.register_araya_routes(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -231,7 +234,7 @@ startServices()
 
 
 def _compose_runtime_extensions():
-    base_tools = list(llm_tools.toollist)
+    base_tools = list(llm_tools.get_tools_for_agent(AGENT_NAME))
     tools = plugin_manager.compose_tools(base_tools=base_tools, agent_name=AGENT_NAME)
     middlewares = plugin_manager.compose_middlewares(agent_name=AGENT_NAME)
     return tools, middlewares
@@ -411,6 +414,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
 
         makeup_init_prompt()
         llm_tools.refresh_runtime_paths()
+        araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
         plugin_reload = plugin_manager.reload()
         print(f"[plugin] reload summary: {plugin_reload}")
         _sync_plugin_trigger_filters()
@@ -487,6 +491,7 @@ async def startup_event():
         kb_runtime = kb_manager.get_kb_manager(refresh=True)
         kb_runtime.ensure_vdb_initialized()
         await kb_runtime.ensure_worker_started()
+        await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(conf.args.no_startup_chat))
         print(f"[main] Startup runtime summary: {startup_info}")
     except Exception as e:
@@ -681,6 +686,25 @@ async def admin_get_skill_detail(slug: str, agent_name: str | None = None):
         return {"status": "ok", "agent": agent_name or AGENT_NAME, "detail": detail}
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Skill 详情读取失败: {e}")
+
+
+@app.put("/faust/admin/skills/{slug}/skill-md")
+async def admin_update_skill_md(slug: str, payload: dict | None = None):
+    body = payload or {}
+    agent_name = body.get("agent_name")
+    content = str(body.get("content") or "")
+    try:
+        detail = skill_manager.get_skill_detail(slug, agent_name=agent_name)
+        skill_path = str(detail.get("path") or "").strip()
+        if not skill_path:
+            raise RuntimeError("Skill 路径为空")
+        md_path = os.path.join(skill_path, "SKILL.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        refreshed = skill_manager.get_skill_detail(slug, agent_name=agent_name)
+        return {"status": "ok", "detail": refreshed}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"SKILL.md 保存失败: {e}")
 
 
 @app.post("/faust/admin/skills/install")
@@ -1075,6 +1099,7 @@ async def chat_post(payload: dict):
     if not RUNTIME_READY or agent is None:
         return {"error": _runtime_not_ready_message(), "runtime": _runtime_status_payload()}
     try:
+        araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
         events.ignore_trigger_event.set()
         resp = await invoke_agent_locked(agent,{"messages":[{"role":"user","content":text}]})
         reply = _message_content_to_text(resp["messages"][-1].content)
@@ -1111,6 +1136,7 @@ async def chat_websocket(websocket: WebSocket):
                 continue
 
             try:
+                araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
                 events.ignore_trigger_event.set()
                 await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
                 reply = ""
@@ -1424,6 +1450,7 @@ async def shutdown_event():
         except Exception:
             pass
         plugin_heartbeat_task = None
+    await araya_runtime.get_araya_runtime(refresh=True).shutdown()
     trigger_manager.exitflag=True
     await vad_runtime.vad_runtime.shutdown()
     print("Shutting down FAUST Backend Main Service...")

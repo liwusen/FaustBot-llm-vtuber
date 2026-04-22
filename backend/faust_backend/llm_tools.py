@@ -40,12 +40,32 @@ DIARY_DIR = Path("agents") / Path(conf.AGENT_NAME) / "diary"
 STARTED = False
 ORIGINAL_TOOL_FUNCS = {}
 KB_MANAGER = kb_manager.get_kb_manager()
+ARAYA_ALLOWED_TOOL_NAMES = {
+    "kbListTool",
+    "kbReadTool",
+    "kbWriteTool",
+    "kbSearchTool",
+    "kbTagSetTool",
+    "kbScorePatchTool",
+    "kbChangedNodesTool",
+}
+DEFAULT_EXCLUDED_TOOL_NAMES = {
+    "kbScorePatchTool",
+    "kbChangedNodesTool",
+}
 
 
 def refresh_runtime_paths() -> None:
     global DIARY_DIR, KB_MANAGER
     DIARY_DIR = Path("agents") / Path(conf.AGENT_NAME) / "diary"
     KB_MANAGER = kb_manager.get_kb_manager(refresh=True)
+
+
+def get_tools_for_agent(agent_name: str | None = None):
+    target = str(agent_name or conf.AGENT_NAME or "").strip().lower()
+    if target == "araya":
+        return [tool_func for tool_func in toollist if getattr(tool_func, "name", getattr(tool_func, "__name__", "")) in ARAYA_ALLOWED_TOOL_NAMES]
+    return [tool_func for tool_func in toollist if getattr(tool_func, "name", getattr(tool_func, "__name__", "")) not in DEFAULT_EXCLUDED_TOOL_NAMES]
 
 
 def _safe_read_file_range(file_path: str, start_line: int, end_line: int) -> str:
@@ -1071,7 +1091,7 @@ def kbReadTool(path: str) -> str:
 @add_to_tool_list
 @tool
 @record_func_name
-def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True) -> str:
+def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True, tags_json: str = "[]") -> str:
     """
     Description:
         将内容写入知识库文件节点，并创建后台索引任务。
@@ -1080,11 +1100,13 @@ def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool
         content (str): 写入内容。
         declared_by (str): 写入声明来源。
         index (bool): 是否创建后台索引任务。
+        tags_json (str): JSON 数组字符串，例如 ["知识","用户相关"]。
     Returns:
         str(json): 写入结果和 task 信息。
     """
     try:
-        return json.dumps(asyncio.run(KB_MANAGER.write_node(path, content, declared_by=declared_by, index=index)), ensure_ascii=False)
+        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
+        return json.dumps(asyncio.run(KB_MANAGER.write_node(path, content, declared_by=declared_by, index=index, tags=tags)), ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
@@ -1092,7 +1114,7 @@ def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool
 @add_to_tool_list
 @tool
 @record_func_name
-def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets") -> str:
+def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags_json: str = "[]", ignore_score_patch: bool = False) -> str:
     """
     Description:
         在知识库指定范围内做向量检索。
@@ -1102,14 +1124,79 @@ def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str =
         scope (str): 限定目录范围。
         top_k (int): 返回数量。
         return_mode (str): paths/snippets/full。
+        tags_json (str): JSON 数组字符串，按标签过滤。
+        ignore_score_patch (bool): 是否忽略 score patch。
     Returns:
         str(json): 搜索结果列表。
     """
     try:
-        items = asyncio.run(KB_MANAGER.search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode))
+        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
+        items = asyncio.run(KB_MANAGER.search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode, tags=tags, ignore_score_patch=ignore_score_patch))
         if return_mode == "paths":
             return json.dumps([item.get("path") for item in items], ensure_ascii=False)
         return json.dumps(items, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def kbTagSetTool(path: str, tags_json: str, managed_by: str = "agent") -> str:
+    """
+    Description:
+        为知识库文档设置标签。
+    Args:
+        path (str): 知识库相对路径。
+        tags_json (str): JSON 数组字符串，例如 ["知识","废弃"]。
+        managed_by (str): 标签维护者。
+    Returns:
+        str(json): 更新后的 meta。
+    """
+    try:
+        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
+        return json.dumps(asyncio.run(KB_MANAGER.set_tags(path, tags, managed_by=managed_by)), ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def kbScorePatchTool(path: str, score_patch: float, managed_by: str = "agent") -> str:
+    """
+    Description:
+        为知识库文档设置 score patch，范围为 -0.15 到 +0.15。
+    Args:
+        path (str): 知识库相对路径。
+        score_patch (float): 分数补丁。
+        managed_by (str): 维护者。
+    Returns:
+        str(json): 更新后的 meta。
+    """
+    try:
+        return json.dumps(asyncio.run(KB_MANAGER.set_score_patch(path, score_patch, managed_by=managed_by)), ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def kbChangedNodesTool(since_ts: float, scope: str = "", tags_json: str = "[]") -> str:
+    """
+    Description:
+        获取某个时间戳之后发生变更的知识库节点，可按 scope 和标签过滤。
+    Args:
+        since_ts (float): Unix 时间戳。
+        scope (str): 限定目录范围。
+        tags_json (str): JSON 数组字符串，按标签过滤。
+    Returns:
+        str(json): 变更节点列表。
+    """
+    try:
+        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
+        return json.dumps(KB_MANAGER.get_changed_nodes(since_ts, scope=scope, tags=tags), ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
