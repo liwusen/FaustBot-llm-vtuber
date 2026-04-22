@@ -1,3 +1,7 @@
+"""
+阿赖耶没有在等待任何人!
+References:
+https://www.bilibili.com/video/BV1VqdLBzEkN"""
 from __future__ import annotations
 
 import asyncio
@@ -209,6 +213,7 @@ class ArayaRuntime:
         manager = kb_manager.get_kb_manager(refresh=True)
         @tool
         def arayaGetTimeTool() -> dict:
+            """获取当前时间戳和 ISO 格式的 UTC 时间字符串。"""
             return {"time": time.time(), "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         @tool
         def arayaKbListTool(scope: str = "") -> dict:

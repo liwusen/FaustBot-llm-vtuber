@@ -688,6 +688,25 @@ async def admin_get_skill_detail(slug: str, agent_name: str | None = None):
         raise HTTPException(status_code=404, detail=f"Skill 详情读取失败: {e}")
 
 
+@app.put("/faust/admin/skills/{slug}/skill-md")
+async def admin_update_skill_md(slug: str, payload: dict | None = None):
+    body = payload or {}
+    agent_name = body.get("agent_name")
+    content = str(body.get("content") or "")
+    try:
+        detail = skill_manager.get_skill_detail(slug, agent_name=agent_name)
+        skill_path = str(detail.get("path") or "").strip()
+        if not skill_path:
+            raise RuntimeError("Skill 路径为空")
+        md_path = os.path.join(skill_path, "SKILL.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        refreshed = skill_manager.get_skill_detail(slug, agent_name=agent_name)
+        return {"status": "ok", "detail": refreshed}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"SKILL.md 保存失败: {e}")
+
+
 @app.post("/faust/admin/skills/install")
 async def admin_install_skill(payload: dict | None = None):
     body = payload or {}

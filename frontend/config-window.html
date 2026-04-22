@@ -2,9 +2,81 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <title>Deprecated</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FaustBot 配置中心</title>
+  <link rel="stylesheet" href="./config-window.css" />
 </head>
 <body>
-  <p>Electron Configer 已迁移到 PySide6，请运行 <code>frontend/configer_pyside6.py</code>。</p>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>Config</h1>
+        <p>FaustBot 配置中心</p>
+      </div>
+      <nav id="moduleNav" class="module-nav" aria-label="配置模块"></nav>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div class="topbar-left">
+          <span id="validBadge" class="badge badge-valid">valid</span>
+          <span id="dirtyBadge" class="badge badge-dirty hidden">0 unsaved change</span>
+        </div>
+        <div class="topbar-actions">
+          <button id="reloadBtn" class="btn btn-ghost" type="button">Reload</button>
+          <button id="saveBtn" class="btn btn-primary" type="button">Save</button>
+          <button id="applyBtn" class="btn btn-secondary" type="button">Apply</button>
+        </div>
+      </header>
+
+      <section id="banner" class="banner hidden" role="status" aria-live="polite"></section>
+
+      <section class="content-head">
+        <h2 id="moduleTitle">配置</h2>
+        <p id="moduleDesc">在此模块中管理配置项。</p>
+      </section>
+
+      <section id="cardsRoot" class="cards-root">
+        <article class="card full-span" id="bootPlaceholder">
+          <h3 class="card-title">配置中心启动中</h3>
+          <p class="card-help">正在连接后端并加载配置，请稍候。</p>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    window.__CONFIG_CENTER_READY__ = false;
+    window.__CONFIG_CENTER_BOOT_ERROR__ = "";
+    window.addEventListener("error", function (evt) {
+      try {
+        window.__CONFIG_CENTER_BOOT_ERROR__ = String((evt && evt.message) || "未知前端错误");
+      } catch (e) {}
+    });
+    setTimeout(function () {
+      if (window.__CONFIG_CENTER_READY__) return;
+      var root = document.getElementById("cardsRoot");
+      if (!root) return;
+      var err = window.__CONFIG_CENTER_BOOT_ERROR__ || "配置脚本未成功启动。";
+      root.innerHTML = "";
+      var box = document.createElement("article");
+      box.className = "card full-span";
+      var title = document.createElement("h3");
+      title.className = "card-title";
+      title.textContent = "配置中心加载失败";
+      var help = document.createElement("p");
+      help.className = "card-help";
+      help.textContent = "请重启前端进程后重试；如果问题仍存在，请将该错误反馈给开发者。";
+      var detail = document.createElement("textarea");
+      detail.className = "textarea code-area";
+      detail.readOnly = true;
+      detail.value = "错误信息: " + err;
+      box.appendChild(title);
+      box.appendChild(help);
+      box.appendChild(detail);
+      root.appendChild(box);
+    }, 1800);
+  </script>
+  <script src="./config-window.js"></script>
 </body>
 </html>

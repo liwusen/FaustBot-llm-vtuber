@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -7,10 +7,12 @@ const { URL } = require('url');
 const { spawn } = require('child_process');
 
 let mainWindow = null;
+let configWindow = null;
 let tray = null;
 let pendingDeepLinks = [];
 const FAUST_PROTOCOL = 'faustbot';
 const STATIC_PROTOCOL = 'static';
+const FAUST_BACKEND_BASE = 'http://127.0.0.1:13900';
 const FAUST_BACKEND_INSTALL_API = 'http://127.0.0.1:13900/faust/admin/plugin-market/install';
 
 protocol.registerSchemesAsPrivileged([
@@ -253,6 +255,72 @@ function postJson(url, payload, timeoutMs = 20000) {
       reject(e);
     }
   });
+}
+
+function requestJson(method, url, payload = null, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    try {
+      const u = new URL(url);
+      const hasBody = payload !== null && payload !== undefined && method !== 'GET';
+      const data = hasBody ? Buffer.from(JSON.stringify(payload), 'utf8') : null;
+      const lib = u.protocol === 'https:' ? https : http;
+      const req = lib.request({
+        method,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: `${u.pathname}${u.search || ''}`,
+        headers: hasBody ? {
+          'Content-Type': 'application/json',
+          'Content-Length': data.length,
+        } : {},
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let parsed = null;
+          try {
+            parsed = text ? JSON.parse(text) : null;
+          } catch (e) {
+            parsed = { raw: text };
+          }
+          if ((res.statusCode || 500) >= 400) {
+            const err = new Error(`HTTP ${res.statusCode}: ${text}`);
+            err.statusCode = res.statusCode || 500;
+            err.response = parsed;
+            return reject(err);
+          }
+          resolve(parsed);
+        });
+      });
+
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error(`请求超时(${timeoutMs}ms)`));
+      });
+      req.on('error', reject);
+      if (data) {
+        req.write(data);
+      }
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+function buildBackendUrl(apiPath, query) {
+  const normalizedPath = String(apiPath || '').trim();
+  if (!normalizedPath.startsWith('/faust/')) {
+    throw new Error('仅允许访问 /faust/ 下的接口');
+  }
+  const url = new URL(`${FAUST_BACKEND_BASE}${normalizedPath}`);
+  if (query && typeof query === 'object') {
+    for (const [k, v] of Object.entries(query)) {
+      if (v === undefined || v === null) continue;
+      url.searchParams.set(String(k), String(v));
+    }
+  }
+  return url.toString();
 }
 
 function parseFaustDeepLink(rawUrl) {
@@ -521,6 +589,47 @@ function createWindow(){
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
 }
 
+function createConfigWindow() {
+  if (configWindow && !configWindow.isDestroyed()) {
+    configWindow.show();
+    if (configWindow.isMinimized()) configWindow.restore();
+    configWindow.focus();
+    return configWindow;
+  }
+
+  const windowIconPath = path.join(getFrontendAppDir(), 'FaustBot.icon.tiny.png');
+  configWindow = new BrowserWindow({
+    width: 1240,
+    height: 860,
+    minWidth: 1080,
+    minHeight: 700,
+    title: 'FaustBot 配置中心',
+    backgroundColor: '#edf1f6',
+    frame: true,
+    show: false,
+    autoHideMenuBar: true,
+    icon: fs.existsSync(windowIconPath) ? windowIconPath : undefined,
+    webPreferences: {
+      preload: path.join(getFrontendAppDir(), 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  configWindow.loadFile(path.join(getFrontendAppDir(), 'config-window.html'));
+  configWindow.once('ready-to-show', () => {
+    if (!configWindow || configWindow.isDestroyed()) return;
+    configWindow.show();
+    configWindow.focus();
+  });
+
+  configWindow.on('closed', () => {
+    configWindow = null;
+  });
+
+  return configWindow;
+}
+
 function spawnDetachedWithCheck(cmd, args, options = {}) {
   return new Promise((resolve) => {
     let settled = false;
@@ -654,12 +763,7 @@ function createTray(){
   tray.setToolTip('FaustBot');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示前端', click: ()=> showMainWindow() },
-    { label: '打开配置中心(PySide6)', click: async ()=> {
-      const result = await launchPySideConfiger();
-      if (!result.ok) {
-        dialog.showErrorBox('打开配置中心失败', result.error || '打开 PySide6 Configer 失败');
-      }
-    } },
+    { label: '打开配置中心', click: ()=> createConfigWindow() },
     { label: '隐藏到托盘', click: ()=> hideMainWindowToTray() },
     { type: 'separator' },
     { label: '退出', click: ()=> app.quit() },
@@ -738,11 +842,78 @@ ipcMain.handle('show-from-tray', () => {
 });
 
 ipcMain.handle('open-config-window', async () => {
-  const result = await launchPySideConfiger();
-  if (!result.ok) {
-    throw new Error(result.error || '打开 PySide6 Configer 失败');
+  createConfigWindow();
+  return { ok: true, mode: 'electron-window' };
+});
+
+ipcMain.handle('config-api', async (event, req) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) {
+    throw new Error('非法请求来源');
   }
-  return result;
+
+  const method = String((req && req.method) || 'GET').toUpperCase();
+  const pathValue = String((req && req.path) || '').trim();
+  const payload = req ? req.payload : null;
+  const query = req ? req.query : null;
+
+  const allowMethods = new Set(['GET', 'POST', 'PUT', 'DELETE']);
+  if (!allowMethods.has(method)) {
+    throw new Error(`不支持的请求方法: ${method}`);
+  }
+
+  const fullUrl = buildBackendUrl(pathValue, query);
+  return requestJson(method, fullUrl, payload);
+});
+
+ipcMain.handle('config-dialog-open-file', async (_event, options) => {
+  const result = await dialog.showOpenDialog({
+    title: String((options && options.title) || '选择文件'),
+    filters: Array.isArray(options && options.filters) ? options.filters : undefined,
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
+ipcMain.handle('config-dialog-open-directory', async (_event, options) => {
+  const result = await dialog.showOpenDialog({
+    title: String((options && options.title) || '选择目录'),
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
+ipcMain.handle('config-open-path', async (_event, targetPath) => {
+  const p = String(targetPath || '').trim();
+  if (!p) {
+    throw new Error('路径不能为空');
+  }
+  const openErr = await shell.openPath(p);
+  return { ok: !openErr, error: openErr || null };
+});
+
+ipcMain.handle('config-http-request', async (_event, req) => {
+  const method = String((req && req.method) || 'GET').toUpperCase();
+  const rawUrl = String((req && req.url) || '').trim();
+  const payload = req ? req.payload : null;
+  const allowMethods = new Set(['GET', 'POST', 'PUT', 'DELETE']);
+  if (!allowMethods.has(method)) {
+    throw new Error(`不支持的请求方法: ${method}`);
+  }
+  if (!rawUrl) {
+    throw new Error('URL 不能为空');
+  }
+  const parsed = new URL(rawUrl);
+  if (!(parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')) {
+    throw new Error('仅允许请求本机服务');
+  }
+  return requestJson(method, parsed.toString(), payload);
 });
 
 // allow renderer to send log messages to main process console
