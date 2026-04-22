@@ -54,6 +54,8 @@ PUBLIC_PROVIDER_KEYS = [
     "SECURITY_VERIFIER_LLM_MODEL",
     "SECURITY_SYS_ENABLED",
     "KB_ENABLED",
+    "ARAYA_ENABLED",
+    "ARAYA_IDLE_MINUTES",
     "MC_OPERATOR_URL",
     "MC_EVENT_TRIGGER_ENABLED",
 ]
@@ -143,6 +145,8 @@ FIELD_METADATA: Dict[str, Dict[str, str]] = {
     "KB_ENABLED": {"label": "启用 KB", "tooltip": "开启后允许使用树形知识库与向量检索能力。"},
     "KB_EMBED_MODEL": {"label": "KB 向量模型", "tooltip": "知识库文本向量化使用的 embedding 模型名称。"},
     "KB_ASYNC_INDEX_ON_WRITE": {"label": "KB 异步索引", "tooltip": "开启后知识库写入会以后台任务方式异步索引。"},
+    "ARAYA_ENABLED": {"label": "启用 Araya", "tooltip": "开启后允许独立记忆维护 Agent 在主 Agent 空闲时自动触发。"},
+    "ARAYA_IDLE_MINUTES": {"label": "Araya 空闲触发分钟", "tooltip": "主 Agent 连续空闲达到该分钟数后，Araya 可自动运行一次。"},
     "MC_OPERATOR_URL": {"label": "Minecraft 操作地址", "tooltip": "Minecraft 桥接服务的 WebSocket 地址。"},
     "MC_EVENT_TRIGGER_ENABLED": {"label": "启用 Minecraft 事件触发", "tooltip": "开启后 Minecraft 事件可以触发 Faust 行为。"},
     "LIVE2D_MODEL_PATH": {"label": "Live2D 模型路径", "tooltip": "前端加载的 Live2D 模型文件路径。"},
@@ -291,6 +295,9 @@ class ConfigerWindow(QMainWindow):
                 "tree": {},
                 "tasks": [],
             },
+            "araya": {
+                "status": {},
+            },
             "triggers": {
                 "items": [],
                 "selected_id": None,
@@ -365,6 +372,7 @@ class ConfigerWindow(QMainWindow):
         self._build_live2d_tab()
         self._build_speech_tab()
         self._build_kb_tab()
+        self._build_araya_tab()
         self._build_runtime_tab()
         self._build_trigger_tab()
         self._build_skills_tab()
@@ -571,6 +579,42 @@ class ConfigerWindow(QMainWindow):
         layout.addWidget(self.service_log, 2, 1, 2, 1)
 
         self.tabs.addTab(tab, "运行控制")
+
+    def _build_araya_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        top = QHBoxLayout()
+        self.araya_enabled_checkbox = QCheckBox("启用 Araya 自动维护")
+        self.araya_idle_spin = QSpinBox()
+        self.araya_idle_spin.setRange(1, 24 * 60)
+        self.araya_idle_spin.setValue(30)
+        self.araya_save_btn = QPushButton("保存 Araya 设置")
+        self.araya_refresh_btn = QPushButton("刷新状态")
+        self.araya_trigger_btn = QPushButton("立即触发")
+        self.araya_save_btn.clicked.connect(self.save_araya_settings)
+        self.araya_refresh_btn.clicked.connect(self.load_araya_status)
+        self.araya_trigger_btn.clicked.connect(self.trigger_araya)
+        top.addWidget(self.araya_enabled_checkbox)
+        top.addWidget(QLabel("空闲分钟"))
+        top.addWidget(self.araya_idle_spin)
+        top.addWidget(self.araya_save_btn)
+        top.addWidget(self.araya_refresh_btn)
+        top.addWidget(self.araya_trigger_btn)
+        top.addStretch(1)
+        layout.addLayout(top)
+
+        self.araya_status_view = QPlainTextEdit()
+        self.araya_status_view.setReadOnly(True)
+        self.araya_log_view = QPlainTextEdit()
+        self.araya_log_view.setReadOnly(True)
+
+        layout.addWidget(QLabel("当前状态"))
+        layout.addWidget(self.araya_status_view, 1)
+        layout.addWidget(QLabel("上一次运行日志"))
+        layout.addWidget(self.araya_log_view, 2)
+
+        self.tabs.addTab(tab, "Araya")
 
     def _build_plugins_tab(self):
         tab = QWidget()
@@ -1144,6 +1188,15 @@ class ConfigerWindow(QMainWindow):
                     self.skill_agent_combo.setCurrentIndex(idx)
             self.skill_agent_combo.blockSignals(False)
 
+    def load_araya_status(self):
+        data = self.api_request("GET", "/faust/araya/status")
+        araya = data.get("araya") or {}
+        self.state["araya"]["status"] = araya
+        self.araya_enabled_checkbox.setChecked(bool(araya.get("enabled", True)))
+        self.araya_idle_spin.setValue(int(float(araya.get("idle_minutes", 30) or 30)))
+        self.araya_status_view.setPlainText(json.dumps(araya, ensure_ascii=False, indent=2))
+        self.araya_log_view.setPlainText(json.dumps(araya.get("last_log") or {}, ensure_ascii=False, indent=2))
+
     def load_services(self):
         data = self.api_request("GET", "/faust/admin/services")
         self.state["services"] = data.get("items") or []
@@ -1622,6 +1675,7 @@ class ConfigerWindow(QMainWindow):
         try:
             self.load_config_view()
             self.load_runtime_summary()
+            self.load_araya_status()
             self.load_services()
             self.load_kb_tree()
             self.load_kb_tasks()
@@ -1661,8 +1715,36 @@ class ConfigerWindow(QMainWindow):
             self.notify("配置已保存")
             self.load_config_view()
             self.load_runtime_summary()
+            self.load_araya_status()
         except Exception as e:
             self.fail("保存配置失败", e)
+
+    def save_araya_settings(self):
+        try:
+            self.api_request(
+                "POST",
+                "/faust/araya/settings",
+                payload={
+                    "enabled": self.araya_enabled_checkbox.isChecked(),
+                    "idle_minutes": int(self.araya_idle_spin.value()),
+                },
+            )
+            self.notify("Araya 设置已保存")
+            self.load_araya_status()
+        except Exception as e:
+            self.fail("保存 Araya 设置失败", e)
+
+    def trigger_araya(self):
+        try:
+            data = self.api_request("POST", "/faust/araya/trigger", payload={"reason": "manual_from_configer"})
+            result = data.get("result") or {}
+            if result.get("accepted"):
+                self.notify("Araya 已加入后台执行队列")
+            else:
+                self.notify(f"Araya 当前未入队: {result.get('status') or '-'}")
+            QTimer.singleShot(500, self.load_araya_status)
+        except Exception as e:
+            self.fail("触发 Araya 失败", e)
 
     def _browse_tts_refer_wav(self):
         file_path, _ = QFileDialog.getOpenFileName(

@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -274,3 +275,75 @@ def test_kb_ensure_vdb_initialized_creates_empty_index_file():
         assert manager.paths.index_file.exists()
     finally:
         manager._vdb = original_vdb
+
+
+def test_kb_write_preserves_tags_and_score_patch_and_search_by_tags():
+    manager = kb_manager.get_kb_manager(refresh=True)
+    original_vdb = manager._vdb
+    original_embed = manager._embed_texts
+    original_create_vdb = manager._create_vdb
+
+    async def fake_embed(texts):
+        vectors = np.zeros((len(texts), kb_manager.EMBED_DIM), dtype=np.float32)
+        vectors[:, 0] = 1.0
+        return vectors
+
+    class FakeVDB:
+        def query(self, query, top_k=10, better_than_threshold=None):
+            return [
+                {
+                    "node_path": "tmp_pytest_tags/doc.md",
+                    "text_preview": "Hello tagged world",
+                    "__metrics__": np.float32(0.61),
+                }
+            ]
+
+    manager._embed_texts = fake_embed
+    manager._create_vdb = lambda: FakeVDB()
+    manager._vdb = None
+
+    async def main():
+        manager.paths.index_file.parent.mkdir(parents=True, exist_ok=True)
+        manager.paths.index_file.write_text("{}", encoding="utf-8")
+        await manager.write_node("tmp_pytest_tags/doc.md", "Hello tagged world", declared_by="pytest", index=False, tags=["知识", "用户相关"])
+        await manager.set_score_patch("tmp_pytest_tags/doc.md", 0.12, managed_by="pytest")
+        node = manager.read_node("tmp_pytest_tags/doc.md")
+        assert node["meta"]["tags"] == ["知识", "用户相关"]
+        assert float(node["meta"]["score_patch"]) == 0.12
+        results = await manager.search("Hello", scope="tmp_pytest_tags", tags=["知识"], top_k=5)
+        assert results
+        assert results[0]["path"] == "tmp_pytest_tags/doc.md"
+        assert abs(float(results[0]["raw_score"]) - 0.61) < 1e-6
+        assert float(results[0]["score_patch"]) == 0.12
+        assert abs(float(results[0]["score"]) - 0.73) < 1e-6
+        ignored = await manager.search("Hello", scope="tmp_pytest_tags", tags=["知识"], top_k=5, ignore_score_patch=True)
+        assert ignored
+        assert float(ignored[0]["score_patch"]) == 0.0
+        assert abs(float(ignored[0]["score"]) - 0.61) < 1e-6
+        await manager.delete_node("tmp_pytest_tags/doc.md")
+
+    try:
+        asyncio.run(main())
+    finally:
+        manager._vdb = original_vdb
+        manager._embed_texts = original_embed
+        manager._create_vdb = original_create_vdb
+        if manager.paths.index_file.exists():
+            manager.paths.index_file.unlink()
+
+
+def test_kb_get_changed_nodes_filters_since_and_tags():
+    manager = kb_manager.get_kb_manager(refresh=True)
+
+    async def main():
+        before = time.time() - 1
+        await manager.write_node("tmp_pytest_changed/doc.md", "changed content", declared_by="pytest", index=False, tags=["知识", "行为准则"])
+        changed = manager.get_changed_nodes(before, scope="tmp_pytest_changed", tags=["知识"])
+        assert changed
+        assert changed[0]["path"] == "tmp_pytest_changed/doc.md"
+        assert changed[0]["tags"] == ["知识", "行为准则"]
+        missing = manager.get_changed_nodes(before, scope="tmp_pytest_changed", tags=["废弃"])
+        assert missing == []
+        await manager.delete_node("tmp_pytest_changed/doc.md")
+
+    asyncio.run(main())

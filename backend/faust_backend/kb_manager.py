@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import math
 import os
@@ -22,6 +23,8 @@ EMBED_DIM = 1536
 MAX_CHUNK_CHARS = 3000
 CHUNK_OVERLAP_CHARS = 300
 MAX_TASK_HISTORY = 200
+MIN_SCORE_PATCH = -0.15
+MAX_SCORE_PATCH = 0.15
 
 
 def _utc_ts() -> float:
@@ -52,6 +55,33 @@ def _normalize_scope(scope: str | None) -> str:
     text = str(scope or "").replace("\\", "/").strip()
     text = text.strip("/")
     return f"{text}/" if text else ""
+
+
+def _normalize_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for tag in tags or []:
+        value = str(tag or "").strip()
+        if not value:
+            continue
+        lowered = value.casefold()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(value)
+    return normalized
+
+
+def _normalize_score_patch(value: float | int | str | None) -> float:
+    try:
+        patch = float(value or 0.0)
+    except Exception as exc:
+        raise ValueError(f"score_patch 非法: {value}") from exc
+    if not math.isfinite(patch):
+        raise ValueError("score_patch 必须是有限数值")
+    if patch < MIN_SCORE_PATCH or patch > MAX_SCORE_PATCH:
+        raise ValueError(f"score_patch 超出范围，必须位于 [{MIN_SCORE_PATCH}, {MAX_SCORE_PATCH}]")
+    return patch
 
 
 def _normalize_kb_path(path: str) -> str:
@@ -140,6 +170,31 @@ class KBManager:
 
     def _chunks_file(self, path: str) -> Path:
         return self.paths.meta_root / f"{_normalize_kb_path(path)}.chunks.json"
+
+    def _iter_meta_files(self):
+        if not self.paths.meta_root.exists():
+            return []
+        return sorted(self.paths.meta_root.rglob("*.meta.json"))
+
+    def _read_meta(self, path: str) -> dict:
+        norm = _normalize_kb_path(path)
+        meta = _read_json(self._meta_file(norm), {})
+        meta.setdefault("path", norm)
+        meta["tags"] = _normalize_tags(meta.get("tags") or [])
+        try:
+            meta["score_patch"] = _normalize_score_patch(meta.get("score_patch", 0.0))
+        except ValueError:
+            meta["score_patch"] = 0.0
+        return meta
+
+    def _write_meta(self, path: str, meta: dict) -> dict:
+        norm = _normalize_kb_path(path)
+        merged = dict(meta or {})
+        merged["path"] = norm
+        merged["tags"] = _normalize_tags(merged.get("tags") or [])
+        merged["score_patch"] = _normalize_score_patch(merged.get("score_patch", 0.0))
+        _atomic_write_json(self._meta_file(norm), merged)
+        return merged
 
     def _load_chunks_index(self) -> dict:
         return _read_json(self.paths.chunks_index_file, {})
@@ -231,7 +286,12 @@ class KBManager:
         return np.array([item.embedding for item in response.data], dtype=np.float32)
 
     def _create_vdb(self) -> NanoVectorDB:
-        return NanoVectorDB(EMBED_DIM, storage_file=str(self.paths.index_file))
+        try:
+            return NanoVectorDB(EMBED_DIM, storage_file=str(self.paths.index_file))
+        except Exception:
+            if self.paths.index_file.exists():
+                self.paths.index_file.unlink()
+            return NanoVectorDB(EMBED_DIM, storage_file=str(self.paths.index_file))
 
     def _get_vdb(self, force_reload: bool = False) -> NanoVectorDB:
         if force_reload or self._vdb is None:
@@ -389,14 +449,14 @@ class KBManager:
         file_path = self._node_file(norm)
         if not file_path.exists() or not file_path.is_file():
             raise FileNotFoundError(f"KB 节点不存在: {norm}")
-        meta = _read_json(self._meta_file(norm), {})
+        meta = self._read_meta(norm)
         return {
             "path": norm,
             "content": file_path.read_text(encoding="utf-8"),
             "meta": meta,
         }
 
-    async def write_node(self, path: str, content: str, declared_by: str | None = None, index: bool = True) -> dict:
+    async def write_node(self, path: str, content: str, declared_by: str | None = None, index: bool = True, tags: list[str] | None = None) -> dict:
         norm = _normalize_kb_path(path)
         async with self._write_lock:
             file_path = self._node_file(norm)
@@ -406,6 +466,7 @@ class KBManager:
             os.replace(tmp, file_path)
 
             chunks = _chunk_text(content)
+            existing_meta = self._read_meta(norm) if self._meta_file(norm).exists() else {"path": norm, "tags": [], "score_patch": 0.0}
             meta = {
                 "path": norm,
                 "declared_by": declared_by or "agent",
@@ -413,8 +474,12 @@ class KBManager:
                 "source": "kb_write",
                 "chunk_count": len(chunks),
                 "indexed": bool(index),
+                "tags": _normalize_tags(tags if tags is not None else existing_meta.get("tags") or []),
+                "score_patch": _normalize_score_patch(existing_meta.get("score_patch", 0.0)),
+                "score_patch_updated_at": existing_meta.get("score_patch_updated_at", ""),
+                "managed_by": existing_meta.get("managed_by", ""),
             }
-            _atomic_write_json(self._meta_file(norm), meta)
+            meta = self._write_meta(norm, meta)
 
             chunk_items = []
             chunks_index = self._load_chunks_index()
@@ -444,6 +509,65 @@ class KBManager:
         if index:
             task = await self.enqueue_task("write_node", {"path": norm})
         return {"path": norm, "meta": meta, "task": task}
+
+    async def set_tags(self, path: str, tags: list[str], managed_by: str | None = None) -> dict:
+        norm = _normalize_kb_path(path)
+        node = self.read_node(norm)
+        meta = dict(node.get("meta") or {})
+        meta["tags"] = _normalize_tags(tags)
+        meta["updated_at"] = _utc_iso()
+        if managed_by is not None:
+            meta["managed_by"] = str(managed_by or "")
+        meta = self._write_meta(norm, meta)
+        return {"path": norm, "meta": meta}
+
+    async def set_score_patch(self, path: str, score_patch: float, managed_by: str | None = None) -> dict:
+        norm = _normalize_kb_path(path)
+        node = self.read_node(norm)
+        meta = dict(node.get("meta") or {})
+        meta["score_patch"] = _normalize_score_patch(score_patch)
+        meta["score_patch_updated_at"] = _utc_iso()
+        meta["updated_at"] = _utc_iso()
+        if managed_by is not None:
+            meta["managed_by"] = str(managed_by or "")
+        meta = self._write_meta(norm, meta)
+        return {"path": norm, "meta": meta}
+
+    def get_changed_nodes(self, since_ts: float | int | str, scope: str | None = None, tags: list[str] | None = None) -> list[dict]:
+        try:
+            since_value = float(since_ts)
+        except Exception as exc:
+            raise ValueError("since_ts 非法") from exc
+        scope_prefix = _normalize_scope(scope)
+        required_tags = {item.casefold() for item in _normalize_tags(tags)}
+        items: list[dict] = []
+        for meta_file in self._iter_meta_files():
+            meta = _read_json(meta_file, {})
+            node_path = str(meta.get("path") or "")
+            if not node_path:
+                continue
+            if scope_prefix and not (node_path == scope_prefix.rstrip("/") or node_path.startswith(scope_prefix)):
+                continue
+            normalized_tags = _normalize_tags(meta.get("tags") or [])
+            if required_tags:
+                current_tags = {item.casefold() for item in normalized_tags}
+                if not required_tags.issubset(current_tags):
+                    continue
+            updated_at = str(meta.get("updated_at") or "")
+            try:
+                updated_ts = float(calendar.timegm(time.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ")))
+            except Exception:
+                updated_ts = 0.0
+            if updated_ts < since_value:
+                continue
+            items.append({
+                "path": node_path,
+                "updated_at": updated_at,
+                "tags": normalized_tags,
+                "score_patch": float(meta.get("score_patch") or 0.0),
+                "managed_by": str(meta.get("managed_by") or ""),
+            })
+        return sorted(items, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
     async def mkdir(self, path: str) -> dict:
         norm = _normalize_kb_path(path)
@@ -525,11 +649,34 @@ class KBManager:
         result["meta"] = meta
         return result
 
-    async def search(self, query: str, scope: str | None = None, top_k: int = 8, return_mode: str = "snippets") -> list[dict]:
+    async def search(
+        self,
+        query: str,
+        scope: str | None = None,
+        top_k: int = 8,
+        return_mode: str = "snippets",
+        tags: list[str] | None = None,
+        ignore_score_patch: bool = False,
+    ) -> list[dict]:
         scope_prefix = _normalize_scope(scope)
         query_text = str(query or "").strip()
-        if not query_text:
+        required_tags = {item.casefold() for item in _normalize_tags(tags)}
+        if not query_text and not required_tags:
             return []
+        if not query_text:
+            items = self.get_changed_nodes(0, scope=scope, tags=list(required_tags))
+            results = []
+            for item in items[:top_k]:
+                patch = 0.0 if ignore_score_patch else float(item.get("score_patch") or 0.0)
+                results.append({
+                    "path": item.get("path"),
+                    "raw_score": 0.0,
+                    "score_patch": patch,
+                    "score": patch,
+                    "tags": list(item.get("tags") or []),
+                    "snippet": "",
+                })
+            return results
         if not self.paths.index_file.exists():
             return []
         emb = await self._embed_texts([query_text])
@@ -552,6 +699,12 @@ class KBManager:
                 continue
             if scope_prefix and not (node_path == scope_prefix.rstrip("/") or node_path.startswith(scope_prefix)):
                 continue
+            meta = self._read_meta(node_path)
+            normalized_tags = list(meta.get("tags") or [])
+            if required_tags:
+                current_tags = {tag.casefold() for tag in normalized_tags}
+                if not required_tags.issubset(current_tags):
+                    continue
             metrics = hit.get("__metrics__")
             if isinstance(metrics, dict):
                 score = metrics.get("cosine_similarity", metrics.get("score", 0))
@@ -559,14 +712,21 @@ class KBManager:
                 score = metrics
             else:
                 score = hit.get("__score__", hit.get("score", 0))
-            score = float(score or 0)
+            raw_score = float(score or 0)
+            if not math.isfinite(raw_score):
+                raw_score = 0.0
+            score_patch = 0.0 if ignore_score_patch else float(meta.get("score_patch") or 0.0)
+            score = raw_score + score_patch
             if not math.isfinite(score):
                 score = 0.0
             current = best_by_path.get(node_path)
             if current is None or float(current.get("score") or 0) < score:
                 row = {
                     "path": node_path,
+                    "raw_score": raw_score,
+                    "score_patch": score_patch,
                     "score": score,
+                    "tags": normalized_tags,
                     "snippet": str(hit.get("text_preview") or hit.get("text") or ""),
                 }
                 if return_mode == "full":

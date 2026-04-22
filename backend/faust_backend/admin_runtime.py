@@ -39,6 +39,8 @@ PUBLIC_CONFIG_DEFAULTS = {
     "KB_ENABLED": True,
     "KB_EMBED_MODEL": "text-embedding-3-small",
     "KB_ASYNC_INDEX_ON_WRITE": True,
+    "ARAYA_ENABLED": True,
+    "ARAYA_IDLE_MINUTES": 30,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,
     "LIVE2D_MODEL_PATH": "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json",
@@ -310,6 +312,10 @@ def runtime_summary() -> Dict[str, Any]:
     public_cfg = get_public_config()
     return {
         "current_agent": public_cfg.get("AGENT_NAME", "faust"),
+        "araya": {
+            "enabled": bool(public_cfg.get("ARAYA_ENABLED", True)),
+            "idle_minutes": float(public_cfg.get("ARAYA_IDLE_MINUTES", 30) or 30),
+        },
         "public_config": public_cfg,
         "private_config": get_private_config(mask_secrets=True),
         "available_models": list_available_models(),

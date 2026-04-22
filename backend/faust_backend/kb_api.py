@@ -27,11 +27,12 @@ def register_kb_routes(app):
         content = str(body.get("content") or "")
         declared_by = body.get("declared_by")
         index = bool(body.get("index", True))
+        tags = body.get("tags") or []
         if not path:
             raise HTTPException(status_code=400, detail="缺少 path")
         manager = get_kb_manager(refresh=True)
         try:
-            result = await manager.write_node(path, content, declared_by=declared_by, index=index)
+            result = await manager.write_node(path, content, declared_by=declared_by, index=index, tags=tags)
             return {"status": "ok", **result}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -72,8 +73,46 @@ def register_kb_routes(app):
                 scope=body.get("scope"),
                 top_k=int(body.get("top_k") or 8),
                 return_mode=str(body.get("return") or "snippets"),
+                tags=body.get("tags") or [],
+                ignore_score_patch=bool(body.get("ignore_score_patch", False)),
             )
             return {"status": "ok", "items": results}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/faust/kb/tags")
+    async def kb_tags(payload: dict | None = None):
+        body = payload or {}
+        path = str(body.get("path") or "").strip()
+        tags = body.get("tags") or []
+        managed_by = body.get("managed_by")
+        if not path:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        manager = get_kb_manager(refresh=True)
+        try:
+            return {"status": "ok", **(await manager.set_tags(path, tags, managed_by=managed_by))}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/faust/kb/score-patch")
+    async def kb_score_patch(payload: dict | None = None):
+        body = payload or {}
+        path = str(body.get("path") or "").strip()
+        managed_by = body.get("managed_by")
+        if not path:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        manager = get_kb_manager(refresh=True)
+        try:
+            return {"status": "ok", **(await manager.set_score_patch(path, body.get("score_patch", 0.0), managed_by=managed_by))}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/faust/kb/changed")
+    async def kb_changed(since_ts: float, scope: str | None = Query(default=None), tags: str | None = Query(default=None)):
+        manager = get_kb_manager(refresh=True)
+        tag_list = [item.strip() for item in str(tags or "").split(",") if item.strip()]
+        try:
+            return {"status": "ok", "items": manager.get_changed_nodes(since_ts, scope=scope, tags=tag_list)}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
