@@ -562,6 +562,31 @@ function makeFieldCard(scope, key, value) {
       card.classList.add("dirty");
     });
     controlWrap.append(input);
+  } else if (key === "TTS_REFER_WAV_PATH") {
+    const row = el("div", "toolbar");
+    const input = el("input", "input");
+    input.type = "text";
+    input.value = currentValue === null || currentValue === undefined ? "" : String(currentValue);
+    input.placeholder = "选择或输入参考音频文件路径";
+    input.addEventListener("input", () => {
+      updateValue(scope, key, input.value);
+      card.classList.add("dirty");
+    });
+    const pickButton = makeButton("选择文件", async () => {
+      const filePath = await window.api.configOpenFile({
+        title: "选择 TTS 参考音频",
+        filters: [
+          { name: "Audio", extensions: ["wav", "mp3", "flac", "m4a", "ogg"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
+      });
+      if (!filePath) return;
+      input.value = filePath;
+      updateValue(scope, key, filePath);
+      card.classList.add("dirty");
+    }, "btn btn-secondary");
+    row.append(input, pickButton);
+    controlWrap.append(row);
   } else {
     const input = el("input", "input");
     input.type = "text";

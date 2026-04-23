@@ -1,22 +1,26 @@
-import queue
-import json
 import asyncio
+import json
 try:
     import faust_backend.events as events
 except ImportError:
     import events
 import uuid
-FrontEndTaskQueue = queue.Queue()
+FrontEndTaskQueue = asyncio.Queue()
 
+
+async def _push_command_async(command: str, payload=None):
+    """Async version of push command for asyncio Queue."""
+    if payload is None:
+        await FrontEndTaskQueue.put(command)
+    elif isinstance(payload, str):
+        await FrontEndTaskQueue.put(command + " " + payload)
+    else:
+        await FrontEndTaskQueue.put(command + " " + json.dumps(payload, ensure_ascii=False))
+    events.backend2frontendQueue_event.set()
 
 def _push_command(command: str, payload=None):
-    if payload is None:
-        FrontEndTaskQueue.put(command)
-    elif isinstance(payload, str):
-        FrontEndTaskQueue.put(command + " " + payload)
-    else:
-        FrontEndTaskQueue.put(command + " " + json.dumps(payload, ensure_ascii=False))
-    events.backend2frontendQueue_event.set()
+    """Sync wrapper for backward compatibility."""
+    asyncio.create_task(_push_command_async(command, payload))
 
 
 def FrontEndSay(text):
@@ -71,11 +75,20 @@ def FrontEndCloseNimbleWindow(payload: dict)->None:
     _push_command("NIMBLE_CLOSE", payload)
 
 
-def popFrontEndTask()->str:
+async def popFrontEndTask()->str:
+    """Async version to properly handle asyncio Queue."""
     try:
-        task=FrontEndTaskQueue.get_nowait()
+        task = await asyncio.wait_for(FrontEndTaskQueue.get(), timeout=0.01)
         return task
-    except queue.Empty:
+    except asyncio.TimeoutError:
+        return ""
+
+def popFrontEndTask_sync()->str:
+    """Sync wrapper for backward compatibility (deprecated)."""
+    try:
+        task = FrontEndTaskQueue.get_nowait()
+        return task
+    except asyncio.QueueEmpty:
         return ""
 def FrontendHIL(context:dict)->None:
     """Handles approval requests from the human-in-the-loop system.
@@ -89,6 +102,7 @@ def FrontendHIL(context:dict)->None:
     """
     _push_command("HIL_APPROVAL", context)
 def hasFrontEndTask():
+    """Check if queue has items (non-blocking)."""
     return not FrontEndTaskQueue.empty()
 
 async def frontendGetMotions()->str:

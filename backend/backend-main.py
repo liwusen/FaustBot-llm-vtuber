@@ -60,8 +60,7 @@ app.add_middleware(
 )
 PORT = 13900
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-asyncio.run(backend2frontend.frontendGetMotions())
-forward_queue=queue.Queue()
+forward_queue=asyncio.Queue()
 agent=None
 agent_lock = asyncio.Lock()
 plugin_manager = PluginManager()
@@ -1214,10 +1213,12 @@ async def command_websocket(websocket: WebSocket):
                 if("<NO_TTS_OUTPUT>" in reply):
                     continue
                 await websocket.send_text(f"SAY {reply}")
-            if not forward_queue.empty():
-                command=forward_queue.get()
+            try:
+                command = await asyncio.wait_for(forward_queue.get(), timeout=0.01)
                 print("[main] Forwarding command from queue:",command)
                 await websocket.send_text(f"{command}")
+            except asyncio.TimeoutError:
+                pass
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
         print("[main] command websocket disconnected")

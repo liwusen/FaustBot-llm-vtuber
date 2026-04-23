@@ -66,6 +66,9 @@ PUBLIC_CONFIG_DEFAULTS = {
     "OPENAI_ASR_RESPONSE_FORMAT": "json",
     "OPENAI_ASR_TEMPERATURE": 0.0,
     "OPENAI_ASR_TIMESTAMP_GRANULARITIES": "",
+    "FAUSTBOT_CLOUD_BASE_URL": "http://127.0.0.1:18980",
+    "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH": "",
+    "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
     # TTS 参考音频配置
     "TTS_REFER_WAV_PATH": str(BACKEND_ROOT / "voices" / "neuro.wav"),
     "TTS_PROMPT_TEXT": "Hold on please, I'm busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.",
@@ -79,6 +82,7 @@ PRIVATE_CONFIG_DEFAULTS = {
     "KB_OPENAI_API_KEY": "",
     "OPENAI_TTS_API_KEY": "",
     "OPENAI_ASR_API_KEY": "",
+    "FAUSTBOT_CLOUD_SERVICE_KEY": "",
 }
 
 _AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
