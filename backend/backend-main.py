@@ -1171,7 +1171,10 @@ async def command_websocket(websocket: WebSocket):
     try:
         while True:
             if backend2frontend.hasFrontEndTask():
-                await websocket.send_text(backend2frontend.popFrontEndTask())
+                task = await backend2frontend.popFrontEndTask()
+                print("[main] Sending frontend task from backend2frontend queue",task)
+                if task:
+                    await websocket.send_text(task)
             if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
                 if not RUNTIME_READY or agent is None:
                     await asyncio.sleep(0.1)
@@ -1238,7 +1241,7 @@ async def command_forward_post(payload: dict):
         command = payload.get('command')
     if not command:
         return {"error": "no command provided"}
-    forward_queue.put(command)
+    await forward_queue.put(command)
     events.backend2frontendQueue_event.set()
     return {"status": "command forwarded"}
 @app.post("/faust/humanInLoop/feedback")
