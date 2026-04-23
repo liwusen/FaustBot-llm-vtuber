@@ -2,34 +2,24 @@
   "enabled": true,
   "idle_minutes": 30.0,
   "last_main_activity_ts": 1776689549.8418045,
-  "last_trigger_ts": 1776852983.6756525,
+  "last_trigger_ts": 1776935379.6600132,
   "last_run_status": "ok",
   "last_error": "",
   "target_agent": "faust",
   "running": true,
   "enabled_by_config": true,
-  "idle_seconds": 164066.50657129288,
+  "idle_seconds": 245611.44338202477,
   "last_log": {
     "reason": "manual_from_configer",
-    "started_at": 1776852733.3777616,
-    "started_at_iso": "2026-04-22T10:12:13Z",
+    "started_at": 1776934145.285565,
+    "started_at_iso": "2026-04-23T08:49:05Z",
     "target_agent": "faust",
-    "since_ts": 1776852374.2771852,
-    "status": "ok",
-    "error": "",
-    "response": {
-      "messages": [
-        "{\"path\": \"audit_log/20260422_101334.md\", \"meta\": {\"path\": \"audit_log/20260422_101334.md\", \"declared_by\": \"araya\", \"updated_at\": \"2026-04-22T10:16:09Z\", \"source\": \"kb_write\", \"chunk_count\": 1, \"indexed\": true, \"tags\": [\"audit_log\", \"araya\"], \"score_patch\": 0.0, \"score_patch_updated_at\": \"\", \"managed_by\": \"araya\"}}",
-        "{\"path\": \"diary/2026-04-22/173047_762bbf.md\", \"meta\": {\"path\": \"diary/2026-04-22/173047_762bbf.md\", \"declared_by\": \"diary\", \"updated_at\": \"2026-04-22T10:16:09Z\", \"source\": \"kb_write\", \"chunk_count\": 1, \"indexed\": true, \"tags\": [\"diary\", \"心跳\", \"faust\"], \"score_patch\": 0.0, \"score_patch_updated_at\": \"\", \"managed_by\": \"araya\"}}",
-        "{\"path\": \"diary/2026-04-22/180007_a43365.md\", \"meta\": {\"path\": \"diary/2026-04-22/180007_a43365.md\", \"declared_by\": \"diary\", \"updated_at\": \"2026-04-22T10:16:09Z\", \"source\": \"kb_write\", \"chunk_count\": 1, \"indexed\": true, \"tags\": [\"diary\", \"心跳\", \"faust\"], \"score_patch\": 0.0, \"score_patch_updated_at\": \"\", \"managed_by\": \"araya\"}}",
-        "",
-        "{\"path\": \"diary/2026-04-22/180017_9d62bb.md\", \"meta\": {\"path\": \"diary/2026-04-22/180017_9d62bb.md\", \"declared_by\": \"diary\", \"updated_at\": \"2026-04-22T10:16:14Z\", \"source\": \"kb_write\", \"chunk_count\": 1, \"indexed\": true, \"tags\": [\"diary\", \"心跳\", \"faust\"], \"score_patch\": 0.0, \"score_patch_updated_at\": \"\", \"managed_by\": \"araya\"}}",
-        "维护完成。以下是本次执行摘要：\n\n**操作记录：**\n- **Tag 补全**：为 16 个无标签文件统一添加 `[\"diary\", \"心跳\", \"faust\"]` 或 `[\"records\", \"faust\", \"标签搜索测试\", \"检索验证\"]` 标签\n- **Auto Index 更新**：覆盖写入 `/auto_index.md`，更新维护时间至 2026-04-22，新增记录条目，diary 目录改为按日期聚合摘要，标签解释表同步更新\n- **审计日志**：写入 `audit_log/20260422_101334.md`\n\n所有文件标签已保持一致，索引结构已同步最新状态。"
-      ]
-    },
-    "finished_at": 1776852983.6756525,
-    "finished_at_iso": "2026-04-22T10:16:23Z",
-    "duration_seconds": 250.298
+    "since_ts": 1776852983.6756525,
+    "status": "error",
+    "error": "'AIMessage' object is not subscriptable",
+    "finished_at": 1776934567.5964046,
+    "finished_at_iso": "2026-04-23T08:56:07Z",
+    "duration_seconds": 422.311
   },
   "run_in_progress": false
 }

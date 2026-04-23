@@ -1089,7 +1089,7 @@ async def chat_post(payload: dict):
         兼容性HTTP端点。内部仍然返回完整回复。
         已经弃用
         请使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。
-        保留原因：方便调试,参见debug_console.py对此的使用
+        保留原因：方便调试
     """
     text = None
     if isinstance(payload, dict):

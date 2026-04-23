@@ -351,12 +351,18 @@ class ArayaRuntime:
                     f"必要时请维护 /auto_index.md，并且仅使用当前可用工具完成知识库维护。\n"
                     f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
                 )
-                response = await araya_agent.ainvoke({"messages": [{"role": "user", "content": instruction}]})
-                print(f"[Araya]Araya agent response: {response}")
-                result_payload["response"] = self._normalize_response(response)
+                #resp["messages"][-1].content => 结果
+                try:
+                    response = await araya_agent.ainvoke({"messages": [{"role": "user", "content": instruction}]})
+                    print(f"[Araya]Araya agent response: {response['messages'][-1].content}")
+                except Exception as e:
+                    print(f"[Araya]Error during agent invocation: {e}")
+                    raise
+                result_payload["response"] = self._normalize_response(response['messages'][-1].content)
                 result_payload["status"] = "ok"
                 state["last_error"] = ""
             except Exception as exc:
+                print("[Araya]Error in run_once: ", exc)
                 result_payload["status"] = "error"
                 result_payload["error"] = str(exc)
                 state["last_error"] = str(exc)

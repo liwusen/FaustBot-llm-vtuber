@@ -1,86 +1,7 @@
-﻿const META = {
-  GUI_OPERATOR_LLM_MODEL: { label: "GUI 操作模型", help: "用于 GUI 自动操作能力的模型名称。" },
-  GUI_OPERATOR_LLM_BASE: { label: "GUI 操作接口地址", help: "GUI 自动操作模型使用的 API Base URL。" },
-  CHAT_MODEL: { label: "主对话模型", help: "Faust 主聊天与推理使用的模型名称。" },
-  CHAT_API_BASE: { label: "主对话接口地址", help: "主对话模型对应的 API Base URL。" },
-  SECURITY_VERIFIER_API_ENDPOINT: { label: "安全校验接口地址", help: "安全审查模型使用的 API Base URL。" },
-  SECURITY_VERIFIER_LLM_MODEL: { label: "安全校验模型", help: "用于高风险操作前校验的模型名称。" },
-  SECURITY_SYS_ENABLED: { label: "启用安全系统", help: "开启后，部分高风险调用会先经过安全审查。" },
-  KB_ENABLED: { label: "启用 KB", help: "开启后允许使用树形知识库与向量检索能力。" },
-  KB_EMBED_MODEL: { label: "KB 向量模型", help: "知识库文本向量化使用的 embedding 模型名称。" },
-  KB_ASYNC_INDEX_ON_WRITE: { label: "KB 异步索引", help: "开启后知识库写入会以后台任务方式异步索引。" },
-  ARAYA_ENABLED: { label: "启用 Araya", help: "开启后允许独立记忆维护 Agent 自动触发。" },
-  ARAYA_IDLE_MINUTES: { label: "Araya 空闲触发分钟", help: "主 Agent 连续空闲达到该值后允许自动运行。" },
-  LIVE2D_MODEL_PATH: { label: "Live2D 模型路径", help: "前端加载的 Live2D 模型文件路径。" },
-  LIVE2D_MODEL_SCALE: { label: "Live2D 缩放", help: "模型在前端画布中的整体缩放比例。" },
-  LIVE2D_MODEL_X: { label: "Live2D 横向位置", help: "模型 X 坐标；留空时由前端自动决定。" },
-  LIVE2D_MODEL_Y: { label: "Live2D 纵向位置", help: "模型 Y 坐标；留空时由前端自动决定。" },
-  TEXT_CHAT_BAR_Y_FACTOR: { label: "文字对话框 Y 轴绑定", help: "控制文字对话框绑定在模型高度上的位置，范围 0 到 1。" },
-  FRONTEND_QUICK_CONTROLLER_X_OFFSET: { label: "快捷控制栏 X 偏移", help: "控制快捷控制栏横向偏移，单位像素。" },
-  FRONTEND_CLICK_THROUGH: { label: "前端点击穿透", help: "开启后桌宠窗口忽略鼠标点击。" },
-  FRONTEND_DEFAULT_TTS_LANG: { label: "默认 TTS 语言", help: "前端发送 TTS 请求时默认使用的语言。" },
-  TTS_MODE: { label: "TTS 模式", help: "选择本地 TTS 或 OpenAI 兼容 TTS。" },
-  ASR_MODE: { label: "ASR 模式", help: "选择本地 ASR 或 OpenAI 兼容 ASR。" },
-  OPENAI_TTS_BASE_URL: { label: "OpenAI TTS 接口地址", help: "OpenAI 兼容 TTS 服务的 API Base URL。" },
-  OPENAI_TTS_MODEL: { label: "OpenAI TTS 模型", help: "OpenAI 兼容 TTS 所使用的模型名称。" },
-  OPENAI_TTS_VOICE: { label: "OpenAI TTS 音色", help: "OpenAI 兼容 TTS 的 voice 参数。" },
-  OPENAI_TTS_RESPONSE_FORMAT: { label: "OpenAI TTS 音频格式", help: "TTS 输出音频编码格式。" },
-  OPENAI_TTS_SPEED: { label: "OpenAI TTS 语速", help: "TTS 合成语速倍率。" },
-  OPENAI_TTS_INSTRUCTIONS: { label: "OpenAI TTS 附加指令", help: "传给 TTS 模型的补充语气说明。" },
-  OPENAI_ASR_BASE_URL: { label: "OpenAI ASR 接口地址", help: "OpenAI 兼容 ASR 服务的 API Base URL。" },
-  OPENAI_ASR_MODEL: { label: "OpenAI ASR 模型", help: "OpenAI 兼容 ASR 所使用的模型名称。" },
-  OPENAI_ASR_LANGUAGE: { label: "OpenAI ASR 语言", help: "可选语言提示，留空则自动判断。" },
-  OPENAI_ASR_PROMPT: { label: "OpenAI ASR 提示词", help: "传给识别模型的上下文提示。" },
-  OPENAI_ASR_RESPONSE_FORMAT: { label: "OpenAI ASR 返回格式", help: "识别结果返回格式。" },
-  OPENAI_ASR_TEMPERATURE: { label: "OpenAI ASR 温度", help: "识别采样温度。" },
-  OPENAI_ASR_TIMESTAMP_GRANULARITIES: { label: "OpenAI ASR 时间戳粒度", help: "verbose_json 模式下的时间戳粒度。" },
-  CHAT_API_KEY: { label: "主对话密钥", help: "主聊天模型使用的 API Key。" },
-  SEARCH_API_KEY: { label: "搜索密钥", help: "联网搜索工具使用的 API Key。" },
-  GUI_OPERATOR_LLM_KEY: { label: "GUI 操作密钥", help: "GUI 自动操作模型使用的 API Key。" },
-  SECURITY_VERIFIER_LLM_KEY: { label: "安全校验密钥", help: "安全校验模型使用的 API Key。" },
-  KB_OPENAI_API_KEY: { label: "KB 密钥", help: "知识库 embedding 使用的 API Key。" },
-  OPENAI_TTS_API_KEY: { label: "OpenAI TTS 密钥", help: "OpenAI 兼容 TTS 服务使用的 API Key。" },
-  OPENAI_ASR_API_KEY: { label: "OpenAI ASR 密钥", help: "OpenAI 兼容 ASR 服务使用的 API Key。" },
-  AGENT_NAME: { label: "当前 Agent", help: "指定当前加载的角色目录名称。" },
-  TTS_REFER_WAV_PATH: { label: "TTS 参考音频路径", help: "本地 TTS 的参考音频文件路径。" },
-  TTS_PROMPT_TEXT: { label: "TTS 参考文本", help: "参考音频对应的文本内容。" },
-  TTS_PROMPT_LANGUAGE: { label: "TTS 参考语言", help: "参考音频文本语言。" },
-};
-
-const FIELD_OPTIONS = {
-  TTS_MODE: ["local", "openai"],
-  ASR_MODE: ["local", "openai"],
-  FRONTEND_DEFAULT_TTS_LANG: ["zh", "en", "ja", "ko", "yue"],
-  OPENAI_TTS_VOICE: ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"],
-  OPENAI_TTS_RESPONSE_FORMAT: ["mp3", "wav", "opus", "aac", "flac", "pcm"],
-  OPENAI_ASR_RESPONSE_FORMAT: ["json", "text", "srt", "verbose_json", "vtt"],
-  TTS_PROMPT_LANGUAGE: ["zh", "en", "ja", "ko", "yue", "中文", "英文", "日文", "韩文", "粤语"],
-};
-
-const AGENT_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"];
-const TEXTAREA_KEYS = new Set(["OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_PROMPT", "TTS_PROMPT_TEXT"]);
-const SECRET_KEYS = new Set(["CHAT_API_KEY", "SEARCH_API_KEY", "GUI_OPERATOR_LLM_KEY", "SECURITY_VERIFIER_LLM_KEY", "KB_OPENAI_API_KEY", "OPENAI_TTS_API_KEY", "OPENAI_ASR_API_KEY"]);
-
-const AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "GUI_OPERATOR_LLM_MODEL", "GUI_OPERATOR_LLM_BASE", "SECURITY_VERIFIER_API_ENDPOINT", "SECURITY_VERIFIER_LLM_MODEL", "SECURITY_SYS_ENABLED", "KB_ENABLED", "KB_EMBED_MODEL", "KB_ASYNC_INDEX_ON_WRITE", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES"];
-const AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "GUI_OPERATOR_LLM_KEY", "SECURITY_VERIFIER_LLM_KEY", "KB_OPENAI_API_KEY"];
-const LIVE2D_KEYS = ["LIVE2D_MODEL_PATH", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
-const SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE"];
-const SPEECH_PRIVATE_KEYS = ["OPENAI_TTS_API_KEY", "OPENAI_ASR_API_KEY"];
-
-const MODULES = [
-  { id: "overview", title: "概览", desc: "当前 Agent、模型、运行时状态摘要。" },
-  { id: "ai", title: "AI Provider", desc: "模型、接口地址与密钥配置。" },
-  { id: "live2d", title: "Live2D", desc: "模型、位置、缩放与显示行为。" },
-  { id: "speech", title: "语音", desc: "ASR/TTS 模式与参数配置。" },
-  { id: "agent", title: "Agent", desc: "角色文件编辑、切换与创建。" },
-  { id: "kb", title: "KB", desc: "知识库树、编辑、检索、索引管理。" },
-  { id: "araya", title: "Araya", desc: "Araya 状态监控与触发。" },
-  { id: "runtime", title: "Runtime", desc: "服务状态与运行时控制。" },
-  { id: "triggers", title: "Triggers", desc: "计划任务列表与编辑。" },
-  { id: "skills", title: "Skills", desc: "Skill 安装、启停、删除。" },
-  { id: "plugins", title: "Plugins", desc: "插件启停、重载、配置。" },
-  { id: "advanced", title: "高级", desc: "未归类字段与扩展配置。" },
-];
+﻿// 常量已抽取到 ./libs/configer/constants.js
+if (typeof META === "undefined" || typeof FIELD_OPTIONS === "undefined" || typeof MODULES === "undefined") {
+  console.error("配置常量未加载：请确认 frontend/libs/configer/constants.js 已在 HTML 中先加载。");
+}
 
 const state = {
   activeModule: "overview",
@@ -125,198 +46,60 @@ const els = {
   banner: document.getElementById("banner"),
 };
 
-function cfgApi(method, path, payload, query) {
-  return window.api.configRequest(method, path, payload, query);
+function clearRoot() {
+  if (els && els.cardsRoot) els.cardsRoot.innerHTML = "";
 }
 
-function apiLocal(method, url, payload) {
-  return window.api.configHttpRequest(method, url, payload);
+function setBusy(v) {
+  if (!els) return;
+  if (els.saveBtn) els.saveBtn.disabled = v;
+  if (els.applyBtn) els.applyBtn.disabled = v;
+  if (els.reloadBtn) els.reloadBtn.disabled = v;
 }
 
 function showBanner(type, text) {
+  if (!els || !els.banner) return;
   els.banner.className = `banner ${type}`;
   els.banner.textContent = text;
   els.banner.classList.remove("hidden");
 }
 
 function hideBanner() {
+  if (!els || !els.banner) return;
   els.banner.classList.add("hidden");
 }
 
-function setBusy(v) {
-  els.saveBtn.disabled = v;
-  els.applyBtn.disabled = v;
-  els.reloadBtn.disabled = v;
+function cfgApi(method, path, payload, query) {
+  if (window.api && typeof window.api.configRequest === "function") return window.api.configRequest(method, path, payload, query);
+  return Promise.reject(new Error("window.api.configRequest 未实现"));
 }
 
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined && text !== null) node.textContent = text;
-  return node;
-}
-
-function makeButton(text, onClick, className = "btn btn-ghost") {
-  const btn = el("button", className, text);
-  btn.type = "button";
-  btn.addEventListener("click", onClick);
-  return btn;
-}
-
-function clearRoot() {
-  els.cardsRoot.innerHTML = "";
+function apiLocal(method, url, payload) {
+  if (window.api && typeof window.api.configHttpRequest === "function") return window.api.configHttpRequest(method, url, payload);
+  return Promise.reject(new Error("window.api.configHttpRequest 未实现"));
 }
 
 function addSection(title, bodyNodes, full = true) {
   const section = el("section", `card section ${full ? "full-span" : ""}`.trim());
   const t = el("h3", "section-title", title);
   section.append(t);
-  for (const node of bodyNodes) {
-    section.append(node);
-  }
-  els.cardsRoot.append(section);
+  for (const node of bodyNodes) section.append(node);
+  if (els && els.cardsRoot) els.cardsRoot.append(section);
 }
 
-function formatScalar(v) {
-  if (v === null || v === undefined) return "-";
-  if (typeof v === "boolean") return v ? "true" : "false";
-  return String(v);
+// Modal helpers 已提取到 frontend/libs/configer/modal.js
+if (typeof ensureModalRoot === "undefined" || typeof openModal === "undefined" || typeof closeModal === "undefined") {
+  console.error("Modal helpers 未加载：请确认 frontend/libs/configer/modal.js 已在 HTML 中先加载。");
 }
 
-function makeDataView(value, depth = 0) {
-  if (value === null || value === undefined || typeof value !== "object") {
-    return el("span", "mono", formatScalar(value));
-  }
-
-  if (Array.isArray(value)) {
-    const wrap = el("div", "kv-group");
-    if (!value.length) {
-      wrap.append(el("div", "empty-state", "空数组"));
-      return wrap;
-    }
-    for (const item of value) {
-      const row = el("div", "kv-row");
-      row.append(makeDataView(item, depth + 1));
-      wrap.append(row);
-    }
-    return wrap;
-  }
-
-  const entries = Object.entries(value);
-  const grid = el("div", "kv-grid");
-  if (!entries.length) {
-    grid.append(el("div", "empty-state", "空对象"));
-    return grid;
-  }
-  for (const [k, v] of entries) {
-    const item = el("div", "kv-item");
-    item.append(el("div", "kv-key", k));
-    if (v !== null && typeof v === "object") {
-      const details = el("details", "kv-details");
-      const summary = el("summary", "kv-summary", Array.isArray(v) ? `数组 (${v.length})` : "对象");
-      details.append(summary, makeDataView(v, depth + 1));
-      item.append(details);
-    } else {
-      item.append(el("div", "kv-value", formatScalar(v)));
-    }
-    grid.append(item);
-  }
-  return grid;
+// UI card builders 已提取到 frontend/libs/configer/ui-cards.js
+if (typeof formatScalar === "undefined" || typeof makeDataView === "undefined" || typeof makeInfoCard === "undefined" || typeof makeTagListCard === "undefined" || typeof makeSimpleTableCard === "undefined") {
+  console.error("UI card builders 未加载：请确认 frontend/libs/configer/ui-cards.js 已在 HTML 中先加载。");
 }
 
-function ensureModalRoot() {
-  let overlay = document.getElementById("cfgModalOverlay");
-  if (overlay) return overlay;
-
-  overlay = el("div", "cfg-modal-overlay hidden");
-  overlay.id = "cfgModalOverlay";
-  const dialog = el("div", "cfg-modal");
-  const header = el("div", "cfg-modal-head");
-  const title = el("h3", "cfg-modal-title", "弹窗");
-  title.id = "cfgModalTitle";
-  const closeBtn = makeButton("关闭", () => closeModal());
-  closeBtn.className = "btn btn-ghost";
-  header.append(title, closeBtn);
-  const body = el("div", "cfg-modal-body");
-  body.id = "cfgModalBody";
-  dialog.append(header, body);
-  overlay.append(dialog);
-  overlay.addEventListener("click", (evt) => {
-    if (evt.target === overlay) closeModal();
-  });
-  document.body.append(overlay);
-  return overlay;
-}
-
-function openModal(title, bodyNodes) {
-  const overlay = ensureModalRoot();
-  const titleEl = document.getElementById("cfgModalTitle");
-  const bodyEl = document.getElementById("cfgModalBody");
-  titleEl.textContent = title;
-  bodyEl.innerHTML = "";
-  for (const n of bodyNodes) bodyEl.append(n);
-  overlay.classList.remove("hidden");
-}
-
-function closeModal() {
-  const overlay = document.getElementById("cfgModalOverlay");
-  if (overlay) overlay.classList.add("hidden");
-}
-
-function makeInfoCard(title, rows) {
-  const card = el("article", "card");
-  card.append(el("h3", "card-title", title));
-  const grid = el("div", "info-grid");
-  for (const row of rows) {
-    const item = el("div", "info-item");
-    item.append(el("div", "info-key", String(row.label || "-")));
-    item.append(el("div", "info-value", formatScalar(row.value)));
-    grid.append(item);
-  }
-  card.append(grid);
-  return card;
-}
-
-function makeTagListCard(title, tags) {
-  const card = el("article", "card");
-  card.append(el("h3", "card-title", title));
-  const wrap = el("div", "tag-list");
-  const arr = Array.isArray(tags) ? tags : [];
-  if (!arr.length) {
-    wrap.append(el("div", "empty-state", "无"));
-  } else {
-    for (const t of arr) wrap.append(el("span", "tag-chip", String(t)));
-  }
-  card.append(wrap);
-  return card;
-}
-
-function makeSimpleTableCard(title, columns, rows) {
-  const card = el("article", "card full-span");
-  card.append(el("h3", "card-title", title));
-  const table = el("table", "simple-table");
-  const thead = el("thead", "");
-  const htr = el("tr", "");
-  for (const col of columns) htr.append(el("th", "", col));
-  thead.append(htr);
-  table.append(thead);
-  const tbody = el("tbody", "");
-  if (!rows.length) {
-    const tr = el("tr", "");
-    const td = el("td", "", "无数据");
-    td.colSpan = columns.length;
-    tr.append(td);
-    tbody.append(tr);
-  } else {
-    for (const row of rows) {
-      const tr = el("tr", "");
-      for (const c of row) tr.append(el("td", "", formatScalar(c)));
-      tbody.append(tr);
-    }
-  }
-  table.append(tbody);
-  card.append(table);
-  return card;
+// List helpers 已提取到 frontend/libs/configer/list-utils.js
+if (typeof makeListBox === "undefined" || typeof makeListRow === "undefined" || typeof makeOpsToolbar === "undefined") {
+  console.error("List helpers 未加载：请确认 frontend/libs/configer/list-utils.js 已在 HTML 中先加载。");
 }
 
 async function openKbEditorModal(path, initialContent = "", initialMeta = null) {
@@ -648,7 +431,10 @@ function createArayaTriggerSlider(onTrigger) {
 
   return wrap;
 }
-
+// Araya slider 已提取到 frontend/libs/configer/araya-slider.js
+if (typeof createArayaTriggerSlider === "undefined") {
+  console.error("Araya slider 未加载：请确认 frontend/libs/configer/araya-slider.js 已在 HTML 中先加载。");
+}
 function toText(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
@@ -875,47 +661,9 @@ function renderConfigModule(moduleId) {
   }
 }
 
-function normalizeKbPath(raw) {
-  const input = String(raw || "").replace(/\\/g, "/").trim();
-  if (!input || input === "/") return "/";
-  const withLeading = input.startsWith("/") ? input : `/${input}`;
-  const compact = withLeading.replace(/\/{2,}/g, "/");
-  return compact.endsWith("/") ? compact.slice(0, -1) : compact;
-}
-
-function kbParentPath(path) {
-  const p = normalizeKbPath(path);
-  if (p === "/") return "/";
-  const idx = p.lastIndexOf("/");
-  return idx <= 0 ? "/" : p.slice(0, idx);
-}
-
-function findKbNodeByPath(root, path) {
-  if (!root || typeof root !== "object") return null;
-  const target = normalizeKbPath(path);
-  const stack = [root];
-  while (stack.length) {
-    const cur = stack.pop();
-    const curPath = normalizeKbPath(cur.path || "/");
-    if (curPath === target) return cur;
-    for (const child of cur.children || []) stack.push(child);
-  }
-  return null;
-}
-
-function getKbChildren(root, dirPath) {
-  const dirNode = findKbNodeByPath(root, dirPath);
-  if (!dirNode || String(dirNode.type || "dir") === "file") return [];
-  const rows = (dirNode.children || []).map((child) => ({
-    path: normalizeKbPath(child.path || "/"),
-    type: String(child.type || "dir"),
-    name: String(child.name || child.path || "") || "/",
-  }));
-  rows.sort((a, b) => {
-    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-  return rows;
+// KB utilities 已提取到 frontend/libs/configer/kb-utils.js
+if (typeof normalizeKbPath === "undefined" || typeof kbParentPath === "undefined" || typeof findKbNodeByPath === "undefined" || typeof getKbChildren === "undefined") {
+  console.error("KB helpers 未加载：请确认 frontend/libs/configer/kb-utils.js 已在 HTML 中先加载。");
 }
 
 function openKbSearchModal() {
@@ -1012,28 +760,10 @@ function buildTriggerUpdatePayload(source) {
 }
 
 function openSkillMdModal(slug, content, agentName) {
-  const area = el("textarea", "textarea code-area code-area-lg");
-  area.value = String(content || "");
-  const info = el("div", "card-help", `Skill: ${slug} | Agent: ${agentName || "-"}`);
-  const bar = el("div", "toolbar");
-  bar.append(
-    makeButton("保存 SKILL.md", async () => {
-      const useAgent = String(agentName || state.skillsAgent || "").trim();
-      await cfgApi("PUT", `/faust/admin/skills/${encodeURIComponent(slug)}/skill-md`, {
-        agent_name: useAgent || null,
-        content: area.value,
-      });
-      if (state.skillDetail && String(state.skillDetail.slug || "") === String(slug)) {
-        state.skillDetail.skill_md = area.value;
-      }
-      showBanner("success", `SKILL.md 已保存: ${slug}`);
-      closeModal();
-      await ensureModuleData("skills");
-      renderModule();
-    }, "btn btn-primary"),
-    makeButton("关闭", closeModal)
-  );
-  openModal(`编辑 SKILL.md - ${slug}`, [info, area, bar]);
+}
+// Skill helpers 已提取到 frontend/libs/configer/skill-utils.js
+if (typeof openSkillMdModal === "undefined") {
+  console.error("Skill helpers 未加载：请确认 frontend/libs/configer/skill-utils.js 已在 HTML 中先加载。");
 }
 
 async function ensureModuleData(moduleId) {
@@ -1212,25 +942,42 @@ function renderKbModule() {
 
   const doKbNewFile = async () => {
     const defaultPath = `${state.kbCurrentDir === "/" ? "" : state.kbCurrentDir.slice(1) + "/"}new.md`;
-    const p = window.prompt("请输入文件路径，例如 reactor/core/control.md", defaultPath);
-    if (!p) return;
-    const target = normalizeKbPath(p.trim());
-    await openKbEditorModal(target, "", {
-      path: target,
-      declared_by: "config-center",
-      indexed: true,
-      tags: [],
-    });
+    const nameInput = el("input", "input");
+    nameInput.value = defaultPath;
+    const save = async () => {
+      const p = String(nameInput.value || "").trim();
+      if (!p) return showBanner("error", "请输入文件路径");
+      const target = normalizeKbPath(p);
+      // 先关闭当前的新建对话框，再打开编辑器对话框
+      closeModal();
+      await openKbEditorModal(target, "", {
+        path: target,
+        declared_by: "config-center",
+        indexed: true,
+        tags: [],
+      });
+    };
+    const kbFileToolbar = el("div", "toolbar");
+    kbFileToolbar.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
+    openModal("新建 KB 文件", [nameInput, kbFileToolbar]);
   };
 
   const doKbNewFolder = async () => {
     const defaultPath = `${state.kbCurrentDir === "/" ? "" : state.kbCurrentDir.slice(1) + "/"}new-folder`;
-    const p = window.prompt("请输入文件夹路径，例如 reactor/core", defaultPath);
-    if (!p) return;
-    await cfgApi("POST", "/faust/kb/mkdir", { path: p.trim() });
-    state.kbCurrentDir = normalizeKbPath(p.trim());
-    await ensureModuleData("kb");
-    renderModule();
+    const nameInput = el("input", "input");
+    nameInput.value = defaultPath;
+    const save = async () => {
+      const p = String(nameInput.value || "").trim();
+      if (!p) return showBanner("error", "请输入文件夹路径");
+      await cfgApi("POST", "/faust/kb/mkdir", { path: p });
+      state.kbCurrentDir = normalizeKbPath(p);
+      await ensureModuleData("kb");
+      closeModal();
+      renderModule();
+    };
+    const kbFolderToolbar = el("div", "toolbar");
+    kbFolderToolbar.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
+    openModal("新建 KB 文件夹", [nameInput, kbFolderToolbar]);
   };
 
   const doKbDelete = async () => {
@@ -1275,18 +1022,20 @@ function renderKbModule() {
     menu.style.left = `${clientX}px`;
     menu.style.top = `${clientY}px`;
     document.body.append(menu);
-    const close = () => {
-      closeKbContextMenu();
-      window.removeEventListener("click", close, true);
-      window.removeEventListener("contextmenu", close, true);
-      window.removeEventListener("keydown", onKey, true);
-    };
-    const onKey = (evt) => {
-      if (evt.key === "Escape") close();
-    };
-    window.addEventListener("click", close, true);
-    window.addEventListener("contextmenu", close, true);
-    window.addEventListener("keydown", onKey, true);
+      const close = (evt) => {
+        // 如果点击在菜单内部，则不关闭
+        if (evt && evt.target && menu.contains(evt.target)) return;
+        closeKbContextMenu();
+        window.removeEventListener("click", close, true);
+        window.removeEventListener("contextmenu", close, true);
+        window.removeEventListener("keydown", onKey, true);
+      };
+      const onKey = (evt) => {
+        if (evt.key === "Escape") close(evt);
+      };
+      window.addEventListener("click", close, true);
+      window.addEventListener("contextmenu", close, true);
+      window.addEventListener("keydown", onKey, true);
   };
 
   const currentDir = normalizeKbPath(state.kbCurrentDir || "/");
