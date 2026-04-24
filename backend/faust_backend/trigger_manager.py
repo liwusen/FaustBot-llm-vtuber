@@ -424,8 +424,8 @@ def clear_triggers():
         store.watchdog.clear()
         try:
             store.save()
-    except Exception as e:
-        print(f"[trigger_manager] Failed to save after clear: {e}")
+        except Exception as e:
+            print(f"[trigger_manager] Failed to save after clear: {e}")
 def has_queue_task():
     return not trigger_queue.empty()
 if __name__ == "__main__":
