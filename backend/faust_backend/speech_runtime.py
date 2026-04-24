@@ -8,6 +8,7 @@ import hashlib
 import requests
 
 import faust_backend.config_loader as conf
+import asyncio
 
 
 LOCAL_TTS_ENDPOINT = "http://127.0.0.1:5000/"
@@ -175,7 +176,27 @@ def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str]:
     payload_text = str(text or "").strip()
     if not payload_text:
         raise SpeechRuntimeError("TTS 文本不能为空")
-    print(f"[TTS] Synthesizing text: {payload_text} with lang: {lang}")
+
+    if _current_tts_mode() == "edge-tts":
+        tts_edge = globals().get("tts_edge")
+        if tts_edge is None:
+            import faust_backend.tts_edge as tts_edge
+
+        try:
+            return asyncio.run(
+                tts_edge.synthesize_edge_tts(
+                    payload_text,
+                    voice=getattr(conf, "EDGE_TTS_VOICE", None),
+                    rate=getattr(conf, "EDGE_TTS_RATE", None),
+                    pitch=getattr(conf, "EDGE_TTS_PITCH", None),
+                    timeout=int(getattr(conf, "EDGE_TTS_TIMEOUT_SECONDS", 120) or 120),
+                )
+            )
+        except SpeechRuntimeError:
+            raise
+        except Exception as exc:
+            raise SpeechRuntimeError(f"Edge TTS 失败: {exc}") from exc
+
     if should_start_local_tts():
         _prime_local_tts_reference()
         payload = {
@@ -188,32 +209,26 @@ def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str]:
         return resp.content, (resp.headers.get("content-type") or "audio/wav")
 
     if _current_tts_mode() == "faustbot-cloud":
-        try:
-            signature = _cloud_reference_signature()
-            existing = _cloud_get_reference(signature)
-            refer_hash = str((existing or {}).get("refer_hash") or "").strip() if existing else ""
-            if not refer_hash:
-                refer_hash = _cloud_upload_reference()
-            payload = {
-                "refer_hash": refer_hash,
-                "text": payload_text,
-                "text_language": str(lang or getattr(conf, "FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh"),
-            }
-            resp = requests.post(
-                _resolve_cloud_url("/v1/tts"),
-                json=payload,
-                headers=_current_cloud_headers(),
-                timeout=int(getattr(conf, "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", 120) or 120),
-            )
-            if not resp.ok:
-                print(f"FaustBot Cloud TTS 请求失败: {resp.status_code} {resp.text}")
-                raise SpeechRuntimeError(f"FaustBot Cloud TTS 服务错误: {resp.status_code} {resp.text}")
-            return resp.content, (resp.headers.get("content-type") or "audio/wav")
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            print(f"FaustBot Cloud TTS 失败: {exc}")
-            raise SpeechRuntimeError(f"FaustBot Cloud TTS 失败: {exc}") from exc
+        signature = _cloud_reference_signature()
+        existing = _cloud_get_reference(signature)
+        refer_hash = str((existing or {}).get("refer_hash") or "").strip() if existing else ""
+        if not refer_hash:
+            refer_hash = _cloud_upload_reference()
+        payload = {
+            "refer_hash": refer_hash,
+            "text": payload_text,
+            "text_language": str(lang or getattr(conf, "FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh"),
+        }
+        resp = requests.post(
+            _resolve_cloud_url("/v1/tts"),
+            json=payload,
+            headers=_current_cloud_headers(),
+            timeout=int(getattr(conf, "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", 120) or 120),
+        )
+        if not resp.ok:
+            raise SpeechRuntimeError(f"FaustBot Cloud TTS 服务错误: {resp.status_code} {resp.text}")
+        return resp.content, (resp.headers.get("content-type") or "audio/wav")
+
     api_key = str(getattr(conf, "OPENAI_TTS_API_KEY", "") or "").strip()
     if not api_key:
         raise SpeechRuntimeError("未配置 OPENAI_TTS_API_KEY")

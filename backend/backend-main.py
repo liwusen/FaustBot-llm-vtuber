@@ -51,6 +51,8 @@ app = FastAPI()
 uvicorn_server = None
 kb_api.register_kb_routes(app)
 araya_api.register_araya_routes(app)
+import faust_backend.edge_tts_api as edge_tts_api
+edge_tts_api.register_edge_tts_routes(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

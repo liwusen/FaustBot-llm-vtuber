@@ -23,6 +23,20 @@ contextBridge.exposeInMainWorld('api', {
   })
 });
 
+// deeplink events
+contextBridge.exposeInMainWorld('deeplink', {
+  onConfigFaustCloud: (cb) => {
+    if (typeof cb !== 'function') return;
+    ipcRenderer.on('deeplink-config-faustcloud', (_evt, payload) => {
+      try {
+        cb(payload);
+      } catch (e) {
+        console.error('deeplink callback failed', e);
+      }
+    });
+  }
+});
+
 // Listen for faust commands forwarded from the main process
 contextBridge.exposeInMainWorld('faust', {
   onCommand: (cb) => {

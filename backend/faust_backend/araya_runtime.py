@@ -59,11 +59,13 @@ class ArayaRuntime:
         return self._target_agent_name
 
     def mark_main_agent_activity(self) -> float:
-        self._last_main_activity_ts = time.time()
+        now = time.time()
+        self._last_main_activity_ts = now
         state = self._load_state()
-        state["last_main_activity_ts"] = self._last_main_activity_ts
+        # ensure we persist the freshly recorded timestamp (don't rely on _load_state to preserve it)
+        state["last_main_activity_ts"] = now
         self._save_state(state)
-        return self._last_main_activity_ts
+        return now
 
     def _load_prompt(self) -> str:
         agent_root = Path(conf.CONFIG_ROOT) / "agents" / ARAYA_AGENT_NAME
@@ -146,6 +148,21 @@ class ArayaRuntime:
                 state["last_log"] = None
         else:
             state["last_log"] = None
+        # add human-readable timestamps for frontend
+        try:
+            lm_ts = float(state.get("last_main_activity_ts") or 0.0)
+            state["last_main_activity_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(lm_ts)) if lm_ts > 0 else "-"
+        except Exception:
+            state["last_main_activity_at"] = "-"
+        try:
+            if self.paths.state_file.exists():
+                mtime = self.paths.state_file.stat().st_mtime
+                state["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+            else:
+                state["updated_at"] = "-"
+        except Exception:
+            state["updated_at"] = "-"
+
         self._save_state(state)
         return state
 

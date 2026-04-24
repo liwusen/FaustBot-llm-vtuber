@@ -53,7 +53,8 @@ def test_araya_run_once_updates_state_and_log(monkeypatch, tmp_path):
 
     class FakeAgent:
         async def ainvoke(self, payload):
-            return {"messages": [{"content": "maintained"}], "payload": payload}
+            from types import SimpleNamespace
+            return {"messages": [SimpleNamespace(content="maintained")], "payload": payload}
 
     monkeypatch.setattr(araya_runtime, "ChatOpenAI", FakeChatOpenAI)
     monkeypatch.setattr(araya_runtime, "create_agent", lambda **kwargs: FakeAgent())

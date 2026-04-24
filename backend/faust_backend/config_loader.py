@@ -49,6 +49,7 @@ def load_configs():
     global OPENAI_ASR_ENERGY_THRESHOLD, OPENAI_ASR_SILENCE_MS, OPENAI_ASR_MIN_SPEECH_MS, OPENAI_ASR_PREROLL_MS
     global OPENAI_TTS_API_KEY, OPENAI_ASR_API_KEY, FAUSTBOT_CLOUD_SERVICE_KEY
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
+    global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_DEFAULT_REFER_HASH, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
@@ -109,6 +110,10 @@ def load_configs():
     TTS_REFER_WAV_PATH = config.get('TTS_REFER_WAV_PATH', p_join(CONFIG_ROOT, 'voices', 'neuro.wav'))
     TTS_PROMPT_TEXT = config.get('TTS_PROMPT_TEXT', 'Hold on please, I\'m busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.')
     TTS_PROMPT_LANGUAGE = config.get('TTS_PROMPT_LANGUAGE', 'en')
+    EDGE_TTS_VOICE = str(config.get('EDGE_TTS_VOICE', 'en-US-AriaNeural') or 'en-US-AriaNeural').strip()
+    EDGE_TTS_RATE = str(config.get('EDGE_TTS_RATE', '0%') or '0%').strip()
+    EDGE_TTS_PITCH = str(config.get('EDGE_TTS_PITCH', '0%') or '0%').strip()
+    EDGE_TTS_TIMEOUT_SECONDS = int(config.get('EDGE_TTS_TIMEOUT_SECONDS', 120) or 120)
     
     AGENT_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config

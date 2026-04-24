@@ -194,6 +194,8 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
     _write_json(PRIVATE_CONFIG_PATH, private_cfg)
+    import faust_backend.config_loader as conf
+    conf.reload_configs()
     return get_config_view()
 
 

@@ -92,6 +92,65 @@ if (typeof ensureModalRoot === "undefined" || typeof openModal === "undefined" |
   console.error("Modal helpers 未加载：请确认 frontend/libs/configer/modal.js 已在 HTML 中先加载。");
 }
 
+// Handle deeplink-config-faustcloud from main process
+async function handleDeeplinkConfigFaustCloud(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const host = String(payload.host || '').trim();
+  const key = String(payload.key || '').trim();
+  if (!host || !key) return;
+
+  const hostInput = el('input', 'input');
+  hostInput.readOnly = true;
+  hostInput.value = host;
+
+  const keyInput = el('input', 'input');
+  keyInput.readOnly = true;
+  keyInput.value = key;
+
+  const info = el('div', 'card-help');
+  info.textContent = '系统检测到来自 FaustBot Cloud 的配置请求。确认后将把云地址和服务密钥写入配置，并将 TTS/ASR 模式切换为 FaustBot-cloud。';
+
+  const actionBar = el('div', 'toolbar');
+  const doConfirm = async () => {
+    try {
+      setBusy(true);
+      const payloadToSave = {
+        public: {
+          FAUSTBOT_CLOUD_BASE_URL: host,
+          TTS_MODE: 'faustbot-cloud',
+          ASR_MODE: 'faustbot-cloud',
+        },
+        private: {
+          FAUSTBOT_CLOUD_SERVICE_KEY: key,
+        }
+      };
+      await cfgApi('POST', '/faust/admin/config', payloadToSave);
+      // reload runtime to apply changes
+      try { await cfgApi('POST', '/faust/admin/config/reload', { reset_dialog: false, no_initial_chat: true }); } catch (e) {}
+      // reload UI config and runtime summary
+      try { await reloadAll(); } catch (e) { console.warn('reloadAll failed after deeplink config', e); }
+      showBanner('success', 'FaustBot Cloud 已配置。');
+      closeModal();
+    } catch (e) {
+      console.error('Failed to apply FaustBot Cloud config', e);
+      showBanner('error', '配置保存失败: ' + String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  actionBar.append(makeButton('确认并保存', doConfirm, 'btn btn-primary'), makeButton('取消', closeModal));
+
+  const body = [info, el('label', '', 'FaustBot Cloud 地址'), hostInput, el('label', '', 'Service Key'), keyInput, actionBar];
+  openModal('收到 FaustBot Cloud 配置', body);
+}
+
+if (window.deeplink && typeof window.deeplink.onConfigFaustCloud === 'function') {
+  window.deeplink.onConfigFaustCloud((payload) => {
+    try { handleDeeplinkConfigFaustCloud(payload); } catch (e) { console.error('deeplink handler failed', e); }
+  });
+}
+
 // UI card builders 已提取到 frontend/libs/configer/ui-cards.js
 if (typeof formatScalar === "undefined" || typeof makeDataView === "undefined" || typeof makeInfoCard === "undefined" || typeof makeTagListCard === "undefined" || typeof makeSimpleTableCard === "undefined") {
   console.error("UI card builders 未加载：请确认 frontend/libs/configer/ui-cards.js 已在 HTML 中先加载。");
@@ -537,6 +596,7 @@ function makeFieldCard(scope, key, value) {
   } else if (SECRET_KEYS.has(key)) {
     const input = el("input", "input");
     input.type = "password";
+    input.name = key;
     input.value = state.dirty[scope].get(key) || "";
     input.placeholder = isMaskedSecret(value) ? "已设置，保持不变" : "请输入密钥";
     input.autocomplete = "off";
@@ -548,6 +608,7 @@ function makeFieldCard(scope, key, value) {
   } else if (typeof value === "number") {
     const input = el("input", "number");
     input.type = "number";
+    input.name = key;
     input.value = String(currentValue ?? 0);
     if (key === "TEXT_CHAT_BAR_Y_FACTOR") {
       input.step = "0.01";
@@ -590,6 +651,7 @@ function makeFieldCard(scope, key, value) {
   } else {
     const input = el("input", "input");
     input.type = "text";
+    input.name = key;
     input.value = currentValue === null || currentValue === undefined ? "" : String(currentValue);
     input.addEventListener("input", () => {
       updateValue(scope, key, input.value);
@@ -624,11 +686,13 @@ function pickModuleFields(moduleId) {
       publicKeys: pub.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
         return true;
       }),
       privateKeys: pri.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
         return true;
       }),
     };
@@ -660,6 +724,13 @@ function renderConfigModule(moduleId) {
     ttsCard.append(el("p", "card-help", "local TTS 模式下可把参考音频参数即时同步到 5000 端口服务。"));
     ttsCard.append(makeButton("应用参考音频到 TTS 服务", applyTtsReferToService, "btn btn-secondary"));
     els.cardsRoot.append(ttsCard);
+    
+    // Edge TTS 语音选择器
+    const edgeTtsCard = el("article", "card");
+    edgeTtsCard.append(el("h3", "card-title", "Edge TTS 语音选择器"));
+    edgeTtsCard.append(el("p", "card-help", "点击打开语音选择器，浏览和选择可用的 Edge TTS 语音。"));
+    edgeTtsCard.append(makeButton("选择 Edge TTS 语音", openEdgeTTSVoiceModal, "btn btn-primary"));
+    els.cardsRoot.append(edgeTtsCard);
   }
 
   if (moduleId === "live2d") {
@@ -763,6 +834,170 @@ function openKbSearchModal() {
     makeButton("关闭", closeModal)
   );
   openModal("KB 搜索", [actionBar, resultBox]);
+}
+
+// Edge TTS 语音管理Modal
+async function openEdgeTTSVoiceModal() {
+  const modalBody = el("div", "edge-tts-voice-modal");
+  
+  // 搜索栏
+  const searchBar = el("div", "search-bar");
+  const searchInput = el("input", "search-input");
+  searchInput.type = "text";
+  searchInput.placeholder = "搜索语音名称、ID或特征...";
+  const searchBtn = makeButton("搜索", () => loadEdgeTTSVoices(searchInput.value), "btn btn-primary");
+  const refreshBtn = makeButton("刷新", () => loadEdgeTTSVoices("", true), "btn btn-secondary");
+  searchBar.append(searchInput, searchBtn, refreshBtn);
+  
+  // 筛选栏
+  const filterBar = el("div", "filter-bar");
+  const languageSelect = el("select", "filter-select");
+  languageSelect.innerHTML = '<option value="">所有语言</option>';
+  const genderSelect = el("select", "filter-select");
+  genderSelect.innerHTML = '<option value="">所有性别</option>';
+  
+  // 语音列表容器
+  const voiceList = el("div", "voice-list");
+  voiceList.style.maxHeight = "400px";
+  voiceList.style.overflowY = "auto";
+  voiceList.style.border = "1px solid #ddd";
+  voiceList.style.padding = "10px";
+  
+  // 选中信息
+  const selectedInfo = el("div", "selected-info");
+  selectedInfo.style.marginTop = "10px";
+  selectedInfo.style.padding = "10px";
+  selectedInfo.style.backgroundColor = "#f5f5f5";
+  selectedInfo.style.borderRadius = "4px";
+  
+  // 加载语言和性别选项
+  async function loadFilters() {
+    try {
+      const [languages, genders] = await Promise.all([
+        cfgApi("GET", "/faust/edge-tts/languages"),
+        cfgApi("GET", "/faust/edge-tts/genders")
+      ]);
+      
+      languages.languages.forEach(lang => {
+        const option = el("option");
+        option.value = lang;
+        option.textContent = lang;
+        languageSelect.appendChild(option);
+      });
+      
+      genders.genders.forEach(gender => {
+        const option = el("option");
+        option.value = gender;
+        option.textContent = gender;
+        genderSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('加载筛选器失败:', error);
+    }
+  }
+  
+  // 加载语音列表
+  async function loadEdgeTTSVoices(searchQuery = "", forceRefresh = false) {
+    try {
+      voiceList.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
+
+      const language = languageSelect.value;
+      const gender = genderSelect.value;
+
+      if (forceRefresh) {
+        await cfgApi("POST", "/faust/edge-tts/cache/refresh", {});
+      }
+
+      const data = await cfgApi("GET", "/faust/edge-tts/voices/search", null, {
+        q: searchQuery,
+        language: language || null,
+        gender: gender || null,
+      });
+      
+      voiceList.innerHTML = '';
+      
+      if (data.voices.length === 0) {
+        voiceList.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">未找到匹配的语音</div>';
+        return;
+      }
+      
+      data.voices.forEach(voice => {
+        const voiceItem = el("div", "voice-item");
+        voiceItem.style.padding = "10px";
+        voiceItem.style.border = "1px solid #eee";
+        voiceItem.style.marginBottom = "5px";
+        voiceItem.style.cursor = "pointer";
+        voiceItem.style.borderRadius = "4px";
+        
+        voiceItem.innerHTML = `
+          <div style="font-weight: bold;">${voice.name}</div>
+          <div style="color: #666; font-size: 0.9em;">ID: ${voice.voice_id}</div>
+          <div style="color: #666; font-size: 0.9em;">语言: ${voice.language} | 性别: ${voice.gender}</div>
+          <div style="color: #888; font-size: 0.8em;">特征: ${voice.voice_personalities}</div>
+        `;
+        
+        voiceItem.addEventListener('click', () => selectVoice(voice, voiceItem));
+        voiceList.appendChild(voiceItem);
+      });
+      
+    } catch (error) {
+      console.error('加载语音列表失败:', error);
+      voiceList.innerHTML = '<div style="text-align: center; padding: 20px; color: red;">加载失败</div>';
+    }
+  }
+  
+  // 选择语音
+  function selectVoice(voice, voiceItem) {
+    // 移除之前的选中状态
+    voiceList.querySelectorAll('.voice-item').forEach(item => {
+      item.style.backgroundColor = '';
+      item.style.border = '1px solid #eee';
+    });
+    
+    // 添加选中状态
+    voiceItem.style.backgroundColor = '#e3f2fd';
+    voiceItem.style.border = '2px solid #2196f3';
+    
+    // 更新选中信息
+    selectedInfo.innerHTML = `
+      <div style="font-weight: bold;">已选择: ${voice.name}</div>
+      <div>语音ID: ${voice.voice_id}</div>
+      <div>语言: ${voice.language} | 性别: ${voice.gender}</div>
+      <div>特征: ${voice.voice_personalities}</div>
+      <button onclick="confirmEdgeTTSVoice('${voice.voice_id}', '${voice.name.replace(/'/g, "\\'")}')" 
+              style="margin-top: 10px; padding: 5px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        确认选择
+      </button>
+    `;
+  }
+  
+  // 确认选择
+  window.confirmEdgeTTSVoice = function(voiceId, voiceName) {
+    updateValue("public", "EDGE_TTS_VOICE", voiceId);
+    const voiceField = document.querySelector('input[name="EDGE_TTS_VOICE"]');
+    if (voiceField) {
+      voiceField.value = voiceId;
+      voiceField.dispatchEvent(new Event('input', { bubbles: true }));
+      voiceField.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    
+    // 关闭Modal
+    closeModal();
+    
+    // 显示成功消息
+    showBanner('success', `已选择语音: ${voiceName}`);
+  };
+  
+  // 初始化
+  modalBody.append(searchBar, filterBar, voiceList, selectedInfo);
+  
+  // 加载筛选器
+  await loadFilters();
+  
+  // 加载语音列表
+  await loadEdgeTTSVoices();
+  
+  openModal("Edge TTS 语音管理", [modalBody]);
 }
 
 function buildTriggerUpdatePayload(source) {
