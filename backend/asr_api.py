@@ -10,23 +10,25 @@ import re
 
 from datetime import datetime
 
-# 保存原始的stdout和stderr
-original_stdout = sys.stdout
-original_stderr = sys.stderr
-
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-# 创建一个可以同时写到文件和终端的类，并过滤ANSI颜色码
-class TeeOutput:
+
+
+# 保存原始的stdout和stderr — 在 startup 中重定向
+_original_stdout = sys.stdout
+_original_stderr = sys.stderr
+_log_file_handle = None
+
+
+class _TeeOutput:
+    """同时写到文件和终端，并过滤ANSI颜色码。"""
+
     def __init__(self, file1, file2):
         self.file1 = file1
         self.file2 = file2
-        # 用于匹配ANSI颜色码的正则表达式
         self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
     def write(self, data):
-        # 终端输出保持原样（带颜色）
         self.file1.write(data)
-        # 文件输出去掉颜色码
         clean_data = self.ansi_escape.sub('', data)
         self.file2.write(clean_data)
         self.file1.flush()
@@ -43,15 +45,14 @@ class TeeOutput:
         return self.file1.fileno()
 
 
-# 创建logs目录
-LOGS_DIR = "logs"
-if not os.path.exists(LOGS_DIR):
-    os.makedirs(LOGS_DIR)
-
-# 设置双重输出
-log_file = open(os.path.join(LOGS_DIR, 'asr.log'), 'w', encoding='utf-8')
-sys.stdout = TeeOutput(original_stdout, log_file)
-sys.stderr = TeeOutput(original_stderr, log_file)
+def _setup_log_redirection() -> None:
+    """将 stdout/stderr 重定向到日志文件和终端。"""
+    global _log_file_handle
+    logs_dir = "logs"
+    os.makedirs(logs_dir, exist_ok=True)
+    _log_file_handle = open(os.path.join(logs_dir, 'asr.log'), 'w', encoding='utf-8')
+    sys.stdout = _TeeOutput(_original_stdout, _log_file_handle)
+    sys.stderr = _TeeOutput(_original_stderr, _log_file_handle)
 
 app = FastAPI()
 
@@ -88,15 +89,14 @@ whisper_state = {
 def _current_asr_mode() -> str:
     try:
         import faust_backend.config_loader as conf
-        return str(getattr(conf, "ASR_MODE", "local") or "local").strip().lower()
+        return str(conf.ASR_MODE or "local").strip().lower()
     except Exception:
         return "local"
 
 
 def _resolve_whisper_device() -> str:
     try:
-        import faust_backend.config_loader as conf
-        device = str(getattr(conf, "WHISPER_DEVICE", "auto") or "auto").strip().lower()
+        device = str(conf.WHISPER_DEVICE or "auto").strip().lower()
     except Exception:
         device = "auto"
     if device in {"", "auto"}:
@@ -106,7 +106,7 @@ def _resolve_whisper_device() -> str:
 
 def _get_whisper_model():
     import faust_backend.config_loader as conf
-    model_name = str(getattr(conf, "WHISPER_MODEL", "base") or "base").strip()
+    model_name = str(conf.WHISPER_MODEL or "base").strip()
     if whisper_state["model"] is None or whisper_state["loaded_name"] != model_name:
         try:
             import whisper
@@ -117,6 +117,7 @@ def _get_whisper_model():
     return whisper_state["model"]
 @app.on_event("startup")
 async def startup_event():
+    _setup_log_redirection()
     print("正在加载模型...")
 
     # 设置环境变量来指定模型下载位置
@@ -188,12 +189,12 @@ async def upload_audio(file: UploadFile = File(...)):
                 import faust_backend.config_loader as conf
                 result = model.transcribe(
                     str(temp_path),
-                    language=str(getattr(conf, "WHISPER_LANGUAGE", "") or "").strip() or None,
-                    prompt=str(getattr(conf, "WHISPER_PROMPT", "") or "").strip() or None,
-                    temperature=float(getattr(conf, "WHISPER_TEMPERATURE", 0.0) or 0.0),
-                    best_of=int(getattr(conf, "WHISPER_BEST_OF", 5) or 5),
-                    beam_size=int(getattr(conf, "WHISPER_BEAM_SIZE", 5) or 5),
-                    fp16=bool(getattr(conf, "WHISPER_FP16", False)) and torch.cuda.is_available(),
+                    language=str(conf.WHISPER_LANGUAGE or "").strip() or None,
+                    prompt=str(conf.WHISPER_PROMPT or "").strip() or None,
+                    temperature=float(conf.WHISPER_TEMPERATURE or 0.0),
+                    best_of=int(conf.WHISPER_BEST_OF or 5),
+                    beam_size=int(conf.WHISPER_BEAM_SIZE or 5),
+                    fp16=bool(conf.WHISPER_FP16) and torch.cuda.is_available(),
                 )
                 return {
                     "status": "success",

@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -28,7 +30,8 @@ class _FakeGetResponse(_FakeResponse):
     pass
 
 
-def test_cloud_tts_branch_uses_service_key_and_default_refer_hash(monkeypatch):
+@pytest.mark.asyncio
+async def test_cloud_tts_branch_uses_service_key_and_default_refer_hash(monkeypatch):
     monkeypatch.setattr(speech_runtime.conf, "TTS_MODE", "faustbot-cloud")
     monkeypatch.setattr(speech_runtime.conf, "FAUSTBOT_CLOUD_BASE_URL", "http://cloud.example")
     monkeypatch.setattr(speech_runtime.conf, "FAUSTBOT_CLOUD_SERVICE_KEY", "FSK-test")
@@ -58,7 +61,7 @@ def test_cloud_tts_branch_uses_service_key_and_default_refer_hash(monkeypatch):
     monkeypatch.setattr(speech_runtime.requests, "get", fake_get)
     monkeypatch.setattr(speech_runtime.requests, "post", fake_post)
 
-    audio, content_type = speech_runtime.synthesize_tts("你好")
+    audio, content_type = await speech_runtime.synthesize_tts("你好")
     assert audio == b"AUDIO"
     assert content_type == "audio/wav"
 

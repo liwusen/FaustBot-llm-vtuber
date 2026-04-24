@@ -29,9 +29,9 @@ async def synthesize_edge_tts(
         from faust_backend.speech_runtime import SpeechRuntimeError
         raise SpeechRuntimeError("TTS 文本不能为空")
 
-    tts_voice = str(voice or getattr(conf, "EDGE_TTS_VOICE", "en-US-AriaNeural") or "en-US-AriaNeural")
-    tts_rate = str(rate or getattr(conf, "EDGE_TTS_RATE", "0%") or "0%")
-    tts_pitch = str(pitch or getattr(conf, "EDGE_TTS_PITCH", "0%") or "0%")
+    tts_voice = str(voice or conf.EDGE_TTS_VOICE or "en-US-AriaNeural")
+    tts_rate = str(rate or conf.EDGE_TTS_RATE or "0%")
+    tts_pitch = str(pitch or conf.EDGE_TTS_PITCH or "0%")
 
     communicate = edge_tts.Communicate(str(text), tts_voice)
 

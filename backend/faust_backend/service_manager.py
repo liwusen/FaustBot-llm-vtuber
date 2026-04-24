@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 STARTUP_WAIT_SECONDS = 15
 TAIL_LOG_LINES = 120
-CREATE_NEW_CONSOLE = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
+CREATE_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE
 
 def find_process_by_port(port):
     for conn in psutil.net_connections():

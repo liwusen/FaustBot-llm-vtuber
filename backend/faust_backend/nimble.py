@@ -139,5 +139,21 @@ def cleanup_nimble_session(callback_id: str) -> Optional[Dict[str, Any]]:
     return session
 
 
+def cleanup_expired_sessions() -> int:
+    """移除所有已过期/已关闭的 session，返回清理数量。"""
+    now = _now()
+    expired_ids = [
+        cid for cid, s in list(_nimble_sessions.items())
+        if s.get("closed") or now >= float(s.get("expires_at", 0))
+    ]
+    for cid in expired_ids:
+        _nimble_sessions.pop(cid, None)
+    if expired_ids:
+        print(f"[faust.backend.nimble] Cleaned {len(expired_ids)} expired/closed sessions")
+    return len(expired_ids)
+
+
 def list_active_sessions() -> Dict[str, Dict[str, Any]]:
+    # 在列出前先清理过期 session，防止内存泄漏
+    cleanup_expired_sessions()
     return {k: v for k, v in _nimble_sessions.items() if is_nimble_session_alive(k)}

@@ -14,8 +14,8 @@ except ImportError:
 import websocket
 import faust_backend.trigger_manager as trigger_manager
 
-MC_OPERATOR_URL = getattr(conf, "config", {}).get("MC_OPERATOR_URL", "ws://127.0.0.1:18901")
-MC_EVENT_TRIGGER_ENABLED = getattr(conf, "config", {}).get("MC_EVENT_TRIGGER_ENABLED", True)
+MC_OPERATOR_URL = conf.config.get("MC_OPERATOR_URL", "ws://127.0.0.1:18901") if hasattr(conf, "config") else "ws://127.0.0.1:18901"
+MC_EVENT_TRIGGER_ENABLED = conf.config.get("MC_EVENT_TRIGGER_ENABLED", True) if hasattr(conf, "config") else True
 
 _ws_app = None
 _ws_thread = None

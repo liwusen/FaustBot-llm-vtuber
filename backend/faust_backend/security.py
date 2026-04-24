@@ -60,8 +60,11 @@ ACCESS LEVELS:
 - "none":任何操作都需要人工审批
 """
 async def match_path_pattern(path, pattern):
-    """匹配路径模式，支持通配符*"""
-    path = os.path.normpath(path).replace("\\", "/")
+    """匹配路径模式，支持通配符*。先解析符号链接和 .. 防止路径穿越。"""
+    try:
+        path = os.path.realpath(path).replace("\\", "/")
+    except Exception:
+        path = os.path.normpath(os.path.abspath(path)).replace("\\", "/")
     pattern = os.path.normpath(pattern).replace("\\", "/")
     return fnmatch(path, pattern)
 async def check_access(path, operation):

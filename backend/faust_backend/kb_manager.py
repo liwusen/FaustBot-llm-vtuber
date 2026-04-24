@@ -267,8 +267,8 @@ class KBManager:
                 self._queue.task_done()
 
     def _build_openai_client(self) -> AsyncOpenAI:
-        api_key = getattr(conf, "KB_OPENAI_API_KEY", "") or getattr(conf, "CHAT_API_KEY", "")
-        base_url = getattr(conf, "CHAT_API_BASE", "https://api.openai.com/v1")
+        api_key = conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
+        base_url = conf.CHAT_API_BASE or "https://api.openai.com/v1"
         if not api_key:
             raise RuntimeError("缺少可用的 OpenAI API Key，无法构建 KB embedding")
         return AsyncOpenAI(api_key=api_key, base_url=base_url)

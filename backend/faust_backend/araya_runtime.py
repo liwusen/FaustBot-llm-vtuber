@@ -49,7 +49,7 @@ class ArayaRuntime:
         )
 
     def _resolve_target_agent_name(self) -> str:
-        current = str(getattr(conf, "AGENT_NAME", "faust") or "faust").strip()
+        current = str(conf.AGENT_NAME or "faust").strip()
         if not current or current.lower() == ARAYA_AGENT_NAME:
             return "faust"
         return current
@@ -82,7 +82,7 @@ class ArayaRuntime:
         if not self.paths.state_file.exists():
             return {
                 "enabled": True,
-                "idle_minutes": float(getattr(conf, "ARAYA_IDLE_MINUTES", 30) or 30),
+                "idle_minutes": float(conf.ARAYA_IDLE_MINUTES or 30),
                 "last_main_activity_ts": self._last_main_activity_ts,
                 "last_trigger_ts": 0.0,
                 "last_run_status": "idle",
@@ -97,7 +97,7 @@ class ArayaRuntime:
         if not isinstance(data, dict):
             data = {}
         data.setdefault("enabled", True)
-        data.setdefault("idle_minutes", float(getattr(conf, "ARAYA_IDLE_MINUTES", 30) or 30))
+        data.setdefault("idle_minutes", float(conf.ARAYA_IDLE_MINUTES or 30))
         data.setdefault("last_main_activity_ts", self._last_main_activity_ts)
         data.setdefault("last_trigger_ts", 0.0)
         data.setdefault("last_run_status", "idle")
@@ -125,7 +125,7 @@ class ArayaRuntime:
             normalized: dict[str, Any] = {}
             for key, value in response.items():
                 if key == "messages" and isinstance(value, list):
-                    normalized[key] = [str(getattr(item, "content", item)) for item in value[-6:]]
+                    normalized[key] = [str(item.content if hasattr(item, "content") else item) for item in value[-6:]]
                 else:
                     normalized[str(key)] = self._normalize_response(value)
             return normalized
@@ -138,7 +138,7 @@ class ArayaRuntime:
         state["target_agent"] = self.refresh_target_agent()
         state["running"] = bool(self._task and not self._task.done())
         state["run_in_progress"] = bool(self._active_run_task and not self._active_run_task.done())
-        state["enabled_by_config"] = bool(getattr(conf, "ARAYA_ENABLED", True))
+        state["enabled_by_config"] = bool(conf.ARAYA_ENABLED)
         state["idle_seconds"] = max(0.0, time.time() - float(state.get("last_main_activity_ts") or time.time()))
         if self.paths.last_log_file.exists():
             try:
@@ -205,7 +205,7 @@ class ArayaRuntime:
                 self._save_state(state)
 
     def should_trigger(self) -> bool:
-        if not bool(getattr(conf, "ARAYA_ENABLED", True)):
+        if not bool(conf.ARAYA_ENABLED):
             return False
         state = self._load_state()
         if not bool(state.get("enabled", True)):

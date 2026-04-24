@@ -43,8 +43,13 @@ from faust_backend.plugin_system import PluginManager
 import tqdm
 from os.path import join as pjoin
 from faust_backend.config_loader import args
+
+# SQLite 持久化对象 — 模块级初始化，避免用 globals() 检查存在性
+conn = None
+checkpointer = None
+conn_for_store = None
+storer = None
 import time
-import inspect
 print("[main]Libs Loaded")
 #Shared Events
 app = FastAPI()
@@ -98,8 +103,8 @@ def _runtime_status_payload() -> dict:
         "error": RUNTIME_ERROR,
         "agent_name": AGENT_NAME,
         "agent_root": AGENT_ROOT,
-        "private_config_missing": bool(getattr(conf, "PRIVATE_CONFIG_WAS_MISSING", False)),
-        "private_config_auto_created": bool(getattr(conf, "PRIVATE_CONFIG_AUTO_CREATED", False)),
+        "private_config_missing": bool(conf.PRIVATE_CONFIG_WAS_MISSING),
+        "private_config_auto_created": bool(conf.PRIVATE_CONFIG_AUTO_CREATED),
     }
 
 
@@ -151,7 +156,7 @@ def startServices():
 
 
 def schedule_kb_record_sync(user_text: str, assistant_text: str) -> None:
-    if not getattr(conf, "KB_ENABLED", True):
+    if not conf.KB_ENABLED:
         return
     if not str(user_text).strip() or not str(assistant_text).strip():
         return
@@ -166,8 +171,6 @@ def schedule_kb_record_sync(user_text: str, assistant_text: str) -> None:
             print(f"[main] Failed to sync chat record into KB: {exc}")
 
     asyncio.create_task(_job())
-
-OVERWRITE_LOCK=True
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -279,13 +282,19 @@ def _create_agent_with_extensions(*, model_name: str, checkpointer, store):
         "store": store,
     }
 
-    sig = inspect.signature(create_agent)
-    if "middlewares" in sig.parameters:
-        kwargs["middlewares"] = middlewares
-    elif "middleware" in sig.parameters:
-        kwargs["middleware"] = middlewares
-    elif middlewares:
-        print("[plugin] create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
+    if middlewares:
+        try:
+            kwargs["middlewares"] = middlewares
+            create_agent(**kwargs)
+        except TypeError:
+            pass
+        try:
+            kwargs.pop("middlewares", None)
+            kwargs["middleware"] = middlewares
+            create_agent(**kwargs)
+        except TypeError:
+            print("[plugin] create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
+            kwargs.pop("middleware", None)
 
     return create_agent(**kwargs)
 
@@ -317,7 +326,7 @@ def _message_content_to_text(content) -> str:
 
 
 def _is_ai_message_chunk(message_chunk) -> bool:
-    msg_type = str(getattr(message_chunk, "type", "")).strip().lower()
+    msg_type = str(message_chunk.type).strip().lower()
     if msg_type == "ai":
         return True
     cls_name = message_chunk.__class__.__name__.lower()
@@ -370,7 +379,7 @@ async def stream_chat_agent_events(target_agent, payload, config=None):
                         chunk = data.get("chunk")
                         if not chunk or not _is_ai_message_chunk(chunk):
                             continue
-                        delta_text = _message_content_to_text(getattr(chunk, "content", None))
+                        delta_text = _message_content_to_text(chunk.content)
                         if delta_text:
                             yield {"type": "delta", "content": delta_text}
                         continue
@@ -403,91 +412,94 @@ async def stream_chat_agent_events(target_agent, payload, config=None):
 async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool = False):
     print("[main] Rebuilding runtime with reset_dialog =", reset_dialog, "no_initial_chat =", no_initial_chat)
     global agent, checkpointer, conn, storer, conn_for_store, AGENT_NAME, AGENT_ROOT
-    try:
-        conf.reload_configs()
-        os.environ["DEEPSEEK_API_KEY"] = conf.CHAT_API_KEY
-        os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
-        os.environ["OPENAI_API_KEY"] = conf.CHAT_API_KEY
-        os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
-        AGENT_NAME = conf.AGENT_NAME
-        AGENT_ROOT = os.path.join("agents", f"{AGENT_NAME}")
-        print("[main]Rubuilding Target Agent:", AGENT_NAME)
+    # 在修改全局 Agent 状态前获取锁，防止并发调用破坏状态一致性
+    async with agent_lock:
+        try:
+            conf.reload_configs()
+            os.environ["DEEPSEEK_API_KEY"] = conf.CHAT_API_KEY
+            os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
+            os.environ["OPENAI_API_KEY"] = conf.CHAT_API_KEY
+            os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
+            AGENT_NAME = conf.AGENT_NAME
+            AGENT_ROOT = os.path.join("agents", f"{AGENT_NAME}")
+            print("[main]Rubuilding Target Agent:", AGENT_NAME)
 
-        makeup_init_prompt()
-        llm_tools.refresh_runtime_paths()
-        araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
-        plugin_reload = plugin_manager.reload()
-        print(f"[plugin] reload summary: {plugin_reload}")
-        _sync_plugin_trigger_filters()
-        if not args.save_in_memory:
-            try:
-                if 'conn' in globals() and conn:
-                    await conn.commit()
-                    await conn.close()
-            except Exception:
-                pass
-            try:
-                if 'conn_for_store' in globals() and conn_for_store:
-                    await conn_for_store.commit()
-                    await conn_for_store.close()
-            except Exception:
-                pass
-            os.makedirs(AGENT_ROOT, exist_ok=True)
-            conn = await aiosqlite.connect(pjoin(AGENT_ROOT,'faust_checkpoint.db'))
-            checkpointer=AsyncSqliteSaver(conn=conn)
-            conn_for_store = await aiosqlite.connect(pjoin(AGENT_ROOT,'faust_store.db'))
-            storer=AsyncSqliteStore(conn=conn_for_store)
-            print(f"[main] Checkpoint and store initialized with SQLite for rebuild.\
-               pos_checkpoint: {pjoin(AGENT_ROOT,'faust_checkpoint.db')},\
-               pos_store: {pjoin(AGENT_ROOT,'faust_store.db')}")
-        else:
-            checkpointer=InMemorySaver()
-            storer=InMemoryStore()
-        print("[main] Checkpoint and store initialized for rebuild.")
-        agent = _create_agent_with_extensions(model_name=conf.CHAT_MODEL, checkpointer=checkpointer, store=storer)
-        print("[main] Agent recreated for rebuild.")
-        checkpoint_exists = (not args.save_in_memory) and _has_checkpoint_db(AGENT_ROOT)
-        if no_initial_chat and checkpoint_exists:
-            print("[main] Runtime rebuild skipped initial chat because checkpoint exists and no_initial_chat=True")
+            makeup_init_prompt()
+            llm_tools.refresh_runtime_paths()
+            araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
+            plugin_reload = plugin_manager.reload()
+            print(f"[plugin] reload summary: {plugin_reload}")
+            _sync_plugin_trigger_filters()
+            if not args.save_in_memory:
+                try:
+                    if conn is not None:
+                        await conn.commit()
+                        await conn.close()
+                except Exception:
+                    pass
+                try:
+                    if conn_for_store is not None:
+                        await conn_for_store.commit()
+                        await conn_for_store.close()
+                except Exception:
+                    pass
+                os.makedirs(AGENT_ROOT, exist_ok=True)
+                conn = await aiosqlite.connect(pjoin(AGENT_ROOT,'faust_checkpoint.db'))
+                checkpointer=AsyncSqliteSaver(conn=conn)
+                conn_for_store = await aiosqlite.connect(pjoin(AGENT_ROOT,'faust_store.db'))
+                storer=AsyncSqliteStore(conn=conn_for_store)
+                print(f"[main] Checkpoint and store initialized with SQLite for rebuild.\
+                   pos_checkpoint: {pjoin(AGENT_ROOT,'faust_checkpoint.db')},\
+                   pos_store: {pjoin(AGENT_ROOT,'faust_store.db')}")
+            else:
+                checkpointer=InMemorySaver()
+                storer=InMemoryStore()
+            print("[main] Checkpoint and store initialized for rebuild.")
+            agent = _create_agent_with_extensions(model_name=conf.CHAT_MODEL, checkpointer=checkpointer, store=storer)
+            print("[main] Agent recreated for rebuild.")
+            checkpoint_exists = (not args.save_in_memory) and _has_checkpoint_db(AGENT_ROOT)
+            if no_initial_chat and checkpoint_exists:
+                print("[main] Runtime rebuild skipped initial chat because checkpoint exists and no_initial_chat=True")
+                _set_runtime_state(ready=True, status="ready")
+                return {
+                    "agent_name": AGENT_NAME,
+                    "agent_root": AGENT_ROOT,
+                    "initial_chat_skipped": True,
+                    "ready": True,
+                    "status": RUNTIME_STATUS,
+                    "error": "",
+                }
+            if reset_dialog:
+                await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
+            else:
+                await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
+            print("[main] Runtime rebuild completed.")
             _set_runtime_state(ready=True, status="ready")
             return {
                 "agent_name": AGENT_NAME,
                 "agent_root": AGENT_ROOT,
-                "initial_chat_skipped": True,
+                "initial_chat_skipped": False,
                 "ready": True,
                 "status": RUNTIME_STATUS,
                 "error": "",
             }
-        if reset_dialog:
-            await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
-        else:
-            await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
-        print("[main] Runtime rebuild completed.")
-        _set_runtime_state(ready=True, status="ready")
-        return {
-            "agent_name": AGENT_NAME,
-            "agent_root": AGENT_ROOT,
-            "initial_chat_skipped": False,
-            "ready": True,
-            "status": RUNTIME_STATUS,
-            "error": "",
-        }
-    except Exception as e:
-        agent = None
-        _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
-        print(f"[main] Runtime rebuild degraded: {e}")
-        return {
-            "agent_name": AGENT_NAME,
-            "agent_root": AGENT_ROOT,
-            "initial_chat_skipped": True,
-            "ready": False,
-            "status": RUNTIME_STATUS,
-            "error": str(e),
-        }
+        except Exception as e:
+            agent = None
+            _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+            print(f"[main] Runtime rebuild degraded: {e}")
+            return {
+                "agent_name": AGENT_NAME,
+                "agent_root": AGENT_ROOT,
+                "initial_chat_skipped": True,
+                "ready": False,
+                "status": RUNTIME_STATUS,
+                "error": str(e),
+            }
 
 @app.on_event("startup")
 async def startup_event():
     global agent,checkpointer,conn,storer,conn_for_store,plugin_heartbeat_task
+    backend2frontend.set_main_loop(asyncio.get_running_loop())  # 注册主事件循环，供同步线程推送命令
     try:
         kb_runtime = kb_manager.get_kb_manager(refresh=True)
         kb_runtime.ensure_vdb_initialized()
@@ -1391,7 +1403,7 @@ async def speech_tts_post(payload: dict):
 
     conf.reload_configs()
     try:
-        audio_bytes, content_type = await asyncio.to_thread(speech_runtime.synthesize_tts, text, lang)
+        audio_bytes, content_type = await speech_runtime.synthesize_tts(text, lang)
         return Response(content=audio_bytes, media_type=content_type)
     except speech_runtime.SpeechRuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))

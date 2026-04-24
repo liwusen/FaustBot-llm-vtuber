@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import asyncio
 import pytest
 
 
@@ -12,6 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
 sys.argv = [sys.argv[0]]
 
 import faust_backend.speech_runtime as sr
+import faust_backend.tts_edge as tts_edge_module
 
 
 def test_speech_runtime_edge_mode(monkeypatch):
@@ -22,12 +24,17 @@ def test_speech_runtime_edge_mode(monkeypatch):
     monkeypatch.setattr(sr.conf, "EDGE_TTS_PITCH", "-5%")
     monkeypatch.setattr(sr.conf, "EDGE_TTS_TIMEOUT_SECONDS", 33)
 
-    dummy_module = mock.Mock(synthesize_edge_tts=mock.AsyncMock(return_value=(b"OK", "audio/mpeg")))
-    monkeypatch.setattr(sr, "tts_edge", dummy_module, raising=False)
-    data, ctype = sr.synthesize_tts("hello")
+    # 直接 mock tts_edge 模块的函数，而非 sr.tts_edge
+    mock_impl = mock.AsyncMock(return_value=(b"OK", "audio/mpeg"))
+    monkeypatch.setattr(tts_edge_module, "synthesize_edge_tts", mock_impl)
+
+    async def _run():
+        return await sr.synthesize_tts("hello")
+
+    data, ctype = asyncio.run(_run())
     assert data == b"OK"
     assert ctype == "audio/mpeg"
-    dummy_module.synthesize_edge_tts.assert_awaited_once_with(
+    mock_impl.assert_awaited_once_with(
         "hello",
         voice="voice-a",
         rate="+10%",

@@ -136,8 +136,9 @@ load_configs()
     
 def print_globals():
     print("Current Global Configuration Variables Of Faust:")
-    for k, v in globals().items():
-        if not k.startswith("__") and k.isupper() and isinstance(v, (str, int, float, bool, dict, list)):
+    mod = sys.modules[__name__]
+    for k, v in vars(mod).items():
+        if not k.startswith("_") and k.isupper() and isinstance(v, (str, int, float, bool, dict, list)):
             print(f"{k}: {v}")
 argparser = argparse.ArgumentParser(description="FAUST Backend Main Service\n命令行参数可以覆盖配置文件中的设置，优先级高于配置文件。\nThis agent has super cow powers")
 argparser.add_argument("--agent",type=str,default="NONE",action="store",help="Agent name to use")
