@@ -123,7 +123,7 @@ def should_start_local_tts() -> bool:
 
 
 def should_start_local_asr() -> bool:
-    return _current_asr_mode() == "local"
+    return _current_asr_mode() in {"local", "whisper"}
 
 
 def frontend_speech_config() -> dict[str, Any]:

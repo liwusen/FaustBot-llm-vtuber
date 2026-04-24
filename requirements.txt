@@ -44,3 +44,4 @@ tqdm
 pipmaster
 
 aiofiles
+openai-whisper

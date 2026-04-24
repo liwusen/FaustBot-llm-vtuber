@@ -21,7 +21,7 @@ var META = {
   FRONTEND_CLICK_THROUGH: { label: "前端点击穿透", help: "开启后桌宠窗口忽略鼠标点击。" },
   FRONTEND_DEFAULT_TTS_LANG: { label: "默认 TTS 语言", help: "前端发送 TTS 请求时默认使用的语言。" },
   TTS_MODE: { label: "TTS 模式", help: "选择本地 TTS 或 OpenAI 兼容 TTS。" },
-  ASR_MODE: { label: "ASR 模式", help: "选择本地 ASR 或 OpenAI 兼容 ASR。" },
+  ASR_MODE: { label: "ASR 模式", help: "选择本地 ASR、Whisper 或 OpenAI 兼容 ASR。" },
   FAUSTBOT_CLOUD_BASE_URL: { label: "FaustBot Cloud 地址", help: "FaustBot Cloud 推理服务的 HTTP Base URL。" },
   FAUSTBOT_CLOUD_TIMEOUT_SECONDS: { label: "FaustBot Cloud 超时秒数", help: "调用 FaustBot Cloud TTS/ASR 时的 HTTP 超时。" },
   OPENAI_TTS_BASE_URL: { label: "OpenAI TTS 接口地址", help: "OpenAI 兼容 TTS 服务的 API Base URL。" },
@@ -53,7 +53,7 @@ var META = {
 
 var FIELD_OPTIONS = {
   TTS_MODE: ["local", "openai", "faustbot-cloud", "edge-tts"],
-  ASR_MODE: ["local", "openai", "faustbot-cloud"],
+  ASR_MODE: ["local", "whisper", "openai", "faustbot-cloud"],
   FRONTEND_DEFAULT_TTS_LANG: ["zh", "en", "ja", "ko", "yue"],
   OPENAI_TTS_VOICE: ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"],
   OPENAI_TTS_RESPONSE_FORMAT: ["mp3", "wav", "opus", "aac", "flac", "pcm"],
@@ -69,6 +69,16 @@ var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "GUI_OPERATOR_LLM_MODEL", "
 var AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "GUI_OPERATOR_LLM_KEY", "SECURITY_VERIFIER_LLM_KEY", "KB_OPENAI_API_KEY"];
 var LIVE2D_KEYS = ["LIVE2D_MODEL_PATH", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
+
+META.WHISPER_MODEL = { label: "Whisper 模型", help: "本地 Whisper 模型名称，例如 tiny、base、small、medium、large。" };
+META.WHISPER_DEVICE = { label: "Whisper 设备", help: "Whisper 运行设备，留空或 auto 表示自动选择。" };
+META.WHISPER_LANGUAGE = { label: "Whisper 语言", help: "可选语言提示，留空则自动判断。" };
+META.WHISPER_PROMPT = { label: "Whisper 提示词", help: "可选上下文提示，帮助提升识别稳定性。" };
+META.WHISPER_FP16 = { label: "Whisper FP16", help: "在 GPU 可用时启用半精度推理。" };
+META.WHISPER_TEMPERATURE = { label: "Whisper 温度", help: "Whisper 解码温度。" };
+META.WHISPER_BEST_OF = { label: "Whisper best_of", help: "采样候选数，仅对采样解码有效。" };
+META.WHISPER_BEAM_SIZE = { label: "Whisper beam_size", help: "束搜索宽度。" };
+SPEECH_PUBLIC_KEYS.push("WHISPER_MODEL", "WHISPER_DEVICE", "WHISPER_LANGUAGE", "WHISPER_PROMPT", "WHISPER_FP16", "WHISPER_TEMPERATURE", "WHISPER_BEST_OF", "WHISPER_BEAM_SIZE");
 
 META.EDGE_TTS_VOICE = { label: "Edge TTS 音色", help: "Microsoft Edge TTS 使用的 voice 名称，例如 en-US-AriaNeural 或 zh-CN-shaanxi-XiaoniNeural。" };
 META.EDGE_TTS_RATE = { label: "Edge TTS 语速", help: "Edge TTS 的速率设置，例如 0% 或 -10% 或 20%。" };

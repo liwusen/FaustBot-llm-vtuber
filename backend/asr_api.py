@@ -78,6 +78,43 @@ model_state = {
     "asr_model": None,
     "punc_model": None
 }
+
+whisper_state = {
+    "model": None,
+    "loaded_name": None,
+}
+
+
+def _current_asr_mode() -> str:
+    try:
+        import faust_backend.config_loader as conf
+        return str(getattr(conf, "ASR_MODE", "local") or "local").strip().lower()
+    except Exception:
+        return "local"
+
+
+def _resolve_whisper_device() -> str:
+    try:
+        import faust_backend.config_loader as conf
+        device = str(getattr(conf, "WHISPER_DEVICE", "auto") or "auto").strip().lower()
+    except Exception:
+        device = "auto"
+    if device in {"", "auto"}:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return device
+
+
+def _get_whisper_model():
+    import faust_backend.config_loader as conf
+    model_name = str(getattr(conf, "WHISPER_MODEL", "base") or "base").strip()
+    if whisper_state["model"] is None or whisper_state["loaded_name"] != model_name:
+        try:
+            import whisper
+        except Exception as exc:
+            raise RuntimeError(f"未安装 openai-whisper: {exc}") from exc
+        whisper_state["model"] = whisper.load_model(model_name, device=_resolve_whisper_device())
+        whisper_state["loaded_name"] = model_name
+    return whisper_state["model"]
 @app.on_event("startup")
 async def startup_event():
     print("正在加载模型...")
@@ -95,25 +132,30 @@ async def startup_event():
     os.environ['MODELSCOPE_CACHE'] = asr_model_path
     os.environ['FUNASR_HOME'] = MODEL_DIR
 
-    # 加载ASR模型
-    print("正在加载ASR模型...")
-    model_state["asr_model"] = AutoModel(
-        model="iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-        device=device,
-        model_type="pytorch",
-        dtype="float32"
-    )
-    print("ASR模型加载完成")
+    if _current_asr_mode() == "whisper":
+        print("正在加载 Whisper ASR 模型...")
+        _get_whisper_model()
+        print("Whisper ASR 模型加载完成")
+    else:
+        # 加载ASR模型
+        print("正在加载ASR模型...")
+        model_state["asr_model"] = AutoModel(
+            model="iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+            device=device,
+            model_type="pytorch",
+            dtype="float32"
+        )
+        print("ASR模型加载完成")
 
-    # 加载标点符号模型
-    print("正在加载标点符号模型...")
-    model_state["punc_model"] = AutoModel(
-        model="iic/punc_ct-transformer_cn-en-common-vocab471067-large",
-        model_revision="v2.0.4",
-        device=device,
-        model_type="pytorch",
-        dtype="float32"
-    )
+        # 加载标点符号模型
+        print("正在加载标点符号模型...")
+        model_state["punc_model"] = AutoModel(
+            model="iic/punc_ct-transformer_cn-en-common-vocab471067-large",
+            model_revision="v2.0.4",
+            device=device,
+            model_type="pytorch",
+            dtype="float32"
+        )
     # 恢复原始环境变量
     if original_modelscope_cache:
         os.environ['MODELSCOPE_CACHE'] = original_modelscope_cache
@@ -132,6 +174,46 @@ async def upload_audio(file: UploadFile = File(...)):
     try:
         # 直接读取音频数据到内存
         audio_bytes = await file.read()
+
+        if _current_asr_mode() == "whisper":
+            import tempfile
+            from pathlib import Path
+
+            model = _get_whisper_model()
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                    temp_path = Path(tmp_file.name)
+                    tmp_file.write(audio_bytes)
+                import faust_backend.config_loader as conf
+                result = model.transcribe(
+                    str(temp_path),
+                    language=str(getattr(conf, "WHISPER_LANGUAGE", "") or "").strip() or None,
+                    prompt=str(getattr(conf, "WHISPER_PROMPT", "") or "").strip() or None,
+                    temperature=float(getattr(conf, "WHISPER_TEMPERATURE", 0.0) or 0.0),
+                    best_of=int(getattr(conf, "WHISPER_BEST_OF", 5) or 5),
+                    beam_size=int(getattr(conf, "WHISPER_BEAM_SIZE", 5) or 5),
+                    fp16=bool(getattr(conf, "WHISPER_FP16", False)) and torch.cuda.is_available(),
+                )
+                return {
+                    "status": "success",
+                    "filename": file.filename or "uploaded_audio",
+                    "text": str((result or {}).get("text") or "").strip(),
+                    "raw": result,
+                    "mode": "whisper"
+                }
+            except Exception as exc:
+                return {
+                    "status": "error",
+                    "filename": file.filename or "uploaded_audio",
+                    "message": f"Whisper ASR 失败: {exc}"
+                }
+            finally:
+                if temp_path is not None:
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
         # 使用 soundfile 或 librosa 直接从内存中解析音频
         import io
