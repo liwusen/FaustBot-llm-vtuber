@@ -11,6 +11,9 @@
 import time
 import uuid
 from typing import Dict, Any, Optional
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.nimble")
 
 _nimble_sessions: Dict[str, Dict[str, Any]] = {}
 
@@ -56,7 +59,7 @@ def create_nimble_session(
         "expire_trigger_id": f"nimble_expire::{callback_id}",
     }
     _nimble_sessions[callback_id] = session
-    print(f"[faust.backend.nimble] Session created: {callback_id}")
+    log.info("Session created: %s", callback_id)
     return session
 
 
@@ -76,7 +79,7 @@ def touch_nimble_session(callback_id: str) -> Optional[Dict[str, Any]]:
 def set_nimble_result(callback_id: str, data: Any, *, closed: bool = False) -> Optional[Dict[str, Any]]:
     session = _nimble_sessions.get(callback_id)
     if not session:
-        print(f"[faust.backend.nimble] Warning: Received result for unknown callback_id: {callback_id}")
+        log.warning("收到未知 callback_id 的结果: %s", callback_id)
         return None
     session["result"] = data
     session["updated_at"] = _now()
@@ -84,7 +87,7 @@ def set_nimble_result(callback_id: str, data: Any, *, closed: bool = False) -> O
     if closed:
         session["closed"] = True
         session["status"] = "closed"
-    print(f"[faust.backend.nimble] Result stored for: {callback_id}")
+    log.info("Result stored for: %s", callback_id)
     return session
 
 
@@ -95,7 +98,7 @@ def close_nimble_session(callback_id: str, reason: str = "closed") -> Optional[D
     session["closed"] = True
     session["status"] = reason
     session["updated_at"] = _now()
-    print(f"[faust.backend.nimble] Session closed: {callback_id}, reason={reason}")
+    log.info("Session closed: %s, reason=%s", callback_id, reason)
     return session
 
 
@@ -135,7 +138,7 @@ def export_window_payload(callback_id: str) -> Optional[Dict[str, Any]]:
 def cleanup_nimble_session(callback_id: str) -> Optional[Dict[str, Any]]:
     session = _nimble_sessions.pop(callback_id, None)
     if session:
-        print(f"[faust.backend.nimble] Session cleaned: {callback_id}")
+        log.info("Session cleaned: %s", callback_id)
     return session
 
 
@@ -149,7 +152,7 @@ def cleanup_expired_sessions() -> int:
     for cid in expired_ids:
         _nimble_sessions.pop(cid, None)
     if expired_ids:
-        print(f"[faust.backend.nimble] Cleaned {len(expired_ids)} expired/closed sessions")
+        log.info("Cleaned %s expired/closed sessions", len(expired_ids))
     return len(expired_ids)
 
 

@@ -9,50 +9,11 @@ import sys
 import re
 
 from datetime import datetime
+from faust_backend.logger import get_logger
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-
-# 保存原始的stdout和stderr — 在 startup 中重定向
-_original_stdout = sys.stdout
-_original_stderr = sys.stderr
-_log_file_handle = None
-
-
-class _TeeOutput:
-    """同时写到文件和终端，并过滤ANSI颜色码。"""
-
-    def __init__(self, file1, file2):
-        self.file1 = file1
-        self.file2 = file2
-        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-
-    def write(self, data):
-        self.file1.write(data)
-        clean_data = self.ansi_escape.sub('', data)
-        self.file2.write(clean_data)
-        self.file1.flush()
-        self.file2.flush()
-
-    def flush(self):
-        self.file1.flush()
-        self.file2.flush()
-
-    def isatty(self):
-        return self.file1.isatty()
-
-    def fileno(self):
-        return self.file1.fileno()
-
-
-def _setup_log_redirection() -> None:
-    """将 stdout/stderr 重定向到日志文件和终端。"""
-    global _log_file_handle
-    logs_dir = "logs"
-    os.makedirs(logs_dir, exist_ok=True)
-    _log_file_handle = open(os.path.join(logs_dir, 'asr.log'), 'w', encoding='utf-8')
-    sys.stdout = _TeeOutput(_original_stdout, _log_file_handle)
-    sys.stderr = _TeeOutput(_original_stderr, _log_file_handle)
+log = get_logger("faust.asr")
 
 app = FastAPI()
 
@@ -117,8 +78,7 @@ def _get_whisper_model():
     return whisper_state["model"]
 @app.on_event("startup")
 async def startup_event():
-    _setup_log_redirection()
-    print("正在加载模型...")
+    log.info("正在加载 ASR 模型...")
 
     # 设置环境变量来指定模型下载位置
     asr_model_path = os.path.join(MODEL_DIR, "asr")
@@ -134,22 +94,20 @@ async def startup_event():
     os.environ['FUNASR_HOME'] = MODEL_DIR
 
     if _current_asr_mode() == "whisper":
-        print("正在加载 Whisper ASR 模型...")
+        log.info("正在加载 Whisper ASR 模型...")
         _get_whisper_model()
-        print("Whisper ASR 模型加载完成")
+        log.info("Whisper ASR 模型加载完成")
     else:
-        # 加载ASR模型
-        print("正在加载ASR模型...")
+        log.info("正在加载 FunASR 模型...")
         model_state["asr_model"] = AutoModel(
             model="iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
             device=device,
             model_type="pytorch",
             dtype="float32"
         )
-        print("ASR模型加载完成")
+        log.info("FunASR 模型加载完成")
 
-        # 加载标点符号模型
-        print("正在加载标点符号模型...")
+        log.info("正在加载标点符号模型...")
         model_state["punc_model"] = AutoModel(
             model="iic/punc_ct-transformer_cn-en-common-vocab471067-large",
             model_revision="v2.0.4",
@@ -167,7 +125,7 @@ async def startup_event():
         os.environ['FUNASR_HOME'] = original_funasr_home
     else:
         os.environ.pop('FUNASR_HOME', None)
-    print("标点符号模型加载完成")
+    log.info("ASR 模型全部加载完成")
 
 
 @app.post("/v1/upload_audio")
@@ -222,13 +180,13 @@ async def upload_audio(file: UploadFile = File(...)):
             import soundfile as sf
             # 直接从内存中读取音频数据
             audio_data, sample_rate = sf.read(io.BytesIO(audio_bytes))
-            print(f"音频数据形状: {audio_data.shape}, 采样率: {sample_rate}")
+            log.info("音频数据形状: %s, 采样率: %s", audio_data.shape, sample_rate)
         except ImportError:
-            print("soundfile 不可用，尝试使用 librosa")
+            log.info("soundfile 不可用，尝试使用 librosa")
             try:
                 import librosa
                 audio_data, sample_rate = librosa.load(io.BytesIO(audio_bytes), sr=16000)
-                print(f"音频数据形状: {audio_data.shape}, 采样率: {sample_rate}")
+                log.info(f"音频数据形状: {audio_data.shape}, 采样率: {sample_rate}")
             except ImportError:
                 return {
                     "status": "error",
@@ -245,7 +203,7 @@ async def upload_audio(file: UploadFile = File(...)):
                     audio_data = np.mean(audio_data, axis=1)
                 audio_data = audio_data.astype('float32')
             except Exception as e:
-                print(f"处理音频数组时出错（类型/维度转换）：{e}")
+                log.warning(f"处理音频数组时出错（类型/维度转换）：{e}")
 
             # 语音识别 - 传入 numpy 数组而不是文件路径
             asr_result = model_state["asr_model"].generate(
@@ -264,7 +222,7 @@ async def upload_audio(file: UploadFile = File(...)):
                     )
                 except Exception as e:
                     # 如果标点模型失败，记录并回退到未标点的文本
-                    print(f"标点模型处理失败，回退到原始文本: {e}")
+                    log.warning(f"标点模型处理失败，回退到原始文本: {e}")
 
                 return {
                     "status": "success",
@@ -279,7 +237,7 @@ async def upload_audio(file: UploadFile = File(...)):
                 }
 
     except Exception as e:
-        print(f"处理音频时出错: {str(e)}")
+        log.error(f"处理音频时出错: {str(e)}")
         return {
             "status": "error",
             "message": str(e)

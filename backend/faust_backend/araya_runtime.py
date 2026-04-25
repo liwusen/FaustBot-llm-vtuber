@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,9 @@ from langchain_openai import ChatOpenAI
 
 import faust_backend.config_loader as conf
 import faust_backend.kb_manager as kb_manager
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.araya")
 
 ARAYA_AGENT_NAME = "araya"
 
@@ -32,11 +36,11 @@ class ArayaPaths:
 class ArayaRuntime:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
-        self._active_run_task: asyncio.Task | None = None
-        self._run_lock = asyncio.Lock()
+        self._run_lock = threading.Lock()
         self._last_main_activity_ts = time.time()
         self._target_agent_name = self._resolve_target_agent_name()
         self.paths = self._build_paths()
+        self._araya_agent: Any = None  # 缓存 Agent 实例，避免每次重建
 
     def _build_paths(self) -> ArayaPaths:
         root = Path(conf.CONFIG_ROOT) / "agents" / ARAYA_AGENT_NAME / "runtime"
@@ -137,7 +141,7 @@ class ArayaRuntime:
         state = self._load_state()
         state["target_agent"] = self.refresh_target_agent()
         state["running"] = bool(self._task and not self._task.done())
-        state["run_in_progress"] = bool(self._active_run_task and not self._active_run_task.done())
+        state["run_in_progress"] = self._run_lock.locked()
         state["enabled_by_config"] = bool(conf.ARAYA_ENABLED)
         state["idle_seconds"] = max(0.0, time.time() - float(state.get("last_main_activity_ts") or time.time()))
         if self.paths.last_log_file.exists():
@@ -173,13 +177,6 @@ class ArayaRuntime:
             self._task = asyncio.create_task(self._loop(), name="araya-runtime")
 
     async def shutdown(self) -> None:
-        if self._active_run_task is not None:
-            self._active_run_task.cancel()
-            try:
-                await self._active_run_task
-            except asyncio.CancelledError:
-                pass
-            self._active_run_task = None
         if self._task is None:
             return
         self._task.cancel()
@@ -195,6 +192,7 @@ class ArayaRuntime:
                 await asyncio.sleep(30.0)
                 if not self.should_trigger():
                     continue
+                # 直接 await run_once — 所有工具已异步，不会阻塞事件循环
                 await self.run_once(reason="idle")
             except asyncio.CancelledError:
                 break
@@ -233,74 +231,74 @@ class ArayaRuntime:
             """获取当前时间戳和 ISO 格式的 UTC 时间字符串。"""
             return {"time": time.time(), "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         @tool
-        def arayaKbListTool(scope: str = "") -> dict:
+        async def arayaKbListTool(scope: str = "") -> dict:
             """列出知识库中某个目录范围下的树结构。"""
             try:
-                print(f"[Araya]arayaKbListTool called with scope: {scope}")
-                return manager.list_tree(scope)
+                log.info("arayaKbListTool called with scope: %s", scope)
+                return await asyncio.to_thread(manager.list_tree, scope)
             except Exception as e:
-                print(f"[Araya]Error in arayaKbListTool: {e}")
+                log.error("Error in arayaKbListTool: %s", e)
                 return {}
 
         @tool
-        def arayaKbReadTool(path: str) -> dict:
+        async def arayaKbReadTool(path: str) -> dict:
             """读取知识库中文件节点的完整内容。"""
             try:
-                print(f"[Araya]arayaKbReadTool called with path: {path}")
-                return manager.read_node(path)
+                log.info("arayaKbReadTool called with path: %s", path)
+                return await asyncio.to_thread(manager.read_node, path)
             except Exception as e:
-                print(f"[Araya]Error in arayaKbReadTool: {e}")
+                log.error("Error in arayaKbReadTool: %s", e)
                 return {}
 
         @tool
         async def arayaKbWriteTool(path: str, content: str, declared_by: str = "araya", index: bool = True, tags: list[str] | None = None) -> dict:
             """写入知识库文件节点，并可附加标签。"""
             try:
-                print(f"[Araya]arayaKbWriteTool called with path: {path}, content length: {len(content)}, declared_by: {declared_by}, index: {index}, tags: {tags}")
+                log.info("arayaKbWriteTool called with path: %s, content length: %s", path, len(content))
                 return await manager.write_node(path, content, declared_by=declared_by, index=index, tags=tags or [])
             except Exception as e:
-                print(f"[Araya]Error in arayaKbWriteTool: {e}")
+                log.error("Error in arayaKbWriteTool: %s", e)
                 return {}
 
         @tool
         async def arayaKbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags: list[str] | None = None, ignore_score_patch: bool = False) -> list[dict]:
             """在知识库指定范围内搜索，可按标签过滤。"""
             try:
-                print(f"[Araya]arayaKbSearchTool called with query: {query}, scope: {scope}, top_k: {top_k}, return_mode: {return_mode}, tags: {tags}, ignore_score_patch: {ignore_score_patch}")
+                log.info("arayaKbSearchTool called with query: %s", query)
                 return await manager.search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode, tags=tags or [], ignore_score_patch=ignore_score_patch)
             except Exception as e:
-                print(f"[Araya]Error in arayaKbSearchTool: {e}")
+                log.error("Error in arayaKbSearchTool: %s", e)
                 return []
 
         @tool
         async def arayaKbTagSetTool(path: str, tags: list[str], managed_by: str = "araya") -> dict:
             """为知识库文档设置标签。"""
             try:
-                print(f"[Araya]arayaKbTagSetTool called with path: {path}, tags: {tags}, managed_by: {managed_by}")
+                log.info("arayaKbTagSetTool called with path: %s", path)
                 return await manager.set_tags(path, tags or [], managed_by=managed_by)
             except Exception as e:
-                print(f"[Araya]Error in arayaKbTagSetTool: {e}")
+                log.error("Error in arayaKbTagSetTool: %s", e)
                 return {"success": False, "error": str(e)}
 
         @tool
         async def arayaKbScorePatchTool(path: str, score_patch: float, managed_by: str = "araya") -> dict:
             """为知识库文档设置 score patch。"""
             
-            print(f"[Araya]arayaKbScorePatchTool called with path: {path}, score_patch: {score_patch}, managed_by: {managed_by}")
+            log.info("arayaKbScorePatchTool called with path: %s", path)
             try:
                 return await manager.set_score_patch(path, score_patch, managed_by=managed_by)
             except Exception as e:
-                print(f"[Araya]Error in arayaKbScorePatchTool: {e}")
+                log.error("Error in arayaKbScorePatchTool: %s", e)
                 return {"success": False, "error": str(e)}
         @tool
-        def arayaKbChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
+        async def arayaKbChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
             """获取自某个时间戳以来发生变更的知识库节点。"""
-            print(f"[Araya]arayaKbChangedNodesTool called with since_ts: {since_ts}, scope: {scope}, tags: {tags}")
+            log.info("arayaKbChangedNodesTool called")
             
             try:
-                return manager.get_changed_nodes(since_ts, scope=scope, tags=tags or [])
+                return await asyncio.to_thread(manager.get_changed_nodes, since_ts, scope=scope, tags=tags or [])
             except Exception as e:
-                print(f"[Araya]Error in arayaKbChangedNodesTool: {e}")
+                log.error("Error in arayaKbChangedNodesTool: %s", e)
                 return []
 
         return [
@@ -314,9 +312,23 @@ class ArayaRuntime:
             arayaGetTimeTool,
         ]
 
+    def _ensure_agent(self) -> Any:
+        """C: 获取或创建缓存的 Agent 实例。"""
+        if self._araya_agent is None:
+            chat_model = ChatOpenAI(
+                model=conf.CHAT_MODEL,
+                api_key=conf.CHAT_API_KEY,
+                base_url=conf.CHAT_API_BASE,
+            )
+            self._araya_agent = create_agent(
+                model=chat_model,
+                tools=self._build_tools(),
+            )
+        return self._araya_agent
+
     def trigger_run(self, reason: str = "manual") -> dict[str, Any]:
         state = self._load_state()
-        if self._active_run_task is not None and not self._active_run_task.done():
+        if self._run_lock.locked():
             return {
                 "accepted": False,
                 "reason": str(reason or "manual"),
@@ -324,7 +336,7 @@ class ArayaRuntime:
                 "target_agent": self.refresh_target_agent(),
                 "last_trigger_ts": float(state.get("last_trigger_ts") or 0.0),
             }
-        self._active_run_task = asyncio.create_task(self.run_once(reason=reason), name="araya-manual-run")
+        asyncio.create_task(self.run_once(reason=reason), name="araya-manual-run")
         return {
             "accepted": True,
             "reason": str(reason or "manual"),
@@ -350,15 +362,6 @@ class ArayaRuntime:
                 "error": "",
             }
             try:
-                chat_model = ChatOpenAI(
-                    model=conf.CHAT_MODEL,
-                    api_key=conf.CHAT_API_KEY,
-                    base_url=conf.CHAT_API_BASE,
-                )
-                araya_agent = create_agent(
-                    model=chat_model,
-                    tools=self._build_tools(),
-                )
                 instruction = (
                     f"{prompt}\n\n"
                     f"当前维护目标 Agent: {self._target_agent_name}\n"
@@ -368,18 +371,15 @@ class ArayaRuntime:
                     f"必要时请维护 /auto_index.md，并且仅使用当前可用工具完成知识库维护。\n"
                     f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
                 )
-                #resp["messages"][-1].content => 结果
-                try:
-                    response = await araya_agent.ainvoke({"messages": [{"role": "user", "content": instruction}]})
-                    print(f"[Araya]Araya agent response: {response['messages'][-1].content}")
-                except Exception as e:
-                    print(f"[Araya]Error during agent invocation: {e}")
-                    raise
+                # C: 直接 await ainvoke — 在主协程中异步执行，不阻塞事件循环
+                agent = self._ensure_agent()
+                response = await agent.ainvoke({"messages": [{"role": "user", "content": instruction}]})
+                log.info("Araya agent response: %s", response['messages'][-1].content[:200])
                 result_payload["response"] = self._normalize_response(response['messages'][-1].content)
                 result_payload["status"] = "ok"
                 state["last_error"] = ""
             except Exception as exc:
-                print("[Araya]Error in run_once: ", exc)
+                log.error("run_once 错误: %s", exc)
                 result_payload["status"] = "error"
                 result_payload["error"] = str(exc)
                 state["last_error"] = str(exc)
@@ -392,7 +392,6 @@ class ArayaRuntime:
             state["target_agent"] = self._target_agent_name
             self._save_state(state)
             self._write_run_log(result_payload)
-            self._active_run_task = None
             return result_payload
 
 

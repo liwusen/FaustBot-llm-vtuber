@@ -13,6 +13,9 @@ except ImportError:
 
 import websocket
 import faust_backend.trigger_manager as trigger_manager
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.mc")
 
 MC_OPERATOR_URL = conf.config.get("MC_OPERATOR_URL", "ws://127.0.0.1:18901") if hasattr(conf, "config") else "ws://127.0.0.1:18901"
 MC_EVENT_TRIGGER_ENABLED = conf.config.get("MC_EVENT_TRIGGER_ENABLED", True) if hasattr(conf, "config") else True
@@ -62,14 +65,14 @@ def _resolve_pending(request_id: str, ok: bool, data: dict[str, Any]) -> None:
 
 def _on_open(ws):
     _connected.set()
-    print(f"[Faust.minecraft_client] Connected to mc-operator: {MC_OPERATOR_URL}")
+    log.info("已连接到 mc-operator: %s", MC_OPERATOR_URL)
 
 
 def _on_message(ws, message: str):
     try:
         payload = json.loads(message)
     except Exception as exc:
-        print(f"[Faust.minecraft_client] Invalid message: {exc}")
+        log.error("无效消息: %s", exc)
         return
 
     msg_type = payload.get("type")
@@ -78,7 +81,7 @@ def _on_message(ws, message: str):
     elif msg_type == "event":
         event_name = payload.get("event_name", "unknown")
         event_payload = payload.get("payload", {})
-        print(f"[Faust.minecraft_client] Received event: {event_name}, payload: {event_payload}")
+        log.info("收到事件: %s, payload: %s", event_name, event_payload)
         if MC_EVENT_TRIGGER_ENABLED:
             if event_name == "hurted":
                 global _hurted_last_trigger_ts
@@ -93,12 +96,12 @@ def _on_message(ws, message: str):
 
 
 def _on_error(ws, error):
-    print(f"[Faust.minecraft_client] WebSocket error: {error}")
+    log.error("WebSocket 错误: %s", error)
 
 
 def _on_close(ws, status_code, msg):
     _connected.clear()
-    print(f"[Faust.minecraft_client] Disconnected from mc-operator: {status_code} {msg}")
+    log.info("与 mc-operator 断开: %s %s", status_code, msg)
 
 
 async def _ensure_started() -> None:
@@ -119,7 +122,7 @@ async def _ensure_started() -> None:
             try:
                 _ws_app.run_forever(reconnect=5)
             except Exception as exc:
-                print(f"[Faust.minecraft_client] run_forever error: {exc}")
+                log.error("run_forever 错误: %s", exc)
             time.sleep(2)
 
     _ws_thread = threading.Thread(target=runner, daemon=True)

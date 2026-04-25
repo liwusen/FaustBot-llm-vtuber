@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Faust Live2d</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles_log_panel.css">
 </head>
 <body>
   <div id="app">
@@ -66,10 +67,32 @@
         <span class="qc-icon" aria-hidden="true">⚙</span>
         <span class="qc-label">配置</span>
       </button>
+      <button id="openLogPanelBtn" type="button" title="打开日志面板">
+        <span class="qc-icon" aria-hidden="true">📋</span>
+        <span class="qc-label">日志</span>
+      </button>
     </div>
   <div id="textChatBar">
     <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" />
     <button id="textChatSendBtn">发送</button>
+  </div>
+  <!-- 日志面板 -->
+  <div id="logPanel" class="floating-panel" style="display:none;">
+    <div class="floating-panel-header">
+      <span>📋 后端日志</span>
+      <div class="log-controls">
+        <select id="logLevelFilter">
+          <option value="0">全部级别</option>
+          <option value="20">INFO+</option>
+          <option value="30">WARNING+</option>
+          <option value="40">ERROR+</option>
+          <option value="50">CRITICAL</option>
+        </select>
+        <button id="logClearBtn" type="button" title="清除日志">🗑</button>
+        <button id="logCloseBtn" type="button" title="关闭日志面板">✕</button>
+      </div>
+    </div>
+    <pre id="logContent"><div class="log-placeholder">等待后端日志…</div></pre>
   </div>
 </div>
 

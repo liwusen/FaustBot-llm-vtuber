@@ -1,4 +1,7 @@
-print("[main]Starting")
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.main")
+
 from fastapi import FastAPI,WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
 import json
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +14,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 import faust_backend.config_loader as conf
 import faust_backend.backend2front as backend2frontend
 import os
-import datetime
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import aiosqlite
 import asyncio
@@ -50,7 +52,7 @@ checkpointer = None
 conn_for_store = None
 storer = None
 import time
-print("[main]Libs Loaded")
+log.info("所有库加载完成")
 #Shared Events
 app = FastAPI()
 uvicorn_server = None
@@ -131,28 +133,26 @@ def makeup_init_prompt():
 try:
     makeup_init_prompt()
 except Exception as e:
-    print(f"[main] Initial prompt load skipped: {e}")
+    log.warning("初始 Prompt 加载跳过: %s", e)
     _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
 
 THREAD_ID=84
-# HTTP POST chat endpoint
-#agent.invoke({"messages":[{"role":"system","content":PROMPT}]},{"configurable":{"thread_id":THREAD_ID}})
 def startServices():
     if not args.no_run_other_backend_services:
-        print("[main] Starting backend services...")
+        log.info("正在启动后端服务...")
         for service in tqdm.tqdm(service_manager.get_service_keys(), desc="[main]Starting services"):
             if service == "tts" and not speech_runtime.should_start_local_tts():
-                print("[main] Skip local TTS service because TTS_MODE is not local.")
+                log.info("跳过本地 TTS 服务（TTS_MODE 不是 local）")
                 continue
             if service == "asr" and not speech_runtime.should_start_local_asr():
-                print("[main] Skip local ASR service because ASR_MODE is not local.")
+                log.info("跳过本地 ASR 服务（ASR_MODE 不是 local）")
                 continue
             try:
                 service_manager.start_service(service, wait=False)
             except Exception as e:
-                print(f"[service_manager] Failed to start {service}: {e}")
+                log.error("启动服务 %s 失败: %s", service, e)
             time.sleep(0.5)
-        print("[main] Other backend services started.")
+        log.info("其他后端服务已启动")
 
 
 def schedule_kb_record_sync(user_text: str, assistant_text: str) -> None:
@@ -160,15 +160,15 @@ def schedule_kb_record_sync(user_text: str, assistant_text: str) -> None:
         return
     if not str(user_text).strip() or not str(assistant_text).strip():
         return
-    print("[main] Scheduling KB record sync for new chat history part.")
+    log.debug("调度 KB 记录同步")
     async def _job():
         try:
             llm_tools.refresh_runtime_paths()
             manager = kb_manager.get_kb_manager(refresh=True)
             result = await manager.add_chat_record(user_text, assistant_text, {"agent": conf.AGENT_NAME})
-            print(f"[main] Chat record synced into KB[异步索引模式]: {result.get('path')}")
+            log.info("聊天记录已同步到知识库[异步索引模式]: %s", result.get("path"))
         except Exception as exc:
-            print(f"[main] Failed to sync chat record into KB: {exc}")
+            log.error("聊天记录同步到知识库失败: %s", exc)
 
     asyncio.create_task(_job())
 
@@ -199,16 +199,16 @@ async def invoke_agent_locked(target_agent, payload, config=None):
         config = {"configurable": {"thread_id": THREAD_ID}}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        print("[main.ai_call] Waiting for lock")
+        log.debug("等待 Agent 锁")
         async with agent_lock:
-            print("[main.ai_call] Start Invoking llm")
+            log.debug("开始调用 LLM")
             try:
                 res = await target_agent.ainvoke(payload, config)
-                print("[main.ai_call] End Invoking llm")
+                log.debug("LLM 调用结束")
                 return res
             except Exception as e:
                 if _is_rate_limit_error(e) and attempt < max_attempts:
-                    print(f"[main.ai_call] 429 retry attempt={attempt}/{max_attempts}")
+                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
                 else:
                     raise
         await _sleep_backoff(attempt)
@@ -219,18 +219,18 @@ async def stream_agent_locked(target_agent, payload, config=None):
         config = {"configurable": {"thread_id": THREAD_ID}}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        print("[main.ai_call] Waiting for lock")
+        log.debug("等待 Agent 锁")
         async with agent_lock:
-            print("[main.ai_call] Start Invoking llm")
+            log.debug("开始流式调用 LLM")
             try:
                 async for message_chunk, metadata in target_agent.astream(payload, config, stream_mode="messages"):
                     if message_chunk.content and metadata.get("langgraph_node")!="tools" and _is_ai_message_chunk(message_chunk):
                         yield message_chunk, metadata
-                print("[main.ai_call] End Invoking llm")
+                log.debug("流式 LLM 调用结束")
                 return
             except Exception as e:
                 if _is_rate_limit_error(e) and attempt < max_attempts:
-                    print(f"[main.ai_call] 429 retry attempt={attempt}/{max_attempts}")
+                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
                 else:
                     raise
         await _sleep_backoff(attempt)
@@ -255,11 +255,11 @@ async def _plugin_heartbeat_loop():
             await asyncio.sleep(10.0)
             summary = plugin_manager.heartbeat_tick()
             if summary.get("errors"):
-                print(f"[plugin.heartbeat] errors: {summary.get('errors')}")
+                log.error("插件心跳错误: %s", summary.get("errors"))
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"[plugin.heartbeat] loop error: {e}")
+            log.error("插件心跳循环错误: %s", e)
             await asyncio.sleep(1.0)
 
 
@@ -293,7 +293,7 @@ def _create_agent_with_extensions(*, model_name: str, checkpointer, store):
             kwargs["middleware"] = middlewares
             create_agent(**kwargs)
         except TypeError:
-            print("[plugin] create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
+            log.warning("create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
             kwargs.pop("middleware", None)
 
     return create_agent(**kwargs)
@@ -366,9 +366,9 @@ async def stream_chat_agent_events(target_agent, payload, config=None):
         config = {"configurable": {"thread_id": THREAD_ID}}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        print("[main.ai_call] Waiting for lock")
+        log.debug("等待 Agent 锁")
         async with agent_lock:
-            print("[main.ai_call] Start Invoking llm")
+            log.debug("开始调用 LLM")
             try:
                 async for event in target_agent.astream_events(payload, config=config, version="v2"):
                     if not isinstance(event, dict):
@@ -399,18 +399,18 @@ async def stream_chat_agent_events(target_agent, payload, config=None):
                             "call_id": str(event.get("run_id") or ""),
                         }
                         continue
-                print("[main.ai_call] End Invoking llm")
+                log.debug("LLM 调用结束")
                 return
             except Exception as e:
                 if _is_rate_limit_error(e) and attempt < max_attempts:
-                    print(f"[main.ai_call] 429 retry attempt={attempt}/{max_attempts}")
+                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
                 else:
                     raise
         await _sleep_backoff(attempt)
 
 
 async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool = False):
-    print("[main] Rebuilding runtime with reset_dialog =", reset_dialog, "no_initial_chat =", no_initial_chat)
+    log.info("正在重建运行时，reset_dialog=%s, no_initial_chat=%s", reset_dialog, no_initial_chat)
     global agent, checkpointer, conn, storer, conn_for_store, AGENT_NAME, AGENT_ROOT
     # 在修改全局 Agent 状态前获取锁，防止并发调用破坏状态一致性
     async with agent_lock:
@@ -422,13 +422,13 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
             AGENT_NAME = conf.AGENT_NAME
             AGENT_ROOT = os.path.join("agents", f"{AGENT_NAME}")
-            print("[main]Rubuilding Target Agent:", AGENT_NAME)
+            log.info("重建目标 Agent: %s", AGENT_NAME)
 
             makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
             araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
             plugin_reload = plugin_manager.reload()
-            print(f"[plugin] reload summary: {plugin_reload}")
+            log.info("插件重载摘要: %s", plugin_reload)
             _sync_plugin_trigger_filters()
             if not args.save_in_memory:
                 try:
@@ -448,18 +448,18 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 checkpointer=AsyncSqliteSaver(conn=conn)
                 conn_for_store = await aiosqlite.connect(pjoin(AGENT_ROOT,'faust_store.db'))
                 storer=AsyncSqliteStore(conn=conn_for_store)
-                print(f"[main] Checkpoint and store initialized with SQLite for rebuild.\
-                   pos_checkpoint: {pjoin(AGENT_ROOT,'faust_checkpoint.db')},\
-                   pos_store: {pjoin(AGENT_ROOT,'faust_store.db')}")
+                log.info("已初始化 SQLite Checkpoint + Store，checkpoint=%s , store=%s",
+                         pjoin(AGENT_ROOT, 'faust_checkpoint.db'),
+                         pjoin(AGENT_ROOT, 'faust_store.db'))
             else:
                 checkpointer=InMemorySaver()
                 storer=InMemoryStore()
-            print("[main] Checkpoint and store initialized for rebuild.")
+            log.info("Checkpoint 和 Store 已为重建就绪")
             agent = _create_agent_with_extensions(model_name=conf.CHAT_MODEL, checkpointer=checkpointer, store=storer)
-            print("[main] Agent recreated for rebuild.")
+            log.debug("Agent 已为重建重新创建")
             checkpoint_exists = (not args.save_in_memory) and _has_checkpoint_db(AGENT_ROOT)
             if no_initial_chat and checkpoint_exists:
-                print("[main] Runtime rebuild skipped initial chat because checkpoint exists and no_initial_chat=True")
+                log.info("运行时重建跳过初始对话（checkpoint 存在且 no_initial_chat=True）")
                 _set_runtime_state(ready=True, status="ready")
                 return {
                     "agent_name": AGENT_NAME,
@@ -473,7 +473,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
             else:
                 await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
-            print("[main] Runtime rebuild completed.")
+            log.info("运行时重建完成")
             _set_runtime_state(ready=True, status="ready")
             return {
                 "agent_name": AGENT_NAME,
@@ -486,7 +486,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
         except Exception as e:
             agent = None
             _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
-            print(f"[main] Runtime rebuild degraded: {e}")
+            log.warning("运行时重建降级: %s", e)
             return {
                 "agent_name": AGENT_NAME,
                 "agent_root": AGENT_ROOT,
@@ -506,26 +506,26 @@ async def startup_event():
         await kb_runtime.ensure_worker_started()
         await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(conf.args.no_startup_chat))
-        print(f"[main] Startup runtime summary: {startup_info}")
+        log.info("启动运行时摘要: %s", startup_info)
     except Exception as e:
         agent = None
         _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
-        print(f"[main] Startup runtime degraded: {e}")
+        log.warning("启动运行时降级: %s", e)
     try:
         await vad_runtime.vad_runtime.startup()
-        print("[main] VAD runtime loaded on CPU.")
+        log.info("VAD 运行时已加载到 CPU")
     except Exception as e:
-        print(f"[main] Startup VAD initialization failed: {e}")
+        log.warning("启动 VAD 初始化失败: %s", e)
     #--- Start the trigger watchdog thread to monitor and activate triggers.
-    print("[main] Trigger Watchdog Thread starting...")
+    log.info("触发器看门狗线程正在启动...")
     trigger_manager.start_trigger_watchdog_thread()
     try:
         await minecraft_client.ensure_started()
     except Exception as e:
-        print(f"[main] Minecraft bridge not connected on startup: {e}")
+        log.warning("Minecraft 桥启动时未连接: %s", e)
     if plugin_heartbeat_task is None:
         plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
-    print("[main]FAUST Backend Main Service started.")
+    log.info("FAUST 后端主服务已启动")
 
 
 @app.get("/faust/admin/config")
@@ -1117,11 +1117,11 @@ async def chat_post(payload: dict):
         resp = await invoke_agent_locked(agent,{"messages":[{"role":"user","content":text}]})
         reply = _message_content_to_text(resp["messages"][-1].content)
         schedule_kb_record_sync(text, reply)
-        print('Chat post reply', reply)
+        log.info('Chat POST 回复完成')
         events.ignore_trigger_event.clear()
         return {"reply": reply,"warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
     except Exception as e:
-        print("Chat post error:", e)
+        log.error("Chat POST 错误: %s", e)
         return {"error": _format_chat_error(e), "warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
 
 @app.websocket("/faust/chat")
@@ -1153,7 +1153,7 @@ async def chat_websocket(websocket: WebSocket):
                 events.ignore_trigger_event.set()
                 await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
                 reply = ""
-                print("[main] Received chat message:", text)
+                log.info("收到聊天消息: %s", text[:100])
                 async for event in stream_chat_agent_events(agent, {"messages":[{"role":"user","content":text}]}) :
                     if not isinstance(event, dict):
                         continue
@@ -1162,21 +1162,21 @@ async def chat_websocket(websocket: WebSocket):
                         if not delta_text:
                             continue
                         reply += delta_text
-                        print(delta_text, end="|", flush=True)
+                        log.debug("聊天增量: %s", delta_text[:80])
                         await websocket.send_text(json.dumps({"type": "delta", "content": delta_text}, ensure_ascii=False))
                         continue
                     if event.get("type") in {"tool_start", "tool_result"}:
                         await websocket.send_text(json.dumps(event, ensure_ascii=False))
                 schedule_kb_record_sync(text, reply)
                 await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
-                print()
+                log.debug("聊天流结束")
                 events.ignore_trigger_event.clear()
             except Exception as e:
                 events.ignore_trigger_event.clear()
-                print("Chat websocket error:", e)
+                log.error("Chat WebSocket 错误: %s", e)
                 await websocket.send_text(json.dumps({"type": "error", "error": _format_chat_error(e)}, ensure_ascii=False))
     except WebSocketDisconnect:
-        print("[main] chat websocket disconnected")
+        log.info("Chat WebSocket 断开")
 
 @app.websocket("/faust/command")
 async def command_websocket(websocket: WebSocket):
@@ -1186,7 +1186,7 @@ async def command_websocket(websocket: WebSocket):
         while True:
             if backend2frontend.hasFrontEndTask():
                 task = await backend2frontend.popFrontEndTask()
-                print("[main] Sending frontend task from backend2frontend queue",task)
+                log.debug("从 backend2frontend 队列发送前端任务: %s", task[:80] if isinstance(task, str) else str(task)[:80])
                 if task:
                     await websocket.send_text(task)
             if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
@@ -1223,30 +1223,30 @@ async def command_websocket(websocket: WebSocket):
                             trigger_manager.delete_trigger(session["expire_trigger_id"])
                             backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": "expired"})
                         trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
-                print('[main] Trigger activated, invoking agent with trigger text:', trigger_text)
+                log.info('触发器激活，正在调用 Agent: %s', trigger_text[:120])
                 resp = await invoke_agent_locked(agent,{"messages":[{"role":"user","content":trigger_text}]})
                 reply = resp["messages"][-1].content
-                print('[main] Trigger activated reply', reply)
+                log.debug('触发器激活回复: %s', str(reply)[:120])
                 if("<NO_TTS_OUTPUT>" in reply):
                     continue
                 await websocket.send_text(f"SAY {reply}")
             try:
                 command = await asyncio.wait_for(forward_queue.get(), timeout=0.01)
-                print("[main] Forwarding command from queue:",command)
+                log.debug("从队列转发命令: %s", command[:80])
                 await websocket.send_text(f"{command}")
             except asyncio.TimeoutError:
                 pass
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
-        print("[main] command websocket disconnected")
+        log.info("Command WebSocket 断开")
     except Exception as e:
-        print("[main] command websocket error:", e)
+        log.error("Command WebSocket 错误: %s", e)
         try:
             await websocket.send_text(f"SAY COMMAND LOOP ERROR::{e}")
         except WebSocketDisconnect:
-            print("[main] command websocket disconnected while reporting error")
+            log.warning("Command WebSocket 报告错误时已断开")
         except RuntimeError as send_error:
-            print("[main] command websocket closed before error report:", send_error)
+            log.warning("Command WebSocket 在错误报告前已关闭: %s", send_error)
 @app.post("/faust/command/forward")
 async def command_forward_post(payload: dict):
     """Forwards a command from frontend to the agent and returns the reply."""
@@ -1264,7 +1264,7 @@ async def human_in_loop_feedback_post(payload: dict):
     feedback = None
     request_id = None
     reason = None
-    print(payload)
+    log.debug("HIL feedback payload: %s", payload)
     if isinstance(payload, dict):
         feedback = payload.get('feedback')
         request_id = payload.get('request_id') or payload.get('id')
@@ -1329,7 +1329,7 @@ async def command_feedback_post(payload: dict):
         feedback = payload.get("feedback")
     if not command_id:
         return {"error": "no command_id provided"}
-    print(f"Received feedback for command {command_id}: {feedback}")
+    log.info("收到命令反馈 %s: %s", command_id, feedback)
     if feedback_event := events.feedback_event_pool.get(command_id):
         feedback_event.set()
     return {"status": "feedback received", "command_id": command_id}
@@ -1362,6 +1362,30 @@ async def speech_config_get():
     return {"status": "ok", "config": speech_runtime.frontend_speech_config()}
 
 
+@app.websocket("/faust/logger/ws")
+async def logger_websocket(websocket: WebSocket):
+    """WebSocket 端点：前端订阅日志流。"""
+    from faust_backend.logger import subscribe_ws, unsubscribe_ws
+
+    await websocket.accept()
+    log.info("日志 WebSocket 客户端已连接")
+    q = await subscribe_ws()
+    try:
+        while True:
+            payload = await q.get()
+            try:
+                await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await unsubscribe_ws(q)
+        log.info("日志 WebSocket 客户端已断开")
+
+
 @app.get("/faust/audio/vad/status")
 async def speech_vad_status_get():
     return await vad_runtime.vad_runtime.status()
@@ -1382,7 +1406,7 @@ async def speech_vad_ws(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        print(f"[main] VAD websocket error: {e}")
+        log.error("VAD WebSocket 错误: %s", e)
     finally:
         await vad_runtime.vad_runtime.connection_closed()
         try:
@@ -1437,11 +1461,11 @@ async def status_post():
 
 async def _graceful_shutdown_task():
     global uvicorn_server
-    print("[main] Graceful shutdown requested.")
+    log.info("正在优雅关闭...")
     await asyncio.sleep(0.1)
 
     uvicorn_server.should_exit = True
-    print("[main] Uvicorn shutdown flag set.")
+    log.info("Uvicorn 关闭标志已设置")
 
 @app.post("/faust/shutdown")
 async def shutdown_post():
@@ -1451,10 +1475,7 @@ async def shutdown_post():
 @app.on_event("shutdown")
 async def shutdown_event():
     global plugin_heartbeat_task
-    print("")
-    #only add to checkpoint
-    with open("faust_main.log","a",encoding="utf-8") as f:
-        f.write(f"{datetime.datetime.now()} Shutting down agent...\n")
+    log.info("开始关闭 Agent...")
     if not args.save_in_memory:
         await conn.commit()
         await conn.close()
@@ -1471,10 +1492,10 @@ async def shutdown_event():
     await araya_runtime.get_araya_runtime(refresh=True).shutdown()
     trigger_manager.exitflag=True
     await vad_runtime.vad_runtime.shutdown()
-    print("Shutting down FAUST Backend Main Service...")
+    log.info("正在关闭 FAUST 后端主服务...")
 
 if __name__ == "__main__":
-    print(f"Starting FAUST Backend Main Service on port {PORT}...")
+    log.info("FAUST 后端主服务正在启动，端口 %d...", PORT)
     config = uvicorn.Config(app, host="127.0.0.1", port=PORT)
     uvicorn_server = uvicorn.Server(config)
     uvicorn_server.run()

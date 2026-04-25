@@ -15,9 +15,11 @@ except ImportError:
     import config_loader as conf
     import nimble
 from pydantic import BaseModel, Field, field_validator
+from faust_backend.logger import get_logger
 
 # 惰性解析 triggers 文件路径 — 不在 import 时读取文件
 _store_lock = threading.Lock()
+log = get_logger("faust.trigger")
 
 
 def _get_triggers_path() -> Path:
@@ -50,7 +52,7 @@ def _apply_append_filters(trigger_payload: dict):
             if not isinstance(payload, dict):
                 raise ValueError("append filter must return dict or None")
         except Exception as e:
-            print(f"[trigger_manager] append filter error: {e}")
+            log.warning("append filter error: %s", e)
             return None
     return payload
 
@@ -65,7 +67,7 @@ def _apply_fire_filters(trigger_payload: dict):
             if not isinstance(payload, dict):
                 raise ValueError("fire filter must return dict or None")
         except Exception as e:
-            print(f"[trigger_manager] fire filter error: {e}")
+            log.warning("fire filter error: %s", e)
             return None
     return payload
 
@@ -176,7 +178,7 @@ class TriggerStore(BaseModel):
             store = cls(watchdog=items)
             return store
         except Exception as e:
-            print(f"[trigger_manager] Error loading triggers file: {e}")
+            log.error("加载 triggers 文件失败: %s", e)
             # create fresh store and overwrite corrupted file
             store = cls()
             store.save()
@@ -230,7 +232,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                             if eval(trig.eval_code):
                                 _emit_trigger(trig.model_dump())
                         except Exception as e:
-                            print(f"[trigger_manager] Error evaluating trigger {trig.id}: {e}")
+                            log.error("评估 trigger %s 时出错: %s", trig.id, e)
                     elif trig.type == "event":
                         if trig.event_name == "nimble_result" and trig.callback_id:
                             session = nimble.get_nimble_session(trig.callback_id)
@@ -242,7 +244,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                                 except Exception:
                                     pass
                         else:
-                            print("[trigger_manager] Event trigger fired:", trig.event_name, "with payload:", trig.payload)
+                            log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
                             _emit_trigger(trig.model_dump())
                             ensure_store.watchdog.remove(trig)
                             ensure_store.save()
@@ -269,7 +271,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                     else:
                         continue
                 except Exception as e:
-                    print(f"[trigger_manager] Watchdog loop error for trigger {getattr(trig, 'id', None)}: {e}")
+                    log.error("Watchdog 循环错误 %s: %s", getattr(trig, 'id', None), e)
         time.sleep(poll_interval)
 _thread=None
 def start_trigger_watchdog_thread():
@@ -324,7 +326,7 @@ def append_trigger(trigger: dict | str):
         try:
             trigger = json.loads(trigger)
         except Exception as e:
-            print(f"[trigger_manager] Invalid trigger JSON string: {e}")
+            log.error("无效的 trigger JSON 字符串: %s", e)
             raise
     trigger = _apply_append_filters(trigger)
     if trigger is None:
@@ -347,7 +349,7 @@ def append_trigger(trigger: dict | str):
         else:
             raise ValueError(f"Unsupported trigger type: {ttype}")
     except Exception as e:
-        print(f"[trigger_manager] Invalid trigger payload: {e}")
+        log.error("无效的 trigger payload: %s", e)
         raise
     
     # remove any existing with same id, then append & save
@@ -367,7 +369,7 @@ def delete_trigger(trigger_id: str):
             try:
                 store.save()
             except Exception as e:
-                print(f"[trigger_manager] Failed to save after delete: {e}")
+                log.error("保存后触发失败: %s", e)
 
 
 def list_triggers() -> list[dict]:
@@ -377,7 +379,7 @@ def list_triggers() -> list[dict]:
         try:
             return [t.model_dump() for t in store.watchdog]
         except Exception as e:
-            print(f"[trigger_manager] Failed to list triggers: {e}")
+            log.error("列出 triggers 失败: %s", e)
             return []
 
 
@@ -390,7 +392,7 @@ def get_trigger(trigger_id: str) -> dict | None:
                 if t.id == trigger_id:
                     return t.model_dump()
         except Exception as e:
-            print(f"[trigger_manager] Failed to get trigger {trigger_id}: {e}")
+            log.error("获取 trigger %s 失败: %s", trigger_id, e)
     return None
 
 
@@ -414,7 +416,7 @@ def get_trigger_information() -> str:
             data = {"watchdog": [t.model_dump() for t in store.watchdog]}
             return json.dumps(data, indent=4, ensure_ascii=False, default=str)
         except Exception as e:
-            print(f"[trigger_manager] Failed to serialize triggers: {e}")
+            log.error("序列化 triggers 失败: %s", e)
     return "{}"
 
 
@@ -425,7 +427,7 @@ def clear_triggers():
         try:
             store.save()
         except Exception as e:
-            print(f"[trigger_manager] Failed to save after clear: {e}")
+            log.error("清理后保存失败: %s", e)
 def has_queue_task():
     return not trigger_queue.empty()
 if __name__ == "__main__":
@@ -435,7 +437,7 @@ if __name__ == "__main__":
         "interval_seconds": 300,
         "recall_description": "核心心跳触发器，不要修改，每5分钟触发一次，用于Agent执行周期性任务或自我检查。"
     })
-    print("Initial triggers:", get_trigger_information())
+    log.info("初始 triggers: %s", get_trigger_information())
     exit(0)
     # test watchdog thread
     append_trigger({
@@ -454,10 +456,10 @@ if __name__ == "__main__":
         "eval_code": "random.random() < 0.1" 
     })
     start_trigger_watchdog_thread()
-    print("Trigger watchdog thread started.")
+    log.info("Trigger 看门狗线程已启动")
     while True:
         trig = get_next_trigger(timeout=1.0)
         if trig:
-            print("Trigger fired:", trig)
+            log.info("Trigger 触发: %s", trig)
         else:
-            print("No trigger fired in the last second.")
+            log.debug("上一秒无 trigger 触发")

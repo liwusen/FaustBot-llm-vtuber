@@ -2308,4 +2308,74 @@
     }catch(e){ console.warn('openConfigWindow failed', e); }
   });
   updateQuickAsrButton();
+
+  // ── 日志面板 ──
+  const LOG_WS_URL = (window.BACKEND_BASE || 'ws://127.0.0.1:13900') + '/faust/logger/ws';
+  const logPanel = document.getElementById('logPanel');
+  const logContent = document.getElementById('logContent');
+  const logLevelFilter = document.getElementById('logLevelFilter');
+  const logClearBtn = document.getElementById('logClearBtn');
+  const logCloseBtn = document.getElementById('logCloseBtn');
+  const openLogBtn = document.getElementById('openLogPanelBtn');
+  let logWs = null;
+  let logReconnectTimer = null;
+
+  function connectLogWs() {
+    if (logWs && (logWs.readyState === WebSocket.OPEN || logWs.readyState === WebSocket.CONNECTING)) return;
+    try {
+      logWs = new WebSocket(LOG_WS_URL);
+      logWs.onmessage = (ev) => {
+        try { addLogEntry(JSON.parse(ev.data)); } catch (e) {}
+      };
+      logWs.onclose = () => {
+        logWs = null;
+        clearTimeout(logReconnectTimer);
+        logReconnectTimer = setTimeout(connectLogWs, 3000);
+      };
+      logWs.onerror = () => { if (logWs) logWs.close(); };
+    } catch (e) {
+      clearTimeout(logReconnectTimer);
+      logReconnectTimer = setTimeout(connectLogWs, 5000);
+    }
+  }
+
+  function addLogEntry(entry) {
+    const levelno = entry.levelno || 20;
+    const filterLevel = parseInt((logLevelFilter && logLevelFilter.value) || '0', 10);
+    if (filterLevel > 0 && levelno < filterLevel) return;
+
+    const placeholder = logContent && logContent.querySelector('.log-placeholder');
+    if (placeholder) placeholder.remove();
+
+    const line = document.createElement('div');
+    line.className = 'log-line LEVEL_' + (entry.level || 'INFO');
+    line.textContent = '[' + (entry.timestamp || '') + '] [' + (entry.level || '') + '] ' + (entry.name || '') + ': ' + (entry.message || '');
+    if (logContent) {
+      logContent.appendChild(line);
+      logContent.scrollTop = logContent.scrollHeight;
+      while (logContent.children.length > 500) logContent.removeChild(logContent.firstChild);
+    }
+  }
+
+  if (openLogBtn) {
+    openLogBtn.addEventListener('click', () => {
+      const isHidden = logPanel && logPanel.style.display === 'none';
+      if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
+      if (logWs) { logWs.close(); logWs = null; }
+      if (isHidden) connectLogWs();
+    });
+  }
+  if (logCloseBtn) {
+    logCloseBtn.addEventListener('click', () => {
+      if (logPanel) logPanel.style.display = 'none';
+      if (logWs) { logWs.close(); logWs = null; }
+    });
+  }
+  if (logClearBtn) {
+    logClearBtn.addEventListener('click', () => {
+      if (logContent) logContent.innerHTML = '<div class="log-placeholder">日志已清除</div>';
+    });
+  }
+  if (logPanel && logPanel.style.display !== 'none') connectLogWs();
+
 })();
