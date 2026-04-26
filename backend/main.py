@@ -500,6 +500,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
 async def startup_event():
     global agent,checkpointer,conn,storer,conn_for_store,plugin_heartbeat_task
     backend2frontend.set_main_loop(asyncio.get_running_loop())  # 注册主事件循环，供同步线程推送命令
+    araya_runtime.get_araya_runtime(refresh=True)  # 提前加载 ArayaRuntime，确保其事件循环在主线程中
     try:
         kb_runtime = kb_manager.get_kb_manager(refresh=True)
         kb_runtime.ensure_vdb_initialized()
@@ -594,6 +595,15 @@ async def admin_stop_service(service_key: str):
 async def admin_restart_service(service_key: str):
     item = service_manager.restart_service(service_key)
     return {"status": "ok", "item": item, "callback": {"type": "service_action", "action": "restart", "service_key": service_key}}
+
+
+@app.get("/faust/admin/log/recent-errors")
+async def admin_log_recent_errors():
+    """从日志环状缓冲区返回最近 N 条 ERROR 级别日志。"""
+    from faust_backend.logger import get_recent_errors
+
+    errors = get_recent_errors(count=5)
+    return {"status": "ok", "errors": errors}
 
 
 @app.post("/faust/admin/runtime/reload-agent")
@@ -1112,7 +1122,7 @@ async def chat_post(payload: dict):
     if not RUNTIME_READY or agent is None:
         return {"error": _runtime_not_ready_message(), "runtime": _runtime_status_payload()}
     try:
-        araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
+        await asyncio.to_thread(araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity)
         events.ignore_trigger_event.set()
         resp = await invoke_agent_locked(agent,{"messages":[{"role":"user","content":text}]})
         reply = _message_content_to_text(resp["messages"][-1].content)
@@ -1496,6 +1506,6 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     log.info("FAUST 后端主服务正在启动，端口 %d...", PORT)
-    config = uvicorn.Config(app, host="127.0.0.1", port=PORT)
+    config = uvicorn.Config(app, host="127.0.0.1", port=PORT,log_level="info",timeout_keep_alive=120)
     uvicorn_server = uvicorn.Server(config)
     uvicorn_server.run()

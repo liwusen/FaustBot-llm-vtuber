@@ -959,6 +959,14 @@ ipcMain.handle('config-open-path', async (_event, targetPath) => {
   return { ok: !openErr, error: openErr || null };
 });
 
+ipcMain.handle('toggle-log-panel', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('toggle-log-panel');
+    return true;
+  }
+  return false;
+});
+
 ipcMain.handle('config-http-request', async (_event, req) => {
   const method = String((req && req.method) || 'GET').toUpperCase();
   const rawUrl = String((req && req.url) || '').trim();

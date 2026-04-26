@@ -2378,4 +2378,14 @@
   }
   if (logPanel && logPanel.style.display !== 'none') connectLogWs();
 
+  // Listen for toggle-log-panel event from config window
+  if (window.faust && typeof window.faust.onToggleLogPanel === 'function') {
+    window.faust.onToggleLogPanel(() => {
+      const isHidden = logPanel && logPanel.style.display === 'none';
+      if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
+      if (logWs) { logWs.close(); logWs = null; }
+      if (isHidden) connectLogWs();
+    });
+  }
+
 })();

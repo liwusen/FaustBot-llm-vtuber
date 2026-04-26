@@ -67,16 +67,9 @@
         <span class="qc-icon" aria-hidden="true">⚙</span>
         <span class="qc-label">配置</span>
       </button>
-      <button id="openLogPanelBtn" type="button" title="打开日志面板">
-        <span class="qc-icon" aria-hidden="true">📋</span>
-        <span class="qc-label">日志</span>
-      </button>
     </div>
-  <div id="textChatBar">
-    <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" />
-    <button id="textChatSendBtn">发送</button>
   </div>
-  <!-- 日志面板 -->
+  <!-- 日志面板（在 #app 外，避免点击穿透影响） -->
   <div id="logPanel" class="floating-panel" style="display:none;">
     <div class="floating-panel-header">
       <span>📋 后端日志</span>
@@ -94,7 +87,10 @@
     </div>
     <pre id="logContent"><div class="log-placeholder">等待后端日志…</div></pre>
   </div>
-</div>
+  <div id="textChatBar">
+    <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" />
+    <button id="textChatSendBtn">发送</button>
+  </div>
 
       <!-- 引入 Live2D 依赖 -->
     <script src="libs/live2d.min.js"></script>

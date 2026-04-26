@@ -14,6 +14,7 @@ py7zr
 rich
 websocket-client
 
+
 #屏幕点击工具依赖
 openai
 pillow

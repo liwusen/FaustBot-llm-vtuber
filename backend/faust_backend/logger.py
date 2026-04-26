@@ -24,6 +24,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,11 @@ WS_LOG_QUEUE_MAX = 500
 _ws_log_queue: asyncio.Queue[dict[str, Any]] | None = None
 _ws_subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
 _ws_sub_lock = asyncio.Lock()
+
+# 环状缓冲区：保存最近 N 条日志记录，供查询接口使用
+_RECENT_BUFFER_SIZE = 500
+_recent_buffer: list[dict[str, Any]] = []
+_recent_buffer_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # 日志等级 → 颜色 / 控制台前缀
@@ -104,6 +110,12 @@ class _WebSocketLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             payload = self._format_record(record)
+            # 写入环状缓冲区（线程安全）
+            with _recent_buffer_lock:
+                _recent_buffer.append(payload)
+                if len(_recent_buffer) > _RECENT_BUFFER_SIZE:
+                    _recent_buffer.pop(0)
+
             # 推送到全局队列
             global _ws_log_queue
             if _ws_log_queue is None:
@@ -211,10 +223,16 @@ def _init_root() -> None:
         "langchain",
         "langgraph",
         "langsmith",
+        "asyncio",
+        "aiosqlite",
+        "websockets",
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
-
-
+    import faust_backend.debug_config as debug_config
+    if debug_config.NETWORK_DEBUG:
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        logging.getLogger("httpcore").setLevel(logging.DEBUG)
+        logging.getLogger("urllib3").setLevel(logging.DEBUG)
 def get_logger(name: str) -> logging.Logger:
     """获取统一配置的 Logger。
 
@@ -222,7 +240,7 @@ def get_logger(name: str) -> logging.Logger:
         name: Logger 名称，建议用点号分隔的层级，如 ``faust.main``、``faust.trigger``。
 
     Returns:
-        标准 ``logging.Logger`` 实例，已附加 Fauste 的自定义 Handler。
+        标准 ``logging.Logger`` 实例，已附加 Faust 的自定义 Handler。
     """
     _init_root()
     if name in _loggers:
@@ -236,6 +254,18 @@ def get_logger(name: str) -> logging.Logger:
 # ---------------------------------------------------------------------------
 # WebSocket 订阅管理
 # ---------------------------------------------------------------------------
+
+
+def get_recent_errors(count: int = 5) -> list[dict[str, Any]]:
+    """从环状缓冲区中获取最近 N 条 ERROR 及以上级别日志。"""
+    result: list[dict[str, Any]] = []
+    with _recent_buffer_lock:
+        for item in reversed(_recent_buffer):
+            if len(result) >= count:
+                break
+            if item.get("levelno", 0) >= logging.ERROR:
+                result.append(item)
+    return result
 
 
 async def subscribe_ws() -> asyncio.Queue[dict[str, Any]]:

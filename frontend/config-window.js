@@ -23,6 +23,7 @@ const state = {
   services: [],
   selectedService: "",
   serviceDetail: null,
+  recentErrors: [],
   triggers: [],
   selectedTriggerId: "",
   skills: [],
@@ -680,6 +681,9 @@ function pickModuleFields(moduleId) {
   if (moduleId === "speech") {
     const modeTts = String(state.config.public.TTS_MODE || "").toLowerCase();
     const modeAsr = String(state.config.public.ASR_MODE || "").toLowerCase();
+    const isCloud = modeTts === "faustbot-cloud" || modeAsr === "faustbot-cloud";
+    const isLocalTts = modeTts === "local";
+    const isWhisper = modeAsr === "whisper" || modeAsr === "local";
     const pub = SPEECH_PUBLIC_KEYS.filter((k) => publicKeys.includes(k));
     const pri = SPEECH_PRIVATE_KEYS.filter((k) => privateKeys.includes(k));
     return {
@@ -687,12 +691,15 @@ function pickModuleFields(moduleId) {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
         if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
+        if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
+        if (k.startsWith("WHISPER_") && !isWhisper) return false;
+        if ((k === "TTS_REFER_WAV_PATH" || k === "TTS_PROMPT_TEXT" || k === "TTS_PROMPT_LANGUAGE") && !isLocalTts) return false;
         return true;
       }),
       privateKeys: pri.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
-        if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
+        if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
         return true;
       }),
     };
@@ -711,11 +718,44 @@ function renderConfigModule(moduleId) {
     addSection("提示", [el("div", "empty-state", "当前模块暂无可编辑字段。")]);
     return;
   }
+  // 分离基础配置和高级配置
+  const basicPub = [], advancedPub = [];
   for (const key of fields.publicKeys) {
+    if (ADVANCED_KEYS.has(key)) advancedPub.push(key);
+    else basicPub.push(key);
+  }
+  const basicPri = [], advancedPri = [];
+  for (const key of fields.privateKeys) {
+    if (ADVANCED_KEYS.has(key)) advancedPri.push(key);
+    else basicPri.push(key);
+  }
+
+  // 渲染基础配置
+  for (const key of basicPub) {
     els.cardsRoot.append(makeFieldCard("public", key, state.config.public[key]));
   }
-  for (const key of fields.privateKeys) {
+  for (const key of basicPri) {
     els.cardsRoot.append(makeFieldCard("private", key, state.config.private[key]));
+  }
+
+  // --- 折叠高级配置：渲染分隔条 + 隐藏的高级字段 ---
+  const allAdvanced = [...advancedPub, ...advancedPri];
+  if (allAdvanced.length > 0) {
+    const divider = el("div", "advanced-divider");
+    divider.innerHTML = '<span class="arrow">▶</span> 高级配置 <span class="badge-adv">' + allAdvanced.length + ' 项</span>';
+    const body = el("div", "advanced-body");
+    for (const key of advancedPub) {
+      body.append(makeFieldCard("public", key, state.config.public[key]));
+    }
+    for (const key of advancedPri) {
+      body.append(makeFieldCard("private", key, state.config.private[key]));
+    }
+    divider.addEventListener("click", () => {
+      body.classList.toggle("open");
+      divider.classList.toggle("open");
+    });
+    els.cardsRoot.append(divider);
+    els.cardsRoot.append(body);
   }
 
   if (moduleId === "speech") {
@@ -731,6 +771,20 @@ function renderConfigModule(moduleId) {
     edgeTtsCard.append(el("p", "card-help", "点击打开语音选择器，浏览和选择可用的 Edge TTS 语音。"));
     edgeTtsCard.append(makeButton("选择 Edge TTS 语音", openEdgeTTSVoiceModal, "btn btn-primary"));
     els.cardsRoot.append(edgeTtsCard);
+  }
+
+  if (moduleId === "advanced") {
+    const logCard = el("article", "card");
+    logCard.append(el("h3", "card-title", "日志面板"));
+    logCard.append(el("p", "card-help", "打开/切换主窗口的日志浮动面板，实时查看后端日志。"));
+    logCard.append(makeButton("打开日志面板", async () => {
+      try {
+        await window.api.toggleLogPanel();
+      } catch (e) {
+        console.error("toggleLogPanel failed", e);
+      }
+    }, "btn btn-primary"));
+    els.cardsRoot.append(logCard);
   }
 
   if (moduleId === "live2d") {
@@ -1027,6 +1081,20 @@ if (typeof openSkillMdModal === "undefined") {
 }
 
 async function ensureModuleData(moduleId) {
+  if (moduleId === "overview") {
+    try {
+      const [pl, sv, err] = await Promise.all([
+        cfgApi("GET", "/faust/admin/plugins"),
+        cfgApi("GET", "/faust/admin/services"),
+        cfgApi("GET", "/faust/admin/log/recent-errors"),
+      ]);
+      state.plugins = pl.items || [];
+      state.services = sv.items || [];
+      state.recentErrors = err.errors || [];
+    } catch (e) {
+      console.warn("overview data fetch error", e);
+    }
+  }
   if (moduleId === "live2d") {
     const m = await cfgApi("GET", "/faust/admin/live2d/models");
     state.live2dModels = m.items || [];
@@ -1476,9 +1544,7 @@ function renderArayaModule() {
   const bar = el("div", "toolbar");
   const triggerSlider = createArayaTriggerSlider(async () => {
     await cfgApi("POST", "/faust/araya/trigger", { reason: "manual_from_configer" });
-    await ensureModuleData("araya");
     showBanner("success", "Araya 已触发。" );
-    renderModule();
   });
   bar.append(
     enabled,
@@ -1490,9 +1556,7 @@ function renderArayaModule() {
         enabled: enabled.checked,
         idle_minutes: Number(idle.value || 30),
       });
-      await ensureModuleData("araya");
       showBanner("success", "Araya 设置已保存。");
-      renderModule();
     }, "btn btn-primary"),
     makeButton("刷新状态", async () => {
       await ensureModuleData("araya");
@@ -2064,20 +2128,81 @@ function renderSimpleJsonModule(title, data) {
 }
 
 function renderOverviewModule() {
-  const overview = {
-    current_agent: state.runtime.current_agent || state.config.public.AGENT_NAME || "-",
-    chat_model: state.config.public.CHAT_MODEL || "-",
-    chat_provider: state.config.public.CHAT_PROVIDER || "-",
-    live2d_model: state.config.public.LIVE2D_MODEL_PATH || "-",
-    tts_mode: state.config.public.TTS_MODE || "-",
-    asr_mode: state.config.public.ASR_MODE || "-",
-    services: (state.services || []).length,
-    triggers: (state.triggers || []).length,
-    skills: (state.skills || []).length,
-    plugins: (state.plugins || []).length,
-  };
+  const agent = state.runtime.current_agent || state.config.public.AGENT_NAME || "-";
+  const model = state.config.public.CHAT_MODEL || "-";
+  const tts = state.config.public.TTS_MODE || "-";
+  const asr = state.config.public.ASR_MODE || "-";
+  const live2d = state.config.public.LIVE2D_MODEL_PATH || "-";
 
-  addSection("运行概览", [makeDataView(overview)]);
+  const plugins = state.plugins || [];
+  const pluginsEnabled = plugins.filter((p) => p.enabled).length;
+  const pluginsTotal = plugins.length;
+
+  const services = state.services || [];
+  const servicesRunning = services.filter((s) => s.running).length;
+  const servicesTotal = services.length;
+
+  // ── 基础信息 ──
+  const summaryCard = el("article", "card full-span");
+  summaryCard.append(el("h3", "card-title", "运行概览"));
+  const summaryGrid = el("div", "info-grid");
+  const summaryRows = [
+    { label: "当前 Agent", value: agent },
+    { label: "主模型", value: model },
+    { label: "TTS 模式", value: tts },
+    { label: "ASR 模式", value: asr },
+    { label: "Live2D 模型", value: live2d },
+  ];
+  for (const row of summaryRows) {
+    const item = el("div", "info-item");
+    item.append(el("div", "info-key", row.label));
+    item.append(el("div", "info-value", row.value));
+    summaryGrid.append(item);
+  }
+  summaryCard.append(summaryGrid);
+  els.cardsRoot.append(summaryCard);
+
+  // ── 统计卡片 ──
+  const statData = [
+    { label: "插件", icon: "🧩", value: `${pluginsEnabled}/${pluginsTotal}`, desc: "已启用/总数" },
+    { label: "服务", icon: "⚙️", value: `${servicesRunning}/${servicesTotal}`, desc: "运行中/总数" },
+    { label: "Live2D", icon: "🖼", value: live2d === "-" ? "未配置" : live2d.split("/").pop(), desc: "当前模型" },
+    { label: "Agent", icon: "🤖", value: agent, desc: "当前角色" },
+  ];
+  for (const s of statData) {
+    const card = el("article", "card");
+    card.style.textAlign = "center";
+    card.style.justifyContent = "center";
+    card.innerHTML = `<div style="font-size:28px;line-height:1.2">${s.icon}</div><div style="font-size:22px;font-weight:700;margin:4px 0">${s.value}</div><div style="font-size:12px;color:var(--muted)">${s.desc}</div>`;
+    card.querySelector("div:last-child").style.marginTop = "2px";
+    els.cardsRoot.append(card);
+  }
+
+  // ── 最近 ERROR 日志 ──
+  const errors = state.recentErrors || [];
+  const errCard = el("article", "card full-span");
+  errCard.append(el("h3", "card-title", "最近错误日志"));
+  if (!errors.length) {
+    errCard.append(el("p", "card-help", "暂无 ERROR 级别日志。"));
+  } else {
+    for (const item of errors) {
+      const ts = item.timestamp || "";
+      const msg = item.message || "";
+      const name = item.name || "";
+      const row = el("div", "list-row");
+      row.style.fontSize = "12px";
+      row.style.fontFamily = "monospace";
+      row.style.color = "#c43";
+      row.style.borderBottom = "1px solid var(--line)";
+      row.style.padding = "4px 0";
+      row.textContent = `${ts} [${name}] ${msg}`;
+      errCard.append(row);
+    }
+    const help = el("p", "card-help");
+    help.textContent = `仅显示最近 ${errors.length} 条 ERROR 日志。`;
+    errCard.append(help);
+  }
+  els.cardsRoot.append(errCard);
 }
 
 async function renderModule() {

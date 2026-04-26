@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import aiofiles
+import aiofiles.os
 import numpy as np
 from nano_vectordb import NanoVectorDB
 from openai import AsyncOpenAI
@@ -49,6 +51,28 @@ def _read_json(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+async def _aread_json(path: Path, default: Any) -> Any:
+    """异步读取 JSON 文件。"""
+    if not path.exists():
+        return default
+    try:
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            content = await f.read()
+        return json.loads(content)
+    except Exception:
+        return default
+
+
+async def _a_atomic_write_json(path: Path, data: Any) -> None:
+    """异步原子写入 JSON 文件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
+        await f.write(content)
+    os.replace(tmp, path)
 
 
 def _normalize_scope(scope: str | None) -> str:
@@ -444,6 +468,33 @@ class KBManager:
 
         return build(base)
 
+    async def alist_tree(self, scope: str | None = None) -> dict:
+        """list_tree 的异步版本，使用 aiofiles.os 遍历目录。"""
+        scope_prefix = _normalize_scope(scope)
+        base = self.paths.kb_root / scope_prefix if scope_prefix else self.paths.kb_root
+        if not await aiofiles.os.path.exists(base):
+            return {"path": scope_prefix or "/", "type": "dir", "children": []}
+
+        async def _iterdir_async(directory: Path) -> list[Path]:
+            names = await aiofiles.os.listdir(directory)
+            return [directory / n for n in names]
+
+        async def _isdir_async(path: Path) -> bool:
+            return await aiofiles.os.path.isdir(path)
+
+        async def build(node: Path) -> dict:
+            rel = node.relative_to(self.paths.kb_root).as_posix() if node != self.paths.kb_root else ""
+            if await _isdir_async(node):
+                children = await _iterdir_async(node)
+                # 判断每个子条目类型用于排序
+                dir_flags = [(child, await _isdir_async(child)) for child in children]
+                dir_flags.sort(key=lambda x: (not x[1], x[0].name.lower()))
+                built = [await build(child) for child, _ in dir_flags]
+                return {"path": rel, "name": node.name or "/", "type": "dir", "children": built}
+            return {"path": rel, "name": node.name, "type": "file"}
+
+        return await build(base)
+
     def read_node(self, path: str) -> dict:
         norm = _normalize_kb_path(path)
         file_path = self._node_file(norm)
@@ -453,6 +504,21 @@ class KBManager:
         return {
             "path": norm,
             "content": file_path.read_text(encoding="utf-8"),
+            "meta": meta,
+        }
+
+    async def aread_node(self, path: str) -> dict:
+        """read_node 的异步版本，使用 aiofiles 读取文件。"""
+        norm = _normalize_kb_path(path)
+        file_path = self._node_file(norm)
+        if not await aiofiles.os.path.exists(file_path) or not await aiofiles.os.path.isfile(file_path):
+            raise FileNotFoundError(f"KB 节点不存在: {norm}")
+        meta = self._read_meta(norm)
+        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+        return {
+            "path": norm,
+            "content": content,
             "meta": meta,
         }
 
@@ -543,6 +609,43 @@ class KBManager:
         items: list[dict] = []
         for meta_file in self._iter_meta_files():
             meta = _read_json(meta_file, {})
+            node_path = str(meta.get("path") or "")
+            if not node_path:
+                continue
+            if scope_prefix and not (node_path == scope_prefix.rstrip("/") or node_path.startswith(scope_prefix)):
+                continue
+            normalized_tags = _normalize_tags(meta.get("tags") or [])
+            if required_tags:
+                current_tags = {item.casefold() for item in normalized_tags}
+                if not required_tags.issubset(current_tags):
+                    continue
+            updated_at = str(meta.get("updated_at") or "")
+            try:
+                updated_ts = float(calendar.timegm(time.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ")))
+            except Exception:
+                updated_ts = 0.0
+            if updated_ts < since_value:
+                continue
+            items.append({
+                "path": node_path,
+                "updated_at": updated_at,
+                "tags": normalized_tags,
+                "score_patch": float(meta.get("score_patch") or 0.0),
+                "managed_by": str(meta.get("managed_by") or ""),
+            })
+        return sorted(items, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+
+    async def aget_changed_nodes(self, since_ts: float | int | str, scope: str | None = None, tags: list[str] | None = None) -> list[dict]:
+        """get_changed_nodes 的异步版本，使用 _aread_json 异步读取 meta 文件。"""
+        try:
+            since_value = float(since_ts)
+        except Exception as exc:
+            raise ValueError("since_ts 非法") from exc
+        scope_prefix = _normalize_scope(scope)
+        required_tags = {item.casefold() for item in _normalize_tags(tags)}
+        items: list[dict] = []
+        for meta_file in self._iter_meta_files():
+            meta = await _aread_json(meta_file, {})
             node_path = str(meta.get("path") or "")
             if not node_path:
                 continue

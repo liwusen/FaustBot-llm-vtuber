@@ -1,0 +1,1 @@
+NETWORK_DEBUG = True

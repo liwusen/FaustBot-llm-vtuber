@@ -20,7 +20,8 @@ contextBridge.exposeInMainWorld('api', {
     method: String(method || 'GET'),
     url: String(url || ''),
     payload: payload ?? null,
-  })
+  }),
+  toggleLogPanel: () => ipcRenderer.invoke('toggle-log-panel'),
 });
 
 // deeplink events
@@ -56,6 +57,11 @@ contextBridge.exposeInMainWorld('faust', {
       } catch (e) {
         console.error('faust.onPluginInstallResult callback failed', e);
       }
+    });
+  },
+  onToggleLogPanel: (cb) => {
+    ipcRenderer.on('toggle-log-panel', () => {
+      try { cb(); } catch (e) { console.error('faust.onToggleLogPanel callback failed', e); }
     });
   }
 });
