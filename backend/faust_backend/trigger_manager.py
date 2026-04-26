@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from faust_backend.logger import get_logger
 
 # 惰性解析 triggers 文件路径 — 不在 import 时读取文件
-_store_lock = threading.Lock()
+_store_lock = threading.RLock()
 log = get_logger("faust.trigger")
 
 

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from faust_backend.araya_runtime import get_araya_runtime
 
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.araya_api")
+
+def _sse_format(event: str, data: str) -> str:
+    return f"event: {event}\ndata: {data}\n\n"
+
+
 def register_araya_routes(app):
     @app.get("/faust/araya/status")
     async def araya_status():
@@ -23,6 +29,31 @@ def register_araya_routes(app):
             return {"status": "ok", "result": result}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/faust/araya/trigger-sse")
+    async def araya_trigger_sse(request: Request, reason: str = "manual"):
+        log.debug("SSE request to trigger Araya with reason: %s", reason)
+        runtime = get_araya_runtime(refresh=True)
+
+        async def event_stream():
+            agen = runtime.stream_once_async(reason=reason)
+            try:
+                async for event in agen:
+                    if await request.is_disconnected():
+                        break
+                    yield _sse_format(event["event"], event["data"])
+            finally:
+                await agen.aclose()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post("/faust/araya/settings")
     async def araya_settings(payload: dict | None = None):

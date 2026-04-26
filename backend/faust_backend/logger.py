@@ -233,6 +233,8 @@ def _init_root() -> None:
         logging.getLogger("httpx").setLevel(logging.DEBUG)
         logging.getLogger("httpcore").setLevel(logging.DEBUG)
         logging.getLogger("urllib3").setLevel(logging.DEBUG)
+    if debug_config.IGNORE_DEBUG_LOGS:
+        logging.getLogger("faust").setLevel(logging.INFO)
 def get_logger(name: str) -> logging.Logger:
     """获取统一配置的 Logger。
 

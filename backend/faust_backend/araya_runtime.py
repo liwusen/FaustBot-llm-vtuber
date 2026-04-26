@@ -40,7 +40,8 @@ class ArayaRuntime:
         self._last_main_activity_ts = time.time()
         self._target_agent_name = self._resolve_target_agent_name()
         self.paths = self._build_paths()
-        # 不在此缓存 agent，按每次运行创建以避免与事件循环/HTTPX 客户端绑定问题
+        self._chat_model: ChatOpenAI | None = None
+        self._agent: Any = None
 
     def _build_paths(self) -> ArayaPaths:
         root = Path(conf.CONFIG_ROOT) / "agents" / ARAYA_AGENT_NAME / "runtime"
@@ -171,26 +172,27 @@ class ArayaRuntime:
 
     async def startup(self) -> None:
         self.refresh_target_agent()
-        # 初始化状态并在主事件循环中启动异步监控任务
         self._save_state(self._load_state())
+        self._init_agent()
         if self._task is None or (hasattr(self._task, "done") and self._task.done()):
             self._stop_event = asyncio.Event()
             self._task = asyncio.create_task(self._loop_async())
+        log.info("ArayaRuntime startup complete")
 
     async def shutdown(self) -> None:
         log.debug("Shutting down ArayaRuntime...")
         if self._stop_event:
             self._stop_event.set()
-        if self._task is None:
-            return
-        try:
-            await asyncio.wait_for(self._task, timeout=10.0)
-        except Exception:
+        if self._task is not None:
             try:
-                self._task.cancel()
+                await asyncio.wait_for(self._task, timeout=10.0)
             except Exception:
-                pass
-        self._task = None
+                try:
+                    self._task.cancel()
+                except Exception:
+                    pass
+            self._task = None
+        await self._close_model()
 
     async def _loop_async(self) -> None:
         while not (self._stop_event and self._stop_event.is_set()):
@@ -320,58 +322,104 @@ class ArayaRuntime:
             arayaGetTimeTool,
         ]
 
-    def _ensure_agent(self) -> Any:
-        """为一次运行创建一个新的 Agent 实例（不缓存）。"""
-        chat_model = ChatOpenAI(
+    def _init_agent(self) -> None:
+        self._chat_model = ChatOpenAI(
             model=conf.CHAT_MODEL,
             api_key=conf.CHAT_API_KEY,
             base_url=conf.CHAT_API_BASE,
-            timeout=30,
+            request_timeout=30,
             max_retries=1,
         )
         log.info("Creating Araya agent with model: %s", conf.CHAT_MODEL)
-        return create_agent(
-            model=chat_model,
+        self._agent = create_agent(
+            model=self._chat_model,
             tools=self._build_tools(),
         )
 
+    async def _close_model(self) -> None:
+        if self._chat_model is None:
+            return
+        try:
+            async_client = getattr(self._chat_model, 'async_client', None)
+            if async_client is not None:
+                await async_client.aclose()
+            client = getattr(self._chat_model, 'client', None)
+            if client is not None:
+                client.close()
+        except Exception:
+            pass
+
     async def trigger_run(self, reason: str = "manual") -> dict[str, Any]:
-        """Asynchronously trigger a run; schedules `run_once_async` as a task."""
+        """Legacy trigger - schedules a background task. Prefer stream_once_async for SSE."""
         state = self._load_state()
-        # use asyncio.Lock to detect in-progress runs for compatibility
         if getattr(self, "_run_lock", None) and self._run_lock.locked():
-            return {
-                "accepted": False,
-                "reason": str(reason or "manual"),
-                "status": "already_running",
-                "target_agent": self.refresh_target_agent(),
-                "last_trigger_ts": float(state.get("last_trigger_ts") or 0.0),
-            }
+            return {"accepted": False, "reason": str(reason or "manual"), "status": "already_running", "target_agent": self.refresh_target_agent(), "last_trigger_ts": float(state.get("last_trigger_ts") or 0.0)}
         log.info("Triggering Araya async run with reason: %s", reason)
         asyncio.create_task(self.run_once_async(reason))
-        return {
-            "accepted": True,
-            "reason": str(reason or "manual"),
-            "status": "queued",
-            "target_agent": self.refresh_target_agent(),
-            "queued_at": time.time(),
-        }
+        return {"accepted": True, "reason": str(reason or "manual"), "status": "queued", "target_agent": self.refresh_target_agent(), "queued_at": time.time()}
+
     async def run_once_async(self, reason: str = "manual") -> dict[str, Any]:
-        """Asynchronous version of run_once using agent.ainvoke and async tools."""
-        log.info("Araya run_once_async triggered with reason: %s", reason)
+        """Legacy non-streaming run. Prefer stream_once_async for SSE."""
+        result = None
+        async for event in self.stream_once_async(reason):
+            if event.get("event") == "done":
+                result = json.loads(event.get("data", "{}"))
+            elif event.get("event") == "error":
+                data = json.loads(event.get("data", "{}"))
+                result = {"status": "error", "error": data.get("error", "unknown")}
+        return result or {"status": "error", "error": "no result"}
+
+    def run_once(self, reason: str = "manual") -> dict[str, Any]:
+        return asyncio.run(self.run_once_async(reason))
+
+    def _is_ai_message_chunk(self, message_chunk) -> bool:
+        msg_type = str(getattr(message_chunk, "type", "")).strip().lower()
+        if msg_type == "ai":
+            return True
+        cls_name = message_chunk.__class__.__name__.lower()
+        return "aimessage" in cls_name
+
+    def _message_content_to_text(self, content) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                    continue
+                if not isinstance(block, dict):
+                    continue
+                btype = str(block.get("type") or "").strip().lower()
+                if btype == "text":
+                    text_val = block.get("text")
+                    if text_val is not None:
+                        parts.append(str(text_val))
+            return "".join(parts)
+        return str(content)
+
+    async def stream_once_async(self, reason: str = "manual"):
+        """Async generator yielding SSE events during agent execution.
+
+        Each yield: {"event": "step|done|error", "data": "<json_string>"}
+        Call this directly from the SSE endpoint — no create_task.
+        """
         if self._run_lock is None:
             self._run_lock = asyncio.Lock()
+
+        if self._run_lock.locked():
+            yield {"event": "error", "data": json.dumps({"message": "Araya is already running"})}
+            return
+
         async with self._run_lock:
-            log.debug("Run lock acquired for reason: %s", reason)
             self.refresh_target_agent()
-            log.debug("Target agent for this run: %s", self._target_agent_name)
             started_at = time.time()
-            log.debug("Starting Araya run_once_async at %s for reason: %s", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)), reason)
             state = self._load_state()
-            log.debug("Loaded state for Araya run_once_async: %s", state)
             previous_trigger_ts = float(state.get("last_trigger_ts") or 0.0)
             prompt = self._load_prompt()
-            log.debug("Loaded prompt for Araya run_once_async, length: %d characters", len(prompt))
+
             result_payload: dict[str, Any] = {
                 "reason": str(reason or "manual"),
                 "started_at": started_at,
@@ -380,64 +428,89 @@ class ArayaRuntime:
                 "since_ts": previous_trigger_ts,
                 "status": "running",
                 "error": "",
+                "response": "",
             }
+
+            instruction = (
+                f"{prompt}\n\n"
+                f"当前维护目标 Agent: {self._target_agent_name}\n"
+                f"本次触发原因: {reason}\n"
+                f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次触发以来的变更节点。\n"
+                f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
+                f"必要时请维护 /auto_index.md，并且仅使用当前可用工具完成知识库维护。\n"
+                f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
+            )
+
+            yield {"event": "step", "data": json.dumps({"type": "start", "reason": reason, "target_agent": self._target_agent_name})}
+
+            full_response = ""
+            run_error = ""
             try:
-                instruction = (
-                    f"{prompt}\n\n"
-                    f"当前维护目标 Agent: {self._target_agent_name}\n"
-                    f"本次触发原因: {reason}\n"
-                    f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次触发以来的变更节点。\n"
-                    f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
-                    f"必要时请维护 /auto_index.md，并且仅使用当前可用工具完成知识库维护。\n"
-                    f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
-                )
-                # 为本次运行创建新的 agent，确保 ChatOpenAI/httpx client 与当前事件循环绑定一致
-                chat_model = ChatOpenAI(
-                    model=conf.CHAT_MODEL,
-                    api_key=conf.CHAT_API_KEY,
-                    base_url=conf.CHAT_API_BASE,
-                    timeout=30,
-                    max_retries=1,
-                )
-                agt = create_agent(model=chat_model, tools=self._build_tools())
+                if self._agent is None:
+                    self._init_agent()
+                agt = self._agent
                 payload = {"messages": [{"role": "user", "content": instruction}]}
-                resp = await agt.ainvoke(payload)
-                # 尝试从返回值中提取文本内容（兼容 tests 中的 FakeAgent）
-                full_response = ""
-                try:
-                    if isinstance(resp, dict):
-                        msgs = resp.get("messages") or []
-                        for m in msgs:
-                            full_response += str(getattr(m, "content", m))
-                    else:
-                        full_response = str(resp)
-                except Exception:
-                    full_response = str(resp)
-                log.info("Araya run response collected, length: %d", len(full_response))
+                config = {"configurable": {"thread_id": int(time.time())}, "recursion_limit": 9999}
+
+                yield {"event": "step", "data": json.dumps({"type": "llm_start"})}
+
+                async for raw_event in agt.astream_events(payload, config=config, version="v2"):
+                    if not isinstance(raw_event, dict):
+                        continue
+                    event_name = str(raw_event.get("event") or "").strip().lower()
+                    data = raw_event.get("data") or {}
+
+                    if event_name == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if not chunk or not self._is_ai_message_chunk(chunk):
+                            continue
+                        delta = self._message_content_to_text(chunk.content)
+                        if delta:
+                            full_response += delta
+                            yield {"event": "step", "data": json.dumps({"type": "llm_chunk", "content": delta})}
+
+                    elif event_name == "on_tool_start":
+                        tool_name = str(raw_event.get("name") or data.get("name") or "tool").strip()
+                        tool_args = data.get("input")
+                        yield {"event": "step", "data": json.dumps({"type": "tool_start", "tool": tool_name, "args": tool_args})}
+
+                    elif event_name == "on_tool_end":
+                        tool_name = str(raw_event.get("name") or data.get("name") or "tool").strip()
+                        yield {"event": "step", "data": json.dumps({"type": "tool_end", "tool": tool_name})}
+
                 result_payload["response"] = full_response or "(no text response)"
                 result_payload["status"] = "ok"
                 state["last_error"] = ""
-                result_payload["tool_calls"] = 0
+
             except Exception as exc:
-                log.error("run_once_async 错误: %s", exc)
+                log.error("stream_once_async 错误: %s", exc)
                 log.debug("Traceback:\n%s", traceback.format_exc())
+                run_error = str(exc)
                 result_payload["status"] = "error"
-                result_payload["error"] = str(exc)
-                state["last_error"] = str(exc)
+                result_payload["error"] = run_error
+                state["last_error"] = run_error
+
             finished_at = time.time()
             result_payload["finished_at"] = finished_at
             result_payload["finished_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(finished_at))
             result_payload["duration_seconds"] = round(finished_at - started_at, 3)
+
             state["last_trigger_ts"] = finished_at
             state["last_run_status"] = result_payload["status"]
             state["target_agent"] = self._target_agent_name
             self._save_state(state)
             self._write_run_log(result_payload)
-            return result_payload
 
-    def run_once(self, reason: str = "manual") -> dict[str, Any]:
-        """同步入口，供测试或同步调用使用。内部使用 asyncio.run 调用异步实现。"""
-        return asyncio.run(self.run_once_async(reason))
+            if run_error:
+                yield {"event": "error", "data": json.dumps({"error": run_error, "duration": result_payload["duration_seconds"], "target_agent": self._target_agent_name})}
+            else:
+                yield {"event": "done", "data": json.dumps({
+                    "status": "ok",
+                    "response": full_response,
+                    "duration": result_payload["duration_seconds"],
+                    "target_agent": self._target_agent_name,
+                    "reason": str(reason or "manual"),
+                })}
 
 
 

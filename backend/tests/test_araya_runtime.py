@@ -55,6 +55,12 @@ def test_araya_run_once_updates_state_and_log(monkeypatch, tmp_path):
             from types import SimpleNamespace
             return {"messages": [SimpleNamespace(content="maintained")], "payload": payload}
 
+        async def astream_events(self, payload, config=None, version=None):
+            class FakeAIMessageChunk:
+                type = "ai"
+                content = "maintained"
+            yield {"event": "on_chat_model_stream", "data": {"chunk": FakeAIMessageChunk()}}
+
     monkeypatch.setattr(araya_runtime, "ChatOpenAI", FakeChatOpenAI)
     monkeypatch.setattr(araya_runtime, "create_agent", lambda **kwargs: FakeAgent())
     monkeypatch.setattr(araya_runtime.ArayaRuntime, "_build_tools", lambda self: [])

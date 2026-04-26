@@ -37,8 +37,11 @@
    保证这个项目的所有内部数据文件都只会被这个项目的程序读写,你无需过多考虑**运行时磁盘数据被修改**的脏数据
 
 
+
 3. 当你修改了这个项目的依赖时，请在` requirements.txt `和` requirements_local_infer.txt`(本地神经网络推理依赖)中修改
 
 4. 当你修改了AI Agent的能力时，请务必编写 Faust角色的 PROMPT (修改agents/faust/xxxxx.md)，介绍这些能力，并且告诉它使用条件
+
+5. 如果你不是Github Copilot 那么，请再编码完成后启动 code xxx.py 打开你修改的文件
 
 

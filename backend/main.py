@@ -269,6 +269,8 @@ def _build_chat_model(*, model_name: str):
         model=model_name,
         api_key=conf.CHAT_API_KEY,
         base_url=conf.CHAT_API_BASE,
+        request_timeout=60,
+        max_retries=1,
     )
 
 
@@ -413,6 +415,8 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
     log.info("正在重建运行时，reset_dialog=%s, no_initial_chat=%s", reset_dialog, no_initial_chat)
     global agent, checkpointer, conn, storer, conn_for_store, AGENT_NAME, AGENT_ROOT
     # 在修改全局 Agent 状态前获取锁，防止并发调用破坏状态一致性
+    _needs_initial_chat = False
+    _reset_dialog = reset_dialog
     async with agent_lock:
         try:
             conf.reload_configs()
@@ -469,10 +473,26 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                     "status": RUNTIME_STATUS,
                     "error": "",
                 }
-            if reset_dialog:
-                await invoke_agent_locked(agent,{"messages":[{"role":"system","content":PROMPT}]})
+            _needs_initial_chat = True
+        except Exception as e:
+            agent = None
+            _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+            log.warning("运行时重建降级: %s", e)
+            return {
+                "agent_name": AGENT_NAME,
+                "agent_root": AGENT_ROOT,
+                "initial_chat_skipped": True,
+                "ready": False,
+                "status": RUNTIME_STATUS,
+                "error": str(e),
+            }
+
+    if _needs_initial_chat:
+        try:
+            if _reset_dialog:
+                await invoke_agent_locked(agent, {"messages": [{"role": "system", "content": PROMPT}]})
             else:
-                await invoke_agent_locked(agent,{"messages":[{"role":"user","content":f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
+                await invoke_agent_locked(agent, {"messages": [{"role": "user", "content": f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
             log.info("运行时重建完成")
             _set_runtime_state(ready=True, status="ready")
             return {
@@ -495,6 +515,15 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 "status": RUNTIME_STATUS,
                 "error": str(e),
             }
+
+    return {
+        "agent_name": AGENT_NAME,
+        "agent_root": AGENT_ROOT,
+        "initial_chat_skipped": True,
+        "ready": True,
+        "status": RUNTIME_STATUS,
+        "error": "",
+    }
 
 @app.on_event("startup")
 async def startup_event():
@@ -526,6 +555,14 @@ async def startup_event():
         log.warning("Minecraft 桥启动时未连接: %s", e)
     if plugin_heartbeat_task is None:
         plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
+    # try:
+    #     log.info("正在启动 ArayaRuntime...")
+    #     async for event in araya_runtime.get_araya_runtime().stream_once_async(reason="startup_events"):
+    #          event_name = str(event.get("event") or "").strip().lower()
+    #          event_payload = event.get("data") or {}
+    #          log.debug("ArayaRuntime 事件: %s, 数据: %s", event_name, event_payload)
+    # except Exception as e:
+    #     log.warning("启动 ArayaRuntime 事件流失败: %s", e)
     log.info("FAUST 后端主服务已启动")
 
 
@@ -795,12 +832,13 @@ async def admin_disable_skill(slug: str, payload: dict | None = None):
 
 @app.get("/faust/admin/triggers")
 async def admin_list_triggers():
-    return {"status": "ok", "items": trigger_manager.list_triggers()}
+    items = await asyncio.to_thread(trigger_manager.list_triggers)
+    return {"status": "ok", "items": items}
 
 
 @app.get("/faust/admin/triggers/{trigger_id}")
 async def admin_get_trigger(trigger_id: str):
-    item = trigger_manager.get_trigger(trigger_id)
+    item = await asyncio.to_thread(trigger_manager.get_trigger, trigger_id)
     if not item:
         raise HTTPException(status_code=404, detail=f"Trigger not found: {trigger_id}")
     return {"status": "ok", "item": item}
@@ -810,12 +848,10 @@ async def admin_get_trigger(trigger_id: str):
 async def admin_create_or_upsert_trigger(payload: dict | None = None):
     body = payload or {}
     try:
-        trigger_manager.append_trigger(body)
+        await asyncio.to_thread(trigger_manager.append_trigger, body)
         tid = str(body.get("id") or "")
-        return {
-            "status": "ok",
-            "item": trigger_manager.get_trigger(tid) if tid else body,
-        }
+        item = await asyncio.to_thread(trigger_manager.get_trigger, tid) if tid else body
+        return {"status": "ok", "item": item}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Trigger 保存失败: {e}")
 
@@ -824,16 +860,18 @@ async def admin_create_or_upsert_trigger(payload: dict | None = None):
 async def admin_update_trigger(trigger_id: str, payload: dict | None = None):
     body = payload or {}
     try:
-        trigger_manager.update_trigger(trigger_id, body)
-        return {"status": "ok", "item": trigger_manager.get_trigger(trigger_id)}
+        await asyncio.to_thread(trigger_manager.update_trigger, trigger_id, body)
+        item = await asyncio.to_thread(trigger_manager.get_trigger, trigger_id)
+        return {"status": "ok", "item": item}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Trigger 更新失败: {e}")
 
 
 @app.delete("/faust/admin/triggers/{trigger_id}")
 async def admin_delete_trigger(trigger_id: str):
-    existed = trigger_manager.get_trigger(trigger_id) is not None
-    trigger_manager.delete_trigger(trigger_id)
+    existed = await asyncio.to_thread(trigger_manager.get_trigger, trigger_id)
+    existed = existed is not None
+    await asyncio.to_thread(trigger_manager.delete_trigger, trigger_id)
     if not existed:
         raise HTTPException(status_code=404, detail=f"Trigger not found: {trigger_id}")
     return {"status": "ok", "deleted": trigger_id}
@@ -1506,6 +1544,6 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     log.info("FAUST 后端主服务正在启动，端口 %d...", PORT)
-    config = uvicorn.Config(app, host="127.0.0.1", port=PORT,log_level="info",timeout_keep_alive=120)
+    config = uvicorn.Config(app, host="127.0.0.1", port=PORT,log_level="info")
     uvicorn_server = uvicorn.Server(config)
     uvicorn_server.run()

@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  backendBaseUrl: 'http://127.0.0.1:13900',
   setIgnoreMouseEvents: (v) => ipcRenderer.invoke('set-ignore-mouse-events', !!v),
   focusMainWindow: () => ipcRenderer.invoke('focus-main-window'),
   hideToTray: () => ipcRenderer.invoke('hide-to-tray'),
