@@ -1,4 +1,3 @@
-import asyncio
 import json
 import sys
 import time
@@ -53,14 +52,21 @@ def test_araya_run_once_updates_state_and_log(monkeypatch, tmp_path):
 
     class FakeAgent:
         async def ainvoke(self, payload):
-            return {"messages": [{"content": "maintained"}], "payload": payload}
+            from types import SimpleNamespace
+            return {"messages": [SimpleNamespace(content="maintained")], "payload": payload}
+
+        async def astream_events(self, payload, config=None, version=None):
+            class FakeAIMessageChunk:
+                type = "ai"
+                content = "maintained"
+            yield {"event": "on_chat_model_stream", "data": {"chunk": FakeAIMessageChunk()}}
 
     monkeypatch.setattr(araya_runtime, "ChatOpenAI", FakeChatOpenAI)
     monkeypatch.setattr(araya_runtime, "create_agent", lambda **kwargs: FakeAgent())
     monkeypatch.setattr(araya_runtime.ArayaRuntime, "_build_tools", lambda self: [])
 
     runtime = araya_runtime.ArayaRuntime()
-    result = asyncio.run(runtime.run_once(reason="manual-test"))
+    result = runtime.run_once(reason="manual-test")
     assert result["status"] == "ok"
     assert result["target_agent"] == "faust"
 
@@ -96,16 +102,12 @@ def test_araya_trigger_run_is_non_blocking(monkeypatch, tmp_path):
 
     runtime = araya_runtime.ArayaRuntime()
 
-    async def fake_run_once(reason: str = "manual"):
-        await asyncio.sleep(0)
+    async def fake_run_once_async(reason: str = "manual"):
         return {"status": "ok", "reason": reason}
 
-    monkeypatch.setattr(runtime, "run_once", fake_run_once)
-
-    async def main():
-        result = runtime.trigger_run(reason="manual-test")
-        assert result["accepted"] is True
-        assert result["status"] == "queued"
-        await asyncio.sleep(0)
-
-    asyncio.run(main())
+    monkeypatch.setattr(runtime, "run_once_async", fake_run_once_async)
+    # trigger_run is async; run it in an event loop for the test
+    import asyncio as _asyncio
+    result = _asyncio.run(runtime.trigger_run(reason="manual-test"))
+    assert result["accepted"] is True
+    assert result["status"] == "queued"

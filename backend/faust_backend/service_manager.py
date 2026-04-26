@@ -3,11 +3,14 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.service")
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 STARTUP_WAIT_SECONDS = 15
 TAIL_LOG_LINES = 120
-CREATE_NEW_CONSOLE = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
+CREATE_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE
 
 def find_process_by_port(port):
     for conn in psutil.net_connections():
@@ -133,13 +136,13 @@ def check_and_start_services():
     for service in SERVICES:
         process_info = find_process_by_port(service['port'])
         if process_info:
-            print(f"{service['name']} is already running (PID: {process_info['pid']}, Name: {process_info['name']})")
+            log.info("%s is already running (PID: %s)", service['name'], process_info['pid'])
         else:
-            print(f"{service['name']} is not running. Starting it...")
+            log.info("%s is not running. Starting it...", service['name'])
             try:
                 start_service(service['key'])
             except Exception as e:
-                print(f"Failed to start {service['name']}: {e}")
+                log.error("Failed to start %s: %s", service['name'], e)
 
 
 def stop_service(service_key: str):

@@ -43,6 +43,9 @@ body.click-through #overlay,
 body.click-through .nimble-window,
 body.click-through #asrBubble,
 body.click-through #hil-approval-host,
+body.click-through #logPanel,
+body.click-through .floating-panel-header,
+body.click-through .floating-panel ,
 body.click-through .hil-approval-shell {
   pointer-events: auto;
 }

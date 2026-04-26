@@ -66,6 +66,14 @@ PUBLIC_CONFIG_DEFAULTS = {
     "OPENAI_ASR_RESPONSE_FORMAT": "json",
     "OPENAI_ASR_TEMPERATURE": 0.0,
     "OPENAI_ASR_TIMESTAMP_GRANULARITIES": "",
+    "WHISPER_MODEL": "base",
+    "WHISPER_DEVICE": "auto",
+    "WHISPER_LANGUAGE": "",
+    "WHISPER_PROMPT": "",
+    "WHISPER_FP16": False,
+    "WHISPER_TEMPERATURE": 0.0,
+    "WHISPER_BEST_OF": 5,
+    "WHISPER_BEAM_SIZE": 5,
     "FAUSTBOT_CLOUD_BASE_URL": "http://127.0.0.1:18980",
     "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH": "",
     "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
@@ -194,6 +202,8 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
     _write_json(PRIVATE_CONFIG_PATH, private_cfg)
+    import faust_backend.config_loader as conf
+    conf.reload_configs()
     return get_config_view()
 
 

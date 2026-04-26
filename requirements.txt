@@ -14,6 +14,7 @@ py7zr
 rich
 websocket-client
 
+
 #屏幕点击工具依赖
 openai
 pillow
@@ -42,3 +43,6 @@ langgraph-checkpoint-sqlite==3.0.3
 tqdm
 
 pipmaster
+
+aiofiles
+openai-whisper

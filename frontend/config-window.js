@@ -23,6 +23,7 @@ const state = {
   services: [],
   selectedService: "",
   serviceDetail: null,
+  recentErrors: [],
   triggers: [],
   selectedTriggerId: "",
   skills: [],
@@ -90,6 +91,65 @@ function addSection(title, bodyNodes, full = true) {
 // Modal helpers 已提取到 frontend/libs/configer/modal.js
 if (typeof ensureModalRoot === "undefined" || typeof openModal === "undefined" || typeof closeModal === "undefined") {
   console.error("Modal helpers 未加载：请确认 frontend/libs/configer/modal.js 已在 HTML 中先加载。");
+}
+
+// Handle deeplink-config-faustcloud from main process
+async function handleDeeplinkConfigFaustCloud(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const host = String(payload.host || '').trim();
+  const key = String(payload.key || '').trim();
+  if (!host || !key) return;
+
+  const hostInput = el('input', 'input');
+  hostInput.readOnly = true;
+  hostInput.value = host;
+
+  const keyInput = el('input', 'input');
+  keyInput.readOnly = true;
+  keyInput.value = key;
+
+  const info = el('div', 'card-help');
+  info.textContent = '系统检测到来自 FaustBot Cloud 的配置请求。确认后将把云地址和服务密钥写入配置，并将 TTS/ASR 模式切换为 FaustBot-cloud。';
+
+  const actionBar = el('div', 'toolbar');
+  const doConfirm = async () => {
+    try {
+      setBusy(true);
+      const payloadToSave = {
+        public: {
+          FAUSTBOT_CLOUD_BASE_URL: host,
+          TTS_MODE: 'faustbot-cloud',
+          ASR_MODE: 'faustbot-cloud',
+        },
+        private: {
+          FAUSTBOT_CLOUD_SERVICE_KEY: key,
+        }
+      };
+      await cfgApi('POST', '/faust/admin/config', payloadToSave);
+      // reload runtime to apply changes
+      try { await cfgApi('POST', '/faust/admin/config/reload', { reset_dialog: false, no_initial_chat: true }); } catch (e) {}
+      // reload UI config and runtime summary
+      try { await reloadAll(); } catch (e) { console.warn('reloadAll failed after deeplink config', e); }
+      showBanner('success', 'FaustBot Cloud 已配置。');
+      closeModal();
+    } catch (e) {
+      console.error('Failed to apply FaustBot Cloud config', e);
+      showBanner('error', '配置保存失败: ' + String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  actionBar.append(makeButton('确认并保存', doConfirm, 'btn btn-primary'), makeButton('取消', closeModal));
+
+  const body = [info, el('label', '', 'FaustBot Cloud 地址'), hostInput, el('label', '', 'Service Key'), keyInput, actionBar];
+  openModal('收到 FaustBot Cloud 配置', body);
+}
+
+if (window.deeplink && typeof window.deeplink.onConfigFaustCloud === 'function') {
+  window.deeplink.onConfigFaustCloud((payload) => {
+    try { handleDeeplinkConfigFaustCloud(payload); } catch (e) { console.error('deeplink handler failed', e); }
+  });
 }
 
 // UI card builders 已提取到 frontend/libs/configer/ui-cards.js
@@ -537,6 +597,7 @@ function makeFieldCard(scope, key, value) {
   } else if (SECRET_KEYS.has(key)) {
     const input = el("input", "input");
     input.type = "password";
+    input.name = key;
     input.value = state.dirty[scope].get(key) || "";
     input.placeholder = isMaskedSecret(value) ? "已设置，保持不变" : "请输入密钥";
     input.autocomplete = "off";
@@ -548,6 +609,7 @@ function makeFieldCard(scope, key, value) {
   } else if (typeof value === "number") {
     const input = el("input", "number");
     input.type = "number";
+    input.name = key;
     input.value = String(currentValue ?? 0);
     if (key === "TEXT_CHAT_BAR_Y_FACTOR") {
       input.step = "0.01";
@@ -590,6 +652,7 @@ function makeFieldCard(scope, key, value) {
   } else {
     const input = el("input", "input");
     input.type = "text";
+    input.name = key;
     input.value = currentValue === null || currentValue === undefined ? "" : String(currentValue);
     input.addEventListener("input", () => {
       updateValue(scope, key, input.value);
@@ -618,17 +681,25 @@ function pickModuleFields(moduleId) {
   if (moduleId === "speech") {
     const modeTts = String(state.config.public.TTS_MODE || "").toLowerCase();
     const modeAsr = String(state.config.public.ASR_MODE || "").toLowerCase();
+    const isCloud = modeTts === "faustbot-cloud" || modeAsr === "faustbot-cloud";
+    const isLocalTts = modeTts === "local";
+    const isWhisper = modeAsr === "whisper" || modeAsr === "local";
     const pub = SPEECH_PUBLIC_KEYS.filter((k) => publicKeys.includes(k));
     const pri = SPEECH_PRIVATE_KEYS.filter((k) => privateKeys.includes(k));
     return {
       publicKeys: pub.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
+        if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
+        if (k.startsWith("WHISPER_") && !isWhisper) return false;
+        if ((k === "TTS_REFER_WAV_PATH" || k === "TTS_PROMPT_TEXT" || k === "TTS_PROMPT_LANGUAGE") && !isLocalTts) return false;
         return true;
       }),
       privateKeys: pri.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
         return true;
       }),
     };
@@ -647,11 +718,44 @@ function renderConfigModule(moduleId) {
     addSection("提示", [el("div", "empty-state", "当前模块暂无可编辑字段。")]);
     return;
   }
+  // 分离基础配置和高级配置
+  const basicPub = [], advancedPub = [];
   for (const key of fields.publicKeys) {
+    if (ADVANCED_KEYS.has(key)) advancedPub.push(key);
+    else basicPub.push(key);
+  }
+  const basicPri = [], advancedPri = [];
+  for (const key of fields.privateKeys) {
+    if (ADVANCED_KEYS.has(key)) advancedPri.push(key);
+    else basicPri.push(key);
+  }
+
+  // 渲染基础配置
+  for (const key of basicPub) {
     els.cardsRoot.append(makeFieldCard("public", key, state.config.public[key]));
   }
-  for (const key of fields.privateKeys) {
+  for (const key of basicPri) {
     els.cardsRoot.append(makeFieldCard("private", key, state.config.private[key]));
+  }
+
+  // --- 折叠高级配置：渲染分隔条 + 隐藏的高级字段 ---
+  const allAdvanced = [...advancedPub, ...advancedPri];
+  if (allAdvanced.length > 0) {
+    const divider = el("div", "advanced-divider");
+    divider.innerHTML = '<span class="arrow">▶</span> 高级配置 <span class="badge-adv">' + allAdvanced.length + ' 项</span>';
+    const body = el("div", "advanced-body");
+    for (const key of advancedPub) {
+      body.append(makeFieldCard("public", key, state.config.public[key]));
+    }
+    for (const key of advancedPri) {
+      body.append(makeFieldCard("private", key, state.config.private[key]));
+    }
+    divider.addEventListener("click", () => {
+      body.classList.toggle("open");
+      divider.classList.toggle("open");
+    });
+    els.cardsRoot.append(divider);
+    els.cardsRoot.append(body);
   }
 
   if (moduleId === "speech") {
@@ -660,6 +764,27 @@ function renderConfigModule(moduleId) {
     ttsCard.append(el("p", "card-help", "local TTS 模式下可把参考音频参数即时同步到 5000 端口服务。"));
     ttsCard.append(makeButton("应用参考音频到 TTS 服务", applyTtsReferToService, "btn btn-secondary"));
     els.cardsRoot.append(ttsCard);
+    
+    // Edge TTS 语音选择器
+    const edgeTtsCard = el("article", "card");
+    edgeTtsCard.append(el("h3", "card-title", "Edge TTS 语音选择器"));
+    edgeTtsCard.append(el("p", "card-help", "点击打开语音选择器，浏览和选择可用的 Edge TTS 语音。"));
+    edgeTtsCard.append(makeButton("选择 Edge TTS 语音", openEdgeTTSVoiceModal, "btn btn-primary"));
+    els.cardsRoot.append(edgeTtsCard);
+  }
+
+  if (moduleId === "advanced") {
+    const logCard = el("article", "card");
+    logCard.append(el("h3", "card-title", "日志面板"));
+    logCard.append(el("p", "card-help", "打开/切换主窗口的日志浮动面板，实时查看后端日志。"));
+    logCard.append(makeButton("打开日志面板", async () => {
+      try {
+        await window.api.toggleLogPanel();
+      } catch (e) {
+        console.error("toggleLogPanel failed", e);
+      }
+    }, "btn btn-primary"));
+    els.cardsRoot.append(logCard);
   }
 
   if (moduleId === "live2d") {
@@ -765,6 +890,170 @@ function openKbSearchModal() {
   openModal("KB 搜索", [actionBar, resultBox]);
 }
 
+// Edge TTS 语音管理Modal
+async function openEdgeTTSVoiceModal() {
+  const modalBody = el("div", "edge-tts-voice-modal");
+  
+  // 搜索栏
+  const searchBar = el("div", "search-bar");
+  const searchInput = el("input", "search-input");
+  searchInput.type = "text";
+  searchInput.placeholder = "搜索语音名称、ID或特征...";
+  const searchBtn = makeButton("搜索", () => loadEdgeTTSVoices(searchInput.value), "btn btn-primary");
+  const refreshBtn = makeButton("刷新", () => loadEdgeTTSVoices("", true), "btn btn-secondary");
+  searchBar.append(searchInput, searchBtn, refreshBtn);
+  
+  // 筛选栏
+  const filterBar = el("div", "filter-bar");
+  const languageSelect = el("select", "filter-select");
+  languageSelect.innerHTML = '<option value="">所有语言</option>';
+  const genderSelect = el("select", "filter-select");
+  genderSelect.innerHTML = '<option value="">所有性别</option>';
+  
+  // 语音列表容器
+  const voiceList = el("div", "voice-list");
+  voiceList.style.maxHeight = "400px";
+  voiceList.style.overflowY = "auto";
+  voiceList.style.border = "1px solid #ddd";
+  voiceList.style.padding = "10px";
+  
+  // 选中信息
+  const selectedInfo = el("div", "selected-info");
+  selectedInfo.style.marginTop = "10px";
+  selectedInfo.style.padding = "10px";
+  selectedInfo.style.backgroundColor = "#f5f5f5";
+  selectedInfo.style.borderRadius = "4px";
+  
+  // 加载语言和性别选项
+  async function loadFilters() {
+    try {
+      const [languages, genders] = await Promise.all([
+        cfgApi("GET", "/faust/edge-tts/languages"),
+        cfgApi("GET", "/faust/edge-tts/genders")
+      ]);
+      
+      languages.languages.forEach(lang => {
+        const option = el("option");
+        option.value = lang;
+        option.textContent = lang;
+        languageSelect.appendChild(option);
+      });
+      
+      genders.genders.forEach(gender => {
+        const option = el("option");
+        option.value = gender;
+        option.textContent = gender;
+        genderSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('加载筛选器失败:', error);
+    }
+  }
+  
+  // 加载语音列表
+  async function loadEdgeTTSVoices(searchQuery = "", forceRefresh = false) {
+    try {
+      voiceList.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
+
+      const language = languageSelect.value;
+      const gender = genderSelect.value;
+
+      if (forceRefresh) {
+        await cfgApi("POST", "/faust/edge-tts/cache/refresh", {});
+      }
+
+      const data = await cfgApi("GET", "/faust/edge-tts/voices/search", null, {
+        q: searchQuery,
+        language: language || null,
+        gender: gender || null,
+      });
+      
+      voiceList.innerHTML = '';
+      
+      if (data.voices.length === 0) {
+        voiceList.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">未找到匹配的语音</div>';
+        return;
+      }
+      
+      data.voices.forEach(voice => {
+        const voiceItem = el("div", "voice-item");
+        voiceItem.style.padding = "10px";
+        voiceItem.style.border = "1px solid #eee";
+        voiceItem.style.marginBottom = "5px";
+        voiceItem.style.cursor = "pointer";
+        voiceItem.style.borderRadius = "4px";
+        
+        voiceItem.innerHTML = `
+          <div style="font-weight: bold;">${voice.name}</div>
+          <div style="color: #666; font-size: 0.9em;">ID: ${voice.voice_id}</div>
+          <div style="color: #666; font-size: 0.9em;">语言: ${voice.language} | 性别: ${voice.gender}</div>
+          <div style="color: #888; font-size: 0.8em;">特征: ${voice.voice_personalities}</div>
+        `;
+        
+        voiceItem.addEventListener('click', () => selectVoice(voice, voiceItem));
+        voiceList.appendChild(voiceItem);
+      });
+      
+    } catch (error) {
+      console.error('加载语音列表失败:', error);
+      voiceList.innerHTML = '<div style="text-align: center; padding: 20px; color: red;">加载失败</div>';
+    }
+  }
+  
+  // 选择语音
+  function selectVoice(voice, voiceItem) {
+    // 移除之前的选中状态
+    voiceList.querySelectorAll('.voice-item').forEach(item => {
+      item.style.backgroundColor = '';
+      item.style.border = '1px solid #eee';
+    });
+    
+    // 添加选中状态
+    voiceItem.style.backgroundColor = '#e3f2fd';
+    voiceItem.style.border = '2px solid #2196f3';
+    
+    // 更新选中信息
+    selectedInfo.innerHTML = `
+      <div style="font-weight: bold;">已选择: ${voice.name}</div>
+      <div>语音ID: ${voice.voice_id}</div>
+      <div>语言: ${voice.language} | 性别: ${voice.gender}</div>
+      <div>特征: ${voice.voice_personalities}</div>
+      <button onclick="confirmEdgeTTSVoice('${voice.voice_id}', '${voice.name.replace(/'/g, "\\'")}')" 
+              style="margin-top: 10px; padding: 5px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        确认选择
+      </button>
+    `;
+  }
+  
+  // 确认选择
+  window.confirmEdgeTTSVoice = function(voiceId, voiceName) {
+    updateValue("public", "EDGE_TTS_VOICE", voiceId);
+    const voiceField = document.querySelector('input[name="EDGE_TTS_VOICE"]');
+    if (voiceField) {
+      voiceField.value = voiceId;
+      voiceField.dispatchEvent(new Event('input', { bubbles: true }));
+      voiceField.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    
+    // 关闭Modal
+    closeModal();
+    
+    // 显示成功消息
+    showBanner('success', `已选择语音: ${voiceName}`);
+  };
+  
+  // 初始化
+  modalBody.append(searchBar, filterBar, voiceList, selectedInfo);
+  
+  // 加载筛选器
+  await loadFilters();
+  
+  // 加载语音列表
+  await loadEdgeTTSVoices();
+  
+  openModal("Edge TTS 语音管理", [modalBody]);
+}
+
 function buildTriggerUpdatePayload(source) {
   const base = {
     id: String(source.id || "").trim(),
@@ -792,6 +1081,20 @@ if (typeof openSkillMdModal === "undefined") {
 }
 
 async function ensureModuleData(moduleId) {
+  if (moduleId === "overview") {
+    try {
+      const [pl, sv, err] = await Promise.all([
+        cfgApi("GET", "/faust/admin/plugins"),
+        cfgApi("GET", "/faust/admin/services"),
+        cfgApi("GET", "/faust/admin/log/recent-errors"),
+      ]);
+      state.plugins = pl.items || [];
+      state.services = sv.items || [];
+      state.recentErrors = err.errors || [];
+    } catch (e) {
+      console.warn("overview data fetch error", e);
+    }
+  }
   if (moduleId === "live2d") {
     const m = await cfgApi("GET", "/faust/admin/live2d/models");
     state.live2dModels = m.items || [];
@@ -1239,12 +1542,87 @@ function renderArayaModule() {
   idle.value = String(status.idle_minutes || 30);
 
   const bar = el("div", "toolbar");
+  const progressArea = el("div", "araya-progress", "");
+  progressArea.style.cssText = "margin:8px 0;padding:8px;background:#f5f7fa;border-radius:6px;font-size:13px;color:#555;white-space:pre-wrap;min-height:20px;display:none";
+
+  let activeEventSource = null;
+
   const triggerSlider = createArayaTriggerSlider(async () => {
-    await cfgApi("POST", "/faust/araya/trigger", { reason: "manual_from_configer" });
-    await ensureModuleData("araya");
-    showBanner("success", "Araya 已触发。" );
-    renderModule();
+    if (activeEventSource) {
+      activeEventSource.close();
+      activeEventSource = null;
+    }
+
+    const baseUrl = (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900";
+    const url = baseUrl + "/faust/araya/trigger-sse?reason=manual_from_configer";
+
+    progressArea.style.display = "block";
+    progressArea.textContent = "正在连接...";
+
+    return new Promise((resolve, reject) => {
+      const es = new EventSource(url);
+      activeEventSource = es;
+
+      es.addEventListener("step", (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          switch (data.type) {
+            case "start":
+              progressArea.textContent = `目标 Agent: ${data.target_agent || "-"}\n原因: ${data.reason || "-"}\n正在启动...`;
+              break;
+            case "llm_start":
+              progressArea.textContent += "\n→ 正在调用 LLM...";
+              break;
+            case "llm_chunk":
+              break;
+            case "tool_start":
+              progressArea.textContent += `\n→ 工具调用: ${data.tool || "?"} args=${JSON.stringify(data.args)}`;
+              break;
+            case "tool_end":
+              progressArea.textContent += `\n→ 工具完成: ${data.tool || "?"}`;
+              break;
+            default:
+              break;
+          }
+        } catch (e) {
+          console.warn("SSE step parse error", e);
+        }
+      });
+
+      es.addEventListener("done", (evt) => {
+        es.close();
+        activeEventSource = null;
+        try {
+          const data = JSON.parse(evt.data);
+          progressArea.textContent += `\n\n✓ 完成! (耗时 ${data.duration || "?"}s)`;
+        } catch (e) {
+          progressArea.textContent += "\n\n✓ 完成!";
+        }
+        ensureModuleData("araya");
+        renderModule();
+        showBanner("success", "Araya 执行完成。");
+        resolve();
+      });
+
+      es.addEventListener("error", (evt) => {
+        es.close();
+        activeEventSource = null;
+        let msg = "未知错误";
+        try {
+          if (evt.data) {
+            const data = JSON.parse(evt.data);
+            msg = data.message || data.error || msg;
+          }
+        } catch (e) {}
+        progressArea.textContent += `\n\n✗ 错误: ${msg}`;
+        ensureModuleData("araya");
+        renderModule();
+        showBanner("error", `Araya 错误: ${msg}`);
+        reject(new Error(msg));
+      });
+    });
   });
+
   bar.append(
     enabled,
     el("span", "switch-text", "启用 Araya 自动维护"),
@@ -1255,9 +1633,7 @@ function renderArayaModule() {
         enabled: enabled.checked,
         idle_minutes: Number(idle.value || 30),
       });
-      await ensureModuleData("araya");
       showBanner("success", "Araya 设置已保存。");
-      renderModule();
     }, "btn btn-primary"),
     makeButton("刷新状态", async () => {
       await ensureModuleData("araya");
@@ -1265,7 +1641,7 @@ function renderArayaModule() {
     }),
     triggerSlider
   );
-  addSection("Araya 控制", [bar]);
+  addSection("Araya 控制", [bar, progressArea]);
 
   const idleMinutes = Number(status.idle_minutes || 0);
   const idleSeconds = Number(status.idle_seconds || 0);
@@ -1829,20 +2205,81 @@ function renderSimpleJsonModule(title, data) {
 }
 
 function renderOverviewModule() {
-  const overview = {
-    current_agent: state.runtime.current_agent || state.config.public.AGENT_NAME || "-",
-    chat_model: state.config.public.CHAT_MODEL || "-",
-    chat_provider: state.config.public.CHAT_PROVIDER || "-",
-    live2d_model: state.config.public.LIVE2D_MODEL_PATH || "-",
-    tts_mode: state.config.public.TTS_MODE || "-",
-    asr_mode: state.config.public.ASR_MODE || "-",
-    services: (state.services || []).length,
-    triggers: (state.triggers || []).length,
-    skills: (state.skills || []).length,
-    plugins: (state.plugins || []).length,
-  };
+  const agent = state.runtime.current_agent || state.config.public.AGENT_NAME || "-";
+  const model = state.config.public.CHAT_MODEL || "-";
+  const tts = state.config.public.TTS_MODE || "-";
+  const asr = state.config.public.ASR_MODE || "-";
+  const live2d = state.config.public.LIVE2D_MODEL_PATH || "-";
 
-  addSection("运行概览", [makeDataView(overview)]);
+  const plugins = state.plugins || [];
+  const pluginsEnabled = plugins.filter((p) => p.enabled).length;
+  const pluginsTotal = plugins.length;
+
+  const services = state.services || [];
+  const servicesRunning = services.filter((s) => s.running).length;
+  const servicesTotal = services.length;
+
+  // ── 基础信息 ──
+  const summaryCard = el("article", "card full-span");
+  summaryCard.append(el("h3", "card-title", "运行概览"));
+  const summaryGrid = el("div", "info-grid");
+  const summaryRows = [
+    { label: "当前 Agent", value: agent },
+    { label: "主模型", value: model },
+    { label: "TTS 模式", value: tts },
+    { label: "ASR 模式", value: asr },
+    { label: "Live2D 模型", value: live2d },
+  ];
+  for (const row of summaryRows) {
+    const item = el("div", "info-item");
+    item.append(el("div", "info-key", row.label));
+    item.append(el("div", "info-value", row.value));
+    summaryGrid.append(item);
+  }
+  summaryCard.append(summaryGrid);
+  els.cardsRoot.append(summaryCard);
+
+  // ── 统计卡片 ──
+  const statData = [
+    { label: "插件", icon: "🧩", value: `${pluginsEnabled}/${pluginsTotal}`, desc: "已启用/总数" },
+    { label: "服务", icon: "⚙️", value: `${servicesRunning}/${servicesTotal}`, desc: "运行中/总数" },
+    { label: "Live2D", icon: "🖼", value: live2d === "-" ? "未配置" : live2d.split("/").pop(), desc: "当前模型" },
+    { label: "Agent", icon: "🤖", value: agent, desc: "当前角色" },
+  ];
+  for (const s of statData) {
+    const card = el("article", "card");
+    card.style.textAlign = "center";
+    card.style.justifyContent = "center";
+    card.innerHTML = `<div style="font-size:28px;line-height:1.2">${s.icon}</div><div style="font-size:22px;font-weight:700;margin:4px 0">${s.value}</div><div style="font-size:12px;color:var(--muted)">${s.desc}</div>`;
+    card.querySelector("div:last-child").style.marginTop = "2px";
+    els.cardsRoot.append(card);
+  }
+
+  // ── 最近 ERROR 日志 ──
+  const errors = state.recentErrors || [];
+  const errCard = el("article", "card full-span");
+  errCard.append(el("h3", "card-title", "最近错误日志"));
+  if (!errors.length) {
+    errCard.append(el("p", "card-help", "暂无 ERROR 级别日志。"));
+  } else {
+    for (const item of errors) {
+      const ts = item.timestamp || "";
+      const msg = item.message || "";
+      const name = item.name || "";
+      const row = el("div", "list-row");
+      row.style.fontSize = "12px";
+      row.style.fontFamily = "monospace";
+      row.style.color = "#c43";
+      row.style.borderBottom = "1px solid var(--line)";
+      row.style.padding = "4px 0";
+      row.textContent = `${ts} [${name}] ${msg}`;
+      errCard.append(row);
+    }
+    const help = el("p", "card-help");
+    help.textContent = `仅显示最近 ${errors.length} 条 ERROR 日志。`;
+    errCard.append(help);
+  }
+  els.cardsRoot.append(errCard);
 }
 
 async function renderModule() {

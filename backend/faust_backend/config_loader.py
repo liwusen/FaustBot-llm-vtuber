@@ -49,6 +49,8 @@ def load_configs():
     global OPENAI_ASR_ENERGY_THRESHOLD, OPENAI_ASR_SILENCE_MS, OPENAI_ASR_MIN_SPEECH_MS, OPENAI_ASR_PREROLL_MS
     global OPENAI_TTS_API_KEY, OPENAI_ASR_API_KEY, FAUSTBOT_CLOUD_SERVICE_KEY
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
+    global WHISPER_MODEL, WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_PROMPT, WHISPER_FP16, WHISPER_TEMPERATURE, WHISPER_BEST_OF, WHISPER_BEAM_SIZE
+    global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_DEFAULT_REFER_HASH, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
@@ -104,11 +106,23 @@ def load_configs():
     OPENAI_ASR_SILENCE_MS = int(config.get('OPENAI_ASR_SILENCE_MS', 700) or 700)
     OPENAI_ASR_MIN_SPEECH_MS = int(config.get('OPENAI_ASR_MIN_SPEECH_MS', 250) or 250)
     OPENAI_ASR_PREROLL_MS = int(config.get('OPENAI_ASR_PREROLL_MS', 250) or 250)
+    WHISPER_MODEL = str(config.get('WHISPER_MODEL', 'base') or 'base').strip()
+    WHISPER_DEVICE = str(config.get('WHISPER_DEVICE', 'auto') or 'auto').strip().lower()
+    WHISPER_LANGUAGE = str(config.get('WHISPER_LANGUAGE', '') or '').strip()
+    WHISPER_PROMPT = str(config.get('WHISPER_PROMPT', '') or '')
+    WHISPER_FP16 = bool(config.get('WHISPER_FP16', False))
+    WHISPER_TEMPERATURE = float(config.get('WHISPER_TEMPERATURE', 0.0) or 0.0)
+    WHISPER_BEST_OF = int(config.get('WHISPER_BEST_OF', 5) or 5)
+    WHISPER_BEAM_SIZE = int(config.get('WHISPER_BEAM_SIZE', 5) or 5)
     
     # TTS 参考音频配置
     TTS_REFER_WAV_PATH = config.get('TTS_REFER_WAV_PATH', p_join(CONFIG_ROOT, 'voices', 'neuro.wav'))
     TTS_PROMPT_TEXT = config.get('TTS_PROMPT_TEXT', 'Hold on please, I\'m busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.')
     TTS_PROMPT_LANGUAGE = config.get('TTS_PROMPT_LANGUAGE', 'en')
+    EDGE_TTS_VOICE = str(config.get('EDGE_TTS_VOICE', 'en-US-AriaNeural') or 'en-US-AriaNeural').strip()
+    EDGE_TTS_RATE = str(config.get('EDGE_TTS_RATE', '0%') or '0%').strip()
+    EDGE_TTS_PITCH = str(config.get('EDGE_TTS_PITCH', '0%') or '0%').strip()
+    EDGE_TTS_TIMEOUT_SECONDS = int(config.get('EDGE_TTS_TIMEOUT_SECONDS', 120) or 120)
     
     AGENT_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
@@ -122,8 +136,9 @@ load_configs()
     
 def print_globals():
     print("Current Global Configuration Variables Of Faust:")
-    for k, v in globals().items():
-        if not k.startswith("__") and k.isupper() and isinstance(v, (str, int, float, bool, dict, list)):
+    mod = sys.modules[__name__]
+    for k, v in vars(mod).items():
+        if not k.startswith("_") and k.isupper() and isinstance(v, (str, int, float, bool, dict, list)):
             print(f"{k}: {v}")
 argparser = argparse.ArgumentParser(description="FAUST Backend Main Service\n命令行参数可以覆盖配置文件中的设置，优先级高于配置文件。\nThis agent has super cow powers")
 argparser.add_argument("--agent",type=str,default="NONE",action="store",help="Agent name to use")

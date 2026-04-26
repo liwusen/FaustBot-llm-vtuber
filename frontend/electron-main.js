@@ -329,18 +329,53 @@ function parseFaustDeepLink(rawUrl) {
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== 'faustbot:') return null;
     const action = (parsed.hostname || parsed.pathname.replace(/^\//, '') || '').trim();
-    if (action !== 'install_plugin') return null;
-    const pluginId = (parsed.searchParams.get('id') || '').trim();
-    const marketUrl = (parsed.searchParams.get('market') || '').trim();
-    if (!pluginId) {
-      throw new Error('缺少插件 id 参数');
+
+    // install plugin (existing behavior)
+    if (action === 'install_plugin') {
+      const pluginId = (parsed.searchParams.get('id') || '').trim();
+      const marketUrl = (parsed.searchParams.get('market') || '').trim();
+      if (!pluginId) {
+        throw new Error('缺少插件 id 参数');
+      }
+      return {
+        type: 'install_plugin',
+        pluginId,
+        marketUrl,
+        rawUrl,
+      };
     }
-    return {
-      type: 'install_plugin',
-      pluginId,
-      marketUrl,
-      rawUrl,
-    };
+
+    // config FaustBot Cloud via deeplink
+    if (action === 'config_faustcloud') {
+      const key = (parsed.searchParams.get('key') || '').trim();
+      let host = (parsed.searchParams.get('host') || '').trim();
+      if (!key || !host) {
+        throw new Error('缺少 key 或 host 参数');
+      }
+      // decode URL-safe base64 host, restore padding if necessary
+      try {
+        const decodeBase64Url = (s) => {
+          if (!s) return '';
+          // replace URL-safe chars
+          let t = String(s).replace(/-/g, '+').replace(/_/g, '/');
+          const padLen = (4 - (t.length % 4)) % 4;
+          if (padLen > 0) t += '='.repeat(padLen);
+          return Buffer.from(t, 'base64').toString('utf8');
+        };
+        const decoded = decodeBase64Url(host);
+        if (decoded) host = decoded;
+      } catch (e) {
+        console.warn('[deeplink] host base64 decode failed, using raw host', e);
+      }
+      return {
+        type: 'config_faustcloud',
+        key,
+        host,
+        rawUrl,
+      };
+    }
+
+    return null;
   } catch (e) {
     console.error('[deeplink] parse failed:', rawUrl, e);
     return null;
@@ -348,7 +383,33 @@ function parseFaustDeepLink(rawUrl) {
 }
 
 async function runInstallPluginByDeepLink(task) {
-  if (!task || task.type !== 'install_plugin') return;
+  if (!task) return;
+
+  // handle FaustBot Cloud config deeplink
+  if (task.type === 'config_faustcloud') {
+    try {
+      const cfgWin = createConfigWindow();
+      if (cfgWin && cfgWin.webContents) {
+        cfgWin.webContents.once('did-finish-load', () => {
+          try {
+            cfgWin.webContents.send('deeplink-config-faustcloud', { host: task.host, key: task.key });
+          } catch (e) {
+            console.error('[deeplink] send config payload failed', e);
+          }
+        });
+        // if already ready, send immediately
+        if (cfgWin.webContents.isLoading() === false) {
+          try { cfgWin.webContents.send('deeplink-config-faustcloud', { host: task.host, key: task.key }); } catch (e) {}
+        }
+      }
+      return;
+    } catch (e) {
+      console.error('[deeplink] config_faustcloud handling failed', e);
+      return;
+    }
+  }
+
+  if (task.type !== 'install_plugin') return;
 
   const targetWindow = mainWindow || BrowserWindow.getFocusedWindow() || undefined;
   const firstConfirm = await dialog.showMessageBox(targetWindow, {
@@ -896,6 +957,14 @@ ipcMain.handle('config-open-path', async (_event, targetPath) => {
   }
   const openErr = await shell.openPath(p);
   return { ok: !openErr, error: openErr || null };
+});
+
+ipcMain.handle('toggle-log-panel', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('toggle-log-panel');
+    return true;
+  }
+  return false;
 });
 
 ipcMain.handle('config-http-request', async (_event, req) => {

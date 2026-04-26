@@ -1,11 +1,25 @@
 import asyncio
 import json
+import logging
+
 try:
     import faust_backend.events as events
 except ImportError:
     import events
 import uuid
+
+logger = logging.getLogger("faust.backend2front")
+
 FrontEndTaskQueue = asyncio.Queue()
+
+# 保存主事件循环引用，用于 run_coroutine_threadsafe
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop | None) -> None:
+    """让 backend-main 注册主事件循环，供同步线程推送到队列。"""
+    global _main_loop
+    _main_loop = loop
 
 
 async def _push_command_async(command: str, payload=None):
@@ -18,9 +32,27 @@ async def _push_command_async(command: str, payload=None):
         await FrontEndTaskQueue.put(command + " " + json.dumps(payload, ensure_ascii=False))
     events.backend2frontendQueue_event.set()
 
+
 def _push_command(command: str, payload=None):
-    """Sync wrapper for backward compatibility."""
-    asyncio.create_task(_push_command_async(command, payload))
+    """Push a command to the frontend queue from sync or async context.
+
+    优先使用 asyncio.create_task；若当前无事件循环（如 to_thread 线程），
+    则通过 run_coroutine_threadsafe 委托给主事件循环。
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            asyncio.create_task(_push_command_async(command, payload))
+            return
+    except RuntimeError:
+        pass
+
+    # 没有 running loop → 回退到主事件循环
+    if _main_loop is not None and _main_loop.is_running():
+        asyncio.run_coroutine_threadsafe(_push_command_async(command, payload), _main_loop)
+        return
+
+    logger.warning("没有可用的事件循环来投递前端命令，命令已丢弃: %s", command[:80])
 
 
 def FrontEndSay(text):

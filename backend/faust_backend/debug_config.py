@@ -1,0 +1,2 @@
+NETWORK_DEBUG = False
+IGNORE_DEBUG_LOGS = False

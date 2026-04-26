@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -24,7 +26,8 @@ class _FakeResponse:
         return self._json_body
 
 
-def test_cloud_tts_uses_existing_reference_without_upload(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_cloud_tts_uses_existing_reference_without_upload(monkeypatch, tmp_path):
     refer_file = tmp_path / "ref.wav"
     refer_file.write_bytes(b"fake-wav")
     monkeypatch.setattr(speech_runtime.conf, "CONFIG_ROOT", str(tmp_path))
@@ -54,7 +57,7 @@ def test_cloud_tts_uses_existing_reference_without_upload(monkeypatch, tmp_path)
     monkeypatch.setattr(speech_runtime.requests, "get", fake_get)
     monkeypatch.setattr(speech_runtime.requests, "post", fake_post)
 
-    audio, content_type = speech_runtime.synthesize_tts("你好")
+    audio, content_type = await speech_runtime.synthesize_tts("你好")
     assert audio == b"audio"
     assert content_type == "audio/wav"
     assert calls == {"lookup": 1, "upload": 1, "tts": 1}

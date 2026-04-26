@@ -1,0 +1,100 @@
+/* ── 日志面板 ── */
+#logPanel {
+  position: fixed;
+  right: 16px;
+  bottom: 80px;
+  z-index: 2500;
+  width: min(480px, 82vw);
+  max-height: min(400px, 60vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: rgba(10, 13, 18, 0.92);
+  border: 1px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.44);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.floating-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(241, 245, 249, 0.88);
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#logLevelFilter {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(241, 245, 249, 0.84);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#logLevelFilter option {
+  background: #1e1e24;
+  color: #e2e8f0;
+}
+
+#logClearBtn, #logCloseBtn {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.54);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+#logClearBtn:hover, #logCloseBtn:hover {
+  background: rgba(255,255,255,0.10);
+  color: #fff;
+}
+
+#logContent {
+  flex: 1;
+  margin: 0;
+  padding: 6px 10px;
+  overflow-y: auto;
+  font-family: "Cascadia Code", "Consolas", "Menlo", monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.82);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-placeholder {
+  color: rgba(255,255,255,0.26);
+  font-style: italic;
+  padding: 8px 4px;
+}
+
+.log-line {
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.log-line.LEVEL_DEBUG { color: rgba(156, 163, 175, 0.68); }
+.log-line.LEVEL_INFO  { color: rgba(148, 220, 148, 0.86); }
+.log-line.LEVEL_WARNING { color: rgba(251, 191, 36, 0.88); }
+.log-line.LEVEL_ERROR { color: rgba(248, 113, 113, 0.90); }
+.log-line.LEVEL_CRITICAL { color: rgba(248, 60, 60, 0.96); font-weight: 700; }
+
+.log-line:hover {
+  background: rgba(255,255,255,0.04);
+}

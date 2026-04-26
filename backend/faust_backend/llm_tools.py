@@ -61,11 +61,19 @@ def refresh_runtime_paths() -> None:
     KB_MANAGER = kb_manager.get_kb_manager(refresh=True)
 
 
+def _tool_func_name(tool_func) -> str:
+    """Extract tool name from a LangChain @tool decorated function."""
+    try:
+        return tool_func.name
+    except AttributeError:
+        return tool_func.__name__
+
+
 def get_tools_for_agent(agent_name: str | None = None):
     target = str(agent_name or conf.AGENT_NAME or "").strip().lower()
     if target == "araya":
-        return [tool_func for tool_func in toollist if getattr(tool_func, "name", getattr(tool_func, "__name__", "")) in ARAYA_ALLOWED_TOOL_NAMES]
-    return [tool_func for tool_func in toollist if getattr(tool_func, "name", getattr(tool_func, "__name__", "")) not in DEFAULT_EXCLUDED_TOOL_NAMES]
+        return [tool_func for tool_func in toollist if _tool_func_name(tool_func) in ARAYA_ALLOWED_TOOL_NAMES]
+    return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in DEFAULT_EXCLUDED_TOOL_NAMES]
 
 
 def _safe_read_file_range(file_path: str, start_line: int, end_line: int) -> str:
@@ -667,7 +675,7 @@ def bgPlayTool(url: str) -> str:
 
 
 def _resolve_live2d_model_path() -> Path:
-    cfg = getattr(conf, "config", {}) or {}
+    cfg = conf.config or {}
     model_rel = str(cfg.get("LIVE2D_MODEL_PATH", "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json") or "").strip()
     frontend_root = Path(conf.CONFIG_ROOT).parent / "frontend"
     model_path = Path(model_rel)

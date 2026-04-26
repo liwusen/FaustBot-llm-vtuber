@@ -169,6 +169,3 @@ flowchart TD
 | Backend  | Python为主体,基于langchain |
 | Frontend | Electron+Qt           |
 
-### 附加声明
-
-###### 本项目于2026/4/11被作为 赛道2 - 青少年人工智能工具应用大赛 **项目二：交互式应用开发** 的参赛项目提交，按照MIT 协议授权.

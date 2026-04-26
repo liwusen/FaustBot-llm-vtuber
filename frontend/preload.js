@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  backendBaseUrl: 'http://127.0.0.1:13900',
   setIgnoreMouseEvents: (v) => ipcRenderer.invoke('set-ignore-mouse-events', !!v),
   focusMainWindow: () => ipcRenderer.invoke('focus-main-window'),
   hideToTray: () => ipcRenderer.invoke('hide-to-tray'),
@@ -20,7 +21,22 @@ contextBridge.exposeInMainWorld('api', {
     method: String(method || 'GET'),
     url: String(url || ''),
     payload: payload ?? null,
-  })
+  }),
+  toggleLogPanel: () => ipcRenderer.invoke('toggle-log-panel'),
+});
+
+// deeplink events
+contextBridge.exposeInMainWorld('deeplink', {
+  onConfigFaustCloud: (cb) => {
+    if (typeof cb !== 'function') return;
+    ipcRenderer.on('deeplink-config-faustcloud', (_evt, payload) => {
+      try {
+        cb(payload);
+      } catch (e) {
+        console.error('deeplink callback failed', e);
+      }
+    });
+  }
 });
 
 // Listen for faust commands forwarded from the main process
@@ -42,6 +58,11 @@ contextBridge.exposeInMainWorld('faust', {
       } catch (e) {
         console.error('faust.onPluginInstallResult callback failed', e);
       }
+    });
+  },
+  onToggleLogPanel: (cb) => {
+    ipcRenderer.on('toggle-log-panel', () => {
+      try { cb(); } catch (e) { console.error('faust.onToggleLogPanel callback failed', e); }
     });
   }
 });

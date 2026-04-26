@@ -50,7 +50,7 @@ skill.d/
 backend/plugins/plugins.state.json
 
 .runtime/
-
+runtime/
 dist/
 
 kb/

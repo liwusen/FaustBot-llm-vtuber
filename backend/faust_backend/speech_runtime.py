@@ -8,6 +8,7 @@ import hashlib
 import requests
 
 import faust_backend.config_loader as conf
+import asyncio
 
 
 LOCAL_TTS_ENDPOINT = "http://127.0.0.1:5000/"
@@ -16,6 +17,15 @@ LOCAL_ASR_ENDPOINT = "http://127.0.0.1:1000/v1/upload_audio"
 
 class SpeechRuntimeError(RuntimeError):
     pass
+
+
+def _conf_get(key: str, default: Any = None) -> Any:
+    """安全读取 config_loader 模块属性，属性不存在时返回默认值。"""
+    try:
+        value = conf.__dict__[key]
+        return value if value is not None else default
+    except KeyError:
+        return default
 
 
 def _resolve_api_url(base_url: str, suffix: str) -> str:
@@ -32,19 +42,19 @@ def _split_csv_values(raw: str) -> list[str]:
 
 
 def _current_tts_mode() -> str:
-    return str(getattr(conf, "TTS_MODE", "local") or "local").strip().lower()
+    return str(conf.TTS_MODE or "local").strip().lower()
 
 
 def _current_asr_mode() -> str:
-    return str(getattr(conf, "ASR_MODE", "local") or "local").strip().lower()
+    return str(conf.ASR_MODE or "local").strip().lower()
 
 
 def _current_cloud_base_url() -> str:
-    return str(getattr(conf, "FAUSTBOT_CLOUD_BASE_URL", "http://127.0.0.1:18980") or "http://127.0.0.1:18980").strip()
+    return str(conf.FAUSTBOT_CLOUD_BASE_URL or "http://127.0.0.1:18980").strip()
 
 
 def _current_cloud_headers() -> dict[str, str]:
-    service_key = str(getattr(conf, "FAUSTBOT_CLOUD_SERVICE_KEY", "") or "").strip()
+    service_key = str(conf.FAUSTBOT_CLOUD_SERVICE_KEY or "").strip()
     if not service_key:
         raise SpeechRuntimeError("未配置 FAUSTBOT_CLOUD_SERVICE_KEY")
     return {"Authorization": f"Bearer {service_key}"}
@@ -58,14 +68,14 @@ def _resolve_cloud_url(path: str) -> str:
 
 
 def _cloud_reference_signature() -> str:
-    refer_path = str(getattr(conf, "TTS_REFER_WAV_PATH", "") or "").strip()
-    prompt_text = str(getattr(conf, "TTS_PROMPT_TEXT", "") or "").strip()
-    prompt_language = str(getattr(conf, "TTS_PROMPT_LANGUAGE", "zh") or "zh").strip()
+    refer_path = str(conf.TTS_REFER_WAV_PATH or "").strip()
+    prompt_text = str(conf.TTS_PROMPT_TEXT or "").strip()
+    prompt_language = str(conf.TTS_PROMPT_LANGUAGE or "zh").strip()
     if not refer_path:
         raise SpeechRuntimeError("未配置 TTS_REFER_WAV_PATH")
     normalized_path = Path(refer_path).expanduser()
     if not normalized_path.is_absolute():
-        normalized_path = Path(getattr(conf, "CONFIG_ROOT", ".")) / normalized_path
+        normalized_path = Path(conf.CONFIG_ROOT) / normalized_path
     if not normalized_path.exists():
         raise SpeechRuntimeError(f"TTS 参考音频不存在: {normalized_path}")
     payload = normalized_path.read_bytes() + b"\n" + prompt_text.encode("utf-8") + b"\n" + prompt_language.encode("utf-8")
@@ -76,7 +86,7 @@ def _cloud_get_reference(signature: str) -> dict[str, Any] | None:
     resp = requests.get(
         _resolve_cloud_url(f"/v1/references/by-signature/{signature}"),
         headers=_current_cloud_headers(),
-        timeout=int(getattr(conf, "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", 120) or 120),
+        timeout=int(conf.FAUSTBOT_CLOUD_TIMEOUT_SECONDS or 120),
     )
     if resp.status_code == 404:
         return None
@@ -89,12 +99,12 @@ def _cloud_get_reference(signature: str) -> dict[str, Any] | None:
 
 
 def _cloud_upload_reference() -> str:
-    refer_path = str(getattr(conf, "TTS_REFER_WAV_PATH", "") or "").strip()
-    prompt_text = str(getattr(conf, "TTS_PROMPT_TEXT", "") or "").strip()
-    prompt_language = str(getattr(conf, "TTS_PROMPT_LANGUAGE", "zh") or "zh").strip()
+    refer_path = str(conf.TTS_REFER_WAV_PATH or "").strip()
+    prompt_text = str(conf.TTS_PROMPT_TEXT or "").strip()
+    prompt_language = str(conf.TTS_PROMPT_LANGUAGE or "zh").strip()
     normalized_path = Path(refer_path).expanduser()
     if not normalized_path.is_absolute():
-        normalized_path = Path(getattr(conf, "CONFIG_ROOT", ".")) / normalized_path
+        normalized_path = Path(conf.CONFIG_ROOT) / normalized_path
     if not normalized_path.exists():
         raise SpeechRuntimeError(f"TTS 参考音频不存在: {normalized_path}")
     with normalized_path.open("rb") as f:
@@ -103,7 +113,7 @@ def _cloud_upload_reference() -> str:
             headers=_current_cloud_headers(),
             files={"file": (normalized_path.name, f.read(), "audio/wav")},
             data={"prompt_text": prompt_text, "prompt_language": prompt_language},
-            timeout=int(getattr(conf, "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", 120) or 120),
+            timeout=int(conf.FAUSTBOT_CLOUD_TIMEOUT_SECONDS or 120),
         )
     if not resp.ok:
         raise SpeechRuntimeError(f"FaustBot Cloud reference 上传失败: {resp.status_code} {resp.text}")
@@ -122,7 +132,7 @@ def should_start_local_tts() -> bool:
 
 
 def should_start_local_asr() -> bool:
-    return _current_asr_mode() == "local"
+    return _current_asr_mode() in {"local", "whisper"}
 
 
 def frontend_speech_config() -> dict[str, Any]:
@@ -131,24 +141,24 @@ def frontend_speech_config() -> dict[str, Any]:
         "asr_mode": _current_asr_mode(),
         "asr_detection_mode": "vad",
         "vad_ws_path": "/faust/audio/ws/vad",
-        "frontend_default_tts_lang": getattr(conf, "FRONTEND_DEFAULT_TTS_LANG", "zh"),
-        "openai_asr_energy_threshold": float(getattr(conf, "OPENAI_ASR_ENERGY_THRESHOLD", 0.02) or 0.02),
-        "openai_asr_silence_ms": int(getattr(conf, "OPENAI_ASR_SILENCE_MS", 700) or 700),
-        "openai_asr_min_speech_ms": int(getattr(conf, "OPENAI_ASR_MIN_SPEECH_MS", 250) or 250),
-        "openai_asr_preroll_ms": int(getattr(conf, "OPENAI_ASR_PREROLL_MS", 250) or 250),
+        "frontend_default_tts_lang": _conf_get("FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh",
+        "openai_asr_energy_threshold": float(conf.OPENAI_ASR_ENERGY_THRESHOLD or 0.02),
+        "openai_asr_silence_ms": int(conf.OPENAI_ASR_SILENCE_MS or 700),
+        "openai_asr_min_speech_ms": int(conf.OPENAI_ASR_MIN_SPEECH_MS or 250),
+        "openai_asr_preroll_ms": int(conf.OPENAI_ASR_PREROLL_MS or 250),
     }
 
 
 def _resolve_local_tts_reference() -> tuple[str, str, str]:
-    refer_path = str(getattr(conf, "TTS_REFER_WAV_PATH", "") or "").strip()
-    prompt_text = str(getattr(conf, "TTS_PROMPT_TEXT", "") or "").strip()
-    prompt_language = str(getattr(conf, "TTS_PROMPT_LANGUAGE", "zh") or "zh").strip()
+    refer_path = str(conf.TTS_REFER_WAV_PATH or "").strip()
+    prompt_text = str(conf.TTS_PROMPT_TEXT or "").strip()
+    prompt_language = str(conf.TTS_PROMPT_LANGUAGE or "zh").strip()
     if not refer_path:
         raise SpeechRuntimeError("未配置本地 TTS 参考音频路径")
 
     normalized_path = Path(refer_path).expanduser()
     if not normalized_path.is_absolute():
-        normalized_path = Path(getattr(conf, "CONFIG_ROOT", ".")) / normalized_path
+        normalized_path = Path(conf.CONFIG_ROOT) / normalized_path
     if not normalized_path.exists():
         raise SpeechRuntimeError(f"本地 TTS 参考音频不存在: {normalized_path}")
     if not prompt_text:
@@ -171,66 +181,80 @@ def _prime_local_tts_reference() -> None:
         raise SpeechRuntimeError(f"本地 TTS 参考音频设置失败: {resp.status_code} {resp.text}")
 
 
-def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str]:
+async def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str]:
     payload_text = str(text or "").strip()
     if not payload_text:
         raise SpeechRuntimeError("TTS 文本不能为空")
-    print(f"[TTS] Synthesizing text: {payload_text} with lang: {lang}")
+
+    if _current_tts_mode() == "edge-tts":
+        import faust_backend.tts_edge as tts_edge
+
+        try:
+            return await tts_edge.synthesize_edge_tts(
+                payload_text,
+                voice=conf.EDGE_TTS_VOICE,
+                rate=conf.EDGE_TTS_RATE,
+                pitch=conf.EDGE_TTS_PITCH,
+                timeout=int(conf.EDGE_TTS_TIMEOUT_SECONDS or 120),
+            )
+        except SpeechRuntimeError:
+            raise
+        except Exception as exc:
+            raise SpeechRuntimeError(f"Edge TTS 失败: {exc}") from exc
+
     if should_start_local_tts():
         _prime_local_tts_reference()
         payload = {
             "text": payload_text,
-            "text_language": str(lang or getattr(conf, "FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh"),
+            "text_language": str(lang or _conf_get("FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh"),
         }
-        resp = requests.post(LOCAL_TTS_ENDPOINT, json=payload, timeout=120)
+        resp = await asyncio.to_thread(
+            requests.post, LOCAL_TTS_ENDPOINT, json=payload, timeout=120
+        )
         if not resp.ok:
             raise SpeechRuntimeError(f"本地 TTS 服务错误: {resp.status_code} {resp.text}")
         return resp.content, (resp.headers.get("content-type") or "audio/wav")
 
     if _current_tts_mode() == "faustbot-cloud":
-        try:
-            signature = _cloud_reference_signature()
-            existing = _cloud_get_reference(signature)
-            refer_hash = str((existing or {}).get("refer_hash") or "").strip() if existing else ""
-            if not refer_hash:
-                refer_hash = _cloud_upload_reference()
-            payload = {
-                "refer_hash": refer_hash,
-                "text": payload_text,
-                "text_language": str(lang or getattr(conf, "FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh"),
-            }
-            resp = requests.post(
-                _resolve_cloud_url("/v1/tts"),
-                json=payload,
-                headers=_current_cloud_headers(),
-                timeout=int(getattr(conf, "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", 120) or 120),
-            )
-            if not resp.ok:
-                print(f"FaustBot Cloud TTS 请求失败: {resp.status_code} {resp.text}")
-                raise SpeechRuntimeError(f"FaustBot Cloud TTS 服务错误: {resp.status_code} {resp.text}")
-            return resp.content, (resp.headers.get("content-type") or "audio/wav")
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            print(f"FaustBot Cloud TTS 失败: {exc}")
-            raise SpeechRuntimeError(f"FaustBot Cloud TTS 失败: {exc}") from exc
-    api_key = str(getattr(conf, "OPENAI_TTS_API_KEY", "") or "").strip()
+        signature = _cloud_reference_signature()
+        existing = _cloud_get_reference(signature)
+        refer_hash = str((existing or {}).get("refer_hash") or "").strip() if existing else ""
+        if not refer_hash:
+            refer_hash = _cloud_upload_reference()
+        payload = {
+            "refer_hash": refer_hash,
+            "text": payload_text,
+            "text_language": str(lang or _conf_get("FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh"),
+        }
+        resp = await asyncio.to_thread(
+            requests.post,
+            _resolve_cloud_url("/v1/tts"),
+            json=payload,
+            headers=_current_cloud_headers(),
+            timeout=int(conf.FAUSTBOT_CLOUD_TIMEOUT_SECONDS or 120),
+        )
+        if not resp.ok:
+            raise SpeechRuntimeError(f"FaustBot Cloud TTS 服务错误: {resp.status_code} {resp.text}")
+        return resp.content, (resp.headers.get("content-type") or "audio/wav")
+
+    api_key = str(conf.OPENAI_TTS_API_KEY or "").strip()
     if not api_key:
         raise SpeechRuntimeError("未配置 OPENAI_TTS_API_KEY")
 
     payload: dict[str, Any] = {
-        "model": getattr(conf, "OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
-        "voice": getattr(conf, "OPENAI_TTS_VOICE", "alloy"),
+        "model": conf.OPENAI_TTS_MODEL,
+        "voice": conf.OPENAI_TTS_VOICE,
         "input": payload_text,
-        "response_format": getattr(conf, "OPENAI_TTS_RESPONSE_FORMAT", "mp3"),
-        "speed": float(getattr(conf, "OPENAI_TTS_SPEED", 1.0) or 1.0),
+        "response_format": conf.OPENAI_TTS_RESPONSE_FORMAT,
+        "speed": float(conf.OPENAI_TTS_SPEED or 1.0),
     }
-    instructions = str(getattr(conf, "OPENAI_TTS_INSTRUCTIONS", "") or "").strip()
+    instructions = str(conf.OPENAI_TTS_INSTRUCTIONS or "").strip()
     if instructions:
         payload["instructions"] = instructions
 
-    url = _resolve_api_url(getattr(conf, "OPENAI_TTS_BASE_URL", "https://api.openai.com/v1"), "/audio/speech")
-    resp = requests.post(
+    url = _resolve_api_url(str(conf.OPENAI_TTS_BASE_URL or "https://api.openai.com/v1"), "/audio/speech")
+    resp = await asyncio.to_thread(
+        requests.post,
         url,
         json=payload,
         headers={"Authorization": f"Bearer {api_key}"},
@@ -271,7 +295,7 @@ def transcribe_audio(filename: str, audio_bytes: bytes, content_type: str | None
             _resolve_cloud_url("/v1/asr"),
             files={"file": (safe_name, audio_bytes, mime_type)},
             headers=_current_cloud_headers(),
-            timeout=int(getattr(conf, "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", 120) or 120),
+            timeout=int(conf.FAUSTBOT_CLOUD_TIMEOUT_SECONDS or 120),
         )
         if not resp.ok:
             raise SpeechRuntimeError(f"FaustBot Cloud ASR 服务错误: {resp.status_code} {resp.text}")
@@ -285,28 +309,28 @@ def transcribe_audio(filename: str, audio_bytes: bytes, content_type: str | None
             return {"status": "success", "text": str(data.get("text"))}
         raise SpeechRuntimeError(str(data.get("message") or data.get("error") or data))
 
-    api_key = str(getattr(conf, "OPENAI_ASR_API_KEY", "") or "").strip()
+    api_key = str(conf.OPENAI_ASR_API_KEY or "").strip()
     if not api_key:
         raise SpeechRuntimeError("未配置 OPENAI_ASR_API_KEY")
 
     payload: dict[str, Any] = {
-        "model": getattr(conf, "OPENAI_ASR_MODEL", "gpt-4o-transcribe"),
-        "response_format": getattr(conf, "OPENAI_ASR_RESPONSE_FORMAT", "json"),
-        "temperature": float(getattr(conf, "OPENAI_ASR_TEMPERATURE", 0.0) or 0.0),
+        "model": conf.OPENAI_ASR_MODEL,
+        "response_format": conf.OPENAI_ASR_RESPONSE_FORMAT,
+        "temperature": float(conf.OPENAI_ASR_TEMPERATURE or 0.0),
     }
-    language = str(getattr(conf, "OPENAI_ASR_LANGUAGE", "") or "").strip()
-    prompt = str(getattr(conf, "OPENAI_ASR_PROMPT", "") or "").strip()
+    language = str(conf.OPENAI_ASR_LANGUAGE or "").strip()
+    prompt = str(conf.OPENAI_ASR_PROMPT or "").strip()
     if language:
         payload["language"] = language
     if prompt:
         payload["prompt"] = prompt
     request_data: list[tuple[str, Any]] = list(payload.items())
-    timestamp_granularities = _split_csv_values(getattr(conf, "OPENAI_ASR_TIMESTAMP_GRANULARITIES", ""))
+    timestamp_granularities = _split_csv_values(conf.OPENAI_ASR_TIMESTAMP_GRANULARITIES)
     if payload.get("response_format") == "verbose_json" and timestamp_granularities:
         for item in timestamp_granularities:
             request_data.append(("timestamp_granularities[]", item))
 
-    url = _resolve_api_url(getattr(conf, "OPENAI_ASR_BASE_URL", "https://api.openai.com/v1"), "/audio/transcriptions")
+    url = _resolve_api_url(str(conf.OPENAI_ASR_BASE_URL or "https://api.openai.com/v1"), "/audio/transcriptions")
     resp = requests.post(
         url,
         data=request_data,
