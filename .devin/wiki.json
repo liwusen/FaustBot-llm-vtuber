@@ -1,0 +1,302 @@
+{
+  "repo_notes": [
+    {
+      "content": "请使用简洁，易懂的中文生成所有Wiki,对于技术名词使用 英语(中文解释) 的形式"
+    }
+  ],
+  "pages": [
+    {
+      "title": "FaustBot Overview",
+      "purpose": "High-level introduction to FaustBot: what it is, its architecture, key subsystems, and how the backend, frontend, and external services fit together. Links to all major child sections.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Getting Started & Installation",
+      "purpose": "Step-by-step guide for setting up FaustBot: prerequisites (Node.js, Anaconda/Python), cloning the repo, installing Python and npm dependencies, configuring API keys, and launching the system for the first time.",
+      "parent": "FaustBot Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "System Architecture Overview",
+      "purpose": "Describes the overall multi-process architecture: Python FastAPI backend, Electron frontend, sidecar services (TTS, ASR, RAG, MC Operator), and how they communicate via HTTP REST and WebSocket. Introduces the agent abstraction and the LangGraph reasoning loop.",
+      "parent": "FaustBot Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Backend Core",
+      "purpose": "Overview of the Python backend: FastAPI service, agent runtime lifecycle, configuration system, and the key modules in faust_backend/. Links to child pages for each major subsystem.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Configuration System",
+      "purpose": "Explains the dual-file configuration strategy (faust.config.json + faust.config.private.json), the config_loader module, global variable population, CLI argument overrides, and the reload_configs() hot-reload mechanism.",
+      "parent": "Backend Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Agent Runtime & LangGraph Integration",
+      "purpose": "Deep dive into how the LangGraph agent is created, how SQLite checkpoints and stores persist conversation state, the agent_lock concurrency model, rate-limit retry logic, and the rebuild_runtime lifecycle.",
+      "parent": "Backend Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Agent Management & Administration",
+      "purpose": "Covers the admin_runtime module: listing, creating, deleting, and switching agents; the agent directory structure (AGENT.md, ROLE.md, COREMEMORY.md, TASK.md); diary and record file access; and the masked-secret configuration save pattern.",
+      "parent": "Backend Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "LLM Tools & Agent Capabilities",
+      "purpose": "Documents all tools available to the FAUST agent: system/environment tools, file I/O and patch mode, diary management, Python/shell execution, GUI operator, Live2D motion control, Human-in-the-Loop approval, Nimble window creation, RAG query tools, and Minecraft integration tools.",
+      "parent": "Backend Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Trigger System",
+      "purpose": "Explains the event-driven trigger architecture: trigger types (datetime, interval, py-eval, event, nimble-reminder, nimble-expire), the trigger queue, append/fire filter chains, persistence via triggers.json, and how triggers inject messages into the agent's chat loop.",
+      "parent": "Backend Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Security & Human-in-the-Loop",
+      "purpose": "Describes the security verifier sub-system (SECURITY_VERIFIER_LLM), access level controls (unlimited/loose/standard/strict/disabled), path-pattern matching, and the HIL (Human-in-the-Loop) approval workflow using asyncio Futures and the /faust/humanInLoop/feedback endpoint.",
+      "parent": "Backend Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Plugin & Skill System",
+      "purpose": "Overview of FaustBot's extensibility architecture: the PluginManager, PluginContext protocol, ToolSpec/MiddlewareSpec interfaces, skill packages, and the plugin market. Links to child pages for plugin development and bundled plugins.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Plugin System Internals",
+      "purpose": "Details the PluginManager class: plugin discovery from the plugins/ directory, manifest loading (plugin.json), hot-reload via file fingerprinting, state persistence in plugins.state.json, and the plugin lifecycle (startup, on_load, register_tools, register_middlewares, on_unload).",
+      "parent": "Plugin & Skill System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Developing Plugins & Middlewares",
+      "purpose": "Developer guide for writing FaustBot plugins: the PluginContext API (trigger_create, get_config, set_config), ToolSpec and MiddlewareSpec registration, the mm_bridge multimodal_tool_result contract, filter_trigger_append/fire hooks, and the string-based config schema format.",
+      "parent": "Plugin & Skill System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Bundled Plugins",
+      "purpose": "Describes the plugins shipped with FaustBot: clipboard (read/write), context_manager (context trimming middleware), search_tools (web search), ui_operator (screen OCR + automation), vision_tools (screenshot capture), and mm_bridge (multimodal message transformation).",
+      "parent": "Plugin & Skill System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Plugin Market",
+      "purpose": "Explains the faust_plugin_market web UI and plugins.json registry: how plugins are listed, the faustbot://install_plugin deep-link protocol, the install-zip backend endpoint, conflict resolution (409 overwrite flow), and how to publish plugins to the market.",
+      "parent": "Plugin & Skill System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Skill System",
+      "purpose": "Covers the skill_manager module: what skills are (agent-scoped tool packages in skill.d/), their _meta.json and SKILL.md structure, how they differ from plugins, installation via installOpenClawSkillTool, and management through the admin API.",
+      "parent": "Plugin & Skill System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Speech & Audio Pipeline",
+      "purpose": "Overview of the multi-modal audio stack: TTS, ASR, and VAD subsystems, their local vs. OpenAI-compatible modes, and how they integrate with the frontend. Links to child pages for each component.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Text-to-Speech (TTS)",
+      "purpose": "Details the TTS subsystem: local GPT-SoVITS mode vs. OpenAI-compatible mode, the TTS_REFER_WAV_PATH voice cloning reference, TTS_PROMPT_TEXT, the local TTS sidecar service on port 5000, the /faust/audio/tts proxy endpoint, and sequential sentence queuing for lip-sync.",
+      "parent": "Speech & Audio Pipeline",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Automatic Speech Recognition (ASR) & Voice Activity Detection (VAD)",
+      "purpose": "Covers the ASR pipeline: local vs. OpenAI-compatible modes, the ASR sidecar on port 1000, energy threshold and silence detection parameters. Also covers the VAD WebSocket (/faust/audio/ws/vad), Silero VAD integration, client-side 16kHz resampling, pre-roll buffering, and the barge-in feature.",
+      "parent": "Speech & Audio Pipeline",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "RAG Memory System",
+      "purpose": "Overview of the Retrieval-Augmented Generation long-term memory system: LightRAG service, the rag_client module, document tracking, auto-indexing of chat history, and the RAG admin API. Links to child pages for client details and admin management.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "RAG Client & Document Tracker",
+      "purpose": "Deep dive into rag_client.py: the docTracker class (MD5-based change detection, rag_doc_tracker.json, rag_chat_history_records.json), synchronous and asynchronous RAG query patterns, the auto-index pipeline, and the nano-vectordb alternative backend.",
+      "parent": "RAG Memory System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "RAG Administration & Memory Management",
+      "purpose": "Covers the admin-facing RAG features: the /faust/admin/rag/documents paginated search API, document content retrieval, the RAG memory bank UI in configer_pyside6.py, agent alignment (align_rag_agent), and the RAG_AUTO_INDEX_RECORD setting.",
+      "parent": "RAG Memory System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Frontend",
+      "purpose": "Overview of the Electron-based desktop frontend: the Live2D overlay window, the app.js interaction layer, the PySide6 configuration tool, and supporting UI components. Links to child pages for each major frontend area.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Electron Main Process",
+      "purpose": "Covers electron-main.js: window creation (transparent, always-on-top, fullscreen enforcement), the static:// and faustbot:// custom protocol handlers, IPC handlers (set-ignore-mouse-events, focus-main-window, open-config-window), global hotkeys, the command WebSocket client, and the PySide6 configer launcher.",
+      "parent": "Frontend",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Live2D Avatar & Interaction Layer (app.js)",
+      "purpose": "Details app.js: PIXI.Application setup, Live2D model loading and scaling, drag-and-drop with position persistence, hit testing and motion triggers, the ASR bubble chat UI, tool call cards, streamed TTS with sequential playback, lip-sync via Web Audio API RMS, and the click-through mouse penetration system.",
+      "parent": "Frontend",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Nimble Interaction System",
+      "purpose": "Explains the Nimble (灵动交互) subsystem end-to-end: the nimble.py session manager, showNimbleWindowTool and closeNimbleWindowTool, the three-trigger lifecycle (result, reminder, expire), the window.nimble.submit() JavaScript API, the /faust/nimble/callback endpoint, and HIL_APPROVAL overlay.",
+      "parent": "Frontend",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Configuration UI (PySide6 Configer)",
+      "purpose": "Documents configer_pyside6.py: the ConfigerWindow class, dynamic form generation from FIELD_METADATA, AI provider settings, Live2D configuration, TTS/ASR speech controls, agent lifecycle management (create/switch/delete/reset checkpoint), plugin and skill management panels, and the RAG memory bank UI.",
+      "parent": "Frontend",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Minecraft Integration",
+      "purpose": "Overview of the AI-plays-Minecraft feature: the mc-operator Node.js WebSocket server, the Python minecraft_client.py, MC event triggering, and the agent tools for connecting and issuing in-game commands.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "MC Operator Service",
+      "purpose": "Details the mc-operator Node.js WebSocket server: the BotManager (mineflayer bot lifecycle), the command router (connect, chat, execute commands), the event bridge (broadcasting game events to connected clients), and the WebSocket protocol message format.",
+      "parent": "Minecraft Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Minecraft Agent Tools & Event Triggers",
+      "purpose": "Covers the Python side of Minecraft integration: minecraft_client.py WebSocket client, the minecraftConnectTool/minecraftCommandTool/minecraftStatusTool LangChain tools, MC_EVENT_TRIGGER_ENABLED configuration, and how game events flow through the trigger system into the agent's chat loop.",
+      "parent": "Minecraft Integration",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
