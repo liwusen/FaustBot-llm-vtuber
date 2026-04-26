@@ -3,8 +3,8 @@
 </p>
 <div align="center">
 <h1 align="center">FaustBot</h1>
-<a href="https://deepwiki.com/liwusen/FaustBot-llm-vtuber" align="centre">
-    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" align="centre"/></a>
+<a href="https://deepwiki.com/liwusen/FaustBot-llm-vtuber" align="center">
+    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" align="center"/></a>
 </div>
 ---
 
