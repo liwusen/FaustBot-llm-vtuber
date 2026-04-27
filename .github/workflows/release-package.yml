@@ -25,6 +25,16 @@ jobs:
         shell: cmd
         run: setup-runtime.bat --mode cloud --source official --install-python yes --install-node yes
 
+      - name: Create version.json
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag -replace '^[Vv]', ''
+          $content = @{ version = $ver; tag = $tag } | ConvertTo-Json -Compress
+          $path = Join-Path $env:GITHUB_WORKSPACE 'backend\version.json'
+          Set-Content -LiteralPath $path -Value $content -Encoding utf8
+          Write-Host "Created $path : $content"
+
       - name: Remove embedded Python zip
         shell: pwsh
         run: |

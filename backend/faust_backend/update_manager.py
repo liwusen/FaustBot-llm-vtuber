@@ -405,7 +405,7 @@ class UpdateManager:
             "Write-Host 'Running setup-runtime.bat --mode cloud...'",
             "$setup = Join-Path $installRoot 'setup-runtime.bat'",
             "if (Test-Path $setup) {",
-            "    & $setup --mode cloud --install-python no --install-node yes",
+            "    & $setup --mode cloud --install-python no --install-node yes --source cn",
             "}",
             "Write-Host 'Setup complete.'",
             "",
