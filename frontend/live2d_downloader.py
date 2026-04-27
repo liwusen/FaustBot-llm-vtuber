@@ -45,11 +45,11 @@ def download_and_extract_live2d_model(url, frontend_2d_path):
 if __name__ == "__main__":
     print("[Live2dDownloader]开始下载和解压Live2D模型...")
     print("警告:在运行这个程序时，你被视为同意Live2D Cubsim 示例数据的使用条款，参见https://cubism.live2d.com，如果不同意，请立刻关闭程序并删除下载的模型文件。")
-    download_and_extract_live2d_model("https://cubism.live2d.com/sample-data/bin/tororohijiki/tororo_hijiki.zip", "./2D")
+    #download_and_extract_live2d_model("https://cubism.live2d.com/sample-data/bin/tororohijiki/tororo_hijiki.zip", "./2D")
+    #download_and_extract_live2d_model(
+    #    url="https://cubism.live2d.com/sample-data/bin/ren_pro/ren_pro_zh.zip",
+    #    frontend_2d_path="./2D")
     download_and_extract_live2d_model(
-        url="https://cubism.live2d.com/sample-data/bin/ren_pro/ren_pro_zh.zip",
-        frontend_2d_path="./2D")
-    download_and_extract_live2d_model(
-        url="https://cubism.live2d.com/sample-data/bin/hiyori_pro/hiyori_pro_zh.zip",
-        frontend_2d_path="./2D")
+       url="https://cubism.live2d.com/sample-data/bin/hiyori_pro/hiyori_pro_zh.zip",
+       frontend_2d_path="./2D")
     print("[Live2dDownloader]所有模型下载和解压完成。")
