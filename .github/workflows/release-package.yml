@@ -45,11 +45,11 @@ jobs:
 
       - name: Download VAD model
         shell: cmd
-        run: .runtime\python.exe embedded_python_bootstrap.py backend\faust_backend\download_vad.py
+        run: .runtime\python.exe -X utf8 embedded_python_bootstrap.py backend\faust_backend\download_vad.py
 
       - name: Download Live2D models
         shell: cmd
-        run: .runtime\python.exe embedded_python_bootstrap.py frontend\live2d_downloader.py
+        run: .runtime\python.exe -X utf8 embedded_python_bootstrap.py frontend\live2d_downloader.py
 
       - name: Package frontend
         shell: cmd

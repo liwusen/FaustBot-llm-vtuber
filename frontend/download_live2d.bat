@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 set "REPO_ROOT=%~dp0.."
 if not exist "%REPO_ROOT%\use-runtime.bat" set "REPO_ROOT=%~dp0..\..\.."

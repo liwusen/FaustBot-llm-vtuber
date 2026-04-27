@@ -1,8 +1,15 @@
-import zipfile
+import io
 import os
-import requests
 import shutil
+import sys
 import tempfile
+import zipfile
+
+import requests
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 def download_and_extract_live2d_model(url, frontend_2d_path):
 
