@@ -25,12 +25,8 @@ class SkillAlreadyInstalledError(SkillError):
     pass
 
 
-def _backend_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
 def _agents_root() -> Path:
-    return _backend_root() / "agents"
+    return Path(conf.CONFIG_ROOT) / "agents"
 
 
 def _resolve_agent(agent_name: str | None = None) -> str:

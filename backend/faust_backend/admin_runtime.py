@@ -15,10 +15,11 @@ except ImportError:
     import backend2front as backend2frontend
 
 BACKEND_ROOT = Path(conf.CONFIG_ROOT)
+PROJECT_ROOT = Path(conf.PROJECT_ROOT)
 AGENTS_ROOT = BACKEND_ROOT / "agents"
 PUBLIC_CONFIG_PATH = BACKEND_ROOT / "faust.config.json"
 PRIVATE_CONFIG_PATH = BACKEND_ROOT / "faust.config.private.json"
-PRIVATE_EXAMPLE_PATH = BACKEND_ROOT / "faust.config.private.example"
+PRIVATE_EXAMPLE_PATH = PROJECT_ROOT / "faust.config.private.example.json"
 OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "OPENAI_ASR_ENERGY_THRESHOLD",
     "OPENAI_ASR_SILENCE_MS",
@@ -78,7 +79,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH": "",
     "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
     # TTS 参考音频配置
-    "TTS_REFER_WAV_PATH": str(BACKEND_ROOT / "voices" / "neuro.wav"),
+    "TTS_REFER_WAV_PATH": str(Path(conf.PROJECT_ROOT) / "voices" / "neuro.wav"),
     "TTS_PROMPT_TEXT": "Hold on please, I'm busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.",
     "TTS_PROMPT_LANGUAGE": "en",
 }
@@ -208,7 +209,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def list_available_models() -> List[Dict[str, str]]:
-    frontend_2d = BACKEND_ROOT.parent / "frontend" / "2D"
+    frontend_2d = PROJECT_ROOT.parent / "frontend" / "2D"
     results: List[Dict[str, str]] = []
     if not frontend_2d.exists():
         return results

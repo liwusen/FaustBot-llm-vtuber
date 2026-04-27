@@ -7,7 +7,10 @@ contextBridge.exposeInMainWorld('api', {
   hideToTray: () => ipcRenderer.invoke('hide-to-tray'),
   showFromTray: () => ipcRenderer.invoke('show-from-tray'),
   openConfigWindow: () => ipcRenderer.invoke('open-config-window'),
+  openLiveWindow: () => ipcRenderer.invoke('open-live-window'),
   resolveFrontendAssetPath: (relativePath) => ipcRenderer.invoke('resolve-frontend-asset-path', String(relativePath || '')),
+  getFaustbotRoot: () => ipcRenderer.invoke('get-faustbot-root'),
+  restartFaust: () => ipcRenderer.invoke('restart-faust'),
   configRequest: (method, path, payload, query) => ipcRenderer.invoke('config-api', {
     method: String(method || 'GET'),
     path: String(path || ''),

@@ -13,11 +13,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    import faust_backend.config_loader as conf
+except ImportError:
+    conf = None
+
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(MODULE_DIR)
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DEFAULT_EDGE_TTS_EXE = os.path.join(PROJECT_ROOT, ".runtime", "Scripts", "edge-tts.exe")
-DEFAULT_CACHE_DIR = os.path.join(BACKEND_DIR, "cache")
+DEFAULT_CACHE_DIR = os.path.join(conf.CONFIG_ROOT, "cache") if conf else os.path.join(BACKEND_DIR, "cache")
 
 class EdgeTTSManager:
     """Edge TTS 语音管理器"""

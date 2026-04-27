@@ -36,7 +36,7 @@ import faust_backend.trigger_manager as trigger_manager
 import faust_backend.utils as utils
 
 toollist = []
-DIARY_DIR = Path("agents") / Path(conf.AGENT_NAME) / "diary"
+DIARY_DIR = Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "diary"
 STARTED = False
 ORIGINAL_TOOL_FUNCS = {}
 KB_MANAGER = kb_manager.get_kb_manager()
@@ -57,7 +57,7 @@ DEFAULT_EXCLUDED_TOOL_NAMES = {
 
 def refresh_runtime_paths() -> None:
     global DIARY_DIR, KB_MANAGER
-    DIARY_DIR = Path("agents") / Path(conf.AGENT_NAME) / "diary"
+    DIARY_DIR = Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "diary"
     KB_MANAGER = kb_manager.get_kb_manager(refresh=True)
 
 
@@ -73,6 +73,13 @@ def get_tools_for_agent(agent_name: str | None = None):
     target = str(agent_name or conf.AGENT_NAME or "").strip().lower()
     if target == "araya":
         return [tool_func for tool_func in toollist if _tool_func_name(tool_func) in ARAYA_ALLOWED_TOOL_NAMES]
+    try:
+        from faust_backend.live_mode import is_live_mode, get_excluded_tool_names
+        if is_live_mode():
+            excluded = DEFAULT_EXCLUDED_TOOL_NAMES | get_excluded_tool_names()
+            return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in excluded]
+    except ImportError:
+        pass
     return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in DEFAULT_EXCLUDED_TOOL_NAMES]
 
 
@@ -447,60 +454,10 @@ def sysExecTool(command: str,timeout:int=15) -> str:
 @add_to_tool_list
 @tool
 @record_func_name
-def listDiaryFilesTool() -> str:
-    """
-    Description:
-        列出日记目录下的所有文件。
-        你可以自行决定何时使用此工具。
-    Args:
-        None
-    Returns:
-        str: 日记目录下的文件列表，或者错误信息。
-    """
-    try:
-        tree = KB_MANAGER.list_tree("diary")
-        files = []
-
-        def _walk(node):
-            if not isinstance(node, dict):
-                return
-            if node.get("type") == "file":
-                files.append(str(node.get("path") or ""))
-                return
-            for child in node.get("children") or []:
-                _walk(child)
-
-        _walk(tree)
-        return "\n".join(files) if files else "日记目录为空。"
-    except Exception as e:
-        return f"列出日记文件出错: {str(e)}"
-@add_to_tool_list
-@tool
-@record_func_name
-def readDiaryFileTool(filename: str) -> str:
-    """
-    Description:
-        读取指定日记文件的内容。
-        你可以自行决定何时使用此工具。
-    Args:
-        filename (str): 需要读取的日记文件名。
-    Returns:
-        str: 文件内容的字符串表示，或者错误信息。
-    """
-    try:
-        diary_path = str(filename or "").strip().replace("\\", "/").lstrip("/")
-        if not diary_path.startswith("diary/"):
-            diary_path = f"diary/{diary_path}"
-        return str(KB_MANAGER.read_node(diary_path).get("content") or "")
-    except Exception as e:
-        return f"读取日记文件出错: {str(e)}"
-@add_to_tool_list
-@tool
-@record_func_name
 def writeDiaryFileTool(content: str) -> str:
     """
     Description:
-        将指定内容写入日记文件，使用UTF-8编码。
+        将指定内容写入知识库，使用UTF-8编码。
         文件名根据当前日期时间生成，格式为YYYYMMDD_HHMMSS.txt
         你可以自行决定何时使用此工具。
     Args:
@@ -570,6 +527,15 @@ def readTextFileTool(file_path: str, start_line: int = 1, end_line: int = 0) -> 
     Returns:
         str: 指定行范围内容，或错误信息。
     """
+    try:
+        from faust_backend.live_mode import is_live_mode
+        if is_live_mode():
+            from fnmatch import fnmatch
+            norm_path = os.path.normpath(file_path).replace("\\", "/")
+            if not fnmatch(norm_path, "*/agents/*.md"):
+                return f"直播模式下不允许读取该文件: {file_path}"
+    except ImportError:
+        pass
     try:
         print("[llm_tools.readTextFileTool] Reading file:", file_path)
         return _safe_read_file_range(file_path, int(start_line), int(end_line))
@@ -746,29 +712,6 @@ def triggerMotionTool(motion_name: str) -> str:
         return json.dumps({"status": "ok", "command": "SET_MOTION", "motion": name}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "motion": name}, ensure_ascii=False)
-
-@add_to_tool_list
-@tool
-@record_func_name
-def guiOpTool(command: str) -> str:
-    """
-    Description:
-        执行语言形式的GUI操作命令，并返回结果。
-        这个工具只应该在用户需要时执行。
-        这会调用一个专用LLM来处理GUI操作。
-        你只需清晰简单描述你的需求即可。
-        如 “关闭VSCode软件”
-    Args:
-        command (str): 需要执行的GUI操作命令字符串。
-    Returns:
-        str: GUI操作的结果字符串，或者错误信息。
-    """
-    try:
-        print("[llm_tools.guiOpTool] Executing GUI operation command:", command)
-        result_str=gui_llm_lib.gui_op(command)
-        return result_str
-    except Exception as e:
-        return f"执行GUI操作出错: {str(e)}"
 @add_to_tool_list
 @tool
 @record_func_name

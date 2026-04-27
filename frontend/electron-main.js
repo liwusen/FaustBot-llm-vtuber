@@ -691,6 +691,49 @@ function createConfigWindow() {
   return configWindow;
 }
 
+let liveWindow = null;
+
+function createLiveWindow() {
+  if (liveWindow && !liveWindow.isDestroyed()) {
+    liveWindow.show();
+    if (liveWindow.isMinimized()) liveWindow.restore();
+    liveWindow.focus();
+    return liveWindow;
+  }
+
+  const windowIconPath = path.join(getFrontendAppDir(), 'FaustBot.icon.tiny.png');
+  liveWindow = new BrowserWindow({
+    width: 900,
+    height: 700,
+    minWidth: 700,
+    minHeight: 500,
+    title: 'FaustBot 直播控制台',
+    backgroundColor: '#edf1f6',
+    frame: true,
+    show: false,
+    autoHideMenuBar: true,
+    icon: fs.existsSync(windowIconPath) ? windowIconPath : undefined,
+    webPreferences: {
+      preload: path.join(getFrontendAppDir(), 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  liveWindow.loadFile(path.join(getFrontendAppDir(), 'live-window.html'));
+  liveWindow.once('ready-to-show', () => {
+    if (!liveWindow || liveWindow.isDestroyed()) return;
+    liveWindow.show();
+    liveWindow.focus();
+  });
+
+  liveWindow.on('closed', () => {
+    liveWindow = null;
+  });
+
+  return liveWindow;
+}
+
 function spawnDetachedWithCheck(cmd, args, options = {}) {
   return new Promise((resolve) => {
     let settled = false;
@@ -907,6 +950,11 @@ ipcMain.handle('open-config-window', async () => {
   return { ok: true, mode: 'electron-window' };
 });
 
+ipcMain.handle('open-live-window', async () => {
+  createLiveWindow();
+  return { ok: true, mode: 'electron-window' };
+});
+
 ipcMain.handle('config-api', async (event, req) => {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   if (!senderWindow) {
@@ -957,6 +1005,18 @@ ipcMain.handle('config-open-path', async (_event, targetPath) => {
   }
   const openErr = await shell.openPath(p);
   return { ok: !openErr, error: openErr || null };
+});
+
+ipcMain.handle('get-faustbot-root', () => {
+  return path.join(app.getPath('home'), '.faustbot');
+});
+
+ipcMain.handle('restart-faust', () => {
+  const appPath = process.argv[0];
+  const args = process.argv.slice(1);
+  spawn(appPath, args, { detached: true, stdio: 'ignore' });
+  app.quit();
+  return { status: 'restarting' };
 });
 
 ipcMain.handle('toggle-log-panel', () => {

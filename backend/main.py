@@ -37,6 +37,10 @@ import faust_backend.kb_manager as kb_manager
 import faust_backend.kb_api as kb_api
 import faust_backend.araya_api as araya_api
 import faust_backend.araya_runtime as araya_runtime
+import faust_backend.live_api as live_api
+import faust_backend.live_mode as live_mode
+import faust_backend.update_api as update_api
+import faust_backend.blive_manager as blive_manager
 import faust_backend.plugin_market as plugin_market
 import faust_backend.skill_manager as skill_manager
 import faust_backend.speech_runtime as speech_runtime
@@ -58,6 +62,8 @@ app = FastAPI()
 uvicorn_server = None
 kb_api.register_kb_routes(app)
 araya_api.register_araya_routes(app)
+app.include_router(live_api.router)
+app.include_router(update_api.router)
 import faust_backend.edge_tts_api as edge_tts_api
 edge_tts_api.register_edge_tts_routes(app)
 app.add_middleware(
@@ -79,7 +85,7 @@ RUNTIME_STATUS = "starting"
 RUNTIME_ERROR = ""
 AGENT_NAME=conf.AGENT_NAME
 PROMPT = ""
-AGENT_ROOT=os.path.join("agents",f"{AGENT_NAME}")
+AGENT_ROOT=os.path.join(conf.CONFIG_ROOT,"agents",f"{AGENT_NAME}")
 
 
 def _set_runtime_state(*, ready: bool, status: str, error: str = ""):
@@ -118,10 +124,10 @@ def _ensure_agent_runtime_ready() -> None:
 def makeup_init_prompt():
     global PROMPT, AGENT_ROOT, AGENT_NAME
     AGENT_NAME = conf.AGENT_NAME
-    AGENT_ROOT=os.path.join("agents",f"{AGENT_NAME}")
+    AGENT_ROOT=os.path.join(conf.CONFIG_ROOT,"agents",f"{AGENT_NAME}")
     if not os.path.exists(AGENT_ROOT):
         PROMPT = ""
-        raise FileNotFoundError(f"Agent file for '{AGENT_NAME}' not found. Please make sure 'agents/{AGENT_NAME}' exists.")
+        raise FileNotFoundError(f"Agent file for '{AGENT_NAME}' not found. Please make sure 'agents/{AGENT_NAME}' exists under {conf.CONFIG_ROOT}.")
     with open(os.path.join(AGENT_ROOT,"AGENT.md"),"r",encoding="utf-8") as f:
         PROMPT=f.read()
     with open(os.path.join(AGENT_ROOT,"ROLE.md"),"r",encoding="utf-8") as f:
@@ -425,7 +431,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             os.environ["OPENAI_API_KEY"] = conf.CHAT_API_KEY
             os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
             AGENT_NAME = conf.AGENT_NAME
-            AGENT_ROOT = os.path.join("agents", f"{AGENT_NAME}")
+            AGENT_ROOT = os.path.join(conf.CONFIG_ROOT, "agents", f"{AGENT_NAME}")
             log.info("重建目标 Agent: %s", AGENT_NAME)
 
             makeup_init_prompt()
@@ -493,6 +499,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 await invoke_agent_locked(agent, {"messages": [{"role": "system", "content": PROMPT}]})
             else:
                 await invoke_agent_locked(agent, {"messages": [{"role": "user", "content": f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，请读取agents/{AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件来获取最新的设定内容。\n 这一条对话无需写入日记"}]})
+
             log.info("运行时重建完成")
             _set_runtime_state(ready=True, status="ready")
             return {
@@ -555,14 +562,12 @@ async def startup_event():
         log.warning("Minecraft 桥启动时未连接: %s", e)
     if plugin_heartbeat_task is None:
         plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
-    # try:
-    #     log.info("正在启动 ArayaRuntime...")
-    #     async for event in araya_runtime.get_araya_runtime().stream_once_async(reason="startup_events"):
-    #          event_name = str(event.get("event") or "").strip().lower()
-    #          event_payload = event.get("data") or {}
-    #          log.debug("ArayaRuntime 事件: %s, 数据: %s", event_name, event_payload)
-    # except Exception as e:
-    #     log.warning("启动 ArayaRuntime 事件流失败: %s", e)
+    live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))
+    try:
+        blm = blive_manager.get_blive_manager(refresh=True)
+        await blm.start()
+    except Exception as e:
+        log.warning("B站直播客户端启动失败: %s", e)
     log.info("FAUST 后端主服务已启动")
 
 
@@ -1130,13 +1135,13 @@ async def admin_delete_plugin(plugin_id: str, apply_runtime: bool = True, reset_
 async def admin_delete_agent_checkpoint(agent_name: str):
     if agent_name == AGENT_NAME:
         raise HTTPException(status_code=400, detail=f"不能删除当前正在使用的 Agent '{AGENT_NAME}' 的 checkpoint")
-    os.remove(pjoin("agents", agent_name, "faust_checkpoint.db"))
-    if os.path.exists(pjoin("agents", agent_name, "faust_store.db")):
-        os.remove(pjoin("agents", agent_name, "faust_store.db"))
-    if os.path.exists(pjoin("agents", agent_name, "faust_checkpoint.db-shm")):
-        os.remove(pjoin("agents", agent_name, "faust_checkpoint.db-shm"))
-    if os.path.exists(pjoin("agents", agent_name, "faust_checkpoint.db-wal")):
-        os.remove(pjoin("agents", agent_name, "faust_checkpoint.db-wal"))
+    os.remove(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_checkpoint.db"))
+    if os.path.exists(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_store.db")):
+        os.remove(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_store.db"))
+    if os.path.exists(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_checkpoint.db-shm")):
+        os.remove(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_checkpoint.db-shm"))
+    if os.path.exists(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_checkpoint.db-wal")):
+        os.remove(pjoin(conf.CONFIG_ROOT, "agents", agent_name, "faust_checkpoint.db-wal"))
     return {
         "status": "ok",
         "detail": f"Agent '{agent_name}' 的 checkpoint 已删除，下一次重启或切换 Agent 将会重新创建一个新的 checkpoint 文件。",
@@ -1250,6 +1255,13 @@ async def command_websocket(websocket: WebSocket):
                     if ttype == "event" and task.get("event_name") == "nimble_result" and callback_id:
                         result = nimble.get_nimble_result(callback_id, cleanup=False)
                         trigger_text = f"<Trigger>灵动交互窗口收到用户提交。callback_id={callback_id}，用户结果={result}。请继续处理。"
+                    elif ttype == "event" and task.get("event_name") == "blive_danmaku":
+                        payload = task.get("payload") or {}
+                        uname = payload.get("uname", "匿名")
+                        msg = payload.get("msg", "")
+                        if live_mode.is_tts_blacklisted(msg):
+                            continue
+                        trigger_text = f"<Trigger>直播间弹幕: {uname}: {msg}"
                     elif ttype == "event" and task.get("event_name") == "mc_event":
                         payload = task.get("payload") or {}
                         trigger_text = (

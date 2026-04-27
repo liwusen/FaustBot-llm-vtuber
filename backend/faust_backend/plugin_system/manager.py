@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 import time
 from pathlib import Path
 from types import ModuleType
@@ -11,17 +13,52 @@ import faust_backend.trigger_manager as trigger_manager
 
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 
+try:
+    import faust_backend.config_loader as conf
+except ImportError:
+    conf = None
+
 
 class PluginLoadError(RuntimeError):
     pass
 
 
+def _ensure_default_plugins() -> None:
+    dst = _plugin_user_dir()
+    if not dst.exists():
+        dst.mkdir(parents=True, exist_ok=True)
+    if any(dst.iterdir()):
+        return
+    candidates = [
+        Path(conf.PROJECT_ROOT) / "default_plugins",
+        Path(conf.PROJECT_ROOT).parent / "backend" / "default_plugins",
+        Path(__file__).resolve().parents[2] / "default_plugins",
+        Path(__file__).resolve().parents[2] / "plugins",
+    ]
+    for src in candidates:
+        if src.exists() and src.is_dir():
+            for item in src.iterdir():
+                dst_item = dst / item.name
+                if not dst_item.exists():
+                    if item.is_dir():
+                        shutil.copytree(item, dst_item, dirs_exist_ok=True)
+                    elif item.is_file():
+                        shutil.copy(item, dst_item)
+            return
+
+
+def _plugin_user_dir() -> Path:
+    if conf:
+        return Path(conf.CONFIG_ROOT) / "plugins"
+    return Path(__file__).resolve().parents[2] / "plugins"
+
+
 class PluginManager:
     def __init__(self, plugins_dir: Path | None = None, state_file: Path | None = None):
-        backend_root = Path(__file__).resolve().parents[2]
-        self.plugins_dir = Path(plugins_dir) if plugins_dir else backend_root / "plugins"
+        self.plugins_dir = Path(plugins_dir) if plugins_dir else _plugin_user_dir()
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = Path(state_file) if state_file else self.plugins_dir / "plugins.state.json"
+        _ensure_default_plugins()
 
         self._state: dict[str, Any] = {"plugins": {}, "configs": {}}
         self._plugins: dict[str, dict[str, Any]] = {}

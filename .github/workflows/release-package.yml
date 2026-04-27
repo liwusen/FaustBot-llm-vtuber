@@ -37,6 +37,10 @@ jobs:
         shell: cmd
         run: .runtime\python.exe embedded_python_bootstrap.py backend\faust_backend\download_vad.py
 
+      - name: Download Live2D models
+        shell: cmd
+        run: .runtime\python.exe embedded_python_bootstrap.py frontend\live2d_downloader.py
+
       - name: Package frontend
         shell: cmd
         working-directory: frontend
@@ -66,6 +70,21 @@ jobs:
         shell: cmd
         working-directory: backend\minecraft\mc-operator
         run: npm run package
+
+      - name: Remove node_modules and dist before packaging
+        shell: pwsh
+        run: |
+          @(
+            'frontend/node_modules',
+            'frontend/dist',
+            'backend/__pycache__'
+          ) | ForEach-Object {
+            $p = Join-Path $env:GITHUB_WORKSPACE $_
+            if (Test-Path $p) {
+              Remove-Item -LiteralPath $p -Recurse -Force
+              Write-Host "Removed: $_"
+            }
+          }
 
       - name: Prepare release archive
         id: prepare_archive

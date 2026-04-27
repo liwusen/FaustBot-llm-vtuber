@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FaustBot 直播控制台</title>
+  <link rel="stylesheet" href="./config-window.css" />
+  <style>
+    body { padding: 0; }
+    .app-shell { grid-template-columns: 1fr; min-height: 100vh; border: none; border-radius: 0; }
+    .main-panel { padding: 20px; }
+    .topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+    .topbar h2 { margin: 0; font-size: 22px; }
+    .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    .status-dot.on { background: #2c9158; }
+    .status-dot.off { background: #999; }
+    .live-feed { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px; background: #fafcfd; font-size: 13px; }
+    .live-feed .entry { padding: 4px 0; border-bottom: 1px solid var(--line); display: flex; gap: 8px; }
+    .live-feed .entry:last-child { border-bottom: none; }
+    .live-feed .uname { color: var(--blue); font-weight: 600; white-space: nowrap; }
+    .live-feed .msg { color: var(--text); word-break: break-all; }
+    .live-feed .del-btn { margin-left: auto; cursor: pointer; color: var(--accent); font-size: 16px; line-height: 1; }
+    .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: var(--panel-strong); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 16px; }
+    .card h3 { margin: 0 0 12px; font-size: 15px; }
+    .field-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .field-row label { min-width: 80px; font-size: 13px; color: var(--muted); }
+    .field-row input, .field-row textarea { flex: 1; }
+    .textarea-block { width: 100%; min-height: 60px; resize: vertical; }
+    .trigger-list { max-height: 200px; overflow-y: auto; }
+    .trigger-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .trigger-item:last-child { border-bottom: none; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-on { background: var(--ok-soft); color: var(--ok); }
+    .badge-off { background: #f0f0f0; color: #999; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <main class="main-panel">
+      <div class="topbar">
+        <h2>直播控制台</h2>
+        <span id="liveStatusBadge" class="badge badge-off">未开启</span>
+        <button id="toggleLiveBtn" class="btn btn-primary" type="button">开启直播模式</button>
+        <button id="refreshBtn" class="btn btn-ghost" type="button">刷新</button>
+        <span id="danmakuCount" style="font-size:13px;color:var(--muted);">弹幕: 0</span>
+      </div>
+
+      <div class="config-grid">
+        <div class="card">
+          <h3>B站设置</h3>
+          <div class="field-row">
+            <label>直播间ID</label>
+            <input id="roomIdInput" type="number" placeholder="如 12235923" />
+          </div>
+          <div class="field-row">
+            <label>SESSDATA</label>
+            <input id="sessdataInput" type="password" placeholder="选填，用于显示用户名" />
+          </div>
+          <div class="field-row">
+            <label>启用</label>
+            <input id="bliveEnabled" type="checkbox" />
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <button id="saveBliveSettingsBtn" class="btn btn-ghost" type="button">保存设置</button>
+            <span id="bliveStatusText" style="font-size:12px;color:var(--muted);line-height:28px;">未连接</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>黑名单设置</h3>
+          <div class="field-row" style="flex-direction:column;align-items:stretch;">
+            <label>弹幕黑名单词（逗号/换行分隔）</label>
+            <textarea id="danmakuBlacklistInput" class="textarea-block" placeholder="广告,抽奖,加群"></textarea>
+          </div>
+          <div class="field-row" style="flex-direction:column;align-items:stretch;">
+            <label>TTS 黑名单词</label>
+            <textarea id="ttsBlacklistInput" class="textarea-block" placeholder="包含这些词的弹幕不会触发语音"></textarea>
+          </div>
+          <button id="saveBlacklistBtn" class="btn btn-ghost" type="button">保存黑名单</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
+        <div class="card">
+          <h3>实时弹幕</h3>
+          <div id="danmakuFeed" class="live-feed"><div style="color:var(--muted);font-size:13px;">等待直播开始...</div></div>
+        </div>
+        <div class="card">
+          <h3>Trigger 队列 <span id="triggerCount" style="font-weight:normal;color:var(--muted);">(0)</span></h3>
+          <div id="triggerList" class="trigger-list"><div style="color:var(--muted);font-size:12px;">暂无弹幕 Trigger</div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    window.__LIVE_WINDOW_READY__ = false;
+  </script>
+  <script src="./libs/configer/dom-utils.js"></script>
+  <script src="./live-window.js"></script>
+</body>
+</html>

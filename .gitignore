@@ -1,19 +1,12 @@
 node_modules/
 __pycache__/
-models/
-snakers4_silero-vad_master/
-*.safetensors
-onnx/
-._____temp/
-7z.exe
-GPT-SoVITS-Bundle/
+
+
 logs/
-*.pth
-TEMP/
-_____temp/
-.____temp/
+
+
 asr-hub/
-bert-hub/
+
 tts-hub/
 *.private.json
 faust_checkpoint.db
@@ -22,11 +15,7 @@ diary/
 #---frontend-live2d-models/
 frontend/2D/
 #LightRAG Backend Service
-inputs/
-.venv/
 __dev__/
-rag_storage/
-lightRAG.log
 #nano-vectordb based RAG Service
 rag_storage_nano/
 

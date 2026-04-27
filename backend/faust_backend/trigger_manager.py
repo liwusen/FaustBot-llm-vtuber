@@ -23,7 +23,7 @@ log = get_logger("faust.trigger")
 
 
 def _get_triggers_path() -> Path:
-    return Path("agents") / Path(conf.AGENT_NAME) / "triggers.json"
+    return Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "triggers.json"
 
 
 exitflag = False

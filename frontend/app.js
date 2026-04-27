@@ -33,6 +33,7 @@
   const textChatStatus = document.getElementById('textChatStatus');
   const trayToggleBtn = document.getElementById('trayToggleBtn');
   const openConfigBtn = document.getElementById('openConfigBtn');
+  const openLiveBtn = document.getElementById('openLiveBtn');
   const quickController = document.getElementById('modelQuickController');
   const quickToggleAsrBtn = document.getElementById('quickToggleAsr');
   const quickStopMediaBtn = document.getElementById('quickStopMedia');
@@ -2307,6 +2308,11 @@
       if (window.api && window.api.openConfigWindow) await window.api.openConfigWindow();
     }catch(e){ console.warn('openConfigWindow failed', e); }
   });
+  if (openLiveBtn) openLiveBtn.addEventListener('click', async ()=>{
+    try{
+      if (window.api && window.api.openLiveWindow) await window.api.openLiveWindow();
+    }catch(e){ console.warn('openLiveWindow failed', e); }
+  });
   updateQuickAsrButton();
 
   // ── 日志面板 ──
@@ -2387,5 +2393,28 @@
       if (isHidden) connectLogWs();
     });
   }
+
+  // ── 直播模式：隐藏/显示文字输入框 ──
+  let liveModePollTimer = null;
+  let lastLiveModeState = false;
+  const textChatBar = document.getElementById('textChatBar');
+
+  async function pollLiveMode() {
+    try {
+      const resp = await fetch('http://127.0.0.1:13900/faust/live/status');
+      const data = await resp.json();
+      const isLive = Boolean(data.live_mode);
+      if (isLive !== lastLiveModeState) {
+        lastLiveModeState = isLive;
+        if (textChatBar) {
+          textChatBar.style.display = isLive ? 'none' : '';
+        }
+      }
+    } catch (e) {
+    }
+  }
+
+  liveModePollTimer = setInterval(pollLiveMode, 3000);
+  pollLiveMode();
 
 })();

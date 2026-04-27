@@ -77,6 +77,16 @@ async def check_access(path, operation):
     Returns:
         bool: 是否允许访问
     """
+    try:
+        from faust_backend.live_mode import is_live_mode
+        if is_live_mode():
+            norm_path = os.path.normpath(path).replace("\\", "/")
+            if not await match_path_pattern(norm_path, "*/agents/*.md"):
+                print(f"安全检查(直播模式): 路径={path}, 操作={operation} -> 拒绝(只允许读取 agents/*.md)")
+                return False
+            return True
+    except ImportError:
+        pass
     level = security_config['level']
     if level == 'unlimited':
         print(f"安全检查: 路径={path}, 操作={operation}, 访问级别={level} -> 允许")

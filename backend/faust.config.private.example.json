@@ -1,0 +1,10 @@
+{
+    "CHAT_API_KEY": "",
+    "SEARCH_API_KEY": "",
+    "GUI_OPERATOR_LLM_KEY": "",
+    "SECURITY_VERIFIER_LLM_KEY": "",
+    "KB_OPENAI_API_KEY": "",
+    "OPENAI_TTS_API_KEY": "",
+    "OPENAI_ASR_API_KEY": "",
+    "FAUSTBOT_CLOUD_SERVICE_KEY": ""
+}
