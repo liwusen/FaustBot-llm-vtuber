@@ -102,13 +102,14 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $stageDir = Join-Path $env:RUNNER_TEMP "faust-$tag-windows"
-          $liteDir  = Join-Path $env:RUNNER_TEMP "faust-$tag-windows-lite"
-          $fullArchive  = Join-Path $env:RUNNER_TEMP "faust-$tag-windows.zip"
-          $liteArchive  = Join-Path $env:RUNNER_TEMP "faust-$tag-without-runtime.zip"
+          $liteDir = Join-Path $env:RUNNER_TEMP "faust-$tag-windows-lite"
+          $fullArchive = Join-Path $env:RUNNER_TEMP "faust-$tag-windows.zip"
+          $liteArchive = Join-Path $env:RUNNER_TEMP "faust-$tag-without-runtime.zip"
 
-          foreach ($p in @($stageDir, $liteDir, $fullArchive, $liteArchive)) {
-            if (Test-Path $p) { Remove-Item $p -Recurse -Force }
-          }
+          if (Test-Path $stageDir) { Remove-Item $stageDir -Recurse -Force }
+          if (Test-Path $liteDir) { Remove-Item $liteDir -Recurse -Force }
+          if (Test-Path $fullArchive) { Remove-Item $fullArchive -Force }
+          if (Test-Path $liteArchive) { Remove-Item $liteArchive -Force }
 
           New-Item -ItemType Directory -Path $stageDir | Out-Null
 
