@@ -37,7 +37,8 @@
       "package.json",
       "live-window.html",
       "live-window.css",
-      "live-window.js"
+      "live-window.js",
+      "FaustBot.icon.tiny.png"
     ],
     "win": {
       "target": [
