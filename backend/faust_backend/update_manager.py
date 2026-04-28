@@ -21,11 +21,13 @@ log=logger.get_logger("faust.update.manager")
 
 GITHUB_OWNER = "liwusen"
 GITHUB_REPO = "FaustBot-llm-vtuber"
-GH_PROXY = "https://gh-proxy.com"
+GH_PROXY = "https://edgeone.gh-proxy.org"
 VERSION_FILE = "version.json"
 RELEASE_CACHE_HOURS = 1
-DOWNLOAD_THREADS = 16
+DOWNLOAD_THREADS = 32
 DOWNLOAD_CHUNK_SIZE = 8192 * 16
+DOWNLOAD_MAX_RETRIES = 3
+DOWNLOAD_RETRY_BASE_DELAY = 2.0
 
 PRESERVE_PATTERNS = [
     ".runtime/",
@@ -145,11 +147,52 @@ class DownloadTask:
             "error": self._error,
         }
 
+    def _request_with_retry(self, method: str, **kwargs) -> requests.Response:
+        last_exc: Exception | None = None
+        for attempt in range(1, DOWNLOAD_MAX_RETRIES + 1):
+            try:
+                r = requests.request(method, self.url, **kwargs)
+                r.raise_for_status()
+                return r
+            except Exception as e:
+                last_exc = e
+                if attempt < DOWNLOAD_MAX_RETRIES:
+                    delay = DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    log.warning(f"Download attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed for "
+                                f"{self.asset_name}, retrying in {delay:.1f}s: {e}")
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
+    def _dl_chunk_with_retry(self, start: int, end: int, idx: int) -> Path:
+        part = self.dest_path.with_suffix(f".part{idx}")
+        h = {"Range": f"bytes={start}-{end}"}
+        last_exc: Exception | None = None
+        for attempt in range(1, DOWNLOAD_MAX_RETRIES + 1):
+            try:
+                r = requests.get(self.url, headers=h, stream=True, timeout=120)
+                r.raise_for_status()
+                with open(part, "wb") as f:
+                    for data in r.iter_content(DOWNLOAD_CHUNK_SIZE):
+                        if data:
+                            f.write(data)
+                            with self._lock:
+                                self.downloaded_bytes += len(data)
+                return part
+            except Exception as e:
+                last_exc = e
+                if attempt < DOWNLOAD_MAX_RETRIES:
+                    delay = DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    log.warning(f"Chunk {idx} attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed "
+                                f"({start}-{end}), retrying in {delay:.1f}s: {e}")
+                    time.sleep(delay)
+                if part.exists():
+                    part.unlink()
+        raise last_exc  # type: ignore[misc]
+
     def run(self) -> None:
         self._start_time = time.time()
         try:
-            head = requests.head(self.url, timeout=15)
-            head.raise_for_status()
+            head = self._request_with_retry("HEAD", timeout=15)
             self.total_bytes = int(head.headers.get("content-length", 0))
             if self.total_bytes == 0:
                 raise RuntimeError("无法获取文件大小")
@@ -169,21 +212,8 @@ class DownloadTask:
 
             part_paths: list[Path] = []
 
-            def _dl_one(start: int, end: int, idx: int) -> Path:
-                part = self.dest_path.with_suffix(f".part{idx}")
-                h = {"Range": f"bytes={start}-{end}"}
-                r = requests.get(self.url, headers=h, stream=True, timeout=120)
-                r.raise_for_status()
-                with open(part, "wb") as f:
-                    for data in r.iter_content(DOWNLOAD_CHUNK_SIZE):
-                        if data:
-                            f.write(data)
-                            with self._lock:
-                                self.downloaded_bytes += len(data)
-                return part
-
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_threads) as pool:
-                fut_map = {pool.submit(_dl_one, s, e, i): i for s, e, i in ranges}
+                fut_map = {pool.submit(self._dl_chunk_with_retry, s, e, i): i for s, e, i in ranges}
                 for fut in concurrent.futures.as_completed(fut_map):
                     exc = fut.exception()
                     if exc:
@@ -284,7 +314,7 @@ class UpdateManager:
     def _find_windows_asset(self, release: dict) -> str:
         for asset in release.get("assets") or []:
             name = str(asset.get("name", ""))
-            if name.endswith("-windows.zip") or (name.endswith(".zip") and "windows" in name.lower()):
+            if "without-runtime" in name.lower() and name.endswith(".zip"):
                 return name
         return ""
 

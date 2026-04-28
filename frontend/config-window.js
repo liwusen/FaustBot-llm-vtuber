@@ -2294,13 +2294,13 @@ function renderOverviewModule() {
   progressLabel.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
   progressContainer.append(progressBar, progressLabel);
 
-  function sseDownload(tag, assetName) {
+  function sseDownload(tag, assetName, useProxy) {
     return new Promise((resolve, reject) => {
       progressContainer.style.display = "";
       progressFill.style.width = "0%";
       progressLabel.textContent = "准备下载...";
 
-      window.api.configRequest("POST", "/faust/update/start-download", { tag, asset_name: assetName })
+      window.api.configRequest("POST", "/faust/update/start-download", { tag, asset_name: assetName, use_proxy: useProxy })
         .then((res) => {
           if (res.status !== "started") {
             reject(new Error(res.error || "启动下载失败"));
@@ -2371,7 +2371,7 @@ function renderOverviewModule() {
           dryBtn.disabled = true;
           dryBtn.textContent = "下载中...";
           try {
-            await sseDownload(data.latest_tag, data.asset_name);
+            await sseDownload(data.latest_tag, data.asset_name, proxyChk.checked);
             const dr = await window.api.configRequest("POST", "/faust/update/dry-run", {
               tag: data.latest_tag,
               asset_name: data.asset_name,
@@ -2397,7 +2397,7 @@ function renderOverviewModule() {
           applyBtn.disabled = true;
           applyBtn.textContent = "下载中...";
           try {
-            await sseDownload(data.latest_tag, data.asset_name);
+            await sseDownload(data.latest_tag, data.asset_name, proxyChk.checked);
             const ar = await window.api.configRequest("POST", "/faust/update/apply", {
               tag: data.latest_tag,
               asset_name: data.asset_name,
@@ -2429,8 +2429,31 @@ function renderOverviewModule() {
     checkBtn.textContent = "检查更新";
   });
 
+  // ── 镜像切换 ──
+  const proxyRow = el("div");
+  proxyRow.style.cssText = "margin-top:8px;display:flex;align-items:center;gap:8px";
+  const proxyChk = el("input");
+  proxyChk.type = "checkbox";
+  proxyChk.id = "update-proxy-chk";
+  proxyChk.checked = true;
+  const proxyLbl = el("label", "", "使用镜像加速下载 (gh-proxy.com)");
+  proxyLbl.htmlFor = "update-proxy-chk";
+  proxyRow.append(proxyChk, proxyLbl);
+  updateCard.append(proxyRow);
+
   updateCard.append(updateInfo, checkBtn, updateResult);
   els.cardsRoot.append(updateCard);
+
+  // ── 数据目录 ──
+  const dataCard = el("article", "card full-span");
+  dataCard.append(el("h3", "card-title", "数据目录"));
+  const dataHelp = el("p", "card-help", "打开 FaustBot 用户数据目录（Agent 文件、日志、配置、插件等）。");
+  const dataBtn = makeButton("打开数据目录", async () => {
+    const root = await window.api.getFaustbotRoot();
+    await window.api.configOpenPath(root);
+  }, "btn btn-primary");
+  dataCard.append(dataHelp, dataBtn);
+  els.cardsRoot.append(dataCard);
 
   // ── 最近 ERROR 日志 ──
   const errors = state.recentErrors || [];

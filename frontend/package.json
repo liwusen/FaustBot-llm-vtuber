@@ -18,7 +18,7 @@
     "ws": "^8.19.0"
   },
   "build": {
-    "appId": "com.faustbot.live2dfrontend",
+    "appId": "com.allenlee.live2dfrontend",
     "productName": "FaustLive2DFrontend",
     "asar": true,
     "directories": {
@@ -34,29 +34,10 @@
       "config-window.css",
       "config-window.js",
       "libs/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "configer_pyside6.py",
-        "to": "configer_pyside6.py"
-      },
-      {
-        "from": "live2d_downloader.py",
-        "to": "live2d_downloader.py"
-      },
-      {
-        "from": "start-configer.bat",
-        "to": "start-configer.bat"
-      },
-      {
-        "from": "download_live2d.bat",
-        "to": "download_live2d.bat"
-      },
-      {
-        "from": "../embedded_python_bootstrap.py",
-        "to": "embedded_python_bootstrap.py"
-      }
+      "package.json",
+      "live-window.html",
+      "live-window.css",
+      "live-window.js"
     ],
     "win": {
       "target": [
