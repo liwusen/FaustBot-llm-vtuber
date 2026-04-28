@@ -2367,32 +2367,6 @@ function renderOverviewModule() {
           </div>
         `;
         const btnRow = el("div", "toolbar");
-        const dryBtn = makeButton("预览变更", async () => {
-          dryBtn.disabled = true;
-          dryBtn.textContent = "下载中...";
-          try {
-            await sseDownload(data.latest_tag, data.asset_name, proxyChk.checked);
-            const dr = await window.api.configRequest("POST", "/faust/update/dry-run", {
-              tag: data.latest_tag,
-              asset_name: data.asset_name,
-            });
-            if (dr.status === "ok") {
-              const lines = [];
-              if (dr.new_files?.length) lines.push(`新增文件: ${dr.new_files.length}`);
-              if (dr.overwritten?.length) lines.push(`将更新: ${dr.overwritten.length}`);
-              if (dr.preserved?.length) lines.push(`将保留: ${dr.preserved.length}`);
-              showBanner("info", `Dry-Run: ${lines.join(" | ")}`);
-              console.log("[dry-run]", JSON.stringify(dr, null, 2));
-            } else {
-              showBanner("error", `分析失败: ${dr.error}`);
-            }
-          } catch (e) {
-            showBanner("error", `预览异常: ${e}`);
-          }
-          dryBtn.disabled = false;
-          dryBtn.textContent = "预览变更";
-          progressContainer.style.display = "none";
-        });
         const applyBtn = makeButton("开始更新", async () => {
           applyBtn.disabled = true;
           applyBtn.textContent = "下载中...";
@@ -2416,7 +2390,7 @@ function renderOverviewModule() {
           applyBtn.disabled = false;
           applyBtn.textContent = "开始更新";
         });
-        btnRow.append(dryBtn, applyBtn);
+        btnRow.append(applyBtn);
         updateResult.append(btnRow);
         updateResult.append(progressContainer);
       } else {

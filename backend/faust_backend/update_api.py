@@ -121,10 +121,19 @@ async def download_events(download_id: str):
                 log.debug(f"Download task {download_id} progress: {task.progress}%")
                 yield f"event: progress\ndata: {json.dumps(task.to_dict())}\n\n"
                 await asyncio.sleep(0.5)
+        except GeneratorExit:
+            log.info(f"SSE client disconnected for task {download_id}")
+        except ConnectionResetError:
+            log.warning(f"SSE connection reset for task {download_id}")
+        except Exception:
+            log.exception(f"SSE stream error for task {download_id}")
         finally:
             cleanup_download_task(download_id)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+    )
 
 
 # ─── dry-run (uses already-downloaded zip) ─────────────────

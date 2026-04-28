@@ -381,28 +381,42 @@ class UpdateManager:
         info["new_files"] = sorted(src_set - dst_set)
         return info
 
-    def generate_update_script(self, extracted_src: Path, tag: str) -> str:
+    def generate_update_script(self, extracted_src: Path, tag: str, dry_run: bool = False) -> str:
         bat_path = Path(tempfile.gettempdir()) / f"faust_apply_update_{tag}.ps1"
 
         lines = [
             "#!powershell",
             "# Faust Auto-Update Script  (generated)",
+            "param([switch]$DryRun)",
+            "",
             f'$extracted = "{extracted_src}"',
             f'$installRoot = "{self.root}"',
             f'$tag = "{tag}"',
             "",
-            "# Wait for Faust to exit",
-            "Write-Host 'Waiting for Faust processes to exit...'",
-            "do {",
-            "    $procs = Get-Process -Name 'electron','python','faust*' -ErrorAction SilentlyContinue",
-            "    if (-not $procs) { break }",
-            "    Write-Host '  Waiting...'",
-            "    Start-Sleep -Seconds 2",
-            "} while ($true)",
-            "Write-Host 'All Faust processes exited.'",
+            'if ($DryRun) {',
+            "    Write-Host '[DRY-RUN] Mode enabled - no files will be modified'",
+            "}",
             "",
+        ]
+
+        if not dry_run:
+            lines += [
+                "# Wait for Faust to exit",
+                "Write-Host 'Waiting for Faust processes to exit...'",
+                "do {",
+                "    $procs = Get-Process -Name 'electron','python','faust*' -ErrorAction SilentlyContinue",
+                "    if (-not $procs) { break }",
+                "    Write-Host '  Waiting...'",
+                "    Start-Sleep -Seconds 2",
+                "} while ($true)",
+                "Write-Host 'All Faust processes exited.'",
+                "",
+            ]
+
+        lines += [
             "# Copy new files (skip preserved items)",
-            "Write-Host 'Copying update files...'",
+            'if ($DryRun) { Write-Host "Scanning files to copy..." }',
+            'else { Write-Host "Copying update files..." }',
             "Get-ChildItem -LiteralPath $extracted -Force | ForEach-Object {",
             "    $name = $_.Name",
             "    $skip = $false",
@@ -422,26 +436,37 @@ class UpdateManager:
         lines += [
             "    if (-not $skip) {",
             "        $dest = Join-Path $installRoot $name",
-            "        if ($_.PSIsContainer) {",
-            "            Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force",
-            "        } else {",
-            "            Copy-Item -LiteralPath $_.FullName -Destination $dest -Force",
+            '        if ($DryRun) {',
+            '            Write-Host "  [DRY-RUN] Would copy: $name"',
+            '        } else {',
+            "            if ($_.PSIsContainer) {",
+            "                Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force",
+            "            } else {",
+            "                Copy-Item -LiteralPath $_.FullName -Destination $dest -Force",
+            "            }",
             "        }",
             "    }",
             "}",
-            "Write-Host 'Update files copied.'",
-            "",
-            "# Run setup-runtime.bat in cloud mode",
-            "Write-Host 'Running setup-runtime.bat --mode cloud...'",
-            "$setup = Join-Path $installRoot 'setup-runtime.bat'",
-            "if (Test-Path $setup) {",
-            "    & $setup --mode cloud --install-python no --install-node yes --source cn",
-            "}",
-            "Write-Host 'Setup complete.'",
-            "",
-            'Write-Host "Update to $tag complete."',
-            "Start-Sleep -Seconds 3",
         ]
+
+        if not dry_run:
+            lines += [
+                'if (-not $DryRun) {',
+                '    Write-Host "Update files copied."',
+                '    Write-Host "Running setup-runtime.bat --mode cloud..."',
+                '    $setup = Join-Path $installRoot "setup-runtime.bat"',
+                '    if (Test-Path $setup) {',
+                '        & $setup --mode cloud --install-python no --install-node yes --source cn',
+                '    }',
+                '    Write-Host "Setup complete."',
+                '    Write-Host "Update to $tag complete."',
+                '    Start-Sleep -Seconds 3',
+                '}',
+            ]
+        else:
+            lines += [
+                'Write-Host "[DRY-RUN] No files were modified."',
+            ]
 
         bat_path.write_text("\n".join(lines), encoding="utf-8")
         return str(bat_path)
@@ -450,9 +475,10 @@ class UpdateManager:
         src = await self.ensure_extracted(tag, asset_name)
         script_path = self.generate_update_script(src, tag)
 
+        CREATE_NEW_CONSOLE = 0x00000010
         proc = subprocess.Popen(
             ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path],
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            creationflags=CREATE_NEW_CONSOLE,
         )
 
         return {
