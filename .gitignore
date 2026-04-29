@@ -50,3 +50,6 @@ kb_meta/
 cloud_inference_server/
 
 version.json
+
+
+*.bundle.js
