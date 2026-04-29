@@ -41,7 +41,7 @@ backend/plugins/plugins.state.json
 .runtime/
 runtime/
 dist/
-
+#--faust-knowledge-base
 kb/
 kb_index/
 kb_meta/

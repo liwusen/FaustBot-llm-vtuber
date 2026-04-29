@@ -527,15 +527,12 @@ def readTextFileTool(file_path: str, start_line: int = 1, end_line: int = 0) -> 
     Returns:
         str: 指定行范围内容，或错误信息。
     """
-    try:
-        from faust_backend.live_mode import is_live_mode
-        if is_live_mode():
-            from fnmatch import fnmatch
-            norm_path = os.path.normpath(file_path).replace("\\", "/")
-            if not fnmatch(norm_path, "*/agents/*.md"):
-                return f"直播模式下不允许读取该文件: {file_path}"
-    except ImportError:
-        pass
+    from faust_backend.live_mode import is_live_mode
+    if is_live_mode():
+        from fnmatch import fnmatch
+        norm_path = os.path.normpath(file_path).replace("\\", "/")
+        if not fnmatch(norm_path, "*/agents/*.md"):
+            return f"直播模式下不允许读取该文件: {file_path}"
     try:
         print("[llm_tools.readTextFileTool] Reading file:", file_path)
         return _safe_read_file_range(file_path, int(start_line), int(end_line))

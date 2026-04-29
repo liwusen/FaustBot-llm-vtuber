@@ -381,8 +381,42 @@ class UpdateManager:
         info["new_files"] = sorted(src_set - dst_set)
         return info
 
+    def _preserve_ps1_conditions(self, indent: int = 4) -> list[str]:
+        pad = " " * indent
+        lines = []
+        for pat in PRESERVE_PATTERNS:
+            escaped = pat.replace("/", "\\")
+            trimmed = escaped.rstrip("\\")
+            if pat.endswith("/"):
+                lines.append(f"{pad}if ($_.PSIsContainer -and $_.Name -eq '{trimmed}') {{ $skip = $true }}")
+            elif pat.startswith("*."):
+                ext = pat.lstrip("*")
+                lines.append(f"{pad}if ($name -like '*{ext}') {{ $skip = $true }}")
+            else:
+                lines.append(f"{pad}if ($name -eq '{escaped}') {{ $skip = $true }}")
+        return lines
+
+    def _preserve_rel_ps1_conditions(self, indent: int = 4) -> list[str]:
+        pad = " " * indent
+        lines = []
+        for pat in PRESERVE_PATTERNS:
+            norm = pat.replace("\\", "/")
+            escaped = pat.replace("/", "\\")
+            trimmed = escaped.rstrip("\\")
+            if pat.endswith("/"):
+                lines.append(f"{pad}if ($rel -like '{norm}*') {{ $skip = $true }}")
+            elif pat.startswith("*."):
+                ext = pat.lstrip("*")
+                lines.append(f"{pad}if ($rel -like '*{ext}') {{ $skip = $true }}")
+            else:
+                lines.append(f"{pad}if ($rel -eq '{escaped}') {{ $skip = $true }}")
+        return lines
+
     def generate_update_script(self, extracted_src: Path, tag: str, dry_run: bool = False) -> str:
         bat_path = Path(tempfile.gettempdir()) / f"faust_apply_update_{tag}.ps1"
+
+        preserve_conds = self._preserve_ps1_conditions(8)
+        preserve_rel_conds = self._preserve_rel_ps1_conditions(8)
 
         lines = [
             "#!powershell",
@@ -409,30 +443,20 @@ class UpdateManager:
                 "    Write-Host '  Waiting...'",
                 "    Start-Sleep -Seconds 2",
                 "} while ($true)",
-                "Write-Host 'All Faust processes exited.'",
+                "Write-Host 'All FaustBot processes exited.'",
                 "",
             ]
 
+        # ── Step 1: Copy new files ──
         lines += [
-            "# Copy new files (skip preserved items)",
-            'if ($DryRun) { Write-Host "Scanning files to copy..." }',
-            'else { Write-Host "Copying update files..." }',
+            "# ── Step 1: Copy new files (skip preserved) ──",
+            'if ($DryRun) { Write-Host "Step 1: Scanning files to copy..." }',
+            'else { Write-Host "Step 1: Copying update files..." }',
             "Get-ChildItem -LiteralPath $extracted -Force | ForEach-Object {",
             "    $name = $_.Name",
             "    $skip = $false",
         ]
-
-        for pat in PRESERVE_PATTERNS:
-            escaped = pat.replace("/", "\\")
-            trimmed = escaped.rstrip("\\")
-            if pat.endswith("/"):
-                lines.append(f"    if ($_.PSIsContainer -and $_.Name -eq '{trimmed}') {{ $skip = $true }}")
-            elif pat.startswith("*."):
-                ext = pat.lstrip("*")
-                lines.append(f"    if ($name -like '*{ext}') {{ $skip = $true }}")
-            else:
-                lines.append(f"    if ($name -eq '{escaped}') {{ $skip = $true }}")
-
+        lines += preserve_conds
         lines += [
             "    if (-not $skip) {",
             "        $dest = Join-Path $installRoot $name",
@@ -447,21 +471,67 @@ class UpdateManager:
             "        }",
             "    }",
             "}",
+            'if (-not $DryRun) { Write-Host "Step 1 done." }',
+            "",
         ]
 
+        # ── Step 2: Remove orphaned files ──
+        lines += [
+            "# ── Step 2: Remove files and folders that exist locally but not in new release ──",
+            'if ($DryRun) { Write-Host "Step 2: Scanning for orphaned items to remove..." }',
+            'else { Write-Host "Step 2: Removing orphaned items..." }',
+            "",
+            "# Build relative path set from extracted release",
+            '$newItems = @{}',
+            'Get-ChildItem -LiteralPath $extracted -Recurse -Force | ForEach-Object {',
+            '    $rel = $_.FullName.Substring($extracted.Length + 1).Replace("\", "/")',
+            '    $newItems[$rel.ToLower()] = $true',
+            '}',
+            "",
+            "# Walk install root and delete items not in new release (skip preserved)",
+            'Get-ChildItem -LiteralPath $installRoot -Recurse -Force | ForEach-Object {',
+            '    $rel = $_.FullName.Substring($installRoot.Length + 1).Replace("\", "/")',
+            '    if ($newItems.ContainsKey($rel.ToLower())) { return }',
+            '    $skip = $false',
+        ]
+        lines += preserve_rel_conds
+        lines += [
+            "    if (-not $skip) {",
+            '        if ($DryRun) {',
+            '            Write-Host "  [DRY-RUN] Would remove: $rel"',
+            '        } else {',
+            '            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue',
+            '        }',
+            "    }",
+            "}",
+            "",
+            "# Remove empty directories left behind",
+            'if (-not $DryRun) {',
+            '    $dirs = Get-ChildItem -LiteralPath $installRoot -Recurse -Directory -Force ',
+            '        | Sort-Object FullName -Descending',
+            '    foreach ($d in $dirs) {',
+            '        $hasChildren = @(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue).Count -gt 0',
+            '        if (-not $hasChildren) {',
+            '            Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue',
+            '        }',
+            '    }',
+            '}',
+            'if (-not $DryRun) { Write-Host "Step 2 done." }',
+            "",
+        ]
+
+        # ── Finalize ──
         if not dry_run:
             lines += [
-                'if (-not $DryRun) {',
-                '    Write-Host "Update files copied."',
-                '    Write-Host "Running setup-runtime.bat --mode cloud..."',
-                '    $setup = Join-Path $installRoot "setup-runtime.bat"',
-                '    if (Test-Path $setup) {',
-                '        & $setup --mode cloud --install-python no --install-node yes --source cn',
-                '    }',
-                '    Write-Host "Setup complete."',
-                '    Write-Host "Update to $tag complete."',
-                '    Start-Sleep -Seconds 3',
+                "# ── Step 3: Run setup ──",
+                'Write-Host "Step 3: Running setup-runtime.bat --mode cloud..."',
+                '$setup = Join-Path $installRoot "setup-runtime.bat"',
+                'if (Test-Path $setup) {',
+                '    & $setup --mode cloud --install-python no --install-node yes --source cn',
                 '}',
+                'Write-Host "Setup complete."',
+                'Write-Host "Update to $tag complete."',
+                'Start-Sleep -Seconds 3',
             ]
         else:
             lines += [
