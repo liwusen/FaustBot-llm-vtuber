@@ -113,7 +113,7 @@ jobs:
 
           New-Item -ItemType Directory -Path $stageDir | Out-Null
 
-          $excludeDirs = @('.git', '.github')
+          $excludeDirs = @('.git', '.github','.devin','.vscode','faust_plugin_market','tests')
           Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force | Where-Object {
             $excludeDirs -notcontains $_.Name
           } | ForEach-Object {
