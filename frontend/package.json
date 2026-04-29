@@ -12,9 +12,12 @@
   },
   "devDependencies": {
     "electron": "^41.1.1",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "esbuild": "^0.28.0"
   },
   "dependencies": {
+    "@pixiv/three-vrm": "^3.5.2",
+    "three": "^0.184.0",
     "ws": "^8.19.0"
   },
   "build": {
@@ -29,6 +32,7 @@
       "preload.js",
       "index.html",
       "app.js",
+      "vrm-renderer.js",
       "styles.css",
       "config-window.html",
       "config-window.css",

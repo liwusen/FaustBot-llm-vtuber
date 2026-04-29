@@ -51,6 +51,11 @@ jobs:
         shell: cmd
         run: .runtime\python.exe -X utf8 embedded_python_bootstrap.py frontend\live2d_downloader.py
 
+      - name: Install frontend dependencies and bundle VRM renderer
+        shell: cmd
+        working-directory: frontend
+        run: npm install && npx esbuild vrm-renderer.js --bundle --format=esm --outfile=libs/vrm-renderer.bundle.js --minify --log-level=warning
+
       - name: Package frontend
         shell: cmd
         working-directory: frontend

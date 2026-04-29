@@ -44,10 +44,12 @@ PUBLIC_CONFIG_DEFAULTS = {
     "ARAYA_IDLE_MINUTES": 30,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,
+    "MODEL_TYPE": "live2d",
     "LIVE2D_MODEL_PATH": "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json",
     "LIVE2D_MODEL_SCALE": 0.3,
     "LIVE2D_MODEL_X": None,
     "LIVE2D_MODEL_Y": None,
+    "VRM_MODEL_PATH": "",
     "TEXT_CHAT_BAR_Y_FACTOR": 0.53,
     "FRONTEND_QUICK_CONTROLLER_X_OFFSET": -12,
     "FRONTEND_CLICK_THROUGH": True,
@@ -209,13 +211,21 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def list_available_models() -> List[Dict[str, str]]:
-    frontend_2d = PROJECT_ROOT.parent / "frontend" / "2D"
+    frontend_root = PROJECT_ROOT.parent / "frontend"
     results: List[Dict[str, str]] = []
-    if not frontend_2d.exists():
-        return results
-    for model_file in frontend_2d.rglob("*.model3.json"):
-        rel = model_file.relative_to(frontend_2d.parent).as_posix()
-        results.append({"label": model_file.parent.name, "path": rel})
+
+    models_2d = frontend_root / "models" / "2D" if (frontend_root / "models" / "2D").exists() else frontend_root / "2D"
+    if models_2d.exists():
+        for model_file in models_2d.rglob("*.model3.json"):
+            rel = model_file.relative_to(frontend_root).as_posix()
+            results.append({"label": model_file.parent.name, "path": rel, "type": "live2d"})
+
+    models_vrm = frontend_root / "models" / "VRM" if (frontend_root / "models" / "VRM").exists() else None
+    if models_vrm and models_vrm.exists():
+        for vrm_file in models_vrm.rglob("*.vrm"):
+            rel = vrm_file.relative_to(frontend_root).as_posix()
+            results.append({"label": vrm_file.stem, "path": rel, "type": "vrm"})
+
     return sorted(results, key=lambda x: x["path"])
 
 
@@ -341,7 +351,15 @@ def runtime_summary() -> Dict[str, Any]:
 def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = payload or {}
     public_cfg = get_public_config()
-    model_path = str(payload.get("LIVE2D_MODEL_PATH") or public_cfg.get("LIVE2D_MODEL_PATH") or "").strip()
+    model_type = str(payload.get("MODEL_TYPE") or public_cfg.get("MODEL_TYPE") or "live2d").strip().lower()
+    model_path = str(
+        payload.get("VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH")
+        or public_cfg.get("VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH")
+        or ""
+    ).strip()
+    if not model_path and model_type == "live2d":
+        model_path = str(public_cfg.get("LIVE2D_MODEL_PATH") or "").strip()
+
     model_scale = payload.get("LIVE2D_MODEL_SCALE", public_cfg.get("LIVE2D_MODEL_SCALE"))
     model_x = payload.get("LIVE2D_MODEL_X", public_cfg.get("LIVE2D_MODEL_X"))
     model_y = payload.get("LIVE2D_MODEL_Y", public_cfg.get("LIVE2D_MODEL_Y"))
@@ -362,7 +380,9 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
     return {
         "status": "ok",
         "applied": {
-            "LIVE2D_MODEL_PATH": model_path,
+            "MODEL_TYPE": model_type,
+            "LIVE2D_MODEL_PATH": model_path if model_type == "live2d" else None,
+            "VRM_MODEL_PATH": model_path if model_type == "vrm" else None,
             "LIVE2D_MODEL_SCALE": model_scale,
             "LIVE2D_MODEL_X": model_x,
             "LIVE2D_MODEL_Y": model_y,

@@ -678,6 +678,14 @@ function pickModuleFields(moduleId) {
     };
   }
   if (moduleId === "live2d") {
+    const modelType = String(state.config.public.MODEL_TYPE || "live2d").toLowerCase();
+    if (modelType === "vrm") {
+      const vrmOnly = LIVE2D_KEYS.filter((k) => {
+        if (k === "LIVE2D_MODEL_PATH" || k === "LIVE2D_MODEL_X" || k === "LIVE2D_MODEL_Y") return false;
+        return publicKeys.includes(k);
+      });
+      return { publicKeys: vrmOnly, privateKeys: [] };
+    }
     return { publicKeys: LIVE2D_KEYS.filter((k) => publicKeys.includes(k)), privateKeys: [] };
   }
   if (moduleId === "speech") {
@@ -790,26 +798,43 @@ function renderConfigModule(moduleId) {
   }
 
   if (moduleId === "live2d") {
+    const modelType = String(state.config.public.MODEL_TYPE || "live2d").toLowerCase();
     const m = el("article", "card full-span");
-    m.append(el("h3", "card-title", "可用模型"));
+    m.append(el("h3", "card-title", "模型类型"));
+    const typeRow = el("div", "list-row");
+    typeRow.append(el("span", "", "当前模型类型: " + modelType.toUpperCase()));
+    const switchType = modelType === "vrm" ? "live2d" : "vrm";
+    typeRow.append(makeButton(`切换到 ${switchType.toUpperCase()}`, async () => {
+      updateValue("public", "MODEL_TYPE", switchType);
+      renderModule();
+      await saveConfig();
+    }, "btn btn-ghost"));
+    m.append(typeRow);
+
+    const m2 = el("article", "card full-span");
+    m2.append(el("h3", "card-title", "可用模型"));
     const list = el("div", "list-box");
-    if (!state.live2dModels.length) {
-      list.append(el("div", "empty-state", "暂无模型列表，可先点击右上角 Reload。"));
+    const filtered = state.live2dModels.filter((item) => item.type === modelType);
+    if (!filtered.length) {
+      list.append(el("div", "empty-state", `暂无 ${modelType.toUpperCase()} 模型，可先点击右上角 Reload 或手动放置模型文件。`));
     } else {
-      for (const item of state.live2dModels) {
+      for (const item of filtered) {
         const row = el("div", "list-row");
         const path = String(item.path || "");
         row.append(el("span", "", `${item.label || "-"} | ${path}`));
+        const configKey = modelType === "vrm" ? "VRM_MODEL_PATH" : "LIVE2D_MODEL_PATH";
         row.append(makeButton("使用", async () => {
-          updateValue("public", "LIVE2D_MODEL_PATH", path);
+          updateValue("public", configKey, path);
+          updateValue("public", "MODEL_TYPE", modelType);
           renderModule();
           await saveConfig();
         }, "btn btn-ghost"));
         list.append(row);
       }
     }
-    m.append(list);
+    m2.append(list);
     els.cardsRoot.append(m);
+    els.cardsRoot.append(m2);
   }
 }
 
@@ -2213,7 +2238,10 @@ function renderOverviewModule() {
   const model = state.config.public.CHAT_MODEL || "-";
   const tts = state.config.public.TTS_MODE || "-";
   const asr = state.config.public.ASR_MODE || "-";
-  const live2d = state.config.public.LIVE2D_MODEL_PATH || "-";
+  const modelType = String(state.config.public.MODEL_TYPE || "live2d").toLowerCase();
+  const modelPath = modelType === "vrm"
+    ? (state.config.public.VRM_MODEL_PATH || "-")
+    : (state.config.public.LIVE2D_MODEL_PATH || "-");
 
   const plugins = state.plugins || [];
   const pluginsEnabled = plugins.filter((p) => p.enabled).length;
@@ -2232,7 +2260,8 @@ function renderOverviewModule() {
     { label: "主模型", value: model },
     { label: "TTS 模式", value: tts },
     { label: "ASR 模式", value: asr },
-    { label: "Live2D 模型", value: live2d },
+    { label: "模型类型", value: modelType.toUpperCase() },
+    { label: "模型路径", value: modelPath },
   ];
   for (const row of summaryRows) {
     const item = el("div", "info-item");
@@ -2247,7 +2276,7 @@ function renderOverviewModule() {
   const statData = [
     { label: "插件", icon: "🧩", value: `${pluginsEnabled}/${pluginsTotal}`, desc: "已启用/总数" },
     { label: "服务", icon: "⚙️", value: `${servicesRunning}/${servicesTotal}`, desc: "运行中/总数" },
-    { label: "Live2D", icon: "🖼", value: live2d === "-" ? "未配置" : live2d.split("/").pop(), desc: "当前模型" },
+    { label: modelType === "vrm" ? "VRM" : "Live2D", icon: modelType === "vrm" ? "🧊" : "🖼", value: modelPath === "-" ? "未配置" : modelPath.split("/").pop(), desc: "当前模型" },
     { label: "Agent", icon: "🤖", value: agent, desc: "当前角色" },
   ];
   for (const s of statData) {

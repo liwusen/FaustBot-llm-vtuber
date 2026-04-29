@@ -63,6 +63,15 @@
   let activeModelLoadRequestId = 0;
   let textChatBarYFactor = 0.53;
   let quickControllerXOffset = -12;
+  let vrmScene = null;
+  let modelType = 'live2d';
+  let _vrmModulePromise = null;
+  async function getVRMModule() {
+    if (!_vrmModulePromise) {
+      _vrmModulePromise = import('./libs/vrm-renderer.bundle.js');
+    }
+    return _vrmModulePromise;
+  }
 
   async function resolveFrontendAssetPath(rawPath){
     const normalized = String(rawPath || '').trim().replace(/\\/g, '/');
@@ -414,8 +423,13 @@
 
   function setScaleFactor(nextScale){
     const parsed = Number(nextScale);
-    scaleFactor = Math.max(0.1, Math.min(2.0, Number.isFinite(parsed) ? parsed : scaleFactor));
-    applyModelScale();
+    const clamped = Math.max(0.1, Math.min(2.0, Number.isFinite(parsed) ? parsed : scaleFactor));
+    scaleFactor = clamped;
+    if (modelType === 'vrm' && vrmScene) {
+      vrmScene.setScale(clamped);
+    } else {
+      applyModelScale();
+    }
   }
 
   async function persistModelPositionToBackend(force = false){
@@ -504,7 +518,30 @@
   }
 
   function updateQuickControllerPosition(){
-    if (!quickController || !currentModel || !app || !app.renderer) return;
+    if (!quickController) return;
+    if (modelType === 'vrm' && vrmScene) {
+      try{
+        const b = vrmScene.getBounds();
+        const left = b.x + b.width * 0.4;
+        const top = b.y;
+        const height = b.height;
+        const controllerScale = Math.max(0.72, Math.min(1.2, 1));
+        const rect = quickController.getBoundingClientRect();
+        const estimatedWidth = rect.width > 0 ? rect.width : 104;
+        const estimatedHeight = rect.height > 0 ? rect.height : 340;
+        const minLeft = estimatedWidth * 0.5 + 8;
+        const maxLeft = window.innerWidth - estimatedWidth * 0.5 - 8;
+        const minTop = estimatedHeight * 0.5 + 8;
+        const maxTop = window.innerHeight - estimatedHeight * 0.5 - 8;
+        const anchoredLeft = Math.max(minLeft, Math.min(maxLeft, left + quickControllerXOffset));
+        const anchoredTop = Math.max(minTop, Math.min(maxTop, top + height * 0.45));
+        quickController.style.left = Math.round(anchoredLeft) + 'px';
+        quickController.style.top = Math.round(anchoredTop) + 'px';
+        quickController.style.setProperty('--qc-scale', controllerScale.toFixed(3));
+      }catch(e){/* ignore */}
+      return;
+    }
+    if (!currentModel || !app || !app.renderer) return;
     try{
       const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
@@ -535,7 +572,8 @@
   }
 
   function refreshQuickControllerVisibility(){
-    setQuickControllerVisible(!!currentModel && (hoverModel || hoverQuickController || dragging || interactionLocked));
+    const modelActive = !!(currentModel || (modelType === 'vrm' && vrmScene));
+    setQuickControllerVisible(modelActive && (hoverModel || hoverQuickController || dragging || interactionLocked));
     updateQuickControllerPosition();
   }
 
@@ -552,6 +590,9 @@
   }
 
   function isPointerOnModel(clientX, clientY){
+    if (modelType === 'vrm' && vrmScene) {
+      return vrmScene.hitTest(clientX, clientY);
+    }
     if (!currentModel || !app || !app.renderer) return false;
     try{
       const canvasRect = app.renderer.view.getBoundingClientRect();
@@ -984,14 +1025,22 @@
         });
       } else if (cmd=="SET_MOTION"){
         if (!arg) return;
-        playMotionByName(arg);
+        if (modelType === 'vrm' && vrmScene) {
+          vrmScene.setExpression(arg);
+        } else {
+          playMotionByName(arg);
+        }
       } else if (cmd === 'LOAD_MODEL' || cmd === 'SET_MODEL_PATH'){
         if (!arg) return;
         if (modelPathInput) modelPathInput.value = arg;
         loadModel(arg);
       } else if (cmd === 'SET_MODEL_SCALE'){
         if (!arg) return;
-        setScaleFactor(parseFloat(arg));
+        if (modelType === 'vrm' && vrmScene) {
+          vrmScene.setScale(parseFloat(arg));
+        } else {
+          setScaleFactor(parseFloat(arg));
+        }
       } else if (cmd === 'SET_TEXT_CHAT_Y_FACTOR'){
         const next = Number(arg);
         if (!Number.isFinite(next)) return;
@@ -1003,14 +1052,23 @@
         quickControllerXOffset = Math.max(-400, Math.min(400, next));
         updateQuickControllerPosition();
       } else if (cmd === 'SET_MODEL_POSITION'){
-        if (!currentModel || !arg) return;
-        const [xRaw, yRaw] = arg.split(/\s+/);
-        const x = Number(xRaw);
-        const y = Number(yRaw);
-        if (Number.isFinite(x)) currentModel.x = x;
-        if (Number.isFinite(y)) currentModel.y = y;
-        updateQuickControllerPosition();
-        persistModelPositionToBackend(true);
+        if (!arg) return;
+        if (modelType === 'vrm' && vrmScene) {
+          const [xRaw, yRaw] = arg.split(/\s+/);
+          const x = Number(xRaw);
+          const y = Number(yRaw);
+          if (Number.isFinite(x) && Number.isFinite(y)) {
+            vrmScene.setPosition(x, y);
+          }
+        } else if (currentModel) {
+          const [xRaw, yRaw] = arg.split(/\s+/);
+          const x = Number(xRaw);
+          const y = Number(yRaw);
+          if (Number.isFinite(x)) currentModel.x = x;
+          if (Number.isFinite(y)) currentModel.y = y;
+          updateQuickControllerPosition();
+          persistModelPositionToBackend(true);
+        }
       } else if (cmd === 'START_ASR'){
         startRecording();
       } else if (cmd === 'STOP_ASR'){
@@ -1024,7 +1082,13 @@
       } else if (cmd === 'FOCUS_TEXT_CHAT'){
         focusTextChatInput();
       } else if (cmd === 'RANDOM_MOTION'){
-        playRandomMotion();
+        if (modelType === 'vrm' && vrmScene) {
+          const exps = vrmScene.getAvailableExpressions();
+          const picked = exps[Math.floor(Math.random() * exps.length)];
+          vrmScene.setExpression(picked);
+        } else {
+          playRandomMotion();
+        }
       } else if (cmd === 'SCALE_UP'){
         nudgeScale(0.05);
       } else if (cmd === 'SCALE_DOWN'){
@@ -1511,7 +1575,33 @@
   }
 
   function updateAsrTextPosition(forceSnap = false){
-    if (!asrBubbleEl || !asrTextEl || !currentModel || !app || !app.renderer) return;
+    if (!asrBubbleEl || !asrTextEl) return;
+    if (modelType === 'vrm' && vrmScene) {
+      try{
+        const b = vrmScene.getBounds();
+        const clientX = b.x + b.width / 2;
+        const clientY = b.y;
+        const offsetY = -108;
+        const bubbleWidth = Math.max(asrBubbleEl.offsetWidth, 220);
+        asrBubbleTargetX = clientX - bubbleWidth / 2;
+        asrBubbleTargetY = clientY + offsetY;
+        if (!asrBubbleInitialized || forceSnap){
+          asrBubbleCurrentX = asrBubbleTargetX;
+          asrBubbleCurrentY = asrBubbleTargetY;
+          asrBubbleInitialized = true;
+        } else {
+          const smooth = 0.2;
+          asrBubbleCurrentX += (asrBubbleTargetX - asrBubbleCurrentX) * smooth;
+          asrBubbleCurrentY += (asrBubbleTargetY - asrBubbleCurrentY) * smooth;
+        }
+        asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
+        asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
+        asrTextEl.style.fontSize = '20px';
+        updateHilApprovalPosition();
+      }catch(e){/*ignore*/}
+      return;
+    }
+    if (!currentModel || !app || !app.renderer) return;
     try{
       const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
@@ -1541,7 +1631,25 @@
 
   function updateTextChatBarPosition(){
     const textChatBar = document.getElementById('textChatBar');
-    if (!textChatBar || !currentModel || !app || !app.renderer) return;
+    if (!textChatBar) return;
+    if (modelType === 'vrm' && vrmScene) {
+      try{
+        const b = vrmScene.getBounds();
+        const clientX = b.x + b.width * 0.5;
+        const waistY = b.y + b.height * textChatBarYFactor;
+        const rect = textChatBar.getBoundingClientRect();
+        const estimatedWidth = rect.width > 0 ? rect.width : 420;
+        const estimatedHeight = rect.height > 0 ? rect.height : 64;
+        const clampedLeft = Math.max(estimatedWidth * 0.5 + 12, Math.min(window.innerWidth - estimatedWidth * 0.5 - 12, clientX));
+        const clampedTop = Math.max(estimatedHeight * 0.5 + 12, Math.min(window.innerHeight - estimatedHeight * 0.5 - 12, waistY));
+        textChatBar.style.left = Math.round(clampedLeft) + 'px';
+        textChatBar.style.top = Math.round(clampedTop) + 'px';
+        textChatBar.style.bottom = 'auto';
+        textChatBar.style.transform = 'translate(-50%, -50%)';
+      }catch(e){/*ignore*/}
+      return;
+    }
+    if (!currentModel || !app || !app.renderer) return;
     try{
       const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
@@ -1763,7 +1871,7 @@
   // update asrText position each frame if visible
   function rafUpdate(){
     if (asrBubbleEl && asrBubbleEl.style.display !== 'none') updateAsrTextPosition();
-    if (quickController && currentModel) updateQuickControllerPosition();
+    if (quickController && (currentModel || vrmScene)) updateQuickControllerPosition();
     updateTextChatBarPosition();
     requestAnimationFrame(rafUpdate);
   }
@@ -1783,7 +1891,114 @@
     o.textContent = '';
   }
 
+  let vrmDragCleanup = null;
+
+  async function loadVRMModel(path) {
+    const loadRequestId = ++activeModelLoadRequestId;
+    showOverlay('加载 VRM 模型: ' + path);
+    try {
+      const resolvedPath = await resolveFrontendAssetPath(path);
+      if (!resolvedPath) throw new Error('模型路径解析失败');
+      if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
+      const { VRMScene } = await getVRMModule();
+      if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
+      if (!vrmScene) {
+        if (app && app.view) app.view.style.display = 'none';
+        vrmScene = new VRMScene();
+        vrmScene.init(document.getElementById('app'));
+      } else {
+        if (app && app.view) app.view.style.display = 'none';
+        const vrmCanvas = vrmScene.getCanvas();
+        if (vrmCanvas) vrmCanvas.style.display = '';
+      }
+      await vrmScene.loadVRM(resolvedPath);
+      if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
+      modelType = 'vrm';
+      clearOverlay();
+      if (modelPathInput) modelPathInput.value = path;
+
+      const configuredScale = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_SCALE !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_SCALE !== null && runtimeLive2DConfig.LIVE2D_MODEL_SCALE !== ''
+        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_SCALE)
+        : 0.3;
+      vrmScene.setScale(configuredScale);
+
+      // attach drag handlers to VRM canvas
+      if (vrmDragCleanup) vrmDragCleanup();
+      const canvas = vrmScene.getCanvas();
+      if (canvas) {
+        const onDown = (e) => {
+          if (clickThroughController) clickThroughController.forceInteractive();
+          setInteractionLock(true);
+          dragging = true;
+          hoverModel = true;
+          vrmScene.pointerDown(e.clientX, e.clientY);
+        };
+        const onUp = () => {
+          dragging = false;
+          hoverModel = false;
+          vrmScene.pointerUp();
+          setInteractionLock(false);
+          refreshQuickControllerVisibility();
+        };
+        const onMove = (e) => {
+          if (!dragging) return;
+          if (e.ctrlKey || e.metaKey) {
+            vrmScene.orbitCamera(e.clientX, e.clientY);
+          } else {
+            vrmScene.moveModel(e.clientX, e.clientY);
+          }
+          updateQuickControllerPosition();
+          updateTextChatBarPosition();
+          updateAsrTextPosition();
+        };
+        const onWheel = (e) => {
+          e.preventDefault();
+          const step = e.deltaY > 0 ? -0.05 : 0.05;
+          setScaleFactor(scaleFactor + step);
+          refreshQuickControllerVisibility();
+        };
+        canvas.addEventListener('pointerdown', onDown);
+        canvas.addEventListener('pointerup', onUp);
+        canvas.addEventListener('pointerupoutside', onUp);
+        canvas.addEventListener('pointermove', onMove);
+        canvas.addEventListener('wheel', onWheel, { passive: false });
+        vrmDragCleanup = () => {
+          canvas.removeEventListener('pointerdown', onDown);
+          canvas.removeEventListener('pointerup', onUp);
+          canvas.removeEventListener('pointerupoutside', onUp);
+          canvas.removeEventListener('pointermove', onMove);
+          canvas.removeEventListener('wheel', onWheel);
+          vrmDragCleanup = null;
+        };
+      }
+
+      refreshQuickControllerVisibility();
+    } catch (err) {
+      if (String(err && err.message || '') === 'stale model load request') return;
+      showOverlay('加载 VRM 模型失败：' + err);
+      console.error(err);
+    }
+  }
+
+  function switchToLive2DRenderer() {
+    if (vrmDragCleanup) { vrmDragCleanup(); vrmDragCleanup = null; }
+    if (vrmScene && vrmScene.isActive) {
+      vrmScene.destroy();
+      vrmScene = null;
+    }
+    if (app && app.view) app.view.style.display = '';
+    modelType = 'live2d';
+  }
+
   function loadModel(path){
+    const ext = String(path || '').toLowerCase().trim();
+    if (ext.endsWith('.vrm')) {
+      loadVRMModel(path);
+      return;
+    }
+    if (modelType !== 'live2d') {
+      switchToLive2DRenderer();
+    }
     const loadRequestId = ++activeModelLoadRequestId;
     console.log('Loading model:', path);
     // determine Live2DModel constructor (try window.Live2DModel, then PIXI.live2d)
@@ -1925,7 +2140,11 @@
     if (Number.isFinite(configuredQuickControllerXOffset)) {
       quickControllerXOffset = Math.max(-400, Math.min(400, configuredQuickControllerXOffset));
     }
-    const toLoad = configuredModel || defaultModel;
+    const configuredModelType = runtimeCfg && runtimeCfg.MODEL_TYPE ? String(runtimeCfg.MODEL_TYPE).trim().toLowerCase() : 'live2d';
+    const vrmModelPath = configuredModelType === 'vrm'
+      ? (runtimeCfg && runtimeCfg.VRM_MODEL_PATH ? String(runtimeCfg.VRM_MODEL_PATH).trim() : '')
+      : '';
+    const toLoad = configuredModelType === 'vrm' ? (vrmModelPath || configuredModel || defaultModel) : (configuredModel || defaultModel);
     modelPathInput.value = toLoad;
     // small delay so UI visible
     setTimeout(()=>{ loadModel(toLoad); }, 120);
@@ -2073,7 +2292,9 @@
     if (audioEl){
       try{ audioEl.pause(); audioEl.currentTime = 0; }catch(e){}
     }
-    if (currentModel){
+    if (modelType === 'vrm' && vrmScene) {
+      vrmScene.stopLipSync();
+    } else if (currentModel){
       try{
         setModelLipSyncValue(0);
       }catch(e){}
@@ -2224,11 +2445,20 @@
     sourceNode.connect(analyser);
     analyser.connect(audioCtx.destination);
     audioEl.onended = ()=>{
-      try{
-        setModelLipSyncValue(0);
-      }catch(e){}
+      if (modelType === 'vrm' && vrmScene) {
+        vrmScene.stopLipSync();
+      } else {
+        try{
+          setModelLipSyncValue(0);
+        }catch(e){}
+      }
     };
     audioEl.play().catch(()=>{ /* autoplay may be blocked */ });
+
+    if (modelType === 'vrm' && vrmScene) {
+      vrmScene.startLipSync(analyser);
+      return;
+    }
 
     function tick(){
       analyser.getByteTimeDomainData(dataArray);

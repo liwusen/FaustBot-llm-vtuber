@@ -660,24 +660,44 @@ def _read_model_motion_names(model_path: Path) -> list[str]:
     return sorted([str(k) for k in motions.keys() if str(k).strip()])
 
 
+VRM_EXPRESSIONS = ["neutral", "happy", "angry", "sad", "relaxed", "surprised"]
+
+
+def _get_model_type() -> str:
+    cfg = conf.config or {}
+    return str(cfg.get("MODEL_TYPE", "live2d") or "live2d").strip().lower()
+
+
 @add_to_tool_list
 @tool
 @record_func_name
 def listAvailableMotionsTool() -> str:
     """
     Description:
-        获取当前 Live2D 模型可用的 Motion 名称列表。
-        列表来源于当前配置的 LIVE2D_MODEL_PATH 对应的 model3.json 文件。
+        获取当前模型可用的 Motion/Expression 名称列表。
+        Live2D 模式列表来源于 model3.json；VRM 模式返回标准表情预设。
     Args:
         None
     Returns:
-        str(json): 包含 model_path、motion_count 和 motions。
+        str(json): 包含 model_type、model_path、motion_count、motions/expressions。
     """
     try:
+        model_type = _get_model_type()
+        if model_type == "vrm":
+            payload = {
+                "status": "ok",
+                "model_type": "vrm",
+                "motion_count": len(VRM_EXPRESSIONS),
+                "expressions": VRM_EXPRESSIONS,
+                "note": "VRM standard expression presets. Use triggerMotionTool with one of these names.",
+            }
+            print("[llm_tools.listAvailableMotionsTool] VRM expressions=", VRM_EXPRESSIONS)
+            return json.dumps(payload, ensure_ascii=False)
         model_path = _resolve_live2d_model_path()
         motions = _read_model_motion_names(model_path)
         payload = {
             "status": "ok",
+            "model_type": "live2d",
             "model_path": str(model_path),
             "motion_count": len(motions),
             "motions": motions,
@@ -694,19 +714,22 @@ def listAvailableMotionsTool() -> str:
 def triggerMotionTool(motion_name: str) -> str:
     """
     Description:
-        触发指定 Live2D Motion。
+        触发指定 Live2D Motion 或 VRM Expression。
+        VRM 模式可用值：neutral, happy, angry, sad, relaxed, surprised。
     Args:
-        motion_name (str): 要触发的 motion 名称，例如 Idle、TapBody。
+        motion_name (str): 要触发的 motion/expression 名称。
     Returns:
-        str(json): 执行状态与 motion 名称。
+        str(json): 执行状态与名称。
     """
     name = str(motion_name or "").strip()
     if not name:
         return json.dumps({"status": "error", "error": "motion_name 不能为空"}, ensure_ascii=False)
     try:
-        print("[llm_tools.triggerMotionTool] Trigger motion:", name)
+        model_type = _get_model_type()
+        obj_type = "expression" if model_type == "vrm" else "motion"
+        print(f"[llm_tools.triggerMotionTool] Trigger {obj_type}:", name)
         backend2frontend.frontendSetMotion(name)
-        return json.dumps({"status": "ok", "command": "SET_MOTION", "motion": name}, ensure_ascii=False)
+        return json.dumps({"status": "ok", "command": "SET_MOTION", obj_type: name}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "motion": name}, ensure_ascii=False)
 @add_to_tool_list

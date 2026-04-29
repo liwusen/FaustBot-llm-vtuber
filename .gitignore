@@ -21,6 +21,7 @@ rag_storage_nano/
 
 package-lock.json
 
+*.vrm
 
 *.log
 *.db

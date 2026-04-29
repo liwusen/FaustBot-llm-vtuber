@@ -156,6 +156,7 @@ function getMimeType(filePath) {
   if (ext === '.motion3.json') return 'application/json; charset=utf-8';
   if (ext === '.exp3.json') return 'application/json; charset=utf-8';
   if (ext === '.wav') return 'audio/wav';
+  if (ext === '.vrm') return 'model/gltf-binary';
   return 'application/octet-stream';
 }
 
