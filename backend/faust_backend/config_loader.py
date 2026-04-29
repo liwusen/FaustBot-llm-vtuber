@@ -26,33 +26,47 @@ PRIVATE_CONFIG_WAS_MISSING = False
 
 def _ensure_faustbot_init():
     faustbot = Path(CONFIG_ROOT)
-    if faustbot.exists():
-        return
-
-    print("[config_loader] 初始化 ~/.faustbot 目录...")
-    faustbot.mkdir(parents=True, exist_ok=True)
-
     project_root = Path(PROJECT_ROOT)
 
-    src_agents = project_root / "agents_template"
-    if not src_agents.exists():
-        src_agents = project_root / "agents"
-    if src_agents.exists():
-        dst_agents = faustbot / "agents"
-        shutil.copytree(src_agents, dst_agents, dirs_exist_ok=True)
-        print(f"[config_loader]  已复制 {src_agents.name}/ → {dst_agents}")
+    if not faustbot.exists():
+        print("[config_loader] 初始化 ~/.faustbot 目录...")
+        faustbot.mkdir(parents=True, exist_ok=True)
 
-    for example_file in project_root.glob("*.example.json"):
-        dst_name = example_file.name.replace(".example.json", ".json")
-        if not (faustbot / dst_name).exists():
-            shutil.copy(example_file, faustbot / dst_name)
-            print(f"[config_loader]  已创建 {faustbot / dst_name}")
+        src_agents = project_root / "agents_template"
+        if not src_agents.exists():
+            src_agents = project_root / "agents"
+        if src_agents.exists():
+            dst_agents = faustbot / "agents"
+            shutil.copytree(src_agents, dst_agents, dirs_exist_ok=True)
+            print(f"[config_loader]  已复制 {src_agents.name}/ → {dst_agents}")
 
-    blive_example = project_root / "blive_config.example.json"
-    if blive_example.exists() and not (faustbot / "blive_config.json").exists():
-        shutil.copy(blive_example, faustbot / "blive_config.json")
-        print(f"[config_loader]  已创建 {faustbot / 'blive_config.json'}")
+        for example_file in project_root.glob("*.example.json"):
+            dst_name = example_file.name.replace(".example.json", ".json")
+            if not (faustbot / dst_name).exists():
+                shutil.copy(example_file, faustbot / dst_name)
+                print(f"[config_loader]  已创建 {faustbot / dst_name}")
 
+        blive_example = project_root / "blive_config.example.json"
+        if blive_example.exists() and not (faustbot / "blive_config.json").exists():
+            shutil.copy(blive_example, faustbot / "blive_config.json")
+            print(f"[config_loader]  已创建 {faustbot / 'blive_config.json'}")
+
+        src_plugins = project_root / "default_plugins"
+        if src_plugins.exists():
+            dst_plugins = faustbot / "plugins"
+            dst_plugins.mkdir(parents=True, exist_ok=True)
+            for item in src_plugins.iterdir():
+                dest = dst_plugins / item.name
+                if not dest.exists():
+                    if item.is_dir():
+                        shutil.copytree(item, dest, dirs_exist_ok=True)
+                    elif item.is_file() and item.name != "plugins.state.json":
+                        shutil.copy(item, dest)
+            print(f"[config_loader]  已复制 default_plugins/ → {dst_plugins}")
+
+        print("[config_loader]  ~/.faustbot 初始化完成")
+
+    # Always ensure subdirectories and voice files exist
     for subdir in ("data", "cache", "voices", "logs"):
         (faustbot / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -66,21 +80,6 @@ def _ensure_faustbot_init():
                     shutil.copy(item, dest)
                 elif item.is_dir():
                     shutil.copytree(item, dest, dirs_exist_ok=True)
-
-    src_plugins = project_root / "default_plugins"
-    if src_plugins.exists():
-        dst_plugins = faustbot / "plugins"
-        dst_plugins.mkdir(parents=True, exist_ok=True)
-        for item in src_plugins.iterdir():
-            dest = dst_plugins / item.name
-            if not dest.exists():
-                if item.is_dir():
-                    shutil.copytree(item, dest, dirs_exist_ok=True)
-                elif item.is_file() and item.name != "plugins.state.json":
-                    shutil.copy(item, dest)
-        print(f"[config_loader]  已复制 default_plugins/ → {dst_plugins}")
-
-    print("[config_loader]  ~/.faustbot 初始化完成")
 
 
 def _ensure_private_config_exists():

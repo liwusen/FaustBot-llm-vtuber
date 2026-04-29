@@ -22,6 +22,7 @@ set "MODE_PROVIDED=0"
 set "SKIP_ADMIN_CHECK=0"
 
 cd /d "%~dp0"
+set "BATCH_PATH=%~f0"
 set "RUNTIME_DIR=%CD%\.runtime"
 set "PYTHON_EXE=%RUNTIME_DIR%\python.exe"
 set "PTH_FILE=%RUNTIME_DIR%\python311._pth"
@@ -179,7 +180,7 @@ if "%SKIP_ADMIN_CHECK%"=="0" (
     )
     set "FAUST_SETUP_ARGS=--mode %INFER_MODE% --source %SOURCE_MODE% --install-python !INSTALL_PYTHON_TEXT! --install-node !INSTALL_NODE_TEXT!"
     if /i "%INFER_MODE%"=="local" set "FAUST_SETUP_ARGS=!FAUST_SETUP_ARGS! --tts-variant %TTS_VARIANT%"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs -ArgumentList $env:FAUST_SETUP_ARGS"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%BATCH_PATH%' -Verb RunAs -ArgumentList $env:FAUST_SETUP_ARGS"
     exit /b 0
   )
 ) else (

@@ -484,13 +484,13 @@ class UpdateManager:
             "# Build relative path set from extracted release",
             '$newItems = @{}',
             'Get-ChildItem -LiteralPath $extracted -Recurse -Force | ForEach-Object {',
-            '    $rel = $_.FullName.Substring($extracted.Length + 1).Replace("\", "/")',
+            '    $rel = $_.FullName.Substring($extracted.Length + 1).Replace("\\", "/")',
             '    $newItems[$rel.ToLower()] = $true',
             '}',
             "",
             "# Walk install root and delete items not in new release (skip preserved)",
             'Get-ChildItem -LiteralPath $installRoot -Recurse -Force | ForEach-Object {',
-            '    $rel = $_.FullName.Substring($installRoot.Length + 1).Replace("\", "/")',
+            '    $rel = $_.FullName.Substring($installRoot.Length + 1).Replace("\\", "/")',
             '    if ($newItems.ContainsKey($rel.ToLower())) { return }',
             '    $skip = $false',
         ]
@@ -507,8 +507,7 @@ class UpdateManager:
             "",
             "# Remove empty directories left behind",
             'if (-not $DryRun) {',
-            '    $dirs = Get-ChildItem -LiteralPath $installRoot -Recurse -Directory -Force ',
-            '        | Sort-Object FullName -Descending',
+            '    $dirs = Get-ChildItem -LiteralPath $installRoot -Recurse -Directory -Force | Sort-Object FullName -Descending',
             '    foreach ($d in $dirs) {',
             '        $hasChildren = @(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue).Count -gt 0',
             '        if (-not $hasChildren) {',
@@ -537,7 +536,7 @@ class UpdateManager:
             lines += [
                 'Write-Host "[DRY-RUN] No files were modified."',
             ]
-
+        log.debug(f"Generated update script for tag={tag}:\n" + "\n".join(lines))
         bat_path.write_text("\n".join(lines), encoding="utf-8")
         return str(bat_path)
 
