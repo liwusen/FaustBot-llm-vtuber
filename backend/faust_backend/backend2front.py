@@ -153,6 +153,49 @@ def frontendSetMotion(motion:dict)->None:
         motion (dict): A dictionary containing the motion data to be sent to the frontend.
     """
     _push_command("SET_MOTION", motion)
+
+def frontendTriggerVRMGesture(gesture_name: str, duration: float | None = None, auto_reset: bool | None = None) -> None:
+    """Triggers a VRM gesture by name.
+
+    Args:
+        gesture_name: Gesture name (nod, wave, point, etc.)
+        duration: Optional duration in seconds.
+        auto_reset: Whether to auto-reset after gesture completes.
+    """
+    parts = [str(gesture_name)]
+    if duration is not None:
+        parts.append(str(duration))
+        if auto_reset is not None:
+            parts.append('true' if auto_reset else 'false')
+    _push_command("VRM_GESTURE", " ".join(parts))
+
+def frontendSetVRMBoneRotation(bone_name: str, axis: str, angle_degrees: float) -> None:
+    """Sets a single VRM bone rotation.
+
+    Args:
+        bone_name: VRM humanoid bone name (e.g. head, rightUpperArm).
+        axis: Rotation axis (x, y, or z).
+        angle_degrees: Rotation angle in degrees.
+    """
+    _push_command("VRM_BONE_ROT", f"{bone_name} {axis} {angle_degrees}")
+
+def frontendResetVRMPose() -> None:
+    """Resets all VRM bone rotations to rest pose."""
+    _push_command("VRM_RESET_POSE")
+
+def frontendSetVRMLookAt(x_or_dir, y=None, z=None) -> None:
+    """Sets VRM look-at target.
+
+    Args:
+        x_or_dir: X coordinate (world space) or direction string (up/down/left/right).
+        y: Y coordinate, omit if using direction string.
+        z: Z coordinate, omit if using direction string.
+    """
+    if y is None and z is None:
+        _push_command("VRM_LOOKAT", str(x_or_dir))
+    else:
+        _push_command("VRM_LOOKAT", f"{x_or_dir} {y} {z}")
+
 async def demo():
     print(fid:=await frontendGetMotions())
     print(events.feedback_event_pool)

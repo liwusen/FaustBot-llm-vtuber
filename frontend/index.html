@@ -71,6 +71,10 @@
         <span class="qc-icon" aria-hidden="true">📡</span>
         <span class="qc-label">直播</span>
       </button>
+      <button id="openVRMConfigBtn" type="button" title="VRM 配置" style="display:none;">
+        <span class="qc-icon" aria-hidden="true">🎮</span>
+        <span class="qc-label">VRM</span>
+      </button>
     </div>
   </div>
   <!-- 日志面板（在 #app 外，避免点击穿透影响） -->
@@ -94,6 +98,18 @@
   <div id="textChatBar">
     <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" />
     <button id="textChatSendBtn">发送</button>
+  </div>
+
+  <div id="vrmConfigPanel" class="floating-panel" style="display:none;">
+    <div class="floating-panel-header">
+      <span>VRM 配置</span>
+      <div class="vrm-config-actions">
+        <button id="vrmConfigResetBtn" type="button" title="恢复默认">↺</button>
+        <button id="vrmConfigSaveBtn" type="button" title="保存">保存</button>
+        <button id="vrmConfigCloseBtn" type="button" title="关闭">✕</button>
+      </div>
+    </div>
+    <div id="vrmConfigPanelBody" class="vrm-config-body"></div>
   </div>
 
       <!-- 引入 Live2D 依赖 -->

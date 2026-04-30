@@ -54,6 +54,12 @@ DEFAULT_EXCLUDED_TOOL_NAMES = {
     "kbChangedNodesTool",
 }
 
+VRM_ONLY_TOOL_NAMES = {
+    "listVRMGesturesTool",
+    "triggerVRMGestureTool",
+    "setVRMLookAtTool",
+}
+
 
 def refresh_runtime_paths() -> None:
     global DIARY_DIR, KB_MANAGER
@@ -73,14 +79,20 @@ def get_tools_for_agent(agent_name: str | None = None):
     target = str(agent_name or conf.AGENT_NAME or "").strip().lower()
     if target == "araya":
         return [tool_func for tool_func in toollist if _tool_func_name(tool_func) in ARAYA_ALLOWED_TOOL_NAMES]
+    model_type = str(getattr(conf, 'MODEL_TYPE', 'live2d') or 'live2d').strip().lower()
     try:
         from faust_backend.live_mode import is_live_mode, get_excluded_tool_names
         if is_live_mode():
             excluded = DEFAULT_EXCLUDED_TOOL_NAMES | get_excluded_tool_names()
+            if model_type != "vrm":
+                excluded |= VRM_ONLY_TOOL_NAMES
             return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in excluded]
     except ImportError:
         pass
-    return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in DEFAULT_EXCLUDED_TOOL_NAMES]
+    base_excluded = set(DEFAULT_EXCLUDED_TOOL_NAMES)
+    if model_type != "vrm":
+        base_excluded |= VRM_ONLY_TOOL_NAMES
+    return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in base_excluded]
 
 
 def _safe_read_file_range(file_path: str, start_line: int, end_line: int) -> str:
@@ -732,6 +744,85 @@ def triggerMotionTool(motion_name: str) -> str:
         return json.dumps({"status": "ok", "command": "SET_MOTION", obj_type: name}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "motion": name}, ensure_ascii=False)
+@add_to_tool_list
+@tool
+@record_func_name
+def listVRMGesturesTool() -> str:
+    """
+    Description:
+        获取 VRM 模型可用的手势名称列表（仅在 VRM 模式下有效）。
+    Args:
+        None
+    Returns:
+        str(json): 包含 gesture_names。
+    """
+    try:
+        if _get_model_type() != "vrm":
+            return json.dumps({"status": "error", "error": "当前不是 VRM 模式"}, ensure_ascii=False)
+        names = ["nod", "shake_head", "bow", "tilt_head", "wave", "point", "thumbs_up", "peace"]
+        return json.dumps({"status": "ok", "gesture_names": names, "count": len(names)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def triggerVRMGestureTool(gesture_name: str, duration: float = 1.5, auto_reset: bool = True) -> str:
+    """
+    Description:
+        触发 VRM 模型的手势动作（仅在 VRM 模式下有效）。
+    Args:
+        gesture_name (str): 手势名称，从 listVRMGesturesTool 获取。
+        duration (float): 手势过渡时长，默认 1.5 秒。
+        auto_reset (bool): 是否自动恢复原始姿势，默认 True。
+    Returns:
+        str(json): 执行状态。
+    """
+    name = str(gesture_name or "").strip().lower()
+    if not name:
+        return json.dumps({"status": "error", "error": "gesture_name 不能为空"}, ensure_ascii=False)
+    if _get_model_type() != "vrm":
+        return json.dumps({"status": "error", "error": "当前不是 VRM 模式"}, ensure_ascii=False)
+    try:
+        dur = max(0.3, float(duration) if duration is not None else 1.5)
+        backend2frontend.frontendTriggerVRMGesture(name, dur, auto_reset)
+        return json.dumps({"status": "ok", "command": "VRM_GESTURE", "gesture": name, "duration": dur, "auto_reset": auto_reset}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def setVRMLookAtTool(x_or_dir, y=None, z=None) -> str:
+    """
+    Description:
+        设置 VRM 模型的视线目标方向（仅在 VRM 模式下有效）。
+        可以指定世界坐标 (x, y, z) 或方向描述字符串。
+    Args:
+        x_or_dir: 世界 X 坐标（浮点数），或方向描述字符串。
+                 方向可选值：up, down, left, right, up_left, up_right, down_left, down_right, front。
+        y: 世界 Y 坐标（浮点数），使用方向字符串时留空。
+        z: 世界 Z 坐标（浮点数），使用方向字符串时留空。
+    Returns:
+        str(json): 执行状态。
+    """
+    try:
+        if _get_model_type() != "vrm":
+            return json.dumps({"status": "error", "error": "当前不是 VRM 模式"}, ensure_ascii=False)
+        if y is None and z is None:
+            backend2frontend.frontendSetVRMLookAt(str(x_or_dir))
+        else:
+            x_val = float(x_or_dir) if x_or_dir is not None else 0
+            y_val = float(y) if y is not None else 0
+            z_val = float(z) if z is not None else 0
+            backend2frontend.frontendSetVRMLookAt(x_val, y_val, z_val)
+        return json.dumps({"status": "ok", "command": "VRM_LOOKAT"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
 @add_to_tool_list
 @tool
 @record_func_name

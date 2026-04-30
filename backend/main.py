@@ -45,6 +45,7 @@ import faust_backend.plugin_market as plugin_market
 import faust_backend.skill_manager as skill_manager
 import faust_backend.speech_runtime as speech_runtime
 import faust_backend.vad_runtime as vad_runtime
+import faust_backend.vrm_config_manager as vrm_config_manager
 from faust_backend.plugin_system import PluginManager
 import tqdm
 from os.path import join as pjoin
@@ -609,6 +610,33 @@ async def admin_runtime_summary_api():
 @app.post("/faust/admin/live2d/apply")
 async def admin_apply_live2d(payload: dict | None = None):
     return admin_runtime.apply_live2d_to_frontend(payload or {})
+
+
+@app.get("/faust/admin/vrm-config")
+async def admin_get_vrm_config():
+    return {"status": "ok", "config": vrm_config_manager.get_vrm_config()}
+
+
+@app.post("/faust/admin/vrm-config")
+async def admin_save_vrm_config(payload: dict | None = None):
+    if not payload or "config" not in payload:
+        raise HTTPException(status_code=400, detail="missing config field")
+    merged = vrm_config_manager.save_vrm_config(payload["config"])
+    return {"status": "ok", "config": merged}
+
+
+@app.post("/faust/admin/vrm-config/model-state")
+async def admin_save_vrm_model_state(payload: dict | None = None):
+    if not payload:
+        raise HTTPException(status_code=400, detail="missing payload")
+    state = vrm_config_manager.save_vrm_model_state(payload)
+    return {"status": "ok", "modelState": state}
+
+
+@app.get("/faust/admin/vrm-config/reset")
+async def admin_reset_vrm_config():
+    defaults = vrm_config_manager.reset_vrm_config()
+    return {"status": "ok", "config": defaults}
 
 
 @app.get("/faust/admin/services")
