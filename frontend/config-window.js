@@ -18,6 +18,7 @@ const state = {
   kbCurrentDir: "/",
   kbSelectedPath: "",
   kbSelectedContent: "",
+  kbSelectedMeta: null,
   kbTasks: [],
   araya: null,
   services: [],
@@ -26,6 +27,7 @@ const state = {
   recentErrors: [],
   triggers: [],
   selectedTriggerId: "",
+  memoryView: "tree",  // "tree" | "graph"
   skills: [],
   selectedSkillSlug: "",
   skillsAgent: "",
@@ -34,6 +36,8 @@ const state = {
   selectedPluginId: "",
   pluginConfigDraft: {},
   runtimeUpdate: null,
+  graphEntities: [],
+  graphRelations: [],
 };
 
 const els = {
@@ -198,7 +202,7 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean);
-    const data = await cfgApi("POST", "/faust/kb/save", {
+    const data = await cfgApi("POST", "/faust/memory/save", {
       path: targetPath,
       content: area.value,
       declared_by: "config-center",
@@ -215,7 +219,7 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
     state.kbSelectedPath = targetPath;
     state.kbSelectedContent = area.value;
     state.kbCurrentDir = kbParentPath(targetPath);
-    await ensureModuleData("kb");
+    await ensureModuleData("memory");
     showBanner("success", `KB 已保存: ${targetPath}`);
     renderModule();
   };
@@ -224,11 +228,11 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
     const targetPath = normalizeKbPath(pathInput.value.trim());
     if (!targetPath || targetPath === "/") return;
     if (!window.confirm(`确定删除 ${targetPath} ?`)) return;
-    await cfgApi("POST", "/faust/kb/delete", { path: targetPath });
+    await cfgApi("POST", "/faust/memory/delete", { path: targetPath });
     state.kbSelectedPath = "";
     state.kbSelectedContent = "";
     state.kbCurrentDir = kbParentPath(targetPath);
-    await ensureModuleData("kb");
+    await ensureModuleData("memory");
     closeModal();
     showBanner("success", `KB 已删除: ${targetPath}`);
     renderModule();
@@ -858,7 +862,7 @@ function openKbSearchModal() {
     try {
       resultBox.innerHTML = "";
       resultBox.append(el("div", "empty-state", "搜索中..."));
-      const data = await cfgApi("POST", "/faust/kb/search", {
+      const data = await cfgApi("POST", "/faust/memory/search", {
         query: q,
         scope: state.kbScope || null,
         top_k: 12,
@@ -882,7 +886,7 @@ function openKbSearchModal() {
         ops.append(makeButton("打开", async () => {
           state.kbSelectedPath = normalizeKbPath(String(it.path || ""));
           state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
-          const d = await cfgApi("GET", "/faust/kb/get", null, { path: state.kbSelectedPath });
+          const d = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
           state.kbSelectedContent = String(d.content || "");
           await openKbEditorModal(state.kbSelectedPath, state.kbSelectedContent, d.meta || {});
           renderModule();
@@ -891,7 +895,7 @@ function openKbSearchModal() {
         row.addEventListener("click", async () => {
           state.kbSelectedPath = normalizeKbPath(String(it.path || ""));
           state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
-          const d = await cfgApi("GET", "/faust/kb/get", null, { path: state.kbSelectedPath });
+          const d = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
           state.kbSelectedContent = String(d.content || "");
           await openKbEditorModal(state.kbSelectedPath, state.kbSelectedContent, d.meta || {});
           renderModule();
@@ -1137,65 +1141,39 @@ async function ensureModuleData(moduleId) {
       state.agentDetail = d.detail || null;
     }
   }
-  if (moduleId === "kb") {
-    const treeRes = await cfgApi("GET", "/faust/kb/tree", null, { scope: state.kbScope || null });
+  if (moduleId === "memory") {
+    const treeRes = await cfgApi("GET", "/faust/memory/tree", null, { scope: state.kbScope || null });
     state.kbTree = treeRes.tree || null;
     state.kbCurrentDir = normalizeKbPath(state.kbCurrentDir || "/");
     if (!findKbNodeByPath(state.kbTree, state.kbCurrentDir)) {
       state.kbCurrentDir = "/";
     }
-    if (state.kbSelectedPath && !findKbNodeByPath(state.kbTree, state.kbSelectedPath)) {
-      state.kbSelectedPath = "";
-      state.kbSelectedContent = "";
-    }
-    const taskRes = await cfgApi("GET", "/faust/kb/tasks");
+    const taskRes = await cfgApi("GET", "/faust/memory/tasks");
     state.kbTasks = taskRes.items || [];
     if (state.kbSelectedPath) {
       try {
-        const nodeRes = await cfgApi("GET", "/faust/kb/get", null, { path: state.kbSelectedPath });
+        const nodeRes = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
         state.kbSelectedContent = String(nodeRes.content || "");
+        state.kbSelectedMeta = nodeRes.meta || {};
       } catch (_e) {
+        state.kbSelectedPath = "";
         state.kbSelectedContent = "";
+        state.kbSelectedMeta = null;
       }
     } else {
       state.kbSelectedContent = "";
+      state.kbSelectedMeta = null;
     }
-  }
-  if (moduleId === "araya") {
-    const ar = await cfgApi("GET", "/faust/araya/status");
-    state.araya = ar.araya || null;
-  }
-  if (moduleId === "runtime") {
-    const sv = await cfgApi("GET", "/faust/admin/services");
-    state.services = sv.items || [];
-    if (!state.selectedService && state.services.length) {
-      state.selectedService = String(state.services[0].key || "");
-    }
-    if (state.selectedService) {
-      const detail = await cfgApi("GET", `/faust/admin/services/${encodeURIComponent(state.selectedService)}`, null, { include_log: "true" });
-      state.serviceDetail = detail.item || null;
-    }
-  }
-  if (moduleId === "triggers") {
-    const tr = await cfgApi("GET", "/faust/admin/triggers");
-    state.triggers = (tr.items || []).filter((x) => ["interval", "datetime", "py-eval"].includes(String(x.type || "")));
-    if (!state.selectedTriggerId && state.triggers.length) {
-      state.selectedTriggerId = String(state.triggers[0].id || "");
-    }
-  }
-  if (moduleId === "skills") {
-    const agentName = state.skillsAgent || state.runtime.current_agent || state.config.public.AGENT_NAME;
-    state.skillsAgent = agentName || "";
-    if (agentName) {
-      const sk = await cfgApi("GET", "/faust/admin/skills", null, { agent_name: agentName });
-      state.skills = sk.items || [];
-      if (!state.selectedSkillSlug && state.skills.length) {
-        state.selectedSkillSlug = String(state.skills[0].slug || "");
-      }
-      if (state.selectedSkillSlug) {
-        const d = await cfgApi("GET", `/faust/admin/skills/${encodeURIComponent(state.selectedSkillSlug)}`, null, { agent_name: agentName });
-        state.skillDetail = d.detail || null;
-      }
+    try {
+      const [entities, relations] = await Promise.all([
+        cfgApi("GET", "/faust/memory/graph/entities"),
+        cfgApi("GET", "/faust/memory/graph/relations"),
+      ]);
+      state.graphEntities = entities.items || [];
+      state.graphRelations = relations.items || [];
+    } catch (e) {
+      state.graphEntities = [];
+      state.graphRelations = [];
     }
   }
   if (moduleId === "plugins") {
@@ -1290,274 +1268,663 @@ function renderAgentModule() {
   addSection("Agent 文件操作", [controls, el("div", "card-help", "文件编辑已迁移到弹窗。")]);
 }
 
-function renderKbModule() {
-  const doKbRefresh = async () => {
-    await ensureModuleData("kb");
+function renderMemoryModule() {
+  const currentDir = normalizeKbPath(state.kbCurrentDir || "/");
+  const view = state.memoryView || "tree";
+
+  // ── Tab bar ──
+  const tabBar = el("div", "toolbar");
+  const treeTab = makeButton("📁 树状浏览", async () => {
+    state.memoryView = "tree";
+    renderModule();
+  }, view === "tree" ? "btn btn-primary" : "btn btn-ghost");
+  const graphTab = makeButton("🔗 知识图谱", async () => {
+    state.memoryView = "graph";
+    await ensureModuleData("memory");
+    renderModule();
+  }, view === "graph" ? "btn btn-primary" : "btn btn-ghost");
+  const searchTab = makeButton("🔍 统一搜索", async () => {
+    state.memoryView = "search";
+    renderModule();
+  }, view === "search" ? "btn btn-primary" : "btn btn-ghost");
+  tabBar.append(treeTab, graphTab, searchTab);
+  addSection("记忆", [tabBar]);
+
+  if (view === "tree") {
+    renderMemoryTree(currentDir);
+  } else if (view === "graph") {
+    renderMemoryGraph();
+  } else if (view === "search") {
+    renderMemorySearch();
+  }
+}
+
+function renderMemoryTree(currentDir) {
+  const doRefresh = async () => {
+    await ensureModuleData("memory");
     renderModule();
   };
 
-  const doKbNewFile = async () => {
-    const defaultPath = `${state.kbCurrentDir === "/" ? "" : state.kbCurrentDir.slice(1) + "/"}new.md`;
+  const doNewFile = async () => {
+    const defaultPath = `${currentDir === "/" ? "" : currentDir.slice(1) + "/"}new.md`;
     const nameInput = el("input", "input");
     nameInput.value = defaultPath;
     const save = async () => {
       const p = String(nameInput.value || "").trim();
       if (!p) return showBanner("error", "请输入文件路径");
       const target = normalizeKbPath(p);
-      // 先关闭当前的新建对话框，再打开编辑器对话框
       closeModal();
-      await openKbEditorModal(target, "", {
-        path: target,
-        declared_by: "config-center",
-        indexed: true,
-        tags: [],
-      });
+      await openKbEditorModal(target, "", { path: target, declared_by: "config-center", indexed: true, tags: [] });
     };
-    const kbFileToolbar = el("div", "toolbar");
-    kbFileToolbar.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
-    openModal("新建 KB 文件", [nameInput, kbFileToolbar]);
+    const tb = el("div", "toolbar");
+    tb.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
+    openModal("新建文件", [nameInput, tb]);
   };
 
-  const doKbNewFolder = async () => {
-    const defaultPath = `${state.kbCurrentDir === "/" ? "" : state.kbCurrentDir.slice(1) + "/"}new-folder`;
+  const doNewFolder = async () => {
+    const defaultPath = `${currentDir === "/" ? "" : currentDir.slice(1) + "/"}new-folder`;
     const nameInput = el("input", "input");
     nameInput.value = defaultPath;
     const save = async () => {
       const p = String(nameInput.value || "").trim();
       if (!p) return showBanner("error", "请输入文件夹路径");
-      await cfgApi("POST", "/faust/kb/mkdir", { path: p });
+      await cfgApi("POST", "/faust/memory/mkdir", { path: p });
       state.kbCurrentDir = normalizeKbPath(p);
-      await ensureModuleData("kb");
+      await ensureModuleData("memory");
       closeModal();
       renderModule();
     };
-    const kbFolderToolbar = el("div", "toolbar");
-    kbFolderToolbar.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
-    openModal("新建 KB 文件夹", [nameInput, kbFolderToolbar]);
+    const tb = el("div", "toolbar");
+    tb.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
+    openModal("新建文件夹", [nameInput, tb]);
   };
 
-  const doKbDelete = async () => {
+  const doDelete = async () => {
     const p = (state.kbSelectedPath || "").trim();
-    if (!p) {
-      showBanner("info", "请先在列表中选中要删除的文件或目录。");
-      return;
-    }
+    if (!p) { showBanner("info", "请先选中文件或目录。"); return; }
     if (!window.confirm(`确定删除 ${p} ?`)) return;
-    await cfgApi("POST", "/faust/kb/delete", { path: p });
+    await cfgApi("DELETE", "/faust/memory/delete", null, { path: p });
     state.kbSelectedPath = "";
     state.kbSelectedContent = "";
     state.kbCurrentDir = kbParentPath(p);
-    await ensureModuleData("kb");
+    await ensureModuleData("memory");
     renderModule();
   };
 
-  const closeKbContextMenu = () => {
-    const menu = document.getElementById("kbContextMenu");
-    if (menu) menu.remove();
-  };
-
-  const openKbContextMenu = (clientX, clientY) => {
-    closeKbContextMenu();
-    const menu = el("div", "kb-context-menu");
-    menu.id = "kbContextMenu";
-    const mk = (label, handler) => {
-      const item = el("button", "kb-context-item", label);
-      item.type = "button";
-      item.addEventListener("click", async () => {
-        closeKbContextMenu();
-        await handler();
-      });
-      return item;
-    };
-    menu.append(
-      mk("刷新", doKbRefresh),
-      mk("新建文件", doKbNewFile),
-      mk("新建文件夹", doKbNewFolder),
-      mk("删除", doKbDelete)
-    );
-    menu.style.left = `${clientX}px`;
-    menu.style.top = `${clientY}px`;
-    document.body.append(menu);
-      const close = (evt) => {
-        // 如果点击在菜单内部，则不关闭
-        if (evt && evt.target && menu.contains(evt.target)) return;
-        closeKbContextMenu();
-        window.removeEventListener("click", close, true);
-        window.removeEventListener("contextmenu", close, true);
-        window.removeEventListener("keydown", onKey, true);
-      };
-      const onKey = (evt) => {
-        if (evt.key === "Escape") close(evt);
-      };
-      window.addEventListener("click", close, true);
-      window.addEventListener("contextmenu", close, true);
-      window.addEventListener("keydown", onKey, true);
-  };
-
-  const currentDir = normalizeKbPath(state.kbCurrentDir || "/");
-
-  const searchInput = el("input", "input");
-  searchInput.placeholder = `搜索当前目录: ${currentDir}`;
-  const searchBtn = makeButton("搜索", async () => {
-    const q = searchInput.value.trim();
-    if (!q) {
-      showBanner("info", "请输入搜索关键词。" );
-      return;
-    }
-    const boundScope = currentDir === "/" ? null : currentDir;
-    const data = await cfgApi("POST", "/faust/kb/search", {
-      query: q,
-      scope: boundScope,
-      top_k: 12,
-      return: "snippets",
-    });
-    const listBox = el("div", "list-box");
-    listBox.style.maxHeight = "420px";
-    const items = data.items || [];
-    if (!items.length) {
-      listBox.append(el("div", "empty-state", "当前目录下未找到匹配内容。"));
-    } else {
-      for (const it of items) {
-        const row = el("div", "list-row clickable");
-        const left = el("div", "field-wrap");
-        left.append(
-          el("div", "mono", `[FILE] ${it.path || "-"} | score=${it.score ?? "-"}`),
-          el("div", "card-help", String(it.snippet || ""))
-        );
-        const ops = el("div", "toolbar compact");
-        ops.addEventListener("click", (evt) => evt.stopPropagation());
-        ops.append(makeButton("打开", async () => {
-          state.kbSelectedPath = normalizeKbPath(String(it.path || ""));
-          state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
-          const d = await cfgApi("GET", "/faust/kb/get", null, { path: state.kbSelectedPath });
-          state.kbSelectedContent = String(d.content || "");
-          await openKbEditorModal(state.kbSelectedPath, state.kbSelectedContent, d.meta || {});
-          renderModule();
-        }));
-        row.append(left, ops);
-        row.addEventListener("click", async () => {
-          state.kbSelectedPath = normalizeKbPath(String(it.path || ""));
-          state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
-          const d = await cfgApi("GET", "/faust/kb/get", null, { path: state.kbSelectedPath });
-          state.kbSelectedContent = String(d.content || "");
-          await openKbEditorModal(state.kbSelectedPath, state.kbSelectedContent, d.meta || {});
-          renderModule();
-        });
-        listBox.append(row);
+  // ── Build node count summary ──
+  function countTreeStats(treeRoot) {
+    function countRec(nodes, typeFilter) {
+      let count = 0;
+      for (const n of nodes) {
+        if (n.type === typeFilter) count++;
+        if (n.children) count += countRec(n.children, typeFilter);
       }
+      return count;
     }
-    openModal(`KB 搜索结果 (${boundScope || "/"})`, [listBox]);
-  }, "btn btn-secondary");
-  searchInput.addEventListener("keydown", (evt) => {
-    if (evt.key === "Enter") searchBtn.click();
-  });
-  const reindexBtn = makeButton("全量重建索引", async () => {
-    await cfgApi("POST", "/faust/kb/reindex", {});
-    await ensureModuleData("kb");
-    renderModule();
-  }, "btn btn-secondary");
+    const children = treeRoot && treeRoot.children ? treeRoot.children : [];
+    return {
+      dirs: countRec(children, "dir"),
+      files: countRec(children, "file"),
+    };
+  }
 
+  function getDirMeta(rowNode) {
+    if (!rowNode) return {};
+    if (rowNode.type === "dir") {
+      const sub = (rowNode.children || []).reduce(function (acc, c) {
+        if (c.type === "dir") acc.dirCt++;
+        else if (c.type === "file") acc.fileCt++;
+        return acc;
+      }, { dirCt: 0, fileCt: 0 });
+      return {
+        metaText: [sub.dirCt && `${sub.dirCt}目录`, sub.fileCt && `${sub.fileCt}文件`].filter(Boolean).join(" | ") || "空",
+        description: String(rowNode.description || ""),
+      };
+    }
+    if (rowNode.type === "file") {
+      return {
+        metaText: String(rowNode.description || "").slice(0, 120),
+        description: String(rowNode.description || ""),
+      };
+    }
+    return { metaText: "", description: "" };
+  }
+
+  // ── Actions ──
+  const actionBar = el("div", "toolbar");
+  actionBar.append(
+    makeButton("刷新", doRefresh),
+    makeButton("新建文件", doNewFile, "btn btn-primary"),
+    makeButton("新建文件夹", doNewFolder),
+    makeButton("删除", doDelete),
+  );
+  addSection("目录操作", [actionBar]);
+
+  // ── Stats badge ──
+  const treeStats = countTreeStats(state.kbTree);
+  const statsLine = el("div", "card-help");
+  statsLine.style.padding = "4px 0";
+  statsLine.style.lineHeight = "1.6";
+  statsLine.innerHTML = [
+    "<b>总计:</b> " + [
+      treeStats.dirs && `${treeStats.dirs} 目录`,
+      treeStats.files && `${treeStats.files} 文件`,
+    ].filter(Boolean).join(", ") +
+    (state.graphEntities && state.graphEntities.length ? " | " + state.graphEntities.length + " 实体" : "") +
+    (state.graphRelations && state.graphRelations.length ? " | " + state.graphRelations.length + " 关系" : ""),
+    "<b>当前:</b> " + currentDir,
+  ].join("<br>");
+  addSection("统计", [statsLine]);
+
+  // ── Dir list ──
   const list = el("div", "list-box");
-  list.addEventListener("contextmenu", (evt) => {
-    evt.preventDefault();
-    openKbContextMenu(evt.clientX, evt.clientY);
-  });
+  list.style.maxHeight = "350px";
+
   const rootRow = el("div", `list-row clickable ${currentDir === "/" ? "selected" : ""}`.trim());
-  rootRow.append(el("span", "mono", `[DIR] /  (根目录)`));
-  const rootOps = el("div", "toolbar compact");
-  rootOps.addEventListener("click", (evt) => evt.stopPropagation());
-  rootOps.append(makeButton("进入", () => {
-    state.kbCurrentDir = "/";
-    state.kbSelectedPath = "";
-    renderModule();
-  }));
-  rootRow.append(rootOps);
-  rootRow.addEventListener("click", () => {
-    state.kbCurrentDir = "/";
-    state.kbSelectedPath = "";
-    renderModule();
-  });
+  rootRow.append(el("span", "mono", "\u{1F4C1} / (根目录)"));
+  rootRow.addEventListener("click", () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; renderModule(); });
   list.append(rootRow);
 
   const parentPath = kbParentPath(currentDir);
-  const upRow = el("div", "list-row clickable");
-  upRow.append(el("span", "mono", `[DIR] ..  (上一级: ${parentPath})`));
-  const upOps = el("div", "toolbar compact");
-  upOps.addEventListener("click", (evt) => evt.stopPropagation());
-  upOps.append(makeButton("进入", () => {
-    state.kbCurrentDir = parentPath;
-    state.kbSelectedPath = "";
-    renderModule();
-  }));
-  upRow.append(upOps);
-  upRow.addEventListener("click", () => {
-    state.kbCurrentDir = parentPath;
-    state.kbSelectedPath = "";
-    renderModule();
-  });
-  list.append(upRow);
+  if (parentPath !== currentDir) {
+    const upRow = el("div", "list-row clickable");
+    upRow.append(el("span", "mono", "\u{1F4C2} .. (上一级: " + parentPath + ")"));
+    upRow.addEventListener("click", () => { state.kbCurrentDir = parentPath; state.kbSelectedPath = ""; renderModule(); });
+    list.append(upRow);
+  }
 
-  const nodes = getKbChildren(state.kbTree, currentDir);
+    const nodes = getKbChildren(state.kbTree, currentDir);
   if (!nodes.length) {
     list.append(el("div", "empty-state", "当前目录为空。"));
   }
   for (const node of nodes) {
+    if (node.type === "entity") continue;
     const row = el("div", `list-row clickable ${state.kbSelectedPath === node.path ? "selected" : ""}`.trim());
-    row.append(el("span", "mono", `${node.type === "file" ? "[FILE]" : "[DIR]"} ${node.name} | ${node.path}`));
-    const ops = el("div", "toolbar compact");
-    ops.addEventListener("click", (evt) => evt.stopPropagation());
-    ops.append(
-      makeButton(node.type === "file" ? "编辑" : "进入", async () => {
-        state.kbSelectedPath = node.path;
-        if (node.type === "file") {
-          const d = await cfgApi("GET", "/faust/kb/get", null, { path: node.path });
-          state.kbSelectedContent = String(d.content || "");
-          await openKbEditorModal(node.path, state.kbSelectedContent, d.meta || {});
-        } else {
-          state.kbCurrentDir = node.path;
-          state.kbSelectedPath = "";
-          state.kbSelectedContent = "";
-        }
-        renderModule();
-      })
-    );
-    row.append(ops);
-    row.addEventListener("click", async () => {
-      state.kbSelectedPath = node.path;
+    const label = el("div");
+    const iconText = node.type === "file" ? "\u{1F4C4}[FILE]" : "\u{1F4C1}[DIR]";
+    // 图片文件显示特殊图标
+    const isImage = node.type === "file" && /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(node.name);
+    const displayIcon = isImage ? "\u{1F5BC}[IMG]" : iconText;
+    const titleSpan = el("span", "mono");
+    titleSpan.textContent = displayIcon + " " + node.name;
+    label.append(titleSpan);
+
+    const meta = getDirMeta(node);
+    if (meta.description) {
+      const descLine = el("div", "card-help");
+      descLine.style.marginLeft = "16px";
+      descLine.style.fontSize = "0.85em";
+      descLine.textContent = meta.description.length > 100
+        ? meta.description.slice(0, 100) + "\u2026"
+        : meta.description;
+      label.append(descLine);
+    }
+    if (meta.metaText) {
+      const badgeline = el("div", "card-help");
+      badgeline.style.marginLeft = "16px";
+      badgeline.style.fontSize = "0.8em";
+      badgeline.style.color = "#888";
+      badgeline.textContent = meta.metaText;
+      label.append(badgeline);
+    }
+
+    row.append(label);
+    row.addEventListener("click", () => {
       if (node.type === "file") {
-        const d = await cfgApi("GET", "/faust/kb/get", null, { path: node.path });
-        state.kbSelectedContent = String(d.content || "");
-        await openKbEditorModal(node.path, state.kbSelectedContent, d.meta || {});
+        state.kbSelectedPath = node.path;
+        state.kbSelectedMeta = null;
       } else {
         state.kbCurrentDir = node.path;
         state.kbSelectedPath = "";
-        state.kbSelectedContent = "";
+        state.kbSelectedMeta = null;
       }
       renderModule();
     });
+    row.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      state.kbSelectedPath = node.path;
+      renderContextMenu(evt.clientX, evt.clientY, node);
+    });
     list.append(row);
   }
-  const searchBar = el("div", "toolbar");
-  searchBar.append(el("span", "mono", `当前目录: ${currentDir}`), searchInput, searchBtn, reindexBtn);
-  addSection("KB 当前目录内容", [searchBar, list]);
+  addSection("目录: " + currentDir, [list]);
 
+  // ── Detail panel + entity children + metadata for selected file ──
+  (async function renderDetailAndEntityChildren() {
+    const selPath = state.kbSelectedPath || "";
+    if (!selPath) return;
+
+    const detailBox = el("div", "card-help");
+    detailBox.style.padding = "8px";
+    detailBox.style.marginTop = "4px";
+    detailBox.style.background = "var(--bg-secondary, #f5f5f5)";
+    detailBox.style.borderRadius = "4px";
+
+    // Detailed metadata
+    const meta = state.kbSelectedMeta || {};
+    const timeStr = meta.updated_at ? new Date(meta.updated_at + (meta.updated_at.endsWith("Z") ? "" : "Z")).toLocaleString() : "-";
+    const contentLen = (state.kbSelectedContent || "").length;
+    const sizeStr = meta.content_type && meta.content_type.startsWith("image/") ? "\u{1F5BC} 图片" : (contentLen > 0 ? contentLen + " 字符" : "");
+
+    detailBox.innerHTML = [
+      "<b>" + selPath + "</b>",
+      "<div style='margin-top:2px;color:#555;font-size:12px'>",
+      meta.declared_by ? "创建: " + meta.declared_by + " | " : "",
+      meta.updated_at ? "更新: " + timeStr + " | " : "",
+      sizeStr ? sizeStr + " | " : "",
+      meta.chunk_count ? meta.chunk_count + " 索引块 | " : "",
+      meta.score_patch ? "权重 " + meta.score_patch : "",
+      "</div>",
+      meta.description ? "<div style='margin-top:4px;color:#333'>" + meta.description.slice(0, 200) + "</div>" : "",
+      meta.tags && meta.tags.length ? "<div style='margin-top:4px'>标签: " + meta.tags.join(", ") + "</div>" : "",
+    ].filter(Boolean).join("");
+
+    // Edit button for files
+    if (selPath) {
+      const editBar = el("div", "toolbar");
+      editBar.style.marginTop = "4px";
+      editBar.style.gap = "8px";
+      editBar.append(makeButton("编辑文件", async () => {
+        await openKbEditorModal(selPath, state.kbSelectedContent || "", meta);
+      }, "btn btn-primary"));
+      // Image display
+      if (meta.content_type && String(meta.content_type).startsWith("image/")) {
+        try {
+          const imgResp = await cfgApi("GET", "/faust/memory/attachment", null, { path: selPath });
+          if (imgResp && imgResp.content_base64) {
+            const imgWrap = el("div");
+            imgWrap.style.marginTop = "4px";
+            const img = el("img");
+            img.src = "data:" + imgResp.content_type + ";base64," + imgResp.content_base64;
+            img.style.maxWidth = "100%";
+            img.style.maxHeight = "300px";
+            img.style.borderRadius = "4px";
+            img.style.cursor = "pointer";
+            img.addEventListener("click", () => {
+              const full = el("img");
+              full.src = img.src;
+              full.style.maxWidth = "100%";
+              full.style.maxHeight = "80vh";
+              openModal("图片预览", [full]);
+            });
+            imgWrap.append(img);
+            editBar.append(imgWrap);
+          }
+        } catch (_) {}
+      } else if (/\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(selPath)) {
+        // Try loading as image even without content_type in meta
+        try {
+          const imgResp = await cfgApi("GET", "/faust/memory/attachment", null, { path: selPath });
+          if (imgResp && imgResp.content_base64) {
+            const imgWrap = el("div");
+            imgWrap.style.marginTop = "4px";
+            const img = el("img");
+            img.src = "data:" + (imgResp.content_type || "image/png") + ";base64," + imgResp.content_base64;
+            img.style.maxWidth = "100%";
+            img.style.maxHeight = "300px";
+            imgWrap.append(img);
+            editBar.append(imgWrap);
+          }
+        } catch (_) {}
+      }
+      detailBox.append(editBar);
+    }
+
+    function findInTree(tree, target) {
+      if (!tree || typeof tree !== "object") return null;
+      if (tree.path === target || tree.id === target) return tree;
+      for (const c of tree.children || []) {
+        const found = findInTree(c, target);
+        if (found) return found;
+      }
+      return null;
+    }
+    addSection("详情", [detailBox]);
+
+    // Entity children - only for file nodes
+    const found = findInTree(state.kbTree, selPath);
+    if (found && found.type === "file") {
+      var entChildren = [];
+      try {
+        const resp = await cfgApi("GET", "/faust/memory/graph/entity-children", null, { path: selPath });
+        entChildren = resp.items || [];
+      } catch (_) {}
+      if (entChildren.length) {
+        const entBox = el("div", "list-box");
+        entBox.style.maxHeight = "200px";
+        entBox.style.marginTop = "4px";
+        for (const ent of entChildren) {
+          const row = el("div", "list-row entity-row");
+          row.style.paddingLeft = "1.5em";
+          const label = el("div");
+          const icon = el("span", "mono");
+          icon.textContent = "\u{1F464}[ENT:" + ent.entity_type + "] " + ent.name;
+          label.append(icon);
+          if (ent.description) {
+            const desc = el("div", "card-help");
+            desc.style.marginLeft = "16px";
+            desc.textContent = ent.description.length > 80 ? ent.description.slice(0, 80) + "\u2026" : ent.description;
+            label.append(desc);
+          }
+          row.append(label);
+          entBox.append(row);
+        }
+        addSection("文档实体 (" + entChildren.length + ")", [entBox]);
+      }
+    }
+  })();
+
+  // ── Right-click context menu ──
+  function renderContextMenu(x, y, node) {
+    const old = document.getElementById("kbContextMenu");
+    if (old) old.remove();
+
+    const menu = el("div", "context-menu");
+    menu.id = "kbContextMenu";
+    menu.style.position = "fixed";
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.style.zIndex = "9999";
+    menu.style.background = "var(--bg-primary, #fff)";
+    menu.style.border = "1px solid var(--border-color, #ccc)";
+    menu.style.borderRadius = "6px";
+    menu.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
+    menu.style.padding = "4px 0";
+    menu.style.minWidth = "140px";
+
+    const items = [];
+    if (node.type === "file") {
+      items.push({ label: "编辑", icon: "\u270F", action: async () => {
+        const d = await cfgApi("GET", "/faust/memory/get", null, { path: node.path });
+        await openKbEditorModal(node.path, String(d.content || ""), d.meta || {});
+      }});
+    }
+    items.push({ label: "新建文件", icon: "\u{1F4C4}", action: async () => {
+      const target = normalizeKbPath((node.path || currentDir) + "/new.md");
+      await openKbEditorModal(target, "", { path: target, declared_by: "config-center", indexed: true, tags: [] });
+    }});
+    items.push({ label: node.type === "file" ? "删除文件" : "删除目录", icon: "\u{1F5D1}", action: async () => {
+      if (!window.confirm("确定删除 " + node.path + " ?")) return;
+      await cfgApi("DELETE", "/faust/memory/delete", null, { path: node.path });
+      state.kbSelectedPath = "";
+      state.kbCurrentDir = kbParentPath(node.path);
+      await ensureModuleData("memory");
+      renderModule();
+    }});
+
+    for (const it of items) {
+      const item = el("div", "context-menu-item");
+      item.style.padding = "6px 16px";
+      item.style.cursor = "pointer";
+      item.style.display = "flex";
+      item.style.alignItems = "center";
+      item.style.gap = "8px";
+      item.style.fontSize = "13px";
+      item.innerHTML = (it.icon || "") + " " + it.label;
+      item.addEventListener("mouseenter", () => { item.style.background = "var(--bg-secondary, #f0f0f0)"; });
+      item.addEventListener("mouseleave", () => { item.style.background = "transparent"; });
+      item.addEventListener("click", async () => {
+        menu.remove();
+        await it.action();
+        renderModule();
+      });
+      menu.append(item);
+    }
+
+    document.body.append(menu);
+    const close = (evt) => {
+      if (!menu.contains(evt.target)) {
+        menu.remove();
+        document.removeEventListener("click", close);
+      }
+    };
+    document.addEventListener("click", close);
+  }
+
+  // ── Import ──
   const importBar = el("div", "toolbar");
-  importBar.append(makeButton("Declare Update 导入外部文件", async () => {
+  importBar.append(makeButton("导入外部文件", async () => {
     const filePath = await window.api.configOpenFile({ title: "选择外部文件" });
     if (!filePath) return;
-    const kbPath = window.prompt("输入导入后的 KB 路径（可留空自动）") || "";
-    await cfgApi("POST", "/faust/kb/declare-update", { file_path: filePath, kb_path: kbPath.trim() || null });
-    await ensureModuleData("kb");
-    showBanner("success", "外部文件已导入 KB。" );
+    const kbPath = window.prompt("KB 路径（可留空自动）") || "";
+    await cfgApi("POST", "/faust/memory/declare-update", { file_path: filePath, kb_path: kbPath.trim() || null });
+    await ensureModuleData("memory");
+    showBanner("success", "文件已导入。");
     renderModule();
   }));
+  addSection("导入", [importBar]);
+}
 
-  const taskView = el("textarea", "textarea code-area");
-  taskView.readOnly = true;
-  taskView.value = (state.kbTasks || []).slice(0, 30).map((x) => `[${x.status}] ${x.type} | ${x.task_id} | ${x.updated_at}${x.error ? ` | ${x.error}` : ""}`).join("\n");
+function renderMemoryGraph() {
+  const wrap = el("div", "graph-canvas-wrap");
+  wrap.id = "graphCanvasWrap";
+  addSection("", [wrap]);
 
-  addSection("KB 文档", [el("div", "card-help", "文档编辑已迁移到弹窗：点击文件行即可打开编辑器。"), importBar]);
-  addSection("KB 后台任务", [taskView]);
+  // ── Toolbar ──
+  const searchInput = el("input", "input");
+  searchInput.placeholder = "搜索实体名称";
+  searchInput.style.maxWidth = "200px";
+  const statusText = el("span", "card-help", "加载中...");
+
+  const tb = el("div", "graph-toolbar");
+  tb.append(searchInput, makeButton("搜索", doSearch, "btn btn-primary"), statusText,
+    makeButton("＋放大", () => { if (gc) { gc._viewScale *= 1.2; gc.render(); } }, "btn btn-ghost"),
+    makeButton("−缩小", () => { if (gc) { gc._viewScale /= 1.2; gc.render(); } }, "btn btn-ghost"),
+    makeButton("适应", () => { if (gc) gc.fitToScreen(); }, "btn btn-ghost"),
+  );
+  addSection("操作", [tb]);
+
+  // ── Legend ──
+  const legend = el("div", "graph-legend");
+  legend.append(el("span", "", "图例: "));
+  for (const [k, v] of Object.entries(GRAPH_COLORS)) {
+    const dot = el("span", "graph-legend-dot");
+    dot.style.background = v;
+    const item = el("span", "graph-legend-item");
+    item.append(dot, document.createTextNode(" " + k));
+    legend.append(item);
+  }
+  addSection("图例", [legend]);
+
+  // ── Context hint ──
+  const ctxHint = el("div", "card-help");
+  ctxHint.textContent = state.kbSelectedPath
+    ? "基于选中文件 \"" + state.kbSelectedPath + "\" 的实体图谱（2跳展开）"
+    : "在树上选中一个文件查看其关联实体图谱";
+  addSection("", [ctxHint]);
+
+  // ── Init graph ──
+  let gc = null;
+  let allEntities = [];
+  let allRelations = [];
+
+  async function initGraph() {
+    try {
+      statusText.textContent = "请求数据中...";
+      let nodes = [];
+      let edges = [];
+      const selPath = state.kbSelectedPath || "";
+
+      if (selPath) {
+        // Load entity children of selected file, then expand each
+        const [entResp] = await Promise.all([
+          cfgApi("GET", "/faust/memory/graph/entity-children", null, { path: selPath })
+        ]);
+        const entChildren = entResp.items || [];
+        const seenIds = new Set();
+        const seenEdgeKeys = new Set();
+        for (const ent of entChildren) {
+          if (seenIds.has(ent.id)) continue;
+          seenIds.add(ent.id);
+          nodes.push({ id: ent.id, name: ent.name, entity_type: ent.entity_type, type: "entity", description: ent.description });
+          // Expand each entity to find neighbors and all relations
+          try {
+            const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: ent.id, depth: 2 });
+            for (const n of expResp.items || []) {
+              if (!seenIds.has(n.id)) {
+                seenIds.add(n.id);
+                nodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+              }
+            }
+            for (const e of expResp.edges || []) {
+              const ek = e.key || e.source + "->" + e.target;
+              if (!seenEdgeKeys.has(ek)) {
+                seenEdgeKeys.add(ek);
+                edges.push({ source: e.source, target: e.target, type: e.type, key: ek });
+              }
+            }
+          } catch (_) {}
+        }
+        // Also fetch all relations that connect any of these nodes
+        try {
+          const relResp = await cfgApi("GET", "/faust/memory/graph/relations");
+          for (const r of relResp.items || []) {
+            if ((seenIds.has(r.source) || seenIds.has(r.target))) {
+              const ek = r.key || r.source + "->" + r.target;
+              if (!seenEdgeKeys.has(ek)) {
+                seenEdgeKeys.add(ek);
+                edges.push({ source: r.source, target: r.target, type: r.type, key: ek });
+                // Also add neighbor nodes not yet in set
+                for (const side of [r.source, r.target]) {
+                  if (!seenIds.has(side)) {
+                    seenIds.add(side);
+                    // fetch node details
+                    try {
+                      const nbResp = await cfgApi("GET", "/faust/memory/graph/neighbors", null, { entity_id: side, depth: 0 });
+                      const nb = nbResp.items || [];
+                      for (const n of nb) {
+                        if (!seenIds.has(n.id)) {
+                          seenIds.add(n.id);
+                          nodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || "custom", type: "entity", description: n.description });
+                        }
+                      }
+                    } catch (_) {}
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      } else {
+        const [fullData] = await Promise.all([
+          cfgApi("GET", "/faust/memory/graph/full"),
+        ]);
+        const allEntities = fullData.entities || [];
+        const allRelations = fullData.relations || [];
+        nodes = allEntities.map(function (e) {
+          return { id: e.id, name: e.name, entity_type: e.entity_type || e.type, type: "entity" };
+        });
+        edges = allRelations.map(function (r) {
+          return { source: r.source, target: r.target, type: r.type, key: r.key };
+        });
+      }
+
+      if (!gc) {
+        gc = new GraphCanvas(wrap);
+      }
+      gc.setData(nodes, edges);
+      statusText.textContent = "实体: " + nodes.length + " | 关系: " + edges.length;
+
+      gc.onNodeClick(function (node) {
+        gc._selectedNode = node;
+        gc.render();
+        if (gc._expanded[node.id]) return;
+        gc._expanded[node.id] = true;
+        statusText.textContent = "展开 " + node.name + "...";
+        cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: node.id, depth: GRAPH_EXPAND_DEPTH || 1 }).then(function (data) {
+          const items = data.items || [];
+          const newEdges2 = data.edges || [];
+          const newNodes = items.filter(function (it) {
+            return !gc.simulation.nodes.some(function (n) { return n.id === it.id; });
+          }).map(function (it) {
+            return { id: it.id, name: it.name, entity_type: it.entity_type || it.type, type: "entity" };
+          });
+          if (newNodes.length) {
+            gc.addNodes(newNodes, newEdges2);
+          }
+          statusText.textContent = "实体: " + gc.simulation.nodes.length + " | 关系: " + gc.simulation.edges.length;
+        }).catch(function () { statusText.textContent = "展开失败"; });
+      });
+
+      gc.fitToScreen();
+    } catch (e) {
+      statusText.textContent = "加载失败: " + (e.message || e);
+    }
+  }
+
+  // ── Search ──
+  async function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q || !gc) return;
+    statusText.textContent = "搜索中...";
+    try {
+      const data = await cfgApi("GET", "/faust/memory/graph/search", null, { query: q, top_k: 20 });
+      const items = data.items || [];
+      const ids = items.map(function (it) { return it.id; });
+      gc.highlightIds(ids);
+      if (items.length) gc.focusNode(items[0].id);
+      statusText.textContent = "找到 " + items.length + " 个匹配实体";
+    } catch (e) {
+      statusText.textContent = "搜索失败";
+    }
+  }
+  searchInput.addEventListener("keydown", function (evt) { if (evt.key === "Enter") doSearch(); });
+
+  initGraph();
+}
+
+function renderMemorySearch() {
+  const searchInput = el("input", "input");
+  searchInput.placeholder = "输入关键词搜索";
+  const resultBox = el("div", "list-box");
+  resultBox.style.maxHeight = "500px";
+
+  const iconByExt = (p) => /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(p) ? "\u{1F5BC}" : "\u{1F4C4}";
+
+  const openResult = async (path) => {
+    state.kbCurrentDir = kbParentPath(normalizeKbPath(path));
+    state.kbSelectedPath = normalizeKbPath(path);
+    state.memoryView = "tree";
+    const d = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
+    state.kbSelectedContent = String(d.content || "");
+    state.kbSelectedMeta = d.meta || {};
+    renderModule();
+  };
+
+  const doSearch = async () => {
+    const q = searchInput.value.trim();
+    if (!q) { showBanner("info", "请输入关键词。"); return; }
+    resultBox.innerHTML = `<div class="empty-state">搜索中...</div>`;
+    try {
+      const data = await cfgApi("POST", "/faust/memory/search-compact", { query: q, top_k: 5 });
+      resultBox.innerHTML = "";
+      const items = data.items || [];
+      if (!items.length) { resultBox.append(el("div", "empty-state", "未找到匹配内容。")); return; }
+      for (const it of items) {
+        const row = el("div", "list-row clickable");
+        row.style.padding = "10px 12px";
+        const left = el("div", "field-wrap");
+        const scoreStr = it.score != null && it.score > 0 ? " score=" + it.score.toFixed(2) : "";
+        const lcStr = it.line_count > 0 ? it.line_count + " 行" : (it.line_count === 0 && it.description ? "（关联文件）" : "");
+        left.append(
+          el("div", "mono", iconByExt(it.path) + " " + it.path),
+          el("div", "card-help", [
+            lcStr && lcStr,
+            scoreStr && scoreStr,
+          ].filter(Boolean).join(" | ") || ""),
+          el("div", "card-help", String(it.description || "").slice(0, 200))
+        );
+        row.append(left);
+        row.addEventListener("click", () => openResult(it.path));
+        resultBox.append(row);
+      }
+    } catch (err) { resultBox.innerHTML = `<div class="empty-state">搜索失败: ${err}</div>`; }
+  };
+  searchInput.addEventListener("keydown", (evt) => { if (evt.key === "Enter") doSearch(); });
+
+  const bar = el("div", "toolbar");
+  bar.append(searchInput, makeButton("搜索", doSearch, "btn btn-primary"));
+  addSection("统一搜索", [bar, resultBox]);
 }
 
 function renderArayaModule() {
@@ -2485,6 +2852,9 @@ function renderOverviewModule() {
   els.cardsRoot.append(errCard);
 }
 
+
+
+
 async function renderModule() {
   const current = MODULES.find((m) => m.id === state.activeModule) || MODULES[0];
   els.moduleTitle.textContent = current.title;
@@ -2498,8 +2868,8 @@ async function renderModule() {
       renderConfigModule(current.id);
     } else if (current.id === "agent") {
       renderAgentModule();
-    } else if (current.id === "kb") {
-      renderKbModule();
+    } else if (current.id === "memory") {
+      renderMemoryModule();
     } else if (current.id === "araya") {
       renderArayaModule();
     } else if (current.id === "runtime") {

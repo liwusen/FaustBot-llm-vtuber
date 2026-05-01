@@ -33,8 +33,6 @@ import faust_backend.nimble as nimble
 import faust_backend.minecraft_client as minecraft_client
 import faust_backend.admin_runtime as admin_runtime
 import faust_backend.service_manager as service_manager
-import faust_backend.kb_manager as kb_manager
-import faust_backend.kb_api as kb_api
 import faust_backend.araya_api as araya_api
 import faust_backend.araya_runtime as araya_runtime
 import faust_backend.live_api as live_api
@@ -46,6 +44,7 @@ import faust_backend.skill_manager as skill_manager
 import faust_backend.speech_runtime as speech_runtime
 import faust_backend.vad_runtime as vad_runtime
 import faust_backend.vrm_config_manager as vrm_config_manager
+import faust_backend.memory.api as memory_api
 from faust_backend.plugin_system import PluginManager
 import tqdm
 from os.path import join as pjoin
@@ -61,10 +60,10 @@ log.info("所有库加载完成")
 #Shared Events
 app = FastAPI()
 uvicorn_server = None
-kb_api.register_kb_routes(app)
 araya_api.register_araya_routes(app)
 app.include_router(live_api.router)
 app.include_router(update_api.router)
+app.include_router(memory_api.router)
 import faust_backend.edge_tts_api as edge_tts_api
 edge_tts_api.register_edge_tts_routes(app)
 app.add_middleware(
@@ -162,20 +161,20 @@ def startServices():
         log.info("其他后端服务已启动")
 
 
-def schedule_kb_record_sync(user_text: str, assistant_text: str) -> None:
+def schedule_memory_record_sync(user_text: str, assistant_text: str) -> None:
     if not conf.KB_ENABLED:
         return
     if not str(user_text).strip() or not str(assistant_text).strip():
         return
-    log.debug("调度 KB 记录同步")
+    log.debug("调度记忆记录同步")
     async def _job():
         try:
             llm_tools.refresh_runtime_paths()
-            manager = kb_manager.get_kb_manager(refresh=True)
-            result = await manager.add_chat_record(user_text, assistant_text, {"agent": conf.AGENT_NAME})
-            log.info("聊天记录已同步到知识库[异步索引模式]: %s", result.get("path"))
+            from faust_backend.memory import get_memory
+            result = await get_memory().add_chat_record(user_text, assistant_text)
+            log.info("聊天记录已同步到记忆库: %s", result.get("path"))
         except Exception as exc:
-            log.error("聊天记录同步到知识库失败: %s", exc)
+            log.error("聊天记录同步到记忆库失败: %s", exc)
 
     asyncio.create_task(_job())
 
@@ -203,7 +202,7 @@ async def _sleep_backoff(attempt: int) -> None:
 
 async def invoke_agent_locked(target_agent, payload, config=None):
     if config is None:
-        config = {"configurable": {"thread_id": THREAD_ID}}
+        config = {"configurable": {"thread_id": THREAD_ID,"recursion_limit": 300}}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
@@ -223,7 +222,7 @@ async def invoke_agent_locked(target_agent, payload, config=None):
 
 async def stream_agent_locked(target_agent, payload, config=None):
     if config is None:
-        config = {"configurable": {"thread_id": THREAD_ID}}
+        config = {"configurable": {"thread_id": THREAD_ID,"recursion_limit": 300}}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
@@ -539,9 +538,8 @@ async def startup_event():
     backend2frontend.set_main_loop(asyncio.get_running_loop())  # 注册主事件循环，供同步线程推送命令
     araya_runtime.get_araya_runtime(refresh=True)  # 提前加载 ArayaRuntime，确保其事件循环在主线程中
     try:
-        kb_runtime = kb_manager.get_kb_manager(refresh=True)
-        kb_runtime.ensure_vdb_initialized()
-        await kb_runtime.ensure_worker_started()
+        from faust_backend.memory import get_memory
+        get_memory(refresh=True)
         await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(conf.args.no_startup_chat))
         log.info("启动运行时摘要: %s", startup_info)
@@ -1197,7 +1195,7 @@ async def chat_post(payload: dict):
         events.ignore_trigger_event.set()
         resp = await invoke_agent_locked(agent,{"messages":[{"role":"user","content":text}]})
         reply = _message_content_to_text(resp["messages"][-1].content)
-        schedule_kb_record_sync(text, reply)
+        schedule_memory_record_sync(text, reply)
         log.info('Chat POST 回复完成')
         events.ignore_trigger_event.clear()
         return {"reply": reply,"warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
@@ -1248,7 +1246,7 @@ async def chat_websocket(websocket: WebSocket):
                         continue
                     if event.get("type") in {"tool_start", "tool_result"}:
                         await websocket.send_text(json.dumps(event, ensure_ascii=False))
-                schedule_kb_record_sync(text, reply)
+                schedule_memory_record_sync(text, reply)
                 await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
                 log.debug("聊天流结束")
                 events.ignore_trigger_event.clear()

@@ -29,7 +29,6 @@ import winsound
 
 import faust_backend.events as events
 import faust_backend.gui_llm_lib as gui_llm_lib
-import faust_backend.kb_manager as kb_manager
 import faust_backend.minecraft_client as minecraft_client
 import faust_backend.nimble as nimble
 import faust_backend.trigger_manager as trigger_manager
@@ -39,15 +38,25 @@ toollist = []
 DIARY_DIR = Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "diary"
 STARTED = False
 ORIGINAL_TOOL_FUNCS = {}
-KB_MANAGER = kb_manager.get_kb_manager()
 ARAYA_ALLOWED_TOOL_NAMES = {
-    "kbListTool",
-    "kbReadTool",
-    "kbWriteTool",
-    "kbSearchTool",
-    "kbTagSetTool",
-    "kbScorePatchTool",
-    "kbChangedNodesTool",
+    "arayaGetTimeTool",
+    "arayaListTreeTool",
+    "arayaReadFileTool",
+    "arayaWriteFileTool",
+    "arayaDeleteFileTool",
+    "arayaSearchMemoryTool",
+    "arayaSetTagsTool",
+    "arayaSetScorePatchTool",
+    "arayaChangedNodesTool",
+    "arayaSearchEntityTool",
+    "arayaListEntitiesTool",
+    "arayaGetNeighborsTool",
+    "arayaAddEntityTool",
+    "arayaDeleteEntityTool",
+    "arayaAddRelationTool",
+    "arayaRemoveRelationTool",
+    "arayaListRelationsTool",
+    "arayaLinkEntityToFileTool",
 }
 DEFAULT_EXCLUDED_TOOL_NAMES = {
     "kbScorePatchTool",
@@ -62,9 +71,10 @@ VRM_ONLY_TOOL_NAMES = {
 
 
 def refresh_runtime_paths() -> None:
-    global DIARY_DIR, KB_MANAGER
+    global DIARY_DIR
     DIARY_DIR = Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "diary"
-    KB_MANAGER = kb_manager.get_kb_manager(refresh=True)
+    from faust_backend.memory import get_memory
+    get_memory(refresh=True)
 
 
 def _tool_func_name(tool_func) -> str:
@@ -478,7 +488,9 @@ def writeDiaryFileTool(content: str) -> str:
         str: 写入成功的确认信息，或者错误信息。
     """    
     try:
-        result = asyncio.run(KB_MANAGER.write_diary(content))
+        import asyncio
+        from faust_backend.memory import get_memory
+        result = asyncio.run(get_memory().write_diary(content))
         return f"日记已写入知识库: {result.get('path')}"
     except Exception as e:
         return f"写入日记文件出错: {str(e)}"
@@ -1117,107 +1129,51 @@ def triggerRemoveTool(trigger_id: str) -> str:
 @tool
 @record_func_name
 def kbListTool(scope: str = "") -> str:
-    """
-    Description:
-        列出知识库中某个目录范围下的树结构。
-        例如 scope 可为 /reactor/core/ 或 diary/。
-    Args:
-        scope (str): 检索范围路径。
-    Returns:
-        str(json): 目录树 JSON。
-    """
-    try:
-        return json.dumps(KB_MANAGER.list_tree(scope), ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+    """列出知识库中某个目录范围下的树结构。"""
+    from faust_backend.memory.tools import memoryListTool as _impl
+    return _impl(scope)
 
 
 @add_to_tool_list
 @tool
 @record_func_name
 def kbReadTool(path: str) -> str:
-    """
-    Description:
-        读取知识库中某个文件节点的完整内容。
-    Args:
-        path (str): 知识库相对路径。
-    Returns:
-        str(json): 包含 content 和 meta。
-    """
-    try:
-        return json.dumps(KB_MANAGER.read_node(path), ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+    """读取知识库中某个文件节点的完整内容。"""
+    from faust_backend.memory.tools import memoryReadTool as _impl
+    return _impl(path)
 
 
 @add_to_tool_list
 @tool
 @record_func_name
 def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True, tags_json: str = "[]") -> str:
-    """
-    Description:
-        将内容写入知识库文件节点，并创建后台索引任务。
-    Args:
-        path (str): 知识库相对路径。
-        content (str): 写入内容。
-        declared_by (str): 写入声明来源。
-        index (bool): 是否创建后台索引任务。
-        tags_json (str): JSON 数组字符串，例如 ["知识","用户相关"]。
-    Returns:
-        str(json): 写入结果和 task 信息。
-    """
-    try:
-        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
-        return json.dumps(asyncio.run(KB_MANAGER.write_node(path, content, declared_by=declared_by, index=index, tags=tags)), ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+    """将内容写入知识库文件节点，并创建后台索引任务。"""
+    from faust_backend.memory.tools import memoryWriteTool as _impl
+    return _impl(path, content, declared_by, index, tags_json)
 
 
 @add_to_tool_list
 @tool
 @record_func_name
 def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags_json: str = "[]", ignore_score_patch: bool = False) -> str:
-    """
-    Description:
-        在知识库指定范围内做向量检索。
-        范围示例：/reactor/core/。
-    Args:
-        query (str): 查询文本。
-        scope (str): 限定目录范围。
-        top_k (int): 返回数量。
-        return_mode (str): paths/snippets/full。
-        tags_json (str): JSON 数组字符串，按标签过滤。
-        ignore_score_patch (bool): 是否忽略 score patch。
-    Returns:
-        str(json): 搜索结果列表。
-    """
-    try:
-        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
-        items = asyncio.run(KB_MANAGER.search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode, tags=tags, ignore_score_patch=ignore_score_patch))
-        if return_mode == "paths":
-            return json.dumps([item.get("path") for item in items], ensure_ascii=False)
-        return json.dumps(items, ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+    """在知识库指定范围内做向量检索。"""
+    from faust_backend.memory.tools import memorySearchTool as _impl
+    return _impl(query, scope, top_k, return_mode, tags_json, True)
 
 
 @add_to_tool_list
 @tool
 @record_func_name
 def kbTagSetTool(path: str, tags_json: str, managed_by: str = "agent") -> str:
-    """
-    Description:
-        为知识库文档设置标签。
-    Args:
-        path (str): 知识库相对路径。
-        tags_json (str): JSON 数组字符串，例如 ["知识","废弃"]。
-        managed_by (str): 标签维护者。
-    Returns:
-        str(json): 更新后的 meta。
-    """
+    """为知识库文档设置标签。"""
     try:
+        import json
         tags = json.loads(tags_json) if str(tags_json or "").strip() else []
-        return json.dumps(asyncio.run(KB_MANAGER.set_tags(path, tags, managed_by=managed_by)), ensure_ascii=False)
+        from faust_backend.memory import get_memory
+        m = get_memory()
+        import asyncio
+        result = asyncio.run(m.set_tags(path, tags))
+        return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
@@ -1226,18 +1182,12 @@ def kbTagSetTool(path: str, tags_json: str, managed_by: str = "agent") -> str:
 @tool
 @record_func_name
 def kbScorePatchTool(path: str, score_patch: float, managed_by: str = "agent") -> str:
-    """
-    Description:
-        为知识库文档设置 score patch，范围为 -0.15 到 +0.15。
-    Args:
-        path (str): 知识库相对路径。
-        score_patch (float): 分数补丁。
-        managed_by (str): 维护者。
-    Returns:
-        str(json): 更新后的 meta。
-    """
+    """为知识库文档设置 score patch，范围为 -0.15 到 +0.15。"""
     try:
-        return json.dumps(asyncio.run(KB_MANAGER.set_score_patch(path, score_patch, managed_by=managed_by)), ensure_ascii=False)
+        import json, asyncio
+        from faust_backend.memory import get_memory
+        result = asyncio.run(get_memory().set_score_patch(path, score_patch))
+        return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
@@ -1246,19 +1196,12 @@ def kbScorePatchTool(path: str, score_patch: float, managed_by: str = "agent") -
 @tool
 @record_func_name
 def kbChangedNodesTool(since_ts: float, scope: str = "", tags_json: str = "[]") -> str:
-    """
-    Description:
-        获取某个时间戳之后发生变更的知识库节点，可按 scope 和标签过滤。
-    Args:
-        since_ts (float): Unix 时间戳。
-        scope (str): 限定目录范围。
-        tags_json (str): JSON 数组字符串，按标签过滤。
-    Returns:
-        str(json): 变更节点列表。
-    """
+    """获取某个时间戳之后发生变更的知识库节点。"""
     try:
-        tags = json.loads(tags_json) if str(tags_json or "").strip() else []
-        return json.dumps(KB_MANAGER.get_changed_nodes(since_ts, scope=scope, tags=tags), ensure_ascii=False)
+        import json, asyncio
+        from faust_backend.memory import get_memory
+        items = asyncio.run(get_memory().get_changed_nodes(since_ts, scope=scope))
+        return json.dumps(items, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
@@ -1394,6 +1337,76 @@ async def installOpenClawSkillTool(slug: str, overwrite: bool = False) -> str:
         return f"Skill 安装成功: {json.dumps(result, ensure_ascii=False)}"
     except Exception as e:
         return f"Skill 安装失败: {str(e)}"
+
+@add_to_tool_list
+@tool
+@record_func_name
+def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
+                     return_mode: str = "compact", tags_json: str = "[]",
+                     use_graph: bool = True) -> str:
+    """
+    Description:
+        增强记忆搜索。默认返回 compact JSON（path, line_count, description），
+        并自动扩展相邻节点。让模型根据 path 自行读取文件内容。
+        设置 return_mode='snippets' 可切回传统带片段的结果。
+    Args:
+        query (str): 搜索查询。
+        scope (str): 限定目录范围。
+        top_k (int): 返回数量，默认 5。
+        return_mode (str): compact/snippets/paths/full。
+        tags_json (str): JSON 标签数组，按标签过滤。
+        use_graph (bool): 是否启用图谱增强搜索。
+    Returns:
+        str(json): 搜索结果列表。compact 模式下每项含 path, line_count, description, score。
+    """
+    from faust_backend.memory.tools import memorySearchTool as _impl
+    return _impl(query, scope, top_k, return_mode, tags_json, use_graph)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def attachmentWriteTool(file_path: str, path: str = "", *,
+                        description: str = "",
+                        content_type: str = "") -> str:
+    """
+    Description:
+        Write an image to memory from a local file path. Reads the image file
+        from your local filesystem and stores it in the KB. The image is
+        searchable by its description text.
+    Args:
+        file_path (str): Local filesystem path to the image file, e.g.
+                         C:\\Users\\name\\screenshot.png
+        path (str): KB file path, e.g. /records/2026-05-01/screenshot.png.
+                    Auto-derived from filename if empty.
+        description (str): Text description of what the image shows
+        content_type (str): MIME type, auto-detected from extension if empty.
+    Returns:
+        str(json): {path, description, content_type}
+    """
+    from faust_backend.memory.tools import attachmentWriteTool as _impl
+    return _impl(file_path, path, description=description,
+                 content_type=content_type)
+
+
+@add_to_tool_list
+@tool
+@record_func_name
+def attachmentReadTool(path: str) -> str:
+    """
+    Description:
+        Read an image attachment from memory and return it as a multimodal
+        result so you can see its contents. Use when you need to inspect a
+        previously saved image.
+    Args:
+        path (str): KB path of the image attachment, e.g.
+                    /records/2026-05-01/screenshot.png
+    Returns:
+        str(json): Multimodal payload with the image and its description.
+    """
+    from faust_backend.memory.tools import attachmentReadTool as _impl
+    return _impl(path)
+
 
 if __name__ == "__main__":
     for tool in toollist:

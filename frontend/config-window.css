@@ -802,7 +802,7 @@ body {
   background: #a8a8a8;
 }
 
-/* ©¤©¤ ¸ß¼¶ÅäÖÃÕÛµş ©¤©¤ */
+/* ï¿½ï¿½ï¿½ï¿½ ï¿½ß¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ûµï¿½ ï¿½ï¿½ï¿½ï¿½ */
 .advanced-divider {
   grid-column: 1 / -1;
   display: flex;
@@ -852,4 +852,90 @@ body {
 }
 .advanced-body.open {
   display: contents;
+}
+
+/* æ—¥å¿—æ¨¡å— */
+.log-search-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.log-area {
+  min-height: 500px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 12px;
+  resize: vertical;
+}
+
+/* å›¾è°±æ¨¡å— */
+.graph-entity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e6edf7;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+.graph-entity-row:hover {
+  background: #f2f6ff;
+}
+.graph-rel-text {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  color: var(--blue);
+  padding: 4px 8px;
+}
+
+/* â”€â”€ å›¾è°± â”€â”€ */
+.graph-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 480px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8faff;
+  margin-bottom: 10px;
+}
+.graph-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.graph-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: Consolas, "Courier New", monospace;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  margin-top: 6px;
+}
+.graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.graph-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }

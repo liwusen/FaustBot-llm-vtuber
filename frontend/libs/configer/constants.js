@@ -7,7 +7,7 @@ var META = {
   SECURITY_VERIFIER_API_ENDPOINT: { label: "安全校验接口地址", help: "安全审查模型使用的 API Base URL。" },
   SECURITY_VERIFIER_LLM_MODEL: { label: "安全校验模型", help: "用于高风险操作前校验的模型名称。" },
   SECURITY_SYS_ENABLED: { label: "启用安全系统", help: "开启后，部分高风险调用会先经过安全审查。" },
-  KB_ENABLED: { label: "启用 KB", help: "开启后允许使用树形知识库与向量检索能力。" },
+  KB_ENABLED: { label: "启用记忆", help: "开启后允许使用树形记忆库与向量检索能力。" },
   KB_EMBED_MODEL: { label: "KB 向量模型", help: "知识库文本向量化使用的 embedding 模型名称。" },
   KB_ASYNC_INDEX_ON_WRITE: { label: "KB 异步索引", help: "开启后知识库写入会以后台任务方式异步索引。" },
   ARAYA_ENABLED: { label: "启用 Araya", help: "开启后允许独立记忆维护 Agent 自动触发。" },
@@ -119,7 +119,7 @@ var MODULES = [
   { id: "live2d", title: "模型", desc: "模型类型切换、位置、缩放与显示行为。" },
   { id: "speech", title: "语音", desc: "ASR/TTS 模式与参数配置。" },
   { id: "agent", title: "Agent", desc: "角色文件编辑、切换与创建。" },
-  { id: "kb", title: "KB", desc: "知识库树、编辑、检索、索引管理。" },
+  { id: "memory", title: "记忆", desc: "知识库树、图谱、搜索一体化管理。" },
   { id: "araya", title: "Araya", desc: "Araya 状态监控与触发。" },
   { id: "runtime", title: "Runtime", desc: "服务状态与运行时控制。" },
   { id: "triggers", title: "Triggers", desc: "计划任务列表与编辑。" },
@@ -127,5 +127,22 @@ var MODULES = [
   { id: "plugins", title: "Plugins", desc: "插件启停、重载、配置。" },
   { id: "advanced", title: "高级", desc: "未归类字段与扩展配置。" },
 ];
+
+// ── 图谱常量 ──
+
+var GRAPH_COLORS = {
+  person: "#4a90d9", place: "#5cb85c", event: "#d9534f",
+  concept: "#9b59b6", object: "#f0ad4e", document: "#5bc0de",
+  custom: "#95a5a6",
+  chat_record: "#27ae60", diary: "#e91e63",
+  file: "#c47f3c", dir: "#8B7355",
+};
+var GRAPH_EDGE_COLORS = {
+  has_child: "#aaa", references: "#666", next: "#1abc9c",
+  relates_to: "#3498db", part_of: "#e67e22",
+  located_at: "#2ecc71", created_by: "#9b59b6", mentions: "#e74c3c",
+};
+var GRAPH_NODE_RADIUS = 18;
+var GRAPH_EXPAND_DEPTH = 1;
 
 // End of constants

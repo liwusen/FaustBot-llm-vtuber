@@ -311,9 +311,6 @@ function requestJson(method, url, payload = null, timeoutMs = 30000) {
 
 function buildBackendUrl(apiPath, query) {
   const normalizedPath = String(apiPath || '').trim();
-  if (!normalizedPath.startsWith('/faust/')) {
-    throw new Error('仅允许访问 /faust/ 下的接口');
-  }
   const url = new URL(`${FAUST_BACKEND_BASE}${normalizedPath}`);
   if (query && typeof query === 'object') {
     for (const [k, v] of Object.entries(query)) {

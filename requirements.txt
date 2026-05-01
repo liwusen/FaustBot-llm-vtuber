@@ -31,6 +31,9 @@ requests
 # KB vector index Required
 nano-vectordb
 
+# Knowledge Graph
+networkx>=3.0
+
 #Langchain Agent Framework
 langchain>1
 langchain-openai

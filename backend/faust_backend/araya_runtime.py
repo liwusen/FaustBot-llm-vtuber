@@ -16,7 +16,6 @@ from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 
 import faust_backend.config_loader as conf
-import faust_backend.kb_manager as kb_manager
 from faust_backend.logger import get_logger
 
 import traceback
@@ -234,92 +233,257 @@ class ArayaRuntime:
         return await self.get_status()
 
     def _build_tools(self):
-        manager = kb_manager.get_kb_manager(refresh=True)
+
+        def _m():
+            from faust_backend.memory import get_memory
+            return get_memory(refresh=True)
 
         @tool
         def arayaGetTimeTool() -> dict:
             """获取当前时间戳和 ISO 格式的 UTC 时间字符串。"""
             return {"time": time.time(), "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
+        # ── tree / file tools ──
+
         @tool
-        def arayaKbListTool(scope: str = "") -> dict:
-            """列出知识库中某个目录范围下的树结构（同步）。"""
+        async def arayaListTreeTool(scope: str = "") -> dict:
+            """列出记忆库中某个目录范围下的树结构。"""
             try:
-                log.info("arayaKbListTool called with scope: %s", scope)
-                return manager.list_tree(scope)
+                log.info("arayaListTreeTool called with scope: %s", scope)
+                return await _m().tree_list(scope)
             except Exception as e:
-                log.error("Error in arayaKbListTool: %s", e)
+                log.error("Error in arayaListTreeTool: %s", e)
                 return {}
 
         @tool
-        def arayaKbReadTool(path: str) -> dict:
-            """读取知识库中文件节点的完整内容（同步）。"""
+        async def arayaReadFileTool(path: str) -> dict:
+            """读取记忆库中文件节点的完整内容。"""
             try:
-                log.info("arayaKbReadTool called with path: %s", path)
-                return manager.read_node(path)
+                log.info("arayaReadFileTool called with path: %s", path)
+                return await _m().file_read(path)
+            except FileNotFoundError:
+                return {"path": path, "error": "not_found"}
             except Exception as e:
-                log.error("Error in arayaKbReadTool: %s", e)
+                log.error("Error in arayaReadFileTool: %s", e)
                 return {}
 
         @tool
-        async def arayaKbWriteTool(path: str, content: str, declared_by: str = "araya", index: bool = True, tags: list[str] | None = None) -> dict:
-            """写入知识库文件节点，并可附加标签。"""
+        async def arayaWriteFileTool(path: str, content: str, declared_by: str = "araya",
+                                     index: bool = True, tags: list[str] | None = None,
+                                     description: str = "") -> dict:
+            """写入记忆库文件节点，并可附加标签和摘要描述。"""
             try:
-                log.info("arayaKbWriteTool called with path: %s, content length: %s", path, len(content))
-                return await manager.write_node(path, content, declared_by=declared_by, index=index, tags=tags or [])
+                log.info("arayaWriteFileTool called with path: %s, content length: %s", path, len(content))
+                return await _m().file_write(path, content, description=description,
+                                              declared_by=declared_by, index=index, tags=tags or [])
             except Exception as e:
-                log.error("Error in arayaKbWriteTool: %s", e)
+                log.error("Error in arayaWriteFileTool: %s", e)
                 return {}
 
         @tool
-        async def arayaKbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags: list[str] | None = None, ignore_score_patch: bool = False) -> list[dict]:
-            """在知识库指定范围内搜索，可按标签过滤。"""
+        async def arayaDeleteFileTool(path: str) -> dict:
+            """删除记忆库中的文件节点。"""
             try:
-                log.info("arayaKbSearchTool called with query: %s", query)
-                return await manager.search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode, tags=tags or [], ignore_score_patch=ignore_score_patch)
+                log.info("arayaDeleteFileTool called with path: %s", path)
+                return await _m().file_delete(path)
+            except FileNotFoundError:
+                return {"path": path, "error": "not_found"}
             except Exception as e:
-                log.error("Error in arayaKbSearchTool: %s", e)
+                log.error("Error in arayaDeleteFileTool: %s", e)
+                return {}
+
+        # ── search ──
+
+        @tool
+        async def arayaSearchMemoryTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags: list[str] | None = None) -> list[dict]:
+            """在记忆库指定范围内搜索，可按标签过滤。组合向量检索与图谱联想。"""
+            try:
+                log.info("arayaSearchMemoryTool called with query: %s", query)
+                return await _m().search(query=query, scope=scope, top_k=int(top_k), return_mode=return_mode, tags=tags or [], use_graph=True)
+            except Exception as e:
+                log.error("Error in arayaSearchMemoryTool: %s", e)
                 return []
 
+        # ── tags / score_patch ──
+
         @tool
-        async def arayaKbTagSetTool(path: str, tags: list[str], managed_by: str = "araya") -> dict:
-            """为知识库文档设置标签。"""
+        async def arayaSetTagsTool(path: str, tags: list[str]) -> dict:
+            """为记忆库文档设置标签。"""
             try:
-                log.info("arayaKbTagSetTool called with path: %s", path)
-                return await manager.set_tags(path, tags or [], managed_by=managed_by)
+                log.info("arayaSetTagsTool called with path: %s", path)
+                return await _m().set_tags(path, tags or [])
             except Exception as e:
-                log.error("Error in arayaKbTagSetTool: %s", e)
+                log.error("Error in arayaSetTagsTool: %s", e)
                 return {"success": False, "error": str(e)}
 
         @tool
-        async def arayaKbScorePatchTool(path: str, score_patch: float, managed_by: str = "araya") -> dict:
-            """为知识库文档设置 score patch。"""
-            log.info("arayaKbScorePatchTool called with path: %s", path)
+        async def arayaSetScorePatchTool(path: str, score_patch: float) -> dict:
+            """为记忆库文档设置 score patch（重要性权重），范围 -0.15 到 +0.15。"""
+            log.info("arayaSetScorePatchTool called with path: %s", path)
             try:
-                return await manager.set_score_patch(path, score_patch, managed_by=managed_by)
+                return await _m().set_score_patch(path, score_patch)
             except Exception as e:
-                log.error("Error in arayaKbScorePatchTool: %s", e)
+                log.error("Error in arayaSetScorePatchTool: %s", e)
                 return {"success": False, "error": str(e)}
 
         @tool
-        def arayaKbChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
-            """获取自某个时间戳以来发生变更的知识库节点（同步）。"""
-            log.info("arayaKbChangedNodesTool called")
+        def arayaChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
+            """获取自某个时间戳以来发生变更的记忆库节点。"""
+            import asyncio
+            log.info("arayaChangedNodesTool called")
             try:
-                return manager.get_changed_nodes(since_ts, scope=scope, tags=tags or [])
+                return asyncio.run(_m().get_changed_nodes(since_ts, scope=scope, tags=tags or []))
             except Exception as e:
-                log.error("Error in arayaKbChangedNodesTool: %s", e)
+                log.error("Error in arayaChangedNodesTool: %s", e)
                 return []
+
+        # ── graph / entity tools ──
+
+        @tool
+        def arayaSearchEntityTool(query: str, type_filter: str = "", top_k: int = 20) -> list[dict]:
+            """在知识图谱中搜索实体节点（按名称模糊匹配）。"""
+            try:
+                results = _m().entity_search(query, type_filter=type_filter or None, top_k=int(top_k))
+                return results
+            except Exception as e:
+                log.error("Error in arayaSearchEntityTool: %s", e)
+                return []
+
+        @tool
+        def arayaListEntitiesTool() -> list[dict]:
+            """列出知识图谱中所有实体节点。"""
+            try:
+                return _m().entity_iter()
+            except Exception as e:
+                log.error("Error in arayaListEntitiesTool: %s", e)
+                return []
+
+        @tool
+        def arayaGetNeighborsTool(entity_id: str, depth: int = 1) -> list[dict]:
+            """获取知识图谱中某个实体指定跳数内的邻居节点。"""
+            try:
+                return _m().get_neighbors(entity_id, depth=int(depth))
+            except Exception as e:
+                log.error("Error in arayaGetNeighborsTool: %s", e)
+                return []
+
+        @tool
+        def arayaAddEntityTool(name: str, entity_type: str = "custom",
+                                properties_json: str = "{}", kb_refs_json: str = "[]",
+                                description: str = "") -> str:
+            """向知识图谱中添加一个实体节点。description 为实体的自然语言描述。返回实体 ID。"""
+            try:
+                import json
+                properties = json.loads(properties_json) if str(properties_json or "").strip() else {}
+                kb_refs = json.loads(kb_refs_json) if str(kb_refs_json or "").strip() else []
+                eid = _m().entity_add(name, entity_type, description=description,
+                                       properties=properties, kb_refs=kb_refs)
+                return str(eid)
+            except Exception as e:
+                log.error("Error in arayaAddEntityTool: %s", e)
+                return f"error: {e}"
+
+        @tool
+        def arayaDeleteEntityTool(entity_id: str) -> bool:
+            """从知识图谱中删除一个实体节点。"""
+            try:
+                return _m().entity_delete(entity_id)
+            except Exception as e:
+                log.error("Error in arayaDeleteEntityTool: %s", e)
+                return False
+
+        @tool
+        def arayaAddRelationTool(source_id: str, target_id: str, rel_type: str = "relates_to") -> str:
+            """在知识图谱中在两个实体之间添加一条有向关系边。返回关系 key。"""
+            try:
+                key = _m().relation_add(source_id, target_id, rel_type)
+                return str(key)
+            except Exception as e:
+                log.error("Error in arayaAddRelationTool: %s", e)
+                return f"error: {e}"
+
+        @tool
+        def arayaRemoveRelationTool(source_id: str, target_id: str) -> bool:
+            """从知识图谱中移除两个实体之间的一条有向关系边。"""
+            try:
+                _m().relation_remove(source_id, target_id)
+                return True
+            except Exception as e:
+                log.error("Error in arayaRemoveRelationTool: %s", e)
+                return False
+
+        @tool
+        def arayaListRelationsTool() -> list[dict]:
+            """列出知识图谱中所有关系边。"""
+            try:
+                return _m().relation_iter()
+            except Exception as e:
+                log.error("Error in arayaListRelationsTool: %s", e)
+                return []
+
+        @tool
+        async def arayaAttachmentWriteTool(file_path: str, path: str = "", *,
+                                            description: str = "",
+                                            content_type: str = "") -> dict:
+            """从本地文件路径读取图片并写入记忆库。自动检测 MIME 类型。"""
+            try:
+                log.info("arayaAttachmentWriteTool file_path=%s", file_path)
+                from pathlib import Path
+                fp = Path(file_path)
+                if not fp.exists():
+                    return {"status": "error", "error": f"文件不存在: {file_path}"}
+                raw = fp.read_bytes()
+                import base64
+                image_base64 = base64.b64encode(raw).decode("ascii")
+                kb_path = str(path or "").strip() or f"/images/{fp.name}"
+                ct = str(content_type or "").strip() or {
+                    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+                }.get(fp.suffix.lower(), "image/png")
+                return await _m().attachment_write(kb_path, image_base64,
+                                                    description=description,
+                                                    content_type=ct)
+            except Exception as e:
+                log.error("Error in arayaAttachmentWriteTool: %s", e)
+                return {"status": "error", "error": str(e)}
+
+        @tool
+        async def arayaAttachmentReadTool(path: str) -> dict:
+            """从记忆库读取图片，返回 multimodal 格式以便查看图片内容。"""
+            try:
+                log.info("arayaAttachmentReadTool path=%s", path)
+                result = await _m().attachment_read(path)
+                return {
+                    "kind": "multimodal_tool_result",
+                    "text": result.get("description", ""),
+                    "images": [{
+                        "url": f"data:{result['content_type']};base64,{result['content_base64']}"
+                    }],
+                }
+            except Exception as e:
+                log.error("Error in arayaAttachmentReadTool: %s", e)
+                return {"status": "error", "error": str(e)}
 
         return [
-            arayaKbListTool,
-            arayaKbReadTool,
-            arayaKbWriteTool,
-            arayaKbSearchTool,
-            arayaKbTagSetTool,
-            arayaKbScorePatchTool,
-            arayaKbChangedNodesTool,
             arayaGetTimeTool,
+            arayaListTreeTool,
+            arayaReadFileTool,
+            arayaWriteFileTool,
+            arayaDeleteFileTool,
+            arayaSearchMemoryTool,
+            arayaSetTagsTool,
+            arayaSetScorePatchTool,
+            arayaChangedNodesTool,
+            arayaSearchEntityTool,
+            arayaListEntitiesTool,
+            arayaGetNeighborsTool,
+            arayaAddEntityTool,
+            arayaDeleteEntityTool,
+            arayaAddRelationTool,
+            arayaRemoveRelationTool,
+            arayaListRelationsTool,
+            arayaAttachmentWriteTool,
+            arayaAttachmentReadTool,
         ]
 
     def _init_agent(self) -> None:
@@ -437,7 +601,7 @@ class ArayaRuntime:
                 f"本次触发原因: {reason}\n"
                 f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次触发以来的变更节点。\n"
                 f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
-                f"必要时请维护 /auto_index.md，并且仅使用当前可用工具完成知识库维护。\n"
+                f"必要时请维护 /auto_index.md，并对 knowledge graph 中的实体和关系进行整合/修剪。\n"
                 f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
             )
 
