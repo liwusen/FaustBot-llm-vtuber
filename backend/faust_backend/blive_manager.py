@@ -15,16 +15,10 @@ from blivedm.models import web as web_models
 BLiveClient = blivedm.BLiveClient
 BaseHandler = blivedm.BaseHandler
 
-try:
-    import faust_backend.config_loader as conf
-    import faust_backend.backend2front as backend2front
-    import faust_backend.trigger_manager as trigger_manager
-    from faust_backend.live_mode import is_danmaku_blacklisted
-except ImportError:
-    import config_loader as conf
-    import backend2front
-    import trigger_manager
-    from live_mode import is_danmaku_blacklisted
+import faust_backend.config_loader as conf
+import faust_backend.backend2front as backend2front
+import faust_backend.trigger_manager as trigger_manager
+from faust_backend.live_mode import is_danmaku_blacklisted
 
 log = logging.getLogger("faust.blive")
 

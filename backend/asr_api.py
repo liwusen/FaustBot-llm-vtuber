@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from funasr import AutoModel
@@ -15,7 +16,60 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 log = get_logger("faust.asr")
 
-app = FastAPI()
+MODEL_DIR = os.path.join("asr-hub", "model")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("正在加载 ASR 模型...")
+
+    asr_model_path = os.path.join(MODEL_DIR, "asr")
+    if not os.path.exists(asr_model_path):
+        os.makedirs(asr_model_path)
+
+    original_modelscope_cache = os.environ.get('MODELSCOPE_CACHE', '')
+    original_funasr_home = os.environ.get('FUNASR_HOME', '')
+
+    os.environ['MODELSCOPE_CACHE'] = asr_model_path
+    os.environ['FUNASR_HOME'] = MODEL_DIR
+
+    if _current_asr_mode() == "whisper":
+        log.info("正在加载 Whisper ASR 模型...")
+        _get_whisper_model()
+        log.info("Whisper ASR 模型加载完成")
+    else:
+        log.info("正在加载 FunASR 模型...")
+        model_state["asr_model"] = AutoModel(
+            model="iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+            device=device,
+            model_type="pytorch",
+            dtype="float32"
+        )
+        log.info("FunASR 模型加载完成")
+
+        log.info("正在加载标点符号模型...")
+        model_state["punc_model"] = AutoModel(
+            model="iic/punc_ct-transformer_cn-en-common-vocab471067-large",
+            model_revision="v2.0.4",
+            device=device,
+            model_type="pytorch",
+            dtype="float32"
+        )
+    if original_modelscope_cache:
+        os.environ['MODELSCOPE_CACHE'] = original_modelscope_cache
+    else:
+        os.environ.pop('MODELSCOPE_CACHE', None)
+
+    if original_funasr_home:
+        os.environ['FUNASR_HOME'] = original_funasr_home
+    else:
+        os.environ.pop('FUNASR_HOME', None)
+    log.info("ASR 模型全部加载完成")
+
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # 添加 CORS 中间件
 app.add_middleware(
@@ -25,9 +79,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 创建模型存储目录
-MODEL_DIR = os.path.join("asr-hub", "model")
 if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
@@ -76,56 +127,6 @@ def _get_whisper_model():
         whisper_state["model"] = whisper.load_model(model_name, device=_resolve_whisper_device())
         whisper_state["loaded_name"] = model_name
     return whisper_state["model"]
-@app.on_event("startup")
-async def startup_event():
-    log.info("正在加载 ASR 模型...")
-
-    # 设置环境变量来指定模型下载位置
-    asr_model_path = os.path.join(MODEL_DIR, "asr")
-    if not os.path.exists(asr_model_path):
-        os.makedirs(asr_model_path)
-
-    # 保存原始环境变量
-    original_modelscope_cache = os.environ.get('MODELSCOPE_CACHE', '')
-    original_funasr_home = os.environ.get('FUNASR_HOME', '')
-
-    # 设置环境变量
-    os.environ['MODELSCOPE_CACHE'] = asr_model_path
-    os.environ['FUNASR_HOME'] = MODEL_DIR
-
-    if _current_asr_mode() == "whisper":
-        log.info("正在加载 Whisper ASR 模型...")
-        _get_whisper_model()
-        log.info("Whisper ASR 模型加载完成")
-    else:
-        log.info("正在加载 FunASR 模型...")
-        model_state["asr_model"] = AutoModel(
-            model="iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-            device=device,
-            model_type="pytorch",
-            dtype="float32"
-        )
-        log.info("FunASR 模型加载完成")
-
-        log.info("正在加载标点符号模型...")
-        model_state["punc_model"] = AutoModel(
-            model="iic/punc_ct-transformer_cn-en-common-vocab471067-large",
-            model_revision="v2.0.4",
-            device=device,
-            model_type="pytorch",
-            dtype="float32"
-        )
-    # 恢复原始环境变量
-    if original_modelscope_cache:
-        os.environ['MODELSCOPE_CACHE'] = original_modelscope_cache
-    else:
-        os.environ.pop('MODELSCOPE_CACHE', None)
-
-    if original_funasr_home:
-        os.environ['FUNASR_HOME'] = original_funasr_home
-    else:
-        os.environ.pop('FUNASR_HOME', None)
-    log.info("ASR 模型全部加载完成")
 
 
 @app.post("/v1/upload_audio")

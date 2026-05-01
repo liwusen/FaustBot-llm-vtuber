@@ -8,12 +8,8 @@ import threading
 import os
 import random
 
-try:
-    import faust_backend.config_loader as conf
-    import faust_backend.nimble as nimble
-except ImportError:
-    import config_loader as conf
-    import nimble
+import faust_backend.config_loader as conf
+import faust_backend.nimble as nimble
 from pydantic import BaseModel, Field, field_validator
 from faust_backend.logger import get_logger
 

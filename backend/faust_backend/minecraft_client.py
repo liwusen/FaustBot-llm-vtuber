@@ -6,10 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-try:
-    import config_loader as conf
-except ImportError:
-    import faust_backend.config_loader as conf
+import faust_backend.config_loader as conf
 
 import websocket
 import faust_backend.trigger_manager as trigger_manager

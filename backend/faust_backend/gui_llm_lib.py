@@ -9,10 +9,7 @@ from PIL import Image
 from io import BytesIO
 import base64
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-try:
-    import faust_backend.config_loader as conf
-except ImportError:
-    import config_loader as conf
+import faust_backend.config_loader as conf
 # API 配置
 API_KEY = conf.GUI_OPERATOR_LLM_KEY
 API_URL = conf.GUI_OPERATOR_LLM_BASE

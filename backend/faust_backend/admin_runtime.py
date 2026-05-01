@@ -7,12 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-try:
-    import faust_backend.config_loader as conf
-    import faust_backend.backend2front as backend2frontend
-except ImportError:
-    import config_loader as conf
-    import backend2front as backend2frontend
+import faust_backend.config_loader as conf
+import faust_backend.backend2front as backend2frontend
 
 BACKEND_ROOT = Path(conf.CONFIG_ROOT)
 PROJECT_ROOT = Path(conf.PROJECT_ROOT)

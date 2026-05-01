@@ -1,0 +1,2 @@
+class SpeechRuntimeError(RuntimeError):
+    pass

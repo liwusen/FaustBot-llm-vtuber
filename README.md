@@ -7,7 +7,6 @@
     <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" align="center"/></a>
 </div>
 
-
 ### 一个AI驱动的 Vtuber/桌宠
 
 **仍然处于早期开发阶段**
@@ -272,4 +271,3 @@ flowchart TD
 | -------- | --------------------- |
 | Backend  | Python为主体,基于langchain |
 | Frontend | Electron+Qt           |
-

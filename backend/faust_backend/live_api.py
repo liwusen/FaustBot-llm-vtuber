@@ -2,32 +2,18 @@ import logging
 
 from fastapi import APIRouter
 
-try:
-    import faust_backend.config_loader as conf
-    import faust_backend.backend2front as backend2front
-    import faust_backend.trigger_manager as trigger_manager
-    from faust_backend.live_mode import (
-        is_live_mode,
-        set_live_mode,
-        get_danmaku_blacklist,
-        set_danmaku_blacklist,
-        get_tts_blacklist,
-        set_tts_blacklist,
-    )
-    from faust_backend.blive_manager import get_blive_manager
-except ImportError:
-    import config_loader as conf
-    import backend2front
-    import trigger_manager
-    from live_mode import (
-        is_live_mode,
-        set_live_mode,
-        get_danmaku_blacklist,
-        set_danmaku_blacklist,
-        get_tts_blacklist,
-        set_tts_blacklist,
-    )
-    from blive_manager import get_blive_manager
+import faust_backend.config_loader as conf
+import faust_backend.backend2front as backend2front
+import faust_backend.trigger_manager as trigger_manager
+from faust_backend.live_mode import (
+    is_live_mode,
+    set_live_mode,
+    get_danmaku_blacklist,
+    set_danmaku_blacklist,
+    get_tts_blacklist,
+    set_tts_blacklist,
+)
+from faust_backend.blive_manager import get_blive_manager
 
 log = logging.getLogger("faust.live_api")
 

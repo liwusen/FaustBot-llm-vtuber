@@ -2,6 +2,7 @@ from faust_backend.logger import get_logger
 
 log = get_logger("faust.main")
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI,WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
 import json
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,7 +59,70 @@ storer = None
 import time
 log.info("所有库加载完成")
 #Shared Events
-app = FastAPI()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global agent, checkpointer, conn, storer, conn_for_store, plugin_heartbeat_task
+
+    # ── startup ──
+    backend2frontend.set_main_loop(asyncio.get_running_loop())
+    araya_runtime.get_araya_runtime(refresh=True)
+    try:
+        from faust_backend.memory import get_memory
+        get_memory(refresh=True)
+        await araya_runtime.get_araya_runtime(refresh=True).startup()
+        startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(conf.args.no_startup_chat))
+        log.info("启动运行时摘要: %s", startup_info)
+    except Exception as e:
+        agent = None
+        _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+        log.warning("启动运行时降级: %s", e)
+    try:
+        await vad_runtime.vad_runtime.startup()
+        log.info("VAD 运行时已加载到 CPU")
+    except Exception as e:
+        log.warning("启动 VAD 初始化失败: %s", e)
+    log.info("触发器看门狗线程正在启动...")
+    trigger_manager.start_trigger_watchdog_thread()
+    try:
+        await minecraft_client.ensure_started()
+    except Exception as e:
+        log.warning("Minecraft 桥启动时未连接: %s", e)
+    if plugin_heartbeat_task is None:
+        plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
+    live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))
+    try:
+        blm = blive_manager.get_blive_manager(refresh=True)
+        await blm.start()
+    except Exception as e:
+        log.warning("B站直播客户端启动失败: %s", e)
+    log.info("FAUST 后端主服务已启动")
+
+    yield
+
+    # ── shutdown ──
+    log.info("开始关闭 Agent...")
+    if not args.save_in_memory:
+        await conn.commit()
+        await conn.close()
+        await conn_for_store.commit()
+        await conn_for_store.close()
+    trigger_manager.stop_trigger_watchdog_thread()
+    if plugin_heartbeat_task is not None:
+        plugin_heartbeat_task.cancel()
+        try:
+            await plugin_heartbeat_task
+        except Exception:
+            pass
+        plugin_heartbeat_task = None
+    await araya_runtime.get_araya_runtime(refresh=True).shutdown()
+    trigger_manager.exitflag = True
+    await vad_runtime.vad_runtime.shutdown()
+    log.info("正在关闭 FAUST 后端主服务...")
+
+
+app = FastAPI(lifespan=lifespan)
 uvicorn_server = None
 araya_api.register_araya_routes(app)
 app.include_router(live_api.router)
@@ -532,42 +596,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
         "error": "",
     }
 
-@app.on_event("startup")
-async def startup_event():
-    global agent,checkpointer,conn,storer,conn_for_store,plugin_heartbeat_task
-    backend2frontend.set_main_loop(asyncio.get_running_loop())  # 注册主事件循环，供同步线程推送命令
-    araya_runtime.get_araya_runtime(refresh=True)  # 提前加载 ArayaRuntime，确保其事件循环在主线程中
-    try:
-        from faust_backend.memory import get_memory
-        get_memory(refresh=True)
-        await araya_runtime.get_araya_runtime(refresh=True).startup()
-        startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(conf.args.no_startup_chat))
-        log.info("启动运行时摘要: %s", startup_info)
-    except Exception as e:
-        agent = None
-        _set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
-        log.warning("启动运行时降级: %s", e)
-    try:
-        await vad_runtime.vad_runtime.startup()
-        log.info("VAD 运行时已加载到 CPU")
-    except Exception as e:
-        log.warning("启动 VAD 初始化失败: %s", e)
-    #--- Start the trigger watchdog thread to monitor and activate triggers.
-    log.info("触发器看门狗线程正在启动...")
-    trigger_manager.start_trigger_watchdog_thread()
-    try:
-        await minecraft_client.ensure_started()
-    except Exception as e:
-        log.warning("Minecraft 桥启动时未连接: %s", e)
-    if plugin_heartbeat_task is None:
-        plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
-    live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))
-    try:
-        blm = blive_manager.get_blive_manager(refresh=True)
-        await blm.start()
-    except Exception as e:
-        log.warning("B站直播客户端启动失败: %s", e)
-    log.info("FAUST 后端主服务已启动")
+
 
 
 @app.get("/faust/admin/config")
@@ -1558,27 +1587,7 @@ async def shutdown_post():
     """Triggers a graceful shutdown for the FAUST backend process."""
     asyncio.create_task(_graceful_shutdown_task())
     return {"status": "shutting_down"}
-@app.on_event("shutdown")
-async def shutdown_event():
-    global plugin_heartbeat_task
-    log.info("开始关闭 Agent...")
-    if not args.save_in_memory:
-        await conn.commit()
-        await conn.close()
-        await conn_for_store.commit()
-        await conn_for_store.close()
-    trigger_manager.stop_trigger_watchdog_thread()
-    if plugin_heartbeat_task is not None:
-        plugin_heartbeat_task.cancel()
-        try:
-            await plugin_heartbeat_task
-        except Exception:
-            pass
-        plugin_heartbeat_task = None
-    await araya_runtime.get_araya_runtime(refresh=True).shutdown()
-    trigger_manager.exitflag=True
-    await vad_runtime.vad_runtime.shutdown()
-    log.info("正在关闭 FAUST 后端主服务...")
+
 
 if __name__ == "__main__":
     log.info("FAUST 后端主服务正在启动，端口 %d...", PORT)

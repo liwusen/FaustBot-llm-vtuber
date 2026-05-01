@@ -13,10 +13,7 @@ import faust_backend.trigger_manager as trigger_manager
 
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 
-try:
-    import faust_backend.config_loader as conf
-except ImportError:
-    conf = None
+import faust_backend.config_loader as conf
 
 
 class PluginLoadError(RuntimeError):
