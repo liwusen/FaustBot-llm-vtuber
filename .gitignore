@@ -40,7 +40,6 @@ skill.d/
 backend/plugins/plugins.state.json
 
 .runtime/
-runtime/
 dist/
 #--faust-knowledge-base
 kb/

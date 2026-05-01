@@ -1,0 +1,383 @@
+import os
+import asyncio
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+import aiosqlite
+from langgraph.store.sqlite import AsyncSqliteStore
+from langgraph.store.memory import InMemoryStore
+import tqdm
+
+import faust_backend.config_loader as conf
+import faust_backend.llm_tools as llm_tools
+import faust_backend.backend2front as backend2frontend
+import faust_backend.trigger_manager as trigger_manager
+import faust_backend.araya_runtime as araya_runtime
+import faust_backend.service_manager as service_manager
+import faust_backend.live_api as live_api
+import faust_backend.blive_manager as blive_manager
+import faust_backend.minecraft_client as minecraft_client
+import faust_backend.vad_runtime as vad_runtime
+import faust_backend.speech_runtime as speech_runtime
+from faust_backend.plugin_system import PluginManager
+from faust_backend.config_loader import args
+
+from faust_backend.runtime import state
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.lifecycle")
+
+
+def init_plugin_manager():
+    if state.plugin_manager is None:
+        state.plugin_manager = PluginManager()
+
+
+def _sync_plugin_trigger_filters():
+    pm = state.plugin_manager
+    if pm is None:
+        return
+    trigger_manager.set_append_filters([pm.filter_trigger_on_append])
+    trigger_manager.set_fire_filters([pm.filter_trigger_on_fire])
+
+
+async def _plugin_heartbeat_loop():
+    while True:
+        try:
+            await asyncio.sleep(10.0)
+            pm = state.plugin_manager
+            if pm:
+                summary = pm.heartbeat_tick()
+                if summary.get("errors"):
+                    log.error("插件心跳错误: %s", summary.get("errors"))
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error("插件心跳循环错误: %s", e)
+            await asyncio.sleep(1.0)
+
+
+async def _sleep_backoff(attempt: int) -> None:
+    import random
+    base = 0.8 * (2 ** max(0, attempt - 1))
+    jitter = random.uniform(0.0, 0.35)
+    await asyncio.sleep(min(3.0, base + jitter))
+
+
+def start_services():
+    if not args.no_run_other_backend_services:
+        log.info("正在启动后端服务...")
+        for service in tqdm.tqdm(service_manager.get_service_keys(), desc="[main]Starting services"):
+            if service == "tts" and not speech_runtime.should_start_local_tts():
+                log.info("跳过本地 TTS 服务（TTS_MODE 不是 local）")
+                continue
+            if service == "asr" and not speech_runtime.should_start_local_asr():
+                log.info("跳过本地 ASR 服务（ASR_MODE 不是 local）")
+                continue
+            try:
+                service_manager.start_service(service, wait=False)
+            except Exception as e:
+                log.error("启动服务 %s 失败: %s", service, e)
+            time.sleep(0.5)
+        log.info("其他后端服务已启动")
+
+
+async def invoke_agent_locked(target_agent, payload, config=None):
+    if config is None:
+        config = {"configurable": {"thread_id": state.THREAD_ID, "recursion_limit": 300}}
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        log.debug("等待 Agent 锁")
+        async with state.agent_lock:
+            log.debug("开始调用 LLM")
+            try:
+                res = await target_agent.ainvoke(payload, config)
+                log.debug("LLM 调用结束")
+                return res
+            except Exception as e:
+                if state.is_rate_limit_error(e) and attempt < max_attempts:
+                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
+                else:
+                    raise
+        await _sleep_backoff(attempt)
+
+
+async def stream_chat_agent_events(target_agent, payload, config=None):
+    if config is None:
+        config = {"configurable": {"thread_id": state.THREAD_ID}}
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        log.debug("等待 Agent 锁")
+        async with state.agent_lock:
+            log.debug("开始调用 LLM")
+            try:
+                async for event in target_agent.astream_events(payload, config=config, version="v2"):
+                    if not isinstance(event, dict):
+                        continue
+                    event_name = str(event.get("event") or "").strip().lower()
+                    data = event.get("data") or {}
+                    if event_name == "on_chat_model_stream":
+                        chunk = data.get("chunk")
+                        if not chunk or not state.is_ai_message_chunk(chunk):
+                            continue
+                        delta_text = state.message_content_to_text(chunk.content)
+                        if delta_text:
+                            yield {"type": "delta", "content": delta_text}
+                        continue
+                    if event_name == "on_tool_start":
+                        yield {
+                            "type": "tool_start",
+                            "tool_name": str(event.get("name") or data.get("name") or "tool").strip(),
+                            "args": state.normalize_tool_args(data.get("input")),
+                            "call_id": str(event.get("run_id") or ""),
+                        }
+                        continue
+                    if event_name == "on_tool_end":
+                        yield {
+                            "type": "tool_result",
+                            "tool_name": str(event.get("name") or data.get("name") or "tool").strip(),
+                            "output": state.tool_value_to_text(data.get("output")),
+                            "call_id": str(event.get("run_id") or ""),
+                        }
+                        continue
+                log.debug("LLM 调用结束")
+                return
+            except Exception as e:
+                if state.is_rate_limit_error(e) and attempt < max_attempts:
+                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
+                else:
+                    raise
+        await _sleep_backoff(attempt)
+
+
+def _compose_runtime_extensions():
+    base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
+    pm = state.plugin_manager
+    tools = pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME) if pm else base_tools
+    middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
+    return tools, middlewares
+
+
+def _build_chat_model(*, model_name: str):
+    return ChatOpenAI(
+        model=model_name,
+        api_key=conf.CHAT_API_KEY,
+        base_url=conf.CHAT_API_BASE,
+        request_timeout=60,
+        max_retries=1,
+    )
+
+
+def _create_agent_with_extensions(*, model_name: str, checkpointer, store):
+    tools, middlewares = _compose_runtime_extensions()
+    chat_model = _build_chat_model(model_name=model_name)
+    kwargs = {
+        "model": chat_model,
+        "checkpointer": checkpointer,
+        "tools": tools,
+        "store": store,
+    }
+    if middlewares:
+        try:
+            kwargs["middlewares"] = middlewares
+            create_agent(**kwargs)
+        except TypeError:
+            pass
+        try:
+            kwargs.pop("middlewares", None)
+            kwargs["middleware"] = middlewares
+            create_agent(**kwargs)
+        except TypeError:
+            log.warning("create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
+            kwargs.pop("middleware", None)
+    return create_agent(**kwargs)
+
+
+async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool = False):
+    log.info("正在重建运行时，reset_dialog=%s, no_initial_chat=%s", reset_dialog, no_initial_chat)
+    _needs_initial_chat = False
+    async with state.agent_lock:
+        try:
+            conf.reload_configs()
+            os.environ["DEEPSEEK_API_KEY"] = conf.CHAT_API_KEY
+            os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
+            os.environ["OPENAI_API_KEY"] = conf.CHAT_API_KEY
+            os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
+            state.AGENT_NAME = conf.AGENT_NAME
+            state.AGENT_ROOT = os.path.join(conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}")
+            log.info("重建目标 Agent: %s", state.AGENT_NAME)
+            state.makeup_init_prompt()
+            llm_tools.refresh_runtime_paths()
+            araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
+            pm = state.plugin_manager
+            if pm:
+                plugin_reload = pm.reload()
+                log.info("插件重载摘要: %s", plugin_reload)
+                _sync_plugin_trigger_filters()
+            if not args.save_in_memory:
+                try:
+                    if state.conn is not None:
+                        await state.conn.commit()
+                        await state.conn.close()
+                except Exception:
+                    pass
+                try:
+                    if state.conn_for_store is not None:
+                        await state.conn_for_store.commit()
+                        await state.conn_for_store.close()
+                except Exception:
+                    pass
+                os.makedirs(state.AGENT_ROOT, exist_ok=True)
+                state.conn = await aiosqlite.connect(os.path.join(state.AGENT_ROOT, 'faust_checkpoint.db'))
+                state.checkpointer = AsyncSqliteSaver(conn=state.conn)
+                state.conn_for_store = await aiosqlite.connect(os.path.join(state.AGENT_ROOT, 'faust_store.db'))
+                state.storer = AsyncSqliteStore(conn=state.conn_for_store)
+                log.info("已初始化 SQLite Checkpoint + Store")
+            else:
+                state.checkpointer = InMemorySaver()
+                state.storer = InMemoryStore()
+            log.info("Checkpoint 和 Store 已为重建就绪")
+            state.agent = _create_agent_with_extensions(
+                model_name=conf.CHAT_MODEL,
+                checkpointer=state.checkpointer,
+                store=state.storer,
+            )
+            log.debug("Agent 已为重建重新创建")
+            checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(state.AGENT_ROOT)
+            if no_initial_chat and checkpoint_exists:
+                log.info("运行时重建跳过初始对话")
+                state.set_runtime_state(ready=True, status="ready")
+                return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
+                        "initial_chat_skipped": True, "ready": True,
+                        "status": state.RUNTIME_STATUS, "error": ""}
+            _needs_initial_chat = True
+        except Exception as e:
+            state.agent = None
+            state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+            log.warning("运行时重建降级: %s", e)
+            return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
+                    "initial_chat_skipped": True, "ready": False,
+                    "status": state.RUNTIME_STATUS, "error": str(e)}
+
+    if _needs_initial_chat:
+        try:
+            if reset_dialog:
+                await invoke_agent_locked(state.agent, {"messages": [{"role": "system", "content": state.PROMPT}]})
+            else:
+                await invoke_agent_locked(state.agent, {
+                    "messages": [{"role": "user", "content": (
+                        f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，"
+                        f"请读取agents/{state.AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件"
+                        f"来获取最新的设定内容。\n 这一条对话无需写入日记"
+                    )}]})
+            log.info("运行时重建完成")
+            state.set_runtime_state(ready=True, status="ready")
+            return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
+                    "initial_chat_skipped": False, "ready": True,
+                    "status": state.RUNTIME_STATUS, "error": ""}
+        except Exception as e:
+            state.agent = None
+            state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+            log.warning("运行时重建降级: %s", e)
+            return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
+                    "initial_chat_skipped": True, "ready": False,
+                    "status": state.RUNTIME_STATUS, "error": str(e)}
+
+    return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
+            "initial_chat_skipped": True, "ready": True,
+            "status": state.RUNTIME_STATUS, "error": ""}
+
+
+def schedule_memory_record_sync(user_text: str, assistant_text: str) -> None:
+    if not conf.KB_ENABLED:
+        return
+    if not str(user_text).strip() or not str(assistant_text).strip():
+        return
+    log.debug("调度记忆记录同步")
+
+    async def _job():
+        try:
+            llm_tools.refresh_runtime_paths()
+            from faust_backend.memory import get_memory
+            result = await get_memory().add_chat_record(user_text, assistant_text)
+            log.info("聊天记录已同步到记忆库: %s", result.get("path"))
+        except Exception as exc:
+            log.error("聊天记录同步到记忆库失败: %s", exc)
+
+    asyncio.create_task(_job())
+
+
+async def _graceful_shutdown_task():
+    log.info("正在优雅关闭...")
+    await asyncio.sleep(0.1)
+    if state.uvicorn_server:
+        state.uvicorn_server.should_exit = True
+        log.info("Uvicorn 关闭标志已设置")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_plugin_manager()
+
+    # ── startup ──
+    backend2frontend.set_main_loop(asyncio.get_running_loop())
+    araya_runtime.get_araya_runtime(refresh=True)
+    try:
+        from faust_backend.memory import get_memory
+        get_memory(refresh=True)
+        await araya_runtime.get_araya_runtime(refresh=True).startup()
+        startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(args.no_startup_chat))
+        log.info("启动运行时摘要: %s", startup_info)
+    except Exception as e:
+        state.agent = None
+        state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+        log.warning("启动运行时降级: %s", e)
+    try:
+        await vad_runtime.vad_runtime.startup()
+        log.info("VAD 运行时已加载到 CPU")
+    except Exception as e:
+        log.warning("启动 VAD 初始化失败: %s", e)
+    log.info("触发器看门狗线程正在启动...")
+    trigger_manager.start_trigger_watchdog_thread()
+    try:
+        await minecraft_client.ensure_started()
+    except Exception as e:
+        log.warning("Minecraft 桥启动时未连接: %s", e)
+    if state.plugin_heartbeat_task is None:
+        state.plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
+    live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))
+    try:
+        blm = blive_manager.get_blive_manager(refresh=True)
+        await blm.start()
+    except Exception as e:
+        log.warning("B站直播客户端启动失败: %s", e)
+    log.info("FAUST 后端主服务已启动")
+
+    yield
+
+    # ── shutdown ──
+    log.info("开始关闭 Agent...")
+    if not args.save_in_memory:
+        if state.conn:
+            await state.conn.commit()
+            await state.conn.close()
+        if state.conn_for_store:
+            await state.conn_for_store.commit()
+            await state.conn_for_store.close()
+    trigger_manager.stop_trigger_watchdog_thread()
+    if state.plugin_heartbeat_task is not None:
+        state.plugin_heartbeat_task.cancel()
+        try:
+            await state.plugin_heartbeat_task
+        except Exception:
+            pass
+        state.plugin_heartbeat_task = None
+    await araya_runtime.get_araya_runtime(refresh=True).shutdown()
+    trigger_manager.exitflag = True
+    await vad_runtime.vad_runtime.shutdown()
+    log.info("正在关闭 FAUST 后端主服务...")
