@@ -50,6 +50,24 @@ body.click-through .hil-approval-shell {
   pointer-events: auto;
 }
 
+/* nimble window: base layer is transparent to clicks; only interactive children respond */
+.nimble-window {
+  pointer-events: auto;
+}
+.nimble-window.nimble-fullscreen {
+  pointer-events: none;
+}
+.nimble-window.nimble-fullscreen :where(
+  button, input, select, textarea, a,
+  [contenteditable], [role="button"],
+  [onclick], [onmousedown], [onmouseup]
+) {
+  pointer-events: auto;
+}
+.nimble-window .nimble-pass-through {
+  pointer-events: none !important;
+}
+
 #statusDock {
   position: fixed;
   top: 14px;

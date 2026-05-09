@@ -1,4 +1,5 @@
 from __future__ import annotations
+from faust_backend.memory.store import GraphStore
 
 _MEMORY: GraphStore | None = None
 

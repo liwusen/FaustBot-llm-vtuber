@@ -4,7 +4,7 @@ import uuid
 
 from langchain.tools import tool
 
-from faust_backend.tools._registry import register, STARTED
+from faust_backend.tools._registry import register
 from faust_backend.tools.hil import HILRequest
 from faust_backend.tools._patch_utils import install_skill_from_slug
 import faust_backend.config_loader as conf
@@ -30,8 +30,6 @@ async def installOpenClawSkillTool(slug: str, overwrite: bool = False) -> str:
     Returns:
         str: 安装结果说明。
     """
-    if not STARTED:
-        return "系统尚未完全启动，无法安装 skill。"
 
     slug = str(slug or "").strip()
     if not slug:

@@ -4,14 +4,12 @@ import json
 
 from langchain.tools import tool
 
-from faust_backend.tools._registry import register, STARTED, _run_async_in_thread
+from faust_backend.tools._registry import register, _run_async_in_thread
 import faust_backend.events as events
 import faust_backend.backend2front as backend2frontend
 
 
 async def HILRequest(id, title, summary, timeout_seconds: int = 120, severity: str = "warning"):
-    if not STARTED:
-        return False, "cannot call HILRequest before the system is fully started."
     request_id = str(id or f"hil_{uuid.uuid4().hex}")
     future = events.create_hil_request(request_id)
     backend2frontend.FrontendHIL({

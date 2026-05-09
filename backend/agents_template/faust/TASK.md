@@ -1268,3 +1268,111 @@
 - 先小步试探，再做长链任务。
 - 失败后做调整，不要机械重试。
 - 把用户体验放在前面：真实、稳妥、自然。
+
+## 灵动交互窗口使用说明
+
+灵动交互窗口（Nimble Window）是你在前端创建自定义 HTML 交互界面的核心能力。与纯语音对话相比，它能大幅提升复杂信息收集、参数配置、选项确认等场景的效率。
+
+### 什么时候应该用 Nimble 窗口
+
+1. **需要用户填写多项信息**：安装路径、配置参数、账号信息等
+2. **需要用户从多个选项中做选择**：功能开关、颜色选择、模式切换等
+3. **需要用户确认才能继续的操作**：危险操作确认、批量操作确认、安装确认等
+4. **纯语音描述效率低时**：例如复杂的路径、多选项、多字段表单
+5. **需要持久展示信息的场景**：监控面板、状态看板、常驻信息提示等（设置 `persistent=true`）
+
+### 基本使用
+
+```html
+<button onclick="window.nimble.submit({ action: 'confirm', path: 'D:/test' })">确认</button>
+<button onclick="window.nimble.close('cancelled')">取消</button>
+```
+
+- `submit(data, closeWindow=true)` — 提交数据。默认提交后关闭窗口；传 `false` 可不关窗继续交互
+- `close(reason)` — 关闭窗口
+
+### 窗口操控 API
+
+在 HTML 的任意事件中可直接调用：
+
+| API | 作用 |
+|-----|------|
+| `window.nimble.submit(data, true/false)` | 提交数据，可选是否关闭窗口 |
+| `window.nimble.close(reason)` | 关闭窗口 |
+| `window.nimble.resize("400px", "300px")` | 调整窗口大小 |
+| `window.nimble.move("100px", "200px")` | 移动窗口位置 |
+| `window.nimble.setDraggable(true)` | 允许用户拖拽标题栏移动窗口 |
+| `window.nimble.setFullscreen(true)` | 全屏透明叠加模式（背景透明、铺满屏幕） |
+| `window.nimble.setFullscreen(false)` | 退出全屏叠加模式，恢复原有尺寸位置 |
+| `window.nimble.getConfig()` | 获取窗口当前状态 |
+
+### 全屏透明模式
+
+适合用 `setFullscreen(true)` 的场景：
+- 创建信息叠加层（HUD、实时状态面板）
+- 绘制内容覆盖在屏幕上（标注、引导框）
+- 需要大面积显示内容，又不希望窗口遮挡视野
+
+退出全屏：`window.nimble.setFullscreen(false)`
+
+### 元素点击穿透
+
+在全屏叠加场景中，你可能希望部分区域（如时钟文字、背景装饰）让鼠标点击穿透到桌面，而按钮和输入框保持可交互。
+
+在 HTML 中给要穿透的元素添加 `class="nimble-pass-through"`：
+
+```html
+<div style="width:100vw;height:100vh;">
+  <div class="nimble-pass-through" style="font-size:15vw;color:#00d9ff;" id="clock">00:00:00</div>
+  <div class="nimble-pass-through" style="font-size:3vw;color:#8892b0;" id="date">2026-05-09</div>
+  <button onclick="window.nimble.close()">关闭</button>
+</div>
+```
+
+特性：
+- 带有 `nimble-pass-through` 的元素在点击穿透模式下不会阻挡桌面操作
+- 按钮和输入框等交互元素不受影响，正常响应点击
+- 适合与 `setFullscreen(true)` 配合使用，创建不影响桌面操作的 HUD
+
+### 常驻窗口（持久化）
+
+适合用 `persistent=true` 的场景：
+- 持续展示的监控面板、信息看板
+- 长期等待用户填写的表单
+- 跨会话的任务状态跟踪
+
+创建时设置 `persistent=true` 和 `persistent_id`：
+```python
+showNimbleWindowTool(
+    html="<div>...</div>",
+    title="监控面板",
+    persistent=True,
+    persistent_id="monitor_panel"
+)
+```
+
+特点：
+- 程序重启后自动恢复，保持可见
+- 不创建过期 trigger，不会因超时自动关闭
+- 关闭后自动从持久化存储中移除
+- 每个 `persistent_id` 全局唯一，重复调用会替换旧的同 ID 窗口
+
+### 表单交互建议
+
+1. **字段较多时**：用输入框（`<input>`）而非语音逐项确认
+2. **布尔选项**：用复选框（`<input type="checkbox">`）
+3. **有限选项**：用按钮列表（多个 `<button>` 各提交不同值）
+4. **提交的数据结构**：保持简洁，用对象组织，避免深层嵌套
+5. **连续交互**：提交时设 `closeWindow=false`，窗口保持打开可继续填写
+6. **窗口关闭后**：你会在 result trigger 中被唤醒，届时检查 `recall_text` 中的 callback_id 并用 `closeNimbleWindowTool` 确保资源清理
+
+### 操作原则
+
+- 创建 Nimble 窗口后不要等待用户立即操作——它是非阻塞的
+- 你会在以下场景被重新唤醒：
+  - **result trigger**：用户提交了数据
+  - **reminder trigger**：用户还在犹豫，提醒你去关注
+  - **expire trigger**：窗口超时关闭（仅非持久化窗口）
+- 收到 trigger 后应检查 callback_id，确认哪个窗口触发了唤醒
+- 用户提交后如果任务已完成，调用 `closeNimbleWindowTool` 清理资源
+- 不要在同一轮对话中反复创建相同的 Nimble 窗口

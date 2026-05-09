@@ -59,6 +59,7 @@ async def nimble_callback_post(payload: dict):
         trigger_manager.delete_trigger(session["reminder_trigger_id"])
         trigger_manager.delete_trigger(session["expire_trigger_id"])
         backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": "submitted"})
+        nimble.cleanup_nimble_session(callback_id)
     return {"status": "ok", "callback_id": callback_id}
 
 

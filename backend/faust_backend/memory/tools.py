@@ -8,6 +8,7 @@ from typing import Any
 
 from faust_backend.logger import get_logger
 from faust_backend.memory import get_memory
+from faust_backend.memory import GraphStore
 
 log = get_logger("faust.memory.tools")
 
@@ -52,7 +53,7 @@ def _run_bg(name: str, coro) -> str:
     return task_id
 
 
-def _m():
+def _m() -> GraphStore:
     return get_memory()
 
 
@@ -172,6 +173,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
             name_vecs = await m._embed_texts(names)
             existing_ids = await m.entity_find_similar(name_vecs, threshold=ENTITY_DEDUP_THRESHOLD)
             doc_nid = _path_id(doc_path)
+            name_to_id: dict[str, str] = {}
 
             for item, name_vec, existing_id in zip(entities, name_vecs, existing_ids):
                 name = str(item.get("name", ""))
@@ -181,6 +183,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
                 refs = item.get("kb_refs", []) or []
 
                 if existing_id:
+                    eid = existing_id
                     if m._has_node(doc_nid) and m._has_node(existing_id):
                         m._add_edge(doc_nid, existing_id, "from")
                 else:
@@ -189,11 +192,19 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
                                        name_embedding=name_vec.tolist())
                     if m._has_node(doc_nid):
                         m._add_edge(doc_nid, eid, "from")
+                name_to_id[name] = eid
 
         for item in relations:
+            src_name = str(item.get("source", ""))
+            tgt_name = str(item.get("target", ""))
+            src_id = name_to_id.get(src_name)
+            tgt_id = name_to_id.get(tgt_name)
+            if not src_id or not tgt_id:
+                log.warning("relation skipped: source=%s target=%s not found in current extraction", src_name, tgt_name)
+                continue
             m.relation_add(
-                source_id=str(item.get("source", "")),
-                target_id=str(item.get("target", "")),
+                source_id=src_id,
+                target_id=tgt_id,
                 rel_type=str(item.get("type", "relates_to")),
             )
         m.flush()

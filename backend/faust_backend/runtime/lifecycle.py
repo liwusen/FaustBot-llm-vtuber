@@ -24,6 +24,7 @@ import faust_backend.blive_manager as blive_manager
 import faust_backend.minecraft_client as minecraft_client
 import faust_backend.vad_runtime as vad_runtime
 import faust_backend.speech_runtime as speech_runtime
+import faust_backend.nimble as nimble
 from faust_backend.plugin_system import PluginManager
 from faust_backend.config_loader import args
 
@@ -345,6 +346,10 @@ async def lifespan(app: FastAPI):
     log.info("触发器看门狗线程正在启动...")
     trigger_manager.start_trigger_watchdog_thread()
     try:
+        await nimble.restore_persistent_sessions()
+    except Exception as e:
+        log.warning("恢复持久化 Nimble 窗口失败: %s", e)
+    try:
         await minecraft_client.ensure_started()
     except Exception as e:
         log.warning("Minecraft 桥启动时未连接: %s", e)
@@ -380,4 +385,10 @@ async def lifespan(app: FastAPI):
     await araya_runtime.get_araya_runtime(refresh=True).shutdown()
     trigger_manager.exitflag = True
     await vad_runtime.vad_runtime.shutdown()
+    for service in service_manager.get_service_keys():
+        try:
+            log.info("正在停止服务: %s", service)
+            service_manager.stop_service(service)
+        except Exception as e:
+            log.error("停止服务 %s 失败: %s", service, e)
     log.info("正在关闭 FAUST 后端主服务...")

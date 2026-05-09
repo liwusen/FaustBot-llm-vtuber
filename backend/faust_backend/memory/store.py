@@ -5,6 +5,7 @@ import base64
 import json
 import math
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -16,6 +17,7 @@ import networkx as nx
 import numpy as np
 from nano_vectordb import NanoVectorDB
 from openai import AsyncOpenAI
+from rank_bm25 import BM25Okapi
 
 import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
@@ -53,6 +55,24 @@ def _is_path_id(nid: str) -> bool:
 
 def _ent_id() -> str:
     return f"ent_{uuid.uuid4().hex}"
+
+
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"\w+", str(text).lower())
+
+
+def _bm25_score_worker(args: tuple) -> list[dict]:
+    corpus, doc_metas, query_tokens, top_k = args
+    bm25 = BM25Okapi(corpus)
+    scores = bm25.get_scores(query_tokens)
+    ps: dict[str, list[float]] = {}
+    for dm, sc in zip(doc_metas, scores):
+        ps.setdefault(dm["path"], []).append(sc)
+    ranked = sorted(
+        [{"path": p, "score": sum(sl) / len(sl), "_source": "bm25"} for p, sl in ps.items()],
+        key=lambda x: x["score"], reverse=True,
+    )
+    return ranked[:top_k]
 
 
 def _normalize_path(path: str) -> str:
@@ -129,6 +149,9 @@ class GraphStore:
         self._embed_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._dirty: bool = False
+        self._bm25_index: BM25Okapi | None = None
+        self._bm25_docs: list[dict] = []
+        self._bm25_corpus: list[list[str]] | None = None
         self._ensure_dirs()
         self._load()
 
@@ -674,6 +697,132 @@ class GraphStore:
         self.flush()
         return {"path": norm, "meta": meta}
 
+    # ── BM25 index ──
+
+    def _ensure_bm25_index(self) -> None:
+        if self._bm25_index is not None and not self._dirty:
+            return
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        docs: list[dict] = []
+        seen: set[str] = set()
+
+        # try VDB file first (populated in hybrid mode)
+        vdb_had_data = False
+        if self.index_file.exists():
+            log.info("Loading BM25 index from VDB file: %s", self.index_file)
+            import json as _json
+            raw = _json.loads(self.index_file.read_text(encoding="utf-8"))
+            items = raw.get("data", [])
+            if items:
+                vdb_had_data = True
+                path_chunks: dict[str, list[str]] = {}
+                for item in items:
+                    p = _normalize_path(str(item.get("node_path", "")))
+                    if p:
+                        path_chunks.setdefault(p, []).append(str(item.get("text", "")))
+                for p, texts in path_chunks.items():
+                    docs.append({"path": p, "text": " ".join(texts), "type": "content"})
+                    seen.add(p)
+
+        # BM25-only fallback: read chunk files in parallel
+        if not vdb_had_data and self.meta_dir.exists():
+            log.info("Loading BM25 index from chunk files in: %s", self.meta_dir)
+            chunk_files = list(self.meta_dir.rglob("*.chunks.json"))
+            if chunk_files:
+                def _load_chunks(cf):
+                    items = _read_json(cf, [])
+                    if not items:
+                        return None
+                    path_set: dict[str, list[str]] = {}
+                    for item in items:
+                        p = _normalize_path(str(item.get("node_path", "")))
+                        if p:
+                            path_set.setdefault(p, []).append(str(item.get("text", "")))
+                    return path_set
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    futures = {ex.submit(_load_chunks, cf): cf for cf in chunk_files}
+                    for f in as_completed(futures):
+                        try:
+                            path_set = f.result()
+                            if path_set:
+                                for p, texts in path_set.items():
+                                    if p not in seen:
+                                        docs.append({"path": p, "text": " ".join(texts), "type": "content"})
+                                        seen.add(p)
+                        except Exception:
+                            pass
+
+        # read meta descriptions in parallel
+        if self.meta_dir.exists():
+            log.info("Loading BM25 index from meta files in: %s", self.meta_dir)
+            meta_files = list(self.meta_dir.rglob("*.meta.json"))
+            if meta_files:
+                def _load_meta(mf):
+                    meta = _read_json(mf, {})
+                    p = meta.get("path", "")
+                    desc = str(meta.get("description", "") or "").strip()
+                    return (p, desc) if p and desc else None
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    futures = {ex.submit(_load_meta, mf): mf for mf in meta_files}
+                    for f in as_completed(futures):
+                        try:
+                            result = f.result()
+                            if result:
+                                p, desc = result
+                                if p not in seen:
+                                    docs.append({"path": p, "text": desc, "type": "description"})
+                                    seen.add(p)
+                        except Exception:
+                            pass
+
+        for nid, ndata in self._graph.nodes(data=True):
+            if ndata.get("type") == "entity":
+                name = str(ndata.get("name", "") or "").strip()
+                desc = str(ndata.get("description", "") or "").strip()
+                text = f"{name} {desc}".strip()
+                if text:
+                    docs.append({"path": nid, "text": text, "type": "entity"})
+
+        if not docs:
+            self._bm25_index = None
+            self._bm25_docs = []
+            self._bm25_corpus = None
+            return
+
+        tokenized = [_tokenize(d["text"]) for d in docs]
+        self._bm25_corpus = tokenized
+        self._bm25_index = BM25Okapi(tokenized)
+        self._bm25_docs = docs
+
+    def _bm25_search(self, query: str, top_k: int) -> list[dict]:
+        self._ensure_bm25_index()
+        if self._bm25_index is None or not self._bm25_docs:
+            return []
+        query_tokens = _tokenize(query)
+        scores = self._bm25_index.get_scores(query_tokens)
+        path_scores: dict[str, list[float]] = {}
+        for doc, score in zip(self._bm25_docs, scores):
+            path_scores.setdefault(doc["path"], []).append(score)
+        results = []
+        for path, sc_list in path_scores.items():
+            results.append({"path": path, "score": sum(sc_list) / len(sc_list), "_source": "bm25"})
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
+
+    def _bm25_search_batch(self, queries: list[str], top_k: int) -> list[list[dict]]:
+        self._ensure_bm25_index()
+        if self._bm25_index is None or not self._bm25_corpus:
+            return [[] for _ in queries]
+        import multiprocessing as _mp
+        from concurrent.futures import ProcessPoolExecutor
+        q_tokens = [_tokenize(q) for q in queries]
+        n_workers = min(len(queries), _mp.cpu_count() or 4)
+        if n_workers <= 1:
+            return [self._bm25_search(q, top_k) for q in queries]
+        args_list = [(self._bm25_corpus, self._bm25_docs, toks, top_k) for toks in q_tokens]
+        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+            return list(ex.map(_bm25_score_worker, args_list))
+
     # ── vector index ──
 
     def _ensure_vdb(self) -> NanoVectorDB:
@@ -702,6 +851,8 @@ class GraphStore:
 
     async def _embed_and_index(self, chunk_items: list[dict]) -> None:
         if not chunk_items:
+            return
+        if getattr(conf, 'BM25_ONLY', False):
             return
         texts = [c["text"] for c in chunk_items]
         embeddings = await self._embed_texts(texts)
@@ -930,7 +1081,7 @@ class GraphStore:
                 results.append(None)
         return results
 
-    # ── enhanced search ──
+    # ── top-level search (hybrid + graph + 2-hop) ──
 
     async def search(self, query: str, scope: str | None = None,
                      top_k: int = 8, return_mode: str = "snippets",
@@ -942,22 +1093,46 @@ class GraphStore:
         scope_prefix = _normalize_path(scope or "").strip("/")
         scope_prefix = f"{scope_prefix}/" if scope_prefix else ""
 
-        vector_results = await self._vector_search(q, scope_prefix, tags, top_k)
+        hybrid_results = await self._hybrid_search(q, scope_prefix, tags, top_k)
         graph_results = self._graph_search(q, top_k) if use_graph else []
 
         seen: dict[str, dict] = {}
-        for item in vector_results:
+        for item in hybrid_results:
             seen[item["path"]] = item
         for item in graph_results:
             p = item["path"]
             if p in seen:
-                seen[p]["_source"] = "vector+graph"
+                seen[p]["_source"] = "hybrid+graph"
                 seen[p]["score"] = max(seen[p]["score"], item["score"])
             else:
                 seen[p] = item
 
-        sorted_items = sorted(seen.values(), key=lambda x: x.get("score", 0), reverse=True)
-        results = sorted_items[:top_k]
+        # 2-hop expansion for matched paths
+        extra: dict[str, dict] = {}
+        for p in list(seen.keys()):
+            nid = _path_id(p)
+            if self._has_node(nid):
+                nb = self.get_neighbors(nid, depth=2)
+                for n in nb:
+                    pref = n.get("path_ref")
+                    if pref and pref not in seen and pref not in extra:
+                        meta = self._read_meta(pref)
+                        patch = float(meta.get("score_patch", 0.0))
+                        extra[pref] = {
+                            "path": pref,
+                            "raw_score": 0,
+                            "score_patch": patch,
+                            "score": patch,
+                            "tags": meta.get("tags", []),
+                            "snippet": "",
+                            "_source": "2hop",
+                        }
+
+        seen.update(extra)
+        merged_list = list(seen.values())
+        reranked = await self._rerank(q, merged_list, top_k)
+        sorted_items = sorted(reranked, key=lambda x: x.get("score", 0), reverse=True)
+        results = sorted_items[:top_k * 2]
 
         for item in results:
             if return_mode == "full" and not item.get("content"):
@@ -968,6 +1143,8 @@ class GraphStore:
                     item["content"] = ""
 
         return results
+
+    # ── hybrid search (vector + BM25) ──
 
     async def _vector_search(self, query: str, scope_prefix: str,
                              tags: list[str] | None, top_k: int) -> list[dict]:
@@ -1030,6 +1207,105 @@ class GraphStore:
 
         return sorted(best.values(), key=lambda x: x["score"], reverse=True)
 
+    async def _hybrid_search(self, query: str, scope_prefix: str,
+                              tags: list[str] | None, top_k: int) -> list[dict]:
+        if getattr(conf, 'BM25_ONLY', False):
+            bm25_results = self._bm25_search(query, top_k * 2)
+            filtered: list[dict] = []
+            required_tags = {t.casefold() for t in (tags or [])}
+            for item in bm25_results:
+                p = item["path"]
+                if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
+                    continue
+                if required_tags:
+                    meta = self._read_meta(p)
+                    if not required_tags.issubset({t.casefold() for t in meta.get("tags", [])}):
+                        continue
+                if p.startswith("ent_"):
+                    continue
+                meta = self._read_meta(p)
+                patch = float(meta.get("score_patch", 0.0))
+                normalized_tags = meta.get("tags", [])
+                filtered.append({
+                    "path": p,
+                    "raw_score": item["score"],
+                    "score_patch": patch,
+                    "score": item["score"] + patch,
+                    "tags": normalized_tags,
+                    "snippet": "",
+                    "_source": "bm25_only",
+                })
+            return filtered[:top_k]
+
+        vector_results = await self._vector_search(query, scope_prefix, tags, top_k)
+        bm25_results = self._bm25_search(query, top_k * 2)
+
+        required_tags = {t.casefold() for t in (tags or [])}
+        bm25_filtered = []
+        for item in bm25_results:
+            p = item["path"]
+            if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
+                continue
+            if required_tags:
+                meta = self._read_meta(p)
+                current_set = {t.casefold() for t in meta.get("tags", [])}
+                if not required_tags.issubset(current_set):
+                    continue
+            if p.startswith("ent_"):
+                continue
+            bm25_filtered.append(item)
+
+        vec_norms: dict[str, float] = {}
+        if vector_results:
+            mx = max(item["raw_score"] for item in vector_results)
+            if mx > 0:
+                for item in vector_results:
+                    vec_norms[item["path"]] = item["raw_score"] / mx
+            else:
+                for item in vector_results:
+                    vec_norms[item["path"]] = 0.0
+
+        bm25_norms: dict[str, float] = {}
+        if bm25_filtered:
+            mx = max(item["score"] for item in bm25_filtered)
+            if mx > 0:
+                for item in bm25_filtered:
+                    bm25_norms[item["path"]] = item["score"] / mx
+            else:
+                for item in bm25_filtered:
+                    bm25_norms[item["path"]] = 0.0
+
+        alpha = 0.5
+        merged: dict[str, dict] = {}
+
+        for item in vector_results:
+            p = item["path"]
+            vec_n = vec_norms.get(p, 0)
+            bm25_n = bm25_norms.get(p, 0)
+            combined = alpha * vec_n + (1 - alpha) * bm25_n
+            patch = item.get("score_patch", 0)
+            merged[p] = {**item, "score": combined + patch, "_source": "hybrid"}
+
+        for item in bm25_filtered:
+            p = item["path"]
+            if p in merged:
+                continue
+            meta = self._read_meta(p)
+            patch = float(meta.get("score_patch", 0.0))
+            bm25_n = bm25_norms.get(p, 0)
+            merged[p] = {
+                "path": p,
+                "raw_score": 0,
+                "score_patch": patch,
+                "score": bm25_n + patch,
+                "tags": meta.get("tags", []),
+                "snippet": "",
+                "_source": "bm25",
+            }
+
+        results = sorted(merged.values(), key=lambda x: x.get("score", 0), reverse=True)
+        return results[:top_k]
+
     async def search_compact(self, query: str, scope: str | None = None,
                               top_k: int = 5) -> list[dict]:
         q = str(query or "").strip()
@@ -1037,9 +1313,9 @@ class GraphStore:
             return []
         scope_prefix = _normalize_path(scope or "").strip("/")
         scope_prefix = f"{scope_prefix}/" if scope_prefix else ""
-        vector_results = await self._vector_search(q, scope_prefix, None, top_k)
+        hybrid_results = await self._hybrid_search(q, scope_prefix, None, top_k)
         seen: dict[str, dict] = {}
-        for item in vector_results:
+        for item in hybrid_results:
             p = item["path"]
             meta = self._read_meta(p)
             desc = meta.get("description", "") or self._get_node_attr(_path_id(p), "description", "")
@@ -1065,8 +1341,10 @@ class GraphStore:
                             "description": desc2,
                             "score": 0,
                         }
-        results = sorted(seen.values(), key=lambda x: x.get("score", 0), reverse=True)
-        return results[:top_k * 2]
+        merged = list(seen.values())
+        reranked = await self._rerank(q, merged, top_k)
+        reranked.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return reranked[:top_k * 2]
 
     def _is_binary_path(self, path: str) -> bool:
         """检测文件后缀是否为图片/二进制文件"""
@@ -1089,7 +1367,25 @@ class GraphStore:
         q = str(query or "").strip().lower()
         if not q:
             return []
+        # match both entity names AND descriptions
         matched = self.entity_search(q, top_k=10)
+        for nid, ndata in self._graph.nodes(data=True):
+            if ndata.get("type") != "entity":
+                continue
+            nid_ = str(nid)
+            if any(m["id"] == nid_ for m in matched):
+                continue
+            desc = str(ndata.get("description", "") or "").lower()
+            if q in desc:
+                matched.append({
+                    "id": nid_,
+                    "name": ndata.get("name", ""),
+                    "entity_type": ndata.get("entity_type", "custom"),
+                    "description": ndata.get("description", ""),
+                    "properties": dict(ndata.get("properties", {})),
+                    "kb_refs": list(ndata.get("kb_refs", [])),
+                    "created_at": ndata.get("created_at", ""),
+                })
         if not matched:
             return []
         path_scores: dict[str, float] = {}
@@ -1116,6 +1412,55 @@ class GraphStore:
                 "_source": "graph",
             })
         return results
+
+    # ── reranker ──
+
+    async def _rerank(self, query: str, items: list[dict], top_k: int) -> list[dict]:
+        if not conf.RERANK_ENABLED or getattr(conf, 'BM25_ONLY', False) or not items:
+            return items
+        texts: list[str] = []
+        for item in items:
+            t = item.get("snippet") or item.get("description", "")
+            if not t:
+                meta = self._read_meta(item["path"])
+                t = str(meta.get("description", "") or "")
+            texts.append(t[:512])
+        if not any(texts):
+            return items
+        try:
+            import httpx
+            api_key = conf.RERANK_API_KEY or conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"{conf.RERANK_API_BASE}/rerank",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": conf.RERANK_MODEL,
+                        "query": query,
+                        "documents": texts,
+                        "top_n": min(top_k * 2, len(items)),
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                return items
+            score_map: dict[str, float] = {}
+            for r in results:
+                idx = r.get("index")
+                if isinstance(idx, int) and 0 <= idx < len(items):
+                    score_map[items[idx]["path"]] = r.get("relevance_score") or r.get("score") or 0.0
+            for item in items:
+                rerank_score = score_map.get(item["path"])
+                if rerank_score is not None:
+                    item["_rerank_score"] = rerank_score
+                    item["score"] = rerank_score
+                    item["_source"] = str(item.get("_source", "")) + "+rerank"
+            items.sort(key=lambda x: x.get("score", 0), reverse=True)
+        except Exception as e:
+            log.warning("rerank failed: %s", e)
+        return items
 
     # ── changed nodes ──
 

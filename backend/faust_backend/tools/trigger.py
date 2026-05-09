@@ -1,6 +1,6 @@
 from langchain.tools import tool
 
-from faust_backend.tools._registry import register, STARTED
+from faust_backend.tools._registry import register
 import faust_backend.trigger_manager as trigger_manager
 from faust_backend.logger import get_logger
 
@@ -17,8 +17,6 @@ def triggerListTool() -> str:
     Returns:
         str: 触发器列表的字符串表示，或者错误信息。
     """
-    if not STARTED:
-        return "系统尚未完全启动，无法列出触发器。"
     try:
         log.info("Listing all triggers.")
         return trigger_manager.get_trigger_information()
@@ -37,8 +35,6 @@ def triggerAddTool(trigger_json: str) -> str:
     Returns:
         str: 添加结果的确认信息，或者错误信息。
     """
-    if not STARTED:
-        return "系统尚未完全启动，无法操作触发器。"
     try:
         log.info("Adding new trigger with JSON: %s", trigger_json)
         trigger_manager.append_trigger(trigger_json)
@@ -58,8 +54,6 @@ def triggerRemoveTool(trigger_id: str) -> str:
     Returns:
         str: 移除结果的确认信息，或者错误信息。
     """
-    if not STARTED:
-        return "系统尚未完全启动，无法操作触发器。"
     try:
         log.info("Removing trigger with ID: %s", trigger_id)
         trigger_manager.delete_trigger(trigger_id)

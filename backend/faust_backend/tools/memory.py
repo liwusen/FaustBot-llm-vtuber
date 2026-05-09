@@ -36,12 +36,12 @@ def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool
     return _memoryWriteTool(path, content, declared_by, index, tags_json)
 
 
-@register
-@tool
-def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags_json: str = "[]", ignore_score_patch: bool = False) -> str:
-    """在知识库指定范围内做向量检索。"""
-    from faust_backend.memory.tools import memorySearchTool as _impl
-    return _impl(query, scope, top_k, return_mode, tags_json, True)
+# @register
+# @tool
+# def kbSearchTool(query: str, scope: str = "", top_k: int = 8, return_mode: str = "snippets", tags_json: str = "[]", ignore_score_patch: bool = False) -> str:
+#     """在知识库指定范围内做向量检索。"""
+#     from faust_backend.memory.tools import memorySearchTool as _impl
+#     return _impl(query, scope, top_k, return_mode, tags_json, True)
 
 
 @register
@@ -90,15 +90,16 @@ def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
     """
     Description:
         增强记忆搜索。默认返回 compact JSON（path, line_count, description），
-        并自动扩展相邻节点。让模型根据 path 自行读取文件内容。
+        并自动扩展相邻节点。你可以根据 path 自行读取文件内容。
         设置 return_mode='snippets' 可切回传统带片段的结果。
+        但我们建议你使用 compact 模式并自行读取，能获得更好的上下文和更快的响应。
     Args:
-        query (str): 搜索查询。
-        scope (str): 限定目录范围。
+        query (str): 搜索查询,支持自然语言。
+        scope (str): 限定目录范围,如果不确定可留空。
         top_k (int): 返回数量，默认 5。
         return_mode (str): compact/snippets/paths/full。
         tags_json (str): JSON 标签数组，按标签过滤。
-        use_graph (bool): 是否启用图谱增强搜索。
+        use_graph (bool): 是否启用图谱增强搜索,建议始终启用。
     Returns:
         str(json): 搜索结果列表。compact 模式下每项含 path, line_count, description, score。
     """

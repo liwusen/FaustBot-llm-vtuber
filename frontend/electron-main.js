@@ -6,6 +6,8 @@ const https = require('https');
 const { URL } = require('url');
 const { spawn } = require('child_process');
 
+const net = require('net');
+
 let mainWindow = null;
 let configWindow = null;
 let tray = null;
@@ -626,6 +628,14 @@ function createWindow(){
 
   const index = path.join(getFrontendAppDir(), 'index.html');
   mainWindow.loadFile(index);
+
+  mainWindow.webContents.on('did-start-loading', () => {
+    rendererReady = false;
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    flushCommandBuffer();
+  });
   // start fullscreen. mouse-ignore (click-through) is controlled from renderer via IPC
 
   // Ensure the window remains fullscreen: if it ever leaves fullscreen or is resized,
@@ -893,6 +903,33 @@ app.on('open-url', (event, url) => {
   queueDeepLinkUrl(url);
 });
 
+const BACKEND_PORT_TO_CHECK = 13900;
+const BACKEND_DIR = path.join(__dirname, '..', 'backend');
+const BACKEND_MAIN = path.join(BACKEND_DIR, 'main.py');
+
+function checkPort(port){
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(1500);
+    socket.on('connect', () => { socket.destroy(); resolve(true); });
+    socket.on('error', () => { socket.destroy(); resolve(false); });
+    socket.on('timeout', () => { socket.destroy(); resolve(false); });
+    socket.connect(port, '127.0.0.1');
+  });
+}
+
+function startBackendInPowerShell(){
+  const cmd = "chcp 65001 | Out-Null; cd '" + BACKEND_DIR.replace(/'/g, "''") + "'; ./MAIN.bat";
+  const child = spawn('powershell.exe', ['-NoExit', '-Command', cmd], {
+    windowsHide: false,
+    cwd: BACKEND_DIR,
+  });
+  child.stdout.on('data', (d) => console.log('[backend-ps]', d.toString().trimEnd()));
+  child.stderr.on('data', (d) => console.error('[backend-ps]', d.toString().trimEnd()));
+  child.on('error', (e) => console.error('启动后端 PowerShell 失败', e));
+  console.log('后端已在独立 PowerShell 窗口中启动，等待就绪…');
+}
+
 app.whenReady().then(()=>{
   registerStaticProtocol();
   registerFaustProtocolClient();
@@ -905,6 +942,15 @@ app.whenReady().then(()=>{
     }
   }
   flushPendingDeepLinks();
+  // Check if backend is already running; if not, start it in a PowerShell window
+  checkPort(BACKEND_PORT_TO_CHECK).then((open) => {
+    if (!open) {
+      console.warn(`端口 ${BACKEND_PORT_TO_CHECK} 未开放，启动后端…`);
+      startBackendInPowerShell();
+    } else {
+      console.log(`端口 ${BACKEND_PORT_TO_CHECK} 已开放，后端已在运行`);
+    }
+  });
   // Start WebSocket command client (main process)
   startCommandWS();
   app.on('activate', ()=>{ if (BrowserWindow.getAllWindows().length === 0) createWindow(); })
@@ -1068,6 +1114,21 @@ try {
 }
 
 // WS client to receive commands from backend and forward to renderer
+const commandBuffer = [];
+let rendererReady = false;
+
+function flushCommandBuffer(){
+  rendererReady = true;
+  while (commandBuffer.length) {
+    const text = commandBuffer.shift();
+    try{
+      if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('faust-command', text);
+    }catch(e){
+      console.error('Failed to forward faust command to renderer', e);
+    }
+  }
+}
+
 function startCommandWS(){
   if (!WSImpl){
     console.warn('WebSocket client not available in main process; faust commands will not be received. Install "ws" in frontend.');
@@ -1094,11 +1155,14 @@ function startCommandWS(){
     ws.on('message', (data, isBinary) => {
       const text = decodeWsTextMessage(data, isBinary);
       console.log('[faust-ws] message:', text);
-      try{
-        // forward raw text to renderer
-        if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('faust-command', text);
-      }catch(e){
-        console.error('Failed to forward faust command to renderer', e);
+      if (rendererReady) {
+        try{
+          if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('faust-command', text);
+        }catch(e){
+          console.error('Failed to forward faust command to renderer', e);
+        }
+      } else {
+        commandBuffer.push(text);
       }
     });
 

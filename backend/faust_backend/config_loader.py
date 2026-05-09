@@ -106,6 +106,8 @@ def load_configs():
     global SECURITY_VERIFIER_LLM_API_ENDPOINT, SECURITY_VERIFIER_LLM_MODEL, SECURITY_SYS_ENABLED, AGENT_ROOT
     global KB_ENABLED, KB_EMBED_MODEL, KB_ASYNC_INDEX_ON_WRITE, ARAYA_ENABLED, ARAYA_IDLE_MINUTES
     global MEMORY_GRAPH_ENABLED, MEMORY_IMAGE_ENABLED, MEMORY_IMAGE_VLM_MODEL
+    global RERANK_ENABLED, RERANK_API_BASE, RERANK_MODEL, RERANK_API_KEY, RERANK_TOP_K
+    global BM25_ONLY
     global TEXT_CHAT_BAR_Y_FACTOR, FRONTEND_QUICK_CONTROLLER_X_OFFSET
     global TTS_MODE, ASR_MODE, OPENAI_TTS_BASE_URL, OPENAI_TTS_MODEL, OPENAI_TTS_VOICE, OPENAI_TTS_RESPONSE_FORMAT, OPENAI_TTS_SPEED, OPENAI_TTS_INSTRUCTIONS
     global OPENAI_ASR_BASE_URL, OPENAI_ASR_MODEL, OPENAI_ASR_LANGUAGE, OPENAI_ASR_PROMPT, OPENAI_ASR_RESPONSE_FORMAT, OPENAI_ASR_TEMPERATURE, OPENAI_ASR_TIMESTAMP_GRANULARITIES
@@ -127,6 +129,7 @@ def load_configs():
     GUI_OPERATOR_LLM_KEY = private_config.get('GUI_OPERATOR_LLM_KEY', '')
     SECURITY_VERIFIER_LLM_KEY = private_config.get('SECURITY_VERIFIER_LLM_KEY', '')
     KB_OPENAI_API_KEY = private_config.get('KB_OPENAI_API_KEY', '')
+    RERANK_API_KEY = private_config.get('RERANK_API_KEY', '')
     OPENAI_TTS_API_KEY = private_config.get('OPENAI_TTS_API_KEY', CHAT_API_KEY)
     OPENAI_ASR_API_KEY = private_config.get('OPENAI_ASR_API_KEY', CHAT_API_KEY)
     FAUSTBOT_CLOUD_SERVICE_KEY = private_config.get('FAUSTBOT_CLOUD_SERVICE_KEY', '')
@@ -143,6 +146,11 @@ def load_configs():
     KB_ENABLED = bool(config.get('KB_ENABLED', True))
     KB_EMBED_MODEL = str(config.get('KB_EMBED_MODEL', 'text-embedding-3-small') or 'text-embedding-3-small').strip()
     KB_ASYNC_INDEX_ON_WRITE = bool(config.get('KB_ASYNC_INDEX_ON_WRITE', True))
+    RERANK_ENABLED = bool(config.get('RERANK_ENABLED', False))
+    RERANK_API_BASE = str(config.get('RERANK_API_BASE', 'https://api.openai.com/v1') or 'https://api.openai.com/v1').strip()
+    RERANK_MODEL = str(config.get('RERANK_MODEL', 'Qwen3-Reranker-4B') or 'Qwen3-Reranker-4B').strip()
+    RERANK_TOP_K = int(config.get('RERANK_TOP_K', 5) or 5)
+    BM25_ONLY = bool(config.get('BM25_ONLY', False))
     MEMORY_GRAPH_ENABLED = bool(config.get('MEMORY_GRAPH_ENABLED', True))
     MEMORY_IMAGE_ENABLED = bool(config.get('MEMORY_IMAGE_ENABLED', True))
     MEMORY_IMAGE_VLM_MODEL = str(config.get('MEMORY_IMAGE_VLM_MODEL', 'gpt-4o') or 'gpt-4o').strip()

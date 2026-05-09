@@ -41,7 +41,6 @@ def set_runtime_state(*, ready: bool, status: str, error: str = ""):
     RUNTIME_READY = bool(ready)
     RUNTIME_STATUS = str(status or ("ready" if ready else "waiting_for_config"))
     RUNTIME_ERROR = str(error or "")
-    llm_tools.STARTED = RUNTIME_READY
 
 
 def runtime_not_ready_message() -> str:

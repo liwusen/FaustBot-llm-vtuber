@@ -97,6 +97,7 @@ async def chat_websocket(websocket: WebSocket):
 async def command_websocket(websocket: WebSocket):
     await websocket.accept()
     backend2frontend.FrontEndSay("Hello World! 你好,世界!")
+    nimble.push_persistent_sessions_to_frontend()
     try:
         while True:
             if backend2frontend.hasFrontEndTask():

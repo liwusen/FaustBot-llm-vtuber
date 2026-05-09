@@ -93,6 +93,31 @@
     return normalized;
   }
 
+  function isInteractiveElement(el){
+    const tag = el.tagName;
+    if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'A'].includes(tag)) return true;
+    if (el.hasAttribute('onclick') || el.hasAttribute('onmousedown') || el.hasAttribute('onmouseup')) return true;
+    if (el.isContentEditable) return true;
+    if (el.getAttribute('role') === 'button') return true;
+    return false;
+  }
+
+  function isPointOverNimble(clientX, clientY){
+    const host = document.getElementById('nimble-host');
+    if (!host) return false;
+    const el = document.elementFromPoint(clientX, clientY);
+    if (!el) return false;
+    const win = el.closest('.nimble-window');
+    if (!win) return false;
+    // elements with nimble-pass-through class let clicks pass through to desktop
+    if (el.closest('.nimble-pass-through')) return false;
+    // In fullscreen mode, only genuinely interactive elements block click-through
+    if (win.classList.contains('nimble-fullscreen')) {
+      return isInteractiveElement(el);
+    }
+    return true;
+  }
+
   function ensureNimbleHost(){
     let host = document.getElementById('nimble-host');
     if (host) return host;
@@ -110,33 +135,124 @@
     return host;
   }
 
-  function installNimbleAPI(callbackId){
+  let nimbleDragState = null;
+
+  document.addEventListener('mousemove', (e)=>{
+    if (!nimbleDragState) return;
+    const { shell, offsetX, offsetY } = nimbleDragState;
+    shell.style.left = (e.clientX - offsetX) + 'px';
+    shell.style.top = (e.clientY - offsetY) + 'px';
+    shell.style.right = 'auto';
+  });
+
+  document.addEventListener('mouseup', ()=>{
+    if (!nimbleDragState) return;
+    const { shell } = nimbleDragState;
+    shell.style.cursor = '';
+    shell.style.userSelect = '';
+    nimbleDragState = null;
+  });
+
+  function installNimbleAPI(callbackId, shell, header){
     activeNimbleContext = { callbackId };
+    const getState = () => ({
+      width: shell.style.width,
+      height: shell.style.height,
+      left: shell.style.left,
+      top: shell.style.top,
+      position: shell.style.position,
+      draggable: header ? header.classList.contains('nimble-draggable') : false,
+      fullscreen: shell.classList.contains('nimble-fullscreen'),
+    });
     window.nimble = {
-      submit: async (data)=>{
-        const currentId = activeNimbleContext && activeNimbleContext.callbackId ? activeNimbleContext.callbackId : callbackId;
+      submit: async (data, closeWindow = true)=>{
         const r = await fetch(NIMBLE_CALLBACK_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: currentId, data, close: true })
+          body: JSON.stringify({ callback_id: callbackId, data, close: closeWindow })
         });
         const j = await r.json().catch(()=>({}));
         if (!r.ok || j.error) throw new Error(j.error || `nimble submit failed: ${r.status}`);
-        closeNimbleWindow(currentId, false);
+        if (closeWindow) closeNimbleWindow(callbackId, false);
         return j;
       },
       close: async (reason='closed_by_user')=>{
-        const currentId = activeNimbleContext && activeNimbleContext.callbackId ? activeNimbleContext.callbackId : callbackId;
         const r = await fetch(NIMBLE_CLOSE_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: currentId, reason })
+          body: JSON.stringify({ callback_id: callbackId, reason })
         });
         const j = await r.json().catch(()=>({}));
         if (!r.ok || j.error) throw new Error(j.error || `nimble close failed: ${r.status}`);
-        closeNimbleWindow(currentId, false);
+        closeNimbleWindow(callbackId, false);
         return j;
-      }
+      },
+      resize(width, height){
+        shell.style.width = width;
+        shell.style.height = height;
+      },
+      move(x, y){
+        shell.style.left = x;
+        shell.style.top = y;
+        shell.style.right = 'auto';
+      },
+      setDraggable(enabled){
+        if (!header) return;
+        header.classList.toggle('nimble-draggable', enabled);
+        header.style.cursor = enabled ? 'grab' : '';
+      },
+      setFullscreen(enabled){
+        if (enabled){
+          shell._nimblePrev = {
+            width: shell.style.width,
+            height: shell.style.height,
+            left: shell.style.left,
+            top: shell.style.top,
+            right: shell.style.right,
+            position: shell.style.position,
+          };
+          shell.style.position = 'fixed';
+          shell.style.top = '0';
+          shell.style.left = '0';
+          shell.style.right = '0';
+          shell.style.width = '100vw';
+          shell.style.height = '100vh';
+          shell.style.maxWidth = 'none';
+          shell.style.maxHeight = 'none';
+          shell.style.borderRadius = '0';
+          shell.style.zIndex = '9999';
+          shell.style.background = 'transparent';
+          shell.style.backdropFilter = 'none';
+          shell.classList.add('nimble-fullscreen');
+        } else {
+          const prev = shell._nimblePrev || {};
+          shell.style.position = prev.position || 'relative';
+          shell.style.top = prev.top || '';
+          shell.style.left = prev.left || '';
+          shell.style.right = prev.right || '';
+          shell.style.width = prev.width || '360px';
+          shell.style.height = prev.height || '';
+          shell.style.maxWidth = '40vw';
+          shell.style.maxHeight = '70vh';
+          shell.style.borderRadius = '14px';
+          shell.style.zIndex = '';
+          shell.style.background = 'rgba(20,24,30,0.92)';
+          shell.style.backdropFilter = 'blur(8px)';
+          shell.classList.remove('nimble-fullscreen');
+        }
+      },
+      getConfig(){
+        const rect = shell.getBoundingClientRect();
+        return {
+          callbackId,
+          width: rect.width,
+          height: rect.height,
+          x: rect.left,
+          y: rect.top,
+          zIndex: shell.style.zIndex,
+          ...getState(),
+        };
+      },
     };
   }
 
@@ -198,17 +314,46 @@
     body.style.padding = '12px';
     body.style.overflow = 'auto';
     body.style.maxHeight = 'calc(70vh - 48px)';
-    installNimbleAPI(payload.callback_id);
+
+    // assemble shell first, then set HTML + run scripts (so shell is in DOM)
+    shell.appendChild(header);
+    shell.appendChild(body);
+    host.appendChild(shell);
+    nimbleWindows.set(payload.callback_id, shell);
+
+    installNimbleAPI(payload.callback_id, shell, header);
     try{
       body.innerHTML = payload.html || '<div>空窗口</div>';
     }catch(e){
       body.textContent = '灵动窗口 HTML 渲染失败: ' + String(e);
     }
+    // re-execute script tags (innerHTML does not execute them)
+    try{
+      body.querySelectorAll('script').forEach((oldScript) => {
+        const newScript = document.createElement('script');
+        if (oldScript.src) {
+          newScript.src = oldScript.src;
+        } else {
+          newScript.textContent = oldScript.textContent;
+        }
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
+    }catch(e){
+      console.warn('nimble script exec error', e);
+    }
 
-    shell.appendChild(header);
-    shell.appendChild(body);
-    host.appendChild(shell);
-    nimbleWindows.set(payload.callback_id, shell);
+    // drag support: mousedown on header starts drag
+    header.addEventListener('mousedown', (e)=>{
+      if (!header.classList.contains('nimble-draggable')) return;
+      if (e.button !== 0) return;
+      const rect = shell.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+      const offsetY = e.clientY - rect.top;
+      nimbleDragState = { shell, offsetX, offsetY };
+      shell.style.cursor = 'grabbing';
+      shell.style.userSelect = 'none';
+      e.preventDefault();
+    });
   }
 
   function ensureHilApprovalHost(){
@@ -589,6 +734,11 @@
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
+  function isPointOverNimbleWindow(clientX, clientY){
+    const el = document.elementFromPoint(clientX, clientY);
+    if (!el) return false;
+    return !!el.closest('.nimble-window');
+  }
   function isPointOverAsrBubble(clientX, clientY){
     if (!asrBubbleEl || asrBubbleEl.style.display === 'none') return false;
     const rect = asrBubbleEl.getBoundingClientRect();
@@ -2250,7 +2400,10 @@
         const overAsrBubble = isPointOverAsrBubble(e.clientX, e.clientY);
         const overHilApproval = isPointOverHilApproval(e.clientX, e.clientY);
         const overVRMConfig = isPointOverVRMConfig(e.clientX, e.clientY);
-        const overInteractive = hoverQuickController || hoverModel || overAsrBubble || overHilApproval || overVRMConfig || dragging || interactionLocked;
+        const overNimble = isPointOverNimble(e.clientX, e.clientY);
+        const onNimbleWindow = isPointOverNimbleWindow(e.clientX, e.clientY);
+        console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overNimble, onNimbleWindow });
+        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overNimble || onNimbleWindow || dragging || interactionLocked;
         if (overInteractive){
           if (!interactiveActive){
             interactiveActive = true;

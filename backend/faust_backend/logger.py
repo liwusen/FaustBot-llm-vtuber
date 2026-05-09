@@ -13,7 +13,6 @@ FaustBot 统一日志系统
     from faust_backend.logger import get_logger
     log = get_logger("faust.main")
     log.info("服务启动")
-    log.error("连接失败", exc_info=True)
 """
 
 from __future__ import annotations
