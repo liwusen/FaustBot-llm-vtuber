@@ -8,7 +8,7 @@ from faust_backend.tools._patch_utils import safe_read_file_range, apply_patch_t
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.tools.file_ops")
-
+log.error("faust.tools.file_ops is deprecated. Please use faust_backend.tools.file_ops instead.")
 
 @register
 @tool
