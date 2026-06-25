@@ -60,7 +60,7 @@ class VadRuntime:
             }
 
     def _load_model(self):
-        torch.set_default_dtype(torch.float32)
+        # torch.set_default_dtype(torch.float32)
         model_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         torch_hub_dir = os.path.join(model_root, "asr-hub", "model", "torch_hub")
         os.makedirs(torch_hub_dir, exist_ok=True)
@@ -71,6 +71,7 @@ class VadRuntime:
             force_reload=False,
             trust_repo=True,
             onnx=False,
+            skip_validation=os.path.exists(model_root)
         )
         model.to("cpu")
         model.eval()
