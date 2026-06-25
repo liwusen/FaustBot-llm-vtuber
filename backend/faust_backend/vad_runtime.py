@@ -60,19 +60,31 @@ class VadRuntime:
             }
 
     def _load_model(self):
-        # torch.set_default_dtype(torch.float32)
         model_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         torch_hub_dir = os.path.join(model_root, "asr-hub", "model", "torch_hub")
         os.makedirs(torch_hub_dir, exist_ok=True)
         torch.hub.set_dir(torch_hub_dir)
-        model, _ = torch.hub.load(
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            force_reload=False,
-            trust_repo=True,
-            onnx=False,
-            skip_validation=os.path.exists(model_root)
-        )
+
+        # Check if model is already cached locally — avoid any network access
+        cache_dir = os.path.join(torch_hub_dir, "snakers4_silero-vad_master")
+        cached = os.path.isdir(cache_dir) and os.path.isfile(
+            os.path.join(cache_dir, "hubconf.py"))
+
+        if cached:
+            model, _ = torch.hub.load(
+                repo_or_dir=cache_dir,
+                model="silero_vad",
+                source="local",
+            )
+        else:
+            model, _ = torch.hub.load(
+                repo_or_dir="snakers4/silero-vad",
+                model="silero_vad",
+                force_reload=False,
+                trust_repo=True,
+                onnx=False,
+                skip_validation=False,
+            )
         model.to("cpu")
         model.eval()
         return model

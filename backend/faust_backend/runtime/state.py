@@ -16,8 +16,6 @@ THREAD_ID = 84
 # ── SQLite 持久化 ──
 conn = None
 checkpointer = None
-conn_for_store = None
-storer = None
 
 # ── 运行时就绪状态 ──
 RUNTIME_READY = False
@@ -78,7 +76,7 @@ def makeup_init_prompt():
         PROMPT = ""
         raise FileNotFoundError(f"Agent file for '{AGENT_NAME}' not found.")
     parts = []
-    for fname in ("AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"):
+    for fname in ("AGENT.md", "ROLE.md", "COREMEMORY.md"):
         fpath = os.path.join(AGENT_ROOT, fname)
         if os.path.exists(fpath):
             with open(fpath, "r", encoding="utf-8") as f:

@@ -1,5 +1,27 @@
 # Filename:TASK.md
 
+## 核心工具速查
+
+你拥有六种核心工具，替代了旧的 readTextFileTool / sysExecTool / writeTextFileTool / kbReadTool / kbWriteTool / memorySearchTool：
+
+| 工具 | 用途 | 示例 |
+|------|------|------|
+| **read** | 读文件/目录/artifact/记忆 | `read("src/main.py:50-100")` `read("artifact://shell_3")` `read("memory://notes/math")` |
+| **execute** | 运行 shell/python/js 代码 | `execute("python", "print(1+2)")` `execute("shell", "dir")` |
+| **write** | 写文件或记忆库 | `write("notes.md", "# Hi")` `write("memory://facts", "知识内容")` |
+| **edit** | 精确行编辑 | `edit("file.py", "SWAP 5.=7:\\n+新内容\\n")` |
+| **search** | 搜索文件系统或记忆库 | `search("关键词", paths=["src/", "memory://"])` |
+| **find** | glob 文件匹配 | `find(["src/**/*.py", "tests/**/*.ts"])` |
+
+**关键工作流**：
+1. 先用 read（结构摘要）了解文件概貌
+2. 再用 read（行号范围）精读感兴趣的部分
+3. 修改少量行用 edit，创建新文件用 write
+4. 查找信息用 search，定位文件用 find
+5. 工具输出被截断时，用 read("artifact://ID") 查看完整内容
+
+---
+
 ## Minecraft 操作系统说明
 
 你现在拥有一个可直接操作 Minecraft 的外部操作系统。你可以通过工具连接 Minecraft 服务器、观察游戏状态、执行动作，并在游戏事件发生时被触发器唤醒。

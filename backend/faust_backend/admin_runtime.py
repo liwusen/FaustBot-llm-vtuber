@@ -23,7 +23,10 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "OPENAI_ASR_PREROLL_MS",
 }
 
-AGENT_CORE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]
+AGENT_TEMPLATE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]  # read-only, bound to template
+AGENT_EDITABLE_FILES: list[str] = []  # no user-editable file
+AGENT_CORE_FILES = AGENT_TEMPLATE_FILES + AGENT_EDITABLE_FILES
+AGENT_SYNC_FILES = AGENT_CORE_FILES  # all files synced from template on rebuild
 PUBLIC_CONFIG_DEFAULTS = {
     "GUI_OPERATOR_LLM_MODEL": "gui-plus",
     "GUI_OPERATOR_LLM_BASE": "https://www.dmxapi.cn/v1/chat/completions",
@@ -70,17 +73,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "OPENAI_ASR_MODEL": "gpt-4o-transcribe",
     "OPENAI_ASR_LANGUAGE": "",
     "OPENAI_ASR_PROMPT": "",
-    "OPENAI_ASR_RESPONSE_FORMAT": "json",
-    "OPENAI_ASR_TEMPERATURE": 0.0,
     "OPENAI_ASR_TIMESTAMP_GRANULARITIES": "",
-    "WHISPER_MODEL": "base",
-    "WHISPER_DEVICE": "auto",
-    "WHISPER_LANGUAGE": "",
-    "WHISPER_PROMPT": "",
-    "WHISPER_FP16": False,
-    "WHISPER_TEMPERATURE": 0.0,
-    "WHISPER_BEST_OF": 5,
-    "WHISPER_BEAM_SIZE": 5,
     "FAUSTBOT_CLOUD_BASE_URL": "http://127.0.0.1:18980",
     "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH": "",
     "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
@@ -248,14 +241,49 @@ def _ensure_agent_core_files(agent_dir: Path, template: Dict[str, str] | None = 
     (agent_dir / "kb_index").mkdir(parents=True, exist_ok=True)
     for filename in AGENT_CORE_FILES:
         path = agent_dir / filename
-        if path.exists():
-            continue
-        default_text = template.get(filename, f"# {filename}\n")
-        path.write_text(default_text, encoding="utf-8")
+        if filename in AGENT_TEMPLATE_FILES:
+            # Locked template files: always overwrite from source
+            src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
+            if src.exists():
+                path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            elif not path.exists():
+                path.write_text(f"# {filename}\n", encoding="utf-8")
+        elif not path.exists():
+            # Editable files: pull from template only on first creation
+            src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
+            if src.exists():
+                path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            else:
+                path.write_text(template.get(filename, f"# {filename}\n"), encoding="utf-8")
     triggers_path = agent_dir / "triggers.json"
     if not triggers_path.exists():
         triggers_path.write_text(json.dumps({"watchdog": []}, ensure_ascii=False, indent=4), encoding="utf-8")
 
+
+
+def sync_template_files(agent_name: str) -> Dict[str, bool]:
+    """Sync template-bound files from agents_template/faust/ to the agent directory.
+
+    Returns {filename: updated} for each file.
+    """
+    agent_dir = _agent_dir(agent_name)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    template_dir = Path(conf.PROJECT_ROOT) / "agents_template" / "faust"
+    result: Dict[str, bool] = {}
+    for filename in AGENT_SYNC_FILES:
+        src = template_dir / filename
+        dst = agent_dir / filename
+        if src.exists():
+            src_content = src.read_text(encoding="utf-8")
+            dst_content = dst.read_text(encoding="utf-8") if dst.exists() else ""
+            if src_content != dst_content:
+                dst.write_text(src_content, encoding="utf-8")
+                result[filename] = True
+            else:
+                result[filename] = False
+        else:
+            result[filename] = False
+    return result
 
 def list_agents() -> List[Dict[str, Any]]:
     current_agent = get_public_config().get("AGENT_NAME", "faust")
@@ -309,24 +337,29 @@ def delete_agent(agent_name: str) -> None:
     shutil.rmtree(target_dir)
 
 
-def get_agent_files(agent_name: str) -> Dict[str, str]:
+def get_agent_files(agent_name: str) -> Dict[str, Dict[str, Any]]:
     agent_dir = _agent_dir(agent_name)
     if not agent_dir.exists():
         raise FileNotFoundError(f"agent 不存在: {agent_name}")
     _ensure_agent_core_files(agent_dir)
-    result: Dict[str, str] = {}
+    result: Dict[str, Dict[str, Any]] = {}
     for filename in AGENT_CORE_FILES:
-        result[filename] = (agent_dir / filename).read_text(encoding="utf-8")
+        result[filename] = {
+            "content": (agent_dir / filename).read_text(encoding="utf-8"),
+            "readonly": filename in AGENT_TEMPLATE_FILES,
+        }
     return result
-
-
 def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, str]:
+    """Save editable agent files only. Template files (AGENT.md/ROLE.md/COREMEMORY.md) are rejected."""
     agent_dir = _agent_dir(agent_name)
     if not agent_dir.exists():
         raise FileNotFoundError(f"agent 不存在: {agent_name}")
     _ensure_agent_core_files(agent_dir)
-    for filename in AGENT_CORE_FILES:
-        if filename in files:
+    for filename in list(files.keys()):
+        if filename in AGENT_TEMPLATE_FILES:
+            # Template files are force-bound — silently skip
+            continue
+        if filename in AGENT_CORE_FILES:
             (agent_dir / filename).write_text(str(files[filename]), encoding="utf-8")
     return get_agent_files(agent_name)
 

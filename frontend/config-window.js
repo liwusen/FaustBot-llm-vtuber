@@ -1,4 +1,4 @@
-﻿// 常量已抽取到 ./libs/configer/constants.js
+// 常量已抽取到 ./libs/configer/constants.js
 if (typeof META === "undefined" || typeof FIELD_OPTIONS === "undefined" || typeof MODULES === "undefined") {
   console.error("配置常量未加载：请确认 frontend/libs/configer/constants.js 已在 HTML 中先加载。");
 }
@@ -280,9 +280,17 @@ function openAgentFilesModal(agentName, files) {
     const card = el("article", "card full-span");
     card.append(el("h3", "card-title", filename));
     const area = el("textarea", "textarea code-area code-area-lg");
-    area.value = String((files && files[filename]) || "");
+    const fileObj = files && files[filename];
+    const raw = (fileObj && typeof fileObj === "object") ? (fileObj.content || "") : String(fileObj || "");
+    area.value = raw;
     areas.set(filename, area);
     card.append(area);
+    const isReadonly = fileObj && fileObj.readonly;
+    if (isReadonly) {
+      area.disabled = true;
+      area.style.opacity = "0.6";
+      card.append(el("small", "hint", "（模板文件，不可编辑 — 修改请更新 agents_template/faust/ 源文件）"));
+    }
     blocks.push(card);
   }
   openModal(`Agent 文件编辑 - ${targetAgent}`, blocks);
@@ -697,7 +705,7 @@ function pickModuleFields(moduleId) {
     const modeAsr = String(state.config.public.ASR_MODE || "").toLowerCase();
     const isCloud = modeTts === "faustbot-cloud" || modeAsr === "faustbot-cloud";
     const isLocalTts = modeTts === "local";
-    const isWhisper = modeAsr === "whisper" || modeAsr === "local";
+    const isLocalAsr = modeAsr === "local";
     const pub = SPEECH_PUBLIC_KEYS.filter((k) => publicKeys.includes(k));
     const pri = SPEECH_PRIVATE_KEYS.filter((k) => privateKeys.includes(k));
     return {
@@ -706,7 +714,6 @@ function pickModuleFields(moduleId) {
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
         if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
         if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
-        if (k.startsWith("WHISPER_") && !isWhisper) return false;
         if ((k === "TTS_REFER_WAV_PATH" || k === "TTS_PROMPT_TEXT" || k === "TTS_PROMPT_LANGUAGE") && !isLocalTts) return false;
         return true;
       }),

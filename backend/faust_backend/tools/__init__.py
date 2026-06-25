@@ -14,6 +14,12 @@ from faust_backend.tools._registry import (
 )
 
 # 导入子模块触发 register 装饰器
+import faust_backend.tools.read
+import faust_backend.tools.execute
+import faust_backend.tools.write
+import faust_backend.tools.edit
+import faust_backend.tools.search
+import faust_backend.tools.find
 import faust_backend.tools.hil
 import faust_backend.tools.datetime
 import faust_backend.tools.system
