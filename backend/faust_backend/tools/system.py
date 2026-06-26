@@ -41,10 +41,11 @@ def sysExecTool(command: str, timeout: int = 15) -> str:
 @register
 @tool
 def beepTool(frequency: int, duration: int) -> str:
-    """发出指定频率和持续时间的蜂鸣声（仅 Windows）。"""
+    """[已弃用] 发出蜂鸣声（仅 Windows）。无核心工具替代。"""
     if os.name == 'nt':
         import winsound
-        log.info("Emitting beep: frequency=%d duration=%d", frequency, duration)
+        import faust_backend.logger as _log
+        _log.getLogger("faust.tools.system").info("beepTool deprecated — emitting beep")
         winsound.Beep(frequency, min(duration, 3000))
         return "蜂鸣声已发出。"
     else:
