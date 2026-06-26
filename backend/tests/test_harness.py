@@ -692,3 +692,50 @@ class TestReadImage:
             assert data["images"][0]["url"].startswith("data:image/png;base64,")
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    def test_read_image_force_plain_text(self):
+        import json, tempfile
+        from pathlib import Path
+        raw_png = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            b'\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0bIDATx\x9cc\xf8O\x00\x00'
+            b'\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(raw_png)
+            tmp_path = f.name
+        try:
+            from faust_backend.tools.read import _read_image
+            result = _read_image(Path(tmp_path), force_plain_text=True)
+            assert isinstance(result, str)
+            assert "图片文件" in result
+            assert "bytes" in result
+            assert ".png" in result
+            # Must NOT contain multimodal JSON markers
+            assert "multimodal_tool_result" not in result
+            assert "base64" not in result
+            assert "data:image" not in result
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+
+class TestReadForcePlainText:
+    def test_artifact_image_force_plain_text(self):
+        from faust_backend.runtime.output_store import reset_output_store, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        payload = {
+            "kind": "multimodal_tool_result",
+            "text": "描述内容",
+            "images": [{"url": "data:image/png;base64,abc123"}],
+        }
+        oid = store.put_multimodal(payload, tool_name="read")
+
+        from faust_backend.tools.read import _read_artifact
+        from faust_backend.runtime.uri import parse
+        parsed = parse(f"artifact://{oid}")
+        result = _read_artifact(parsed, force_plain_text=True)
+        assert "描述内容" in result
+        assert "base64" not in result
+        assert "multimodal_tool_result" not in result

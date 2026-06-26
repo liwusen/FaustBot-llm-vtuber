@@ -25,7 +25,7 @@ IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", 
 
 @register
 @tool
-def read(uri: str) -> str:
+def read(uri: str, *, force_plain_text: bool = False) -> str:
     """Read a file, directory, tool output, or memory document — the universal read tool.
 
     This is your PRIMARY tool for inspecting anything on disk or in memory.
@@ -62,27 +62,39 @@ def read(uri: str) -> str:
     - `read("memory://")` → list all documents in the memory tree.
     - Use this when: checking your knowledge base, reviewing past notes or diaries.
 
+    **Reading images (multimodal vs plain text):**
+    - `read("screenshot.png")` → returns multimodal JSON with the image in base64,
+      allowing vision-capable models to see it.
+    - `read("screenshot.png", force_plain_text=True)` → returns only the file metadata
+      (name, size) as plain text, WITHOUT the base64 image data.
+    - Use `force_plain_text=True` when: you only need the image metadata, or when
+      you know the current model cannot process images and you want to save context.
+
     Args:
         uri: Path or URI with optional :line-selector suffix.
+        force_plain_text: If True, images and multimodal artifacts return only
+                          text description (no base64 data). Defaults to False.
 
     Returns:
         For files: structural summary (code) or first 300 lines; or specified range.
+        For images: multimodal JSON with base64 (unless force_plain_text=True).
         For directories: list of entries.
         For artifacts: full or ranged tool output.
         For memory: document content or file tree.
     """
     parsed = parse(uri)
-    log.debug("read parsed: scheme=%s path=%r selector=%r", parsed.scheme, parsed.path, parsed.selector)
+    log.debug("read parsed: scheme=%s path=%r selector=%r force_plain_text=%r",
+              parsed.scheme, parsed.path, parsed.selector, force_plain_text)
 
     if parsed.scheme == SCHEME_ARTIFACT:
-        return _read_artifact(parsed)
+        return _read_artifact(parsed, force_plain_text=force_plain_text)
     elif parsed.scheme == SCHEME_MEMORY:
-        return _read_memory(parsed)
+        return _read_memory(parsed, force_plain_text=force_plain_text)
     else:
-        return _read_file(parsed)
+        return _read_file(parsed, force_plain_text=force_plain_text)
 
 
-def _read_artifact(parsed) -> str:
+def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:
     store = get_output_store()
     output_id = parsed.path
     if not output_id:
@@ -100,10 +112,15 @@ def _read_artifact(parsed) -> str:
         lines = art.content.split("\n")
         selected = lines[start - 1:end]
         return "\n".join(selected)
-    return art.content
+
+    # Image/multimodal artifacts: return plain text if requested
+    if force_plain_text and art.content_type in ("image", "multimodal"):
+        return art.content or f"[图片 artifact: {output_id}]"
+
+    return art.get()
 
 
-def _read_memory(parsed) -> str:
+def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -122,10 +139,13 @@ def _read_memory(parsed) -> str:
                 result = _asyncio.run(store.attachment_read(path))
             except (FileNotFoundError, Exception) as e:
                 return f"读取记忆图片出错: {e}"
+            desc = result.get("description") or f"记忆图片: {path}"
+            if force_plain_text:
+                return f"[图片附件: {path}]\n描述: {desc}\n类型: {result['content_type']}"
             import json as _json
             payload = {
                 "kind": "multimodal_tool_result",
-                "text": result.get("description", f"记忆图片: {path}"),
+                "text": desc,
                 "images": [{
                     "url": f"data:{result['content_type']};base64,{result['content_base64']}"
                 }],
@@ -159,7 +179,7 @@ def _read_memory(parsed) -> str:
     return content
 
 
-def _read_file(parsed) -> str:
+def _read_file(parsed, *, force_plain_text: bool = False) -> str:
     path_str = parsed.path
 
     # Empty path → current directory
@@ -186,7 +206,7 @@ def _read_file(parsed) -> str:
 
     # Image file detection
     if file_path.suffix.lower() in IMAGE_EXTENSIONS:
-        return _read_image(file_path)
+        return _read_image(file_path, force_plain_text=force_plain_text)
 
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -279,14 +299,16 @@ def _format_tree(tree: dict, indent: int = 0) -> str:
     return "\n".join(result)
 
 
-def _read_image(path: Path) -> str:
-    """Read an image file and return a multimodal JSON string."""
+def _read_image(path: Path, *, force_plain_text: bool = False) -> str:
+    """Read an image file and return a multimodal JSON string or plain text."""
+    raw = path.read_bytes()
+    if force_plain_text:
+        return f"[图片文件: {path.name}]\n大小: {len(raw)} bytes\n类型: {path.suffix}"
     import base64, json
     mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                 ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
                 ".svg": "image/svg+xml"}
     mime = mime_map.get(path.suffix.lower(), "image/png")
-    raw = path.read_bytes()
     b64 = base64.b64encode(raw).decode("ascii")
     payload = {
         "kind": "multimodal_tool_result",
