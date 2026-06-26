@@ -10,7 +10,7 @@ from faust_backend.tools._patch_utils import install_skill_from_slug
 import faust_backend.config_loader as conf
 
 
-@register
+
 @tool
 async def installOpenClawSkillTool(slug: str, overwrite: bool = False) -> str:
     """

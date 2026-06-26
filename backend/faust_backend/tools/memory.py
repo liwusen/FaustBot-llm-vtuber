@@ -15,7 +15,7 @@ from faust_backend.logger import get_logger
 log = get_logger("faust.tools.memory")
 
 
-@register
+
 @tool
 def kbListTool(scope: str = "") -> str:
     """[已弃用] 列出知识库树 → 请使用 read("memory://") 或 find(["memory://**"]).
@@ -25,7 +25,6 @@ def kbListTool(scope: str = "") -> str:
     return read(f"memory://{scope}" if scope else "memory://")
 
 
-@register
 @tool
 def kbReadTool(path: str) -> str:
     """[已弃用] 读取知识库节点 → 请使用 read("memory://path")。
@@ -35,10 +34,9 @@ def kbReadTool(path: str) -> str:
     return read(f"memory://{path}")
 
 
-@register
 @tool
 def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True, tags_json: str = "[]") -> str:
-    """[已弃用] 写入知识库 → 请使用 write("memory://path", content)。
+    """[已弃用] 写入知识库 → 请使用 write("memory://path", content")。
     直接转发给 write 工具。
     """
     from faust_backend.tools.write import write

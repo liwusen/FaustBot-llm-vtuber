@@ -31,7 +31,7 @@ def attachmentWriteTool(file_path: str, path: str = "", *,
                                 content_type=content_type)
 
 
-@register
+
 @tool
 def attachmentReadTool(path: str) -> str:
     """[已弃用] 读取记忆图片 → 请使用 read("memory://path")。

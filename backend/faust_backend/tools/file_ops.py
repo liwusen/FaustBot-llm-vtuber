@@ -9,20 +9,14 @@ Deprecated tools — all functionality moved to the 6 core tools:
   getCwdTool        → no direct equivalent
 
 These wrappers exist for backward compatibility only.
-New code and Agent prompts should use the core tools directly.
+They are NOT registered as tools for the LLM (no @register decorator).
 """
 
 import os
 
 from langchain.tools import tool
 
-from faust_backend.tools._registry import register
-from faust_backend.logger import get_logger
 
-log = get_logger("faust.tools.file_ops")
-
-
-@register
 @tool
 def getCwdTool() -> str:
     """[已弃用] 获取当前工作目录。无直接替代。"""
@@ -32,7 +26,6 @@ def getCwdTool() -> str:
         return f"出错{str(e)}"
 
 
-@register
 @tool
 def listDirectoryTool(path: str) -> str:
     """[已弃用] 列出目录 → 请使用 read(path) 或 find(patterns)。
@@ -42,7 +35,6 @@ def listDirectoryTool(path: str) -> str:
     return read(path)
 
 
-@register
 @tool
 def readTextFileTool(file_path: str, start_line: int = 1, end_line: int = 0) -> str:
     """[已弃用] 读取文本文件 → 请使用 read(uri)。
@@ -56,7 +48,6 @@ def readTextFileTool(file_path: str, start_line: int = 1, end_line: int = 0) -> 
     return read(file_path)
 
 
-@register
 @tool
 def writeTextFileTool(file_path: str = "", content: str = "", patch_text: str = "") -> str:
     """[已弃用] 写入/修改文件 → 请使用 write(path, content) 或 edit(path, patch)。
