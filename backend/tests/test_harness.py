@@ -546,3 +546,149 @@ class TestExecuteTool:
         from faust_backend.tools.execute import execute
         result = execute.invoke({"language": "ruby", "code": "puts 'hi'"})
         assert "不支持" in result
+
+
+# ============================================================
+# Multimodal / Image Support
+# ============================================================
+
+class TestToolValueToText:
+    def test_dict_passes_through(self):
+        from faust_backend.runtime.state import tool_value_to_text
+        result = tool_value_to_text({"kind": "multimodal_tool_result", "text": "hi"})
+        assert isinstance(result, dict)
+        assert result["kind"] == "multimodal_tool_result"
+
+    def test_string_unchanged(self):
+        from faust_backend.runtime.state import tool_value_to_text
+        result = tool_value_to_text("hello")
+        assert result == "hello"
+
+
+class TestArtifactImage:
+    def test_put_multimodal_stores_correctly(self):
+        from faust_backend.runtime.output_store import OutputStore, reset_output_store
+        reset_output_store()
+        store = OutputStore()
+        payload = {
+            "kind": "multimodal_tool_result",
+            "text": "测试图片",
+            "images": [{"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}],
+        }
+        oid = store.put_multimodal(payload, tool_name="read")
+        art = store.get(oid)
+        assert art.content_type == "multimodal"
+        assert art.mime_type == "image/png"
+        assert art.content_base64 == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        assert art.content == "测试图片"
+        assert art.metadata.get("image_count") == 1
+
+    def test_multimodal_summary(self):
+        from faust_backend.runtime.output_store import OutputStore, reset_output_store
+        reset_output_store()
+        store = OutputStore()
+        payload = {
+            "kind": "multimodal_tool_result",
+            "text": "一张截图",
+            "images": [{"url": "data:image/jpeg;base64,abc123"}],
+        }
+        oid = store.put_multimodal(payload, tool_name="read")
+        s = store.summary(oid)
+        assert "一张截图" in s
+        assert "1张图片" in s
+        assert f"artifact://{oid}" in s
+
+    def test_image_summary(self):
+        from faust_backend.runtime.output_store import Artifact
+        art = Artifact(
+            output_id="img_1",
+            content="test",
+            tool_name="read",
+            content_type="image",
+            content_base64="abc",
+            mime_type="image/png",
+        )
+        s = art.summary()
+        assert "图片" in s
+        assert "artifact://img_1" in s
+
+    def test_multimodal_get_returns_json(self):
+        import json
+        from faust_backend.runtime.output_store import OutputStore, reset_output_store
+        reset_output_store()
+        store = OutputStore()
+        payload = {
+            "kind": "multimodal_tool_result",
+            "text": "desc",
+            "images": [{"url": "data:image/png;base64,hello123"}],
+        }
+        oid = store.put_multimodal(payload, tool_name="read")
+        art = store.get(oid)
+        result = art.get()
+        data = json.loads(result)
+        assert data["kind"] == "multimodal_tool_result"
+        assert data["text"] == "desc"
+        assert len(data["images"]) == 1
+        assert "data:image/png;base64,hello123" in data["images"][0]["url"]
+
+
+class TestMiddlewareMultimodal:
+    def test_multimodal_json_passes_through(self):
+        import json
+        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        payload = json.dumps({
+            "kind": "multimodal_tool_result",
+            "text": "图片描述",
+            "images": [{"url": "data:image/png;base64,abc123"}],
+        }, ensure_ascii=False)
+        result = _store_and_summarize(store, "read", payload)
+        data = json.loads(result)
+        assert data["kind"] == "multimodal_tool_result"
+        assert "图片描述" in data["text"]
+        assert "artifact://" in data["text"]  # augmented with artifact ref
+        assert len(data["images"]) == 1
+
+    def test_dict_multimodal_passes_through(self):
+        import json
+        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        payload = {
+            "kind": "multimodal_tool_result",
+            "text": "dict_test",
+            "images": [{"url": "data:image/png;base64,xyz"}],
+        }
+        result = _store_and_summarize(store, "read", payload)
+        data = json.loads(result)
+        assert data["kind"] == "multimodal_tool_result"
+        assert "dict_test" in data["text"]
+        assert "artifact://" in data["text"]
+
+
+class TestReadImage:
+    def test_read_image_returns_multimodal_json(self):
+        import json, tempfile
+        from pathlib import Path
+        # Create a minimal 1x1 red PNG
+        raw_png = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            b'\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0bIDATx\x9cc\xf8O\x00\x00'
+            b'\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(raw_png)
+            tmp_path = f.name
+        try:
+            from faust_backend.tools.read import _read_image
+            result = _read_image(Path(tmp_path))
+            data = json.loads(result)
+            assert data["kind"] == "multimodal_tool_result"
+            assert "图片文件" in data["text"]
+            assert len(data["images"]) == 1
+            assert data["images"][0]["url"].startswith("data:image/png;base64,")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)

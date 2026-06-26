@@ -8,12 +8,12 @@ implement this as a tool-wrapper approach (compatible with all versions).
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
 
 from faust_backend.runtime.output_store import get_output_store
-
 
 def wrap_tool_output(tool: BaseTool) -> BaseTool:
     """Wrap a LangChain tool so its output goes through OutputStore.
@@ -65,7 +65,27 @@ def wrap_tools(tools: list[BaseTool]) -> list[BaseTool]:
 
 
 def _store_and_summarize(store, tool_name: str, result: Any) -> str:
-    """Store tool output and return truncated summary."""
+    """Store tool output and return truncated summary.
+    Multimodal JSON results are stored but passed through so mm_bridge can process them."""
+    # Detect multimodal JSON: store full content, augment text, pass through
+    if isinstance(result, str):
+        try:
+            data = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            data = None
+        if isinstance(data, dict) and data.get("kind") == "multimodal_tool_result":
+            output_id = store.put_multimodal(data, tool_name=tool_name)
+            text = str(data.get("text") or "")
+            image_count = len(data.get("images") or [])
+            data["text"] = f"{text}\n[图片({image_count}张): artifact://{output_id}]"
+            return json.dumps(data, ensure_ascii=False)
+    elif isinstance(result, dict) and result.get("kind") == "multimodal_tool_result":
+        output_id = store.put_multimodal(result, tool_name=tool_name)
+        text = str(result.get("text") or "")
+        image_count = len(result.get("images") or [])
+        result["text"] = f"{text}\n[图片({image_count}张): artifact://{output_id}]"
+        return json.dumps(result, ensure_ascii=False)
+
     output = str(result) if not isinstance(result, str) else result
 
     # Skip trivial results — no need for an artifact

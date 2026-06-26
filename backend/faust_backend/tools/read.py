@@ -15,9 +15,12 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 from faust_backend.runtime.uri import parse, SCHEME_FILE, SCHEME_ARTIFACT, SCHEME_MEMORY
 from faust_backend.runtime.output_store import get_output_store
+from faust_backend.memory.store import _path_id
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.tools.read")
+
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
 
 
 @register
@@ -109,6 +112,26 @@ def _read_memory(parsed) -> str:
     store = get_memory()
     path = parsed.path
 
+    # Check if this is an image attachment
+    import asyncio as _asyncio
+    nid = _path_id(path)
+    if path and store._has_node(nid):
+        ct = store._get_node_attr(nid, "content_type", "")
+        if ct.startswith("image/"):
+            try:
+                result = _asyncio.run(store.attachment_read(path))
+            except (FileNotFoundError, Exception) as e:
+                return f"读取记忆图片出错: {e}"
+            import json as _json
+            payload = {
+                "kind": "multimodal_tool_result",
+                "text": result.get("description", f"记忆图片: {path}"),
+                "images": [{
+                    "url": f"data:{result['content_type']};base64,{result['content_base64']}"
+                }],
+            }
+            return _json.dumps(payload, ensure_ascii=False)
+
     # empty path → tree
     if not path or parsed.is_dir:
         try:
@@ -160,6 +183,10 @@ def _read_file(parsed) -> str:
                 break
         else:
             return f"[文件不存在: {path_str}]"
+
+    # Image file detection
+    if file_path.suffix.lower() in IMAGE_EXTENSIONS:
+        return _read_image(file_path)
 
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
@@ -250,3 +277,20 @@ def _format_tree(tree: dict, indent: int = 0) -> str:
             else:
                 result.append(f"{prefix}  {cname}")
     return "\n".join(result)
+
+
+def _read_image(path: Path) -> str:
+    """Read an image file and return a multimodal JSON string."""
+    import base64, json
+    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+                ".svg": "image/svg+xml"}
+    mime = mime_map.get(path.suffix.lower(), "image/png")
+    raw = path.read_bytes()
+    b64 = base64.b64encode(raw).decode("ascii")
+    payload = {
+        "kind": "multimodal_tool_result",
+        "text": f"图片文件: {path.name} ({len(raw)} bytes)",
+        "images": [{"url": f"data:{mime};base64,{b64}"}],
+    }
+    return json.dumps(payload, ensure_ascii=False)

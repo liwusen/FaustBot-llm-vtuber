@@ -147,10 +147,13 @@ def _search_filesystem(pattern: str, paths: list[str]) -> str:
                 if fname.startswith("."):
                     continue
                 fpath = Path(root) / fname
-                if fpath.suffix in (".pyc", ".pyd", ".dll", ".so", ".exe", ".bin", ".png", ".jpg", ".mp3", ".wav"):
+                if fpath.suffix in (".pyc", ".pyd", ".dll", ".so", ".exe", ".bin", ".mp3", ".wav"):
                     continue
                 try:
                     content = fpath.read_text(encoding="utf-8", errors="replace")
+                except UnicodeDecodeError:
+                    results.append({"file": str(fpath.relative_to(project_root)), "line": 0, "text": "(二进制文件，已跳过内容)"})
+                    continue
                 except Exception:
                     continue
                 for i, line in enumerate(content.split("\n"), 1):

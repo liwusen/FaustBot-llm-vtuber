@@ -133,9 +133,11 @@ def is_ai_message_chunk(message_chunk) -> bool:
     return "aimessage" in cls_name
 
 
-def tool_value_to_text(value) -> str:
+def tool_value_to_text(value) -> str | dict:
     if value is None:
         return ""
+    if isinstance(value, dict):
+        return value  # 让外层的 json.dumps 只序列化一次
     if isinstance(value, str):
         return value
     try:
