@@ -1,4 +1,5 @@
-EMBED_MODEL = "text-embedding-3-small"
+import faust_backend.config_loader as conf
+EMBED_MODEL = conf.KB_EMBED_MODEL
 EMBED_DIM = 1536
 MAX_CHUNK_CHARS = 3000
 CHUNK_OVERLAP_CHARS = 300
