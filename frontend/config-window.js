@@ -1183,6 +1183,26 @@ async function ensureModuleData(moduleId) {
       state.graphRelations = [];
     }
   }
+  if (moduleId === "runtime") {
+    try {
+      const sv = await cfgApi("GET", "/faust/admin/services", null, { include_log: true });
+      state.services = sv.items || [];
+      if (state.selectedService) {
+        const sd = await cfgApi("GET", `/faust/admin/services/${encodeURIComponent(state.selectedService)}`, null, { include_log: true });
+        state.serviceDetail = sd.item || null;
+      }
+    } catch (e) {
+      console.warn("runtime data fetch error", e);
+    }
+  }
+  if (moduleId === "triggers") {
+    try {
+      const tr = await cfgApi("GET", "/faust/admin/triggers");
+      state.triggers = tr.items || [];
+    } catch (e) {
+      console.warn("triggers data fetch error", e);
+    }
+  }
   if (moduleId === "plugins") {
     const pl = await cfgApi("GET", "/faust/admin/plugins");
     state.plugins = pl.items || [];
