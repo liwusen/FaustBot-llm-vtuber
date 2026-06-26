@@ -43,6 +43,3 @@ def test_speech_runtime_edge_mode(monkeypatch):
     )
 
 
-def test_should_start_local_asr_treats_whisper_as_local(monkeypatch):
-    monkeypatch.setattr(sr.conf, "ASR_MODE", "whisper")
-    assert sr.should_start_local_asr() is True

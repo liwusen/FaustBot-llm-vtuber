@@ -114,7 +114,6 @@ def load_configs():
     global OPENAI_ASR_ENERGY_THRESHOLD, OPENAI_ASR_SILENCE_MS, OPENAI_ASR_MIN_SPEECH_MS, OPENAI_ASR_PREROLL_MS
     global OPENAI_TTS_API_KEY, OPENAI_ASR_API_KEY, FAUSTBOT_CLOUD_SERVICE_KEY
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
-    global WHISPER_MODEL, WHISPER_DEVICE, WHISPER_LANGUAGE, WHISPER_PROMPT, WHISPER_FP16, WHISPER_TEMPERATURE, WHISPER_BEST_OF, WHISPER_BEAM_SIZE
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_DEFAULT_REFER_HASH, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     _ensure_private_config_exists()
@@ -180,15 +179,6 @@ def load_configs():
     OPENAI_ASR_SILENCE_MS = int(config.get('OPENAI_ASR_SILENCE_MS', 700) or 700)
     OPENAI_ASR_MIN_SPEECH_MS = int(config.get('OPENAI_ASR_MIN_SPEECH_MS', 250) or 250)
     OPENAI_ASR_PREROLL_MS = int(config.get('OPENAI_ASR_PREROLL_MS', 250) or 250)
-    WHISPER_MODEL = str(config.get('WHISPER_MODEL', 'base') or 'base').strip()
-    WHISPER_DEVICE = str(config.get('WHISPER_DEVICE', 'auto') or 'auto').strip().lower()
-    WHISPER_LANGUAGE = str(config.get('WHISPER_LANGUAGE', '') or '').strip()
-    WHISPER_PROMPT = str(config.get('WHISPER_PROMPT', '') or '')
-    WHISPER_FP16 = bool(config.get('WHISPER_FP16', False))
-    WHISPER_TEMPERATURE = float(config.get('WHISPER_TEMPERATURE', 0.0) or 0.0)
-    WHISPER_BEST_OF = int(config.get('WHISPER_BEST_OF', 5) or 5)
-    WHISPER_BEAM_SIZE = int(config.get('WHISPER_BEAM_SIZE', 5) or 5)
-    
     # TTS 参考音频配置
     TTS_REFER_WAV_PATH = config.get('TTS_REFER_WAV_PATH', p_join(CONFIG_ROOT, 'voices', 'neuro.wav'))
     TTS_PROMPT_TEXT = config.get('TTS_PROMPT_TEXT', 'Hold on please, I\'m busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.')
@@ -221,7 +211,7 @@ argparser.add_argument("--no-run-other-backend-services",action="store_true",hel
 argparser.add_argument("--save-in-memory",action="store_true",help="Memory Checkpointer and Store for debugging (default: False)")
 argparser.add_argument("--MOO",action="store_true",help="apt-get:???\n这里没有任何彩蛋!!!")
 argparser.add_argument("--no-startup-chat",action="store_true",help="Whether to disable startup chat (default: False)")
-args = argparser.parse_args()
+args, _ = argparser.parse_known_args()
 if args.agent != "NONE":
     AGENT_NAME = args.agent
     print(f"[config_loader] Agent name overridden by command line argument: {AGENT_NAME}")

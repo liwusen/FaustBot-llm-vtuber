@@ -10,20 +10,13 @@ from faust_backend.tools._patch_utils import install_skill_from_slug
 import faust_backend.config_loader as conf
 
 
-@register
+
 @tool
 async def installOpenClawSkillTool(slug: str, overwrite: bool = False) -> str:
     """
-    Description:
-        安装一个 OpenClaw Skill 到当前 Agent 的独立目录 agents/<agent>/skill.d/<slug>。
-        安装前会触发前端 HIL 确认框，用户批准后才会真正下载与安装。
-        下载 API:
-        https://wry-manatee-359.convex.site/api/v1/download?slug=<NAME>
+    [已弃用] 安装 OpenClaw Skill。无核心工具替代，但仍可用于安装插件。
+    安装前会触发前端 HIL 确认框。
 
-        Skill ZIP 结构要求：
-        - _meta.json
-        - SKILL.md
-        - 其他文件
     Args:
         slug (str): skill 名称（slug）。
         overwrite (bool): 若已存在是否覆盖安装。

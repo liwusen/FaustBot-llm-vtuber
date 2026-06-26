@@ -74,13 +74,23 @@ class ArayaRuntime:
     def _load_prompt(self) -> str:
         agent_root = Path(conf.CONFIG_ROOT) / "agents" / ARAYA_AGENT_NAME
         parts: list[str] = []
-        for name in ("AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"):
+        for name in ("AGENT.md", "ROLE.md", "COREMEMORY.md"):
             path = agent_root / name
             if path.exists():
                 parts.append(path.read_text(encoding="utf-8"))
         if not parts:
             raise FileNotFoundError("Araya prompt files are missing")
         return "\n".join(parts)
+
+    def _sync_templates(self) -> None:
+        try:
+            from faust_backend.admin_runtime import sync_araya_template_files
+            result = sync_araya_template_files()
+            updated = [k for k, v in result.items() if v]
+            if updated:
+                log.info("Araya 模板文件已同步: %s", ", ".join(updated))
+        except Exception as e:
+            log.warning("Araya 模板同步失败: %s", e)
 
     def _load_state(self) -> dict[str, Any]:
         if not self.paths.state_file.exists():
@@ -171,13 +181,13 @@ class ArayaRuntime:
 
     async def startup(self) -> None:
         self.refresh_target_agent()
+        self._sync_templates()
         self._save_state(self._load_state())
         self._init_agent()
         if self._task is None or (hasattr(self._task, "done") and self._task.done()):
             self._stop_event = asyncio.Event()
             self._task = asyncio.create_task(self._loop_async())
         log.info("ArayaRuntime startup complete")
-
     async def shutdown(self) -> None:
         log.debug("Shutting down ArayaRuntime...")
         if self._stop_event:

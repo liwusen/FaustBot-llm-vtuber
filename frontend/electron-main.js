@@ -569,6 +569,7 @@ function decodeWsTextMessage(data, isBinary = false) {
 const GLOBAL_SHORTCUTS = [
   { accelerator: 'CommandOrControl+Alt+A', command: 'TOGGLE_ASR' },
   { accelerator: 'CommandOrControl+Alt+S', command: 'STOP_AUDIO' },
+  { accelerator: 'CommandOrControl+Alt+X', command: 'INTERRUPT_CHAT' },
   { accelerator: 'CommandOrControl+Alt+Up', command: 'SCALE_UP' },
   { accelerator: 'CommandOrControl+Alt+Down', command: 'SCALE_DOWN' },
   { accelerator: 'CommandOrControl+Alt+M', command: 'RANDOM_MOTION' },

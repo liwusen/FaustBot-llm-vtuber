@@ -13,11 +13,25 @@ agent = None
 agent_lock = asyncio.Lock()
 THREAD_ID = 84
 
+# ── 中断信号 ──
+_agent_abort: asyncio.Event | None = None
+
+
+def get_abort_event() -> asyncio.Event:
+    global _agent_abort
+    if _agent_abort is None:
+        _agent_abort = asyncio.Event()
+    return _agent_abort
+
+
+def reset_abort_event() -> asyncio.Event:
+    global _agent_abort
+    _agent_abort = asyncio.Event()
+    return _agent_abort
+
 # ── SQLite 持久化 ──
 conn = None
 checkpointer = None
-conn_for_store = None
-storer = None
 
 # ── 运行时就绪状态 ──
 RUNTIME_READY = False
@@ -78,7 +92,7 @@ def makeup_init_prompt():
         PROMPT = ""
         raise FileNotFoundError(f"Agent file for '{AGENT_NAME}' not found.")
     parts = []
-    for fname in ("AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"):
+    for fname in ("AGENT.md", "ROLE.md", "COREMEMORY.md"):
         fpath = os.path.join(AGENT_ROOT, fname)
         if os.path.exists(fpath):
             with open(fpath, "r", encoding="utf-8") as f:
@@ -135,9 +149,11 @@ def is_ai_message_chunk(message_chunk) -> bool:
     return "aimessage" in cls_name
 
 
-def tool_value_to_text(value) -> str:
+def tool_value_to_text(value) -> str | dict:
     if value is None:
         return ""
+    if isinstance(value, dict):
+        return value  # 让外层的 json.dumps 只序列化一次
     if isinstance(value, str):
         return value
     try:

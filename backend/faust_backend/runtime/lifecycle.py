@@ -9,8 +9,6 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import aiosqlite
-from langgraph.store.sqlite import AsyncSqliteStore
-from langgraph.store.memory import InMemoryStore
 import tqdm
 
 import faust_backend.config_loader as conf
@@ -26,6 +24,7 @@ import faust_backend.vad_runtime as vad_runtime
 import faust_backend.speech_runtime as speech_runtime
 import faust_backend.nimble as nimble
 from faust_backend.plugin_system import PluginManager
+from faust_backend.runtime import middleware
 from faust_backend.config_loader import args
 
 from faust_backend.runtime import state
@@ -90,7 +89,7 @@ def start_services():
 
 async def invoke_agent_locked(target_agent, payload, config=None):
     if config is None:
-        config = {"configurable": {"thread_id": state.THREAD_ID, "recursion_limit": 300}}
+        config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
@@ -108,9 +107,9 @@ async def invoke_agent_locked(target_agent, payload, config=None):
         await _sleep_backoff(attempt)
 
 
-async def stream_chat_agent_events(target_agent, payload, config=None):
+async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_event: asyncio.Event | None = None):
     if config is None:
-        config = {"configurable": {"thread_id": state.THREAD_ID}}
+        config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
@@ -120,6 +119,9 @@ async def stream_chat_agent_events(target_agent, payload, config=None):
                 async for event in target_agent.astream_events(payload, config=config, version="v2"):
                     if not isinstance(event, dict):
                         continue
+                    if abort_event and abort_event.is_set():
+                        log.info("Agent stream aborted by user")
+                        raise asyncio.CancelledError("User interrupted")
                     event_name = str(event.get("event") or "").strip().lower()
                     data = event.get("data") or {}
                     if event_name == "on_chat_model_stream":
@@ -174,28 +176,28 @@ def _build_chat_model(*, model_name: str):
     )
 
 
-def _create_agent_with_extensions(*, model_name: str, checkpointer, store):
-    tools, middlewares = _compose_runtime_extensions()
+def _create_agent_with_extensions(*, model_name: str, checkpointer):
+    tools, mgmt_middlewares = _compose_runtime_extensions()
+    tools = middleware.wrap_tools(tools)
     chat_model = _build_chat_model(model_name=model_name)
     kwargs = {
         "model": chat_model,
         "checkpointer": checkpointer,
         "tools": tools,
-        "store": store,
     }
-    if middlewares:
+    if mgmt_middlewares:
         try:
-            kwargs["middlewares"] = middlewares
-            create_agent(**kwargs)
+            kwargs["middleware"] = mgmt_middlewares
+            return create_agent(**kwargs)
         except TypeError:
-            pass
+            log.debug("create_agent 不接受 'middleware' 参数，尝试 'middlewares'")
         try:
-            kwargs.pop("middlewares", None)
-            kwargs["middleware"] = middlewares
-            create_agent(**kwargs)
+            kwargs.pop("middleware", None)
+            kwargs["middlewares"] = mgmt_middlewares
+            return create_agent(**kwargs)
         except TypeError:
             log.warning("create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
-            kwargs.pop("middleware", None)
+            kwargs.pop("middlewares", None)
     return create_agent(**kwargs)
 
 
@@ -212,6 +214,11 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             state.AGENT_NAME = conf.AGENT_NAME
             state.AGENT_ROOT = os.path.join(conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}")
             log.info("重建目标 Agent: %s", state.AGENT_NAME)
+            import faust_backend.admin_runtime as admin_runtime
+            sync_result = admin_runtime.sync_template_files(state.AGENT_NAME)
+            if any(sync_result.values()):
+                updated = [k for k, v in sync_result.items() if v]
+                log.info("模板文件已同步: %s", ", ".join(updated))
             state.makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
             araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
@@ -227,26 +234,16 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                         await state.conn.close()
                 except Exception:
                     pass
-                try:
-                    if state.conn_for_store is not None:
-                        await state.conn_for_store.commit()
-                        await state.conn_for_store.close()
-                except Exception:
-                    pass
                 os.makedirs(state.AGENT_ROOT, exist_ok=True)
                 state.conn = await aiosqlite.connect(os.path.join(state.AGENT_ROOT, 'faust_checkpoint.db'))
                 state.checkpointer = AsyncSqliteSaver(conn=state.conn)
-                state.conn_for_store = await aiosqlite.connect(os.path.join(state.AGENT_ROOT, 'faust_store.db'))
-                state.storer = AsyncSqliteStore(conn=state.conn_for_store)
-                log.info("已初始化 SQLite Checkpoint + Store")
+                log.info("已初始化 SQLite Checkpoint")
             else:
                 state.checkpointer = InMemorySaver()
-                state.storer = InMemoryStore()
-            log.info("Checkpoint 和 Store 已为重建就绪")
+            log.info("Checkpoint 已为重建就绪")
             state.agent = _create_agent_with_extensions(
                 model_name=conf.CHAT_MODEL,
                 checkpointer=state.checkpointer,
-                store=state.storer,
             )
             log.debug("Agent 已为重建重新创建")
             checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(state.AGENT_ROOT)
@@ -371,9 +368,6 @@ async def lifespan(app: FastAPI):
         if state.conn:
             await state.conn.commit()
             await state.conn.close()
-        if state.conn_for_store:
-            await state.conn_for_store.commit()
-            await state.conn_for_store.close()
     trigger_manager.stop_trigger_watchdog_thread()
     if state.plugin_heartbeat_task is not None:
         state.plugin_heartbeat_task.cancel()
