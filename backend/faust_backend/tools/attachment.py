@@ -34,15 +34,8 @@ def attachmentWriteTool(file_path: str, path: str = "", *,
 @register
 @tool
 def attachmentReadTool(path: str) -> str:
+    """[已弃用] 读取记忆图片 → 请使用 read("memory://path")。
+    直接转发给 read 工具（支持多模态图片输出）。
     """
-    Description:
-        Read an image attachment from memory and return it as a multimodal
-        result so you can see its contents. Use when you need to inspect a
-        previously saved image.
-    Args:
-        path (str): KB path of the image attachment, e.g.
-                    /records/2026-05-01/screenshot.png
-    Returns:
-        str(json): Multimodal payload with the image and its description.
-    """
-    return _attachmentReadTool(path)
+    from faust_backend.tools.read import read
+    return read(f"memory://{path}")

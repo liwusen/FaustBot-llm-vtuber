@@ -18,22 +18,31 @@ log = get_logger("faust.tools.memory")
 @register
 @tool
 def kbListTool(scope: str = "") -> str:
-    """列出知识库中某个目录范围下的树结构。"""
-    return _memoryListTool(scope)
+    """[已弃用] 列出知识库树 → 请使用 read("memory://") 或 find(["memory://**"]).
+    直接转发给 read 工具。
+    """
+    from faust_backend.tools.read import read
+    return read(f"memory://{scope}" if scope else "memory://")
 
 
 @register
 @tool
 def kbReadTool(path: str) -> str:
-    """读取知识库中某个文件节点的完整内容。"""
-    return _memoryReadTool(path)
+    """[已弃用] 读取知识库节点 → 请使用 read("memory://path")。
+    直接转发给 read 工具。
+    """
+    from faust_backend.tools.read import read
+    return read(f"memory://{path}")
 
 
 @register
 @tool
 def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True, tags_json: str = "[]") -> str:
-    """将内容写入知识库文件节点，并创建后台索引任务。"""
-    return _memoryWriteTool(path, content, declared_by, index, tags_json)
+    """[已弃用] 写入知识库 → 请使用 write("memory://path", content)。
+    直接转发给 write 工具。
+    """
+    from faust_backend.tools.write import write
+    return write(f"memory://{path}", content)
 
 
 # @register

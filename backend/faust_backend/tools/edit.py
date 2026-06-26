@@ -59,22 +59,39 @@ def edit(path: str, patch: str) -> str:
     2. read("src/main.py:40-60") to see the exact lines you want to edit.
     3. edit("src/main.py", "SWAP 42.=44:\\n+new line 1\\n+new line 2\\n")
 
-    Args:
-        path: File path (relative to project root).
-        patch: Patch instructions in the described format.
+    **Editing memory documents:**
+    - `edit("memory://notes/todo", "SWAP 3.=3:\\n+updated entry\\n")` — edits a memory doc.
+    - Works exactly like file edits but targets the memory store.
 
-    Returns:
-        Summary of changes: "已编辑 <filename>: N 行变更" or error.
+    Args:
+        path: File path (relative to project root) or memory:// URI.
+        patch: Patch instructions in the described format.
     """
+    import asyncio as _asyncio
     from faust_backend.config_loader import PROJECT_ROOT
-    file_path = Path(path)
-    if not file_path.is_absolute():
-        file_path = Path(PROJECT_ROOT) / path
-    file_path = file_path.resolve()
-    try:
-        original = file_path.read_text(encoding="utf-8")
-    except Exception as e:
-        return f"读取文件出错: {e}"
+
+    # Detect memory:// scheme
+    is_memory = path.startswith("memory://")
+    if is_memory:
+        mem_path = path[len("memory://"):]
+        try:
+            from faust_backend.memory import get_memory
+            store = get_memory()
+            result = _asyncio.run(store.file_read(mem_path))
+            original = result.get("content", "")
+        except FileNotFoundError:
+            return f"[记忆文档不存在: {mem_path}]"
+        except Exception as e:
+            return f"读取记忆文档出错: {e}"
+    else:
+        file_path = Path(path)
+        if not file_path.is_absolute():
+            file_path = Path(PROJECT_ROOT) / path
+        file_path = file_path.resolve()
+        try:
+            original = file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            return f"读取文件出错: {e}"
 
     # Parse patch
     try:
@@ -111,13 +128,19 @@ def edit(path: str, patch: str) -> str:
             changes += len(body)
 
     result = "\n".join(lines)
-    try:
-        file_path.write_text(result, encoding="utf-8")
-    except Exception as e:
-        return f"写入文件出错: {e}"
 
-    return f"已编辑 {file_path.name}: {changes} 行变更"
-
+    if is_memory:
+        try:
+            _asyncio.run(store.file_write(mem_path, result))
+        except Exception as e:
+            return f"写入记忆文档出错: {e}"
+        return f"已编辑 memory://{mem_path}: {changes} 行变更"
+    else:
+        try:
+            file_path.write_text(result, encoding="utf-8")
+        except Exception as e:
+            return f"写入文件出错: {e}"
+        return f"已编辑 {file_path.name}: {changes} 行变更"
 
 def _parse_patch(patch_text: str) -> list[dict]:
     """Parse patch instructions into a list of operations."""
