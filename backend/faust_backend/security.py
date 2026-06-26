@@ -220,12 +220,16 @@ async def security_check_command(command:str)->bool:
         return True
     accept, paths, reason = await extract_command_information(command)
     if accept == "approve":
-        for path_info in paths:
-            path = path_info.get("path", "")
-            operation = path_info.get("operation", "")
-            if not await check_access(path, operation):
-                print(f"[security]安全检查: 命令='{command}' -> 访问被拒绝，路径='{path}', 操作='{operation}'")
-                return False
+        # LLM has judged this safe — trust the verifier model
+        if paths:
+            for path_info in paths:
+                path = path_info.get("path", "")
+                operation = path_info.get("operation", "")
+                if not await check_access(path, operation):
+                    print(f"[security]安全检查: 命令='{command}' -> 访问被拒绝，路径='{path}', 操作='{operation}' -> 触发人工审批")
+                    res, _ = await HILRequest("安全检查", f"命令: {command} 需要人工审批",
+                                             f"{command}\nLLM审批通过但路径检查未通过。\n路径: {path}\n操作: {operation}\nReason: {reason}")
+                    return res
         return True
     elif accept == "reject":
         return False

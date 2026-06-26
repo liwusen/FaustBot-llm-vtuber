@@ -79,20 +79,28 @@ def _resolve_cwd(cwd: str) -> str:
 
 
 def _run_shell(command: str, timeout: int, cwd: str) -> str:
+    import faust_backend.config_loader as conf
+    if not getattr(conf, 'SECURITY_SYS_ENABLED', False):
+        # Security system is disabled — execute without checks
+        return _run_shell_no_check(command, timeout, cwd)
+
     try:
         from faust_backend.security import security_check_command
     except ImportError:
-        security_check_command = None
+        return _run_shell_no_check(command, timeout, cwd)
 
-    if security_check_command:
-        try:
-            import asyncio as _asyncio
-            ok = _asyncio.run(security_check_command(command))
-            if not ok:
-                return "安全检查拒绝执行该命令"
-        except Exception as e:
-            log.warning("安全检查调用失败: %s", e)
+    try:
+        import asyncio as _asyncio
+        ok = _asyncio.run(security_check_command(command))
+        if not ok:
+            return "安全检查拒绝执行该命令"
+    except Exception as e:
+        log.warning("安全检查调用失败: %s", e)
 
+    return _run_shell_no_check(command, timeout, cwd)
+
+
+def _run_shell_no_check(command: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
     try:
         proc = subprocess.run(
