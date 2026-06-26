@@ -11,6 +11,10 @@ MODEL_NAME = "silero_vad"
 
 
 def main() -> None:
+    # 从环境变量读取 token（Actions 中自动存在）
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        torch.hub.set_auth_token(token)
     backend_root = Path(__file__).resolve().parents[1]
     torch_hub_dir = backend_root / "asr-hub" / "model" / "torch_hub"
     torch_hub_dir.mkdir(parents=True, exist_ok=True)
