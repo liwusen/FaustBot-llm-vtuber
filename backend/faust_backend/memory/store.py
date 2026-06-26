@@ -846,7 +846,7 @@ class GraphStore:
         if not texts:
             return np.zeros((0, EMBED_DIM), dtype=np.float32)
         client = self._get_openai()
-        response = await client.embeddings.create(model=EMBED_MODEL, input=texts)
+        response = await client.embeddings.create(model=EMBED_MODEL, input=texts, dimensions=EMBED_DIM)
         return np.array([item.embedding for item in response.data], dtype=np.float32)
 
     async def _embed_and_index(self, chunk_items: list[dict]) -> None:
