@@ -89,7 +89,7 @@ def start_services():
 
 async def invoke_agent_locked(target_agent, payload, config=None):
     if config is None:
-        config = {"configurable": {"thread_id": state.THREAD_ID, "recursion_limit": 300}}
+        config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
@@ -109,7 +109,7 @@ async def invoke_agent_locked(target_agent, payload, config=None):
 
 async def stream_chat_agent_events(target_agent, payload, config=None):
     if config is None:
-        config = {"configurable": {"thread_id": state.THREAD_ID, "recursion_limit": 300}}
+        config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
