@@ -46,6 +46,37 @@ async def chat_post(payload: dict):
 @router.websocket("/faust/chat")
 async def chat_websocket(websocket: WebSocket):
     await websocket.accept()
+    agent_task: asyncio.Task | None = None
+
+    async def _run_agent_stream(text: str):
+        reply = ""
+        abort_evt = state.reset_abort_event()
+        try:
+            async for event in stream_chat_agent_events(
+                state.agent,
+                {"messages": [{"role": "user", "content": text}]},
+                abort_event=abort_evt,
+            ):
+                if not isinstance(event, dict):
+                    continue
+                if event.get("type") == "delta":
+                    delta_text = state.message_content_to_text(event.get("content"))
+                    if not delta_text:
+                        continue
+                    reply += delta_text
+                    log.debug("聊天增量: %s", delta_text[:80])
+                    await websocket.send_text(json.dumps({"type": "delta", "content": delta_text}, ensure_ascii=False))
+                    continue
+                if event.get("type") in {"tool_start", "tool_result"}:
+                    await websocket.send_text(json.dumps(event, ensure_ascii=False))
+            schedule_memory_record_sync(text, reply)
+            await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
+            log.debug("聊天流结束")
+        except asyncio.CancelledError:
+            await websocket.send_text(json.dumps({"type": "interrupted"}, ensure_ascii=False))
+            log.info("聊天流被用户中断")
+        return reply
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -53,6 +84,13 @@ async def chat_websocket(websocket: WebSocket):
                 payload = json.loads(raw)
             except Exception:
                 payload = {"text": raw}
+
+            # Handle interrupt message
+            if isinstance(payload, dict) and payload.get("type") == "interrupt":
+                state.get_abort_event().set()
+                await websocket.send_text(json.dumps({"type": "interrupt_ack"}, ensure_ascii=False))
+                continue
+
             text = None
             if isinstance(payload, dict):
                 text = payload.get("text") or payload.get("message")
@@ -62,36 +100,28 @@ async def chat_websocket(websocket: WebSocket):
             if not state.RUNTIME_READY or state.agent is None:
                 await websocket.send_text(json.dumps({"type": "error", "error": state.runtime_not_ready_message(), "runtime": state.runtime_status_payload()}, ensure_ascii=False))
                 continue
+
+            # Cancel any running agent task before starting a new one
+            if agent_task is not None and not agent_task.done():
+                state.get_abort_event().set()
+                agent_task.cancel()
+                try:
+                    await agent_task
+                except asyncio.CancelledError:
+                    pass
+
             try:
                 araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
                 events.ignore_trigger_event.set()
                 await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
-                reply = ""
                 log.info("收到聊天消息: %s", text[:100])
-                async for event in stream_chat_agent_events(state.agent, {"messages": [{"role": "user", "content": text}]}):
-                    if not isinstance(event, dict):
-                        continue
-                    if event.get("type") == "delta":
-                        delta_text = state.message_content_to_text(event.get("content"))
-                        if not delta_text:
-                            continue
-                        reply += delta_text
-                        log.debug("聊天增量: %s", delta_text[:80])
-                        await websocket.send_text(json.dumps({"type": "delta", "content": delta_text}, ensure_ascii=False))
-                        continue
-                    if event.get("type") in {"tool_start", "tool_result"}:
-                        await websocket.send_text(json.dumps(event, ensure_ascii=False))
-                schedule_memory_record_sync(text, reply)
-                await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
-                log.debug("聊天流结束")
-                events.ignore_trigger_event.clear()
+                agent_task = asyncio.create_task(_run_agent_stream(text))
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
                 await websocket.send_text(json.dumps({"type": "error", "error": state.format_chat_error(e)}, ensure_ascii=False))
     except WebSocketDisconnect:
         log.info("Chat WebSocket 断开")
-
 
 @router.websocket("/faust/command")
 async def command_websocket(websocket: WebSocket):

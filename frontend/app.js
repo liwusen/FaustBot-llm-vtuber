@@ -43,6 +43,7 @@
   const quickController = document.getElementById('modelQuickController');
   const quickToggleAsrBtn = document.getElementById('quickToggleAsr');
   const quickStopMediaBtn = document.getElementById('quickStopMedia');
+  const quickStopAgentBtn = document.getElementById('quickStopAgentBtn');
   const quickRandomMotionBtn = document.getElementById('quickRandomMotion');
   const quickScaleUpBtn = document.getElementById('quickScaleUp');
   const quickScaleDownBtn = document.getElementById('quickScaleDown');
@@ -810,6 +811,19 @@
     try{ if (ttsStatus) ttsStatus.textContent = '已打断'; }catch(e){}
   }
 
+  function interruptAgent(){
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+      chatWs.send(JSON.stringify({ type: 'interrupt' }));
+    }
+    if (currentChatRequest) {
+      currentChatRequest.reject(new Error('User interrupted'));
+      currentChatRequest = null;
+    }
+    if (quickStopAgentBtn) quickStopAgentBtn.disabled = true;
+    if (chatStatusEl) chatStatusEl.textContent = '就绪';
+    resetStreamTtsState();
+  }
+
   function toggleAsr(){
     if (asrRunning) stopRecording();
     else startRecording();
@@ -1241,6 +1255,8 @@
         interruptPlayback();
       } else if (cmd === 'INTERRUPT_SPEECH'){
         interruptPlayback();
+      } else if (cmd === 'INTERRUPT_CHAT'){
+        interruptAgent();
       } else if (cmd === 'FOCUS_TEXT_CHAT'){
         focusTextChatInput();
       } else if (cmd === 'RANDOM_MOTION'){
@@ -1441,6 +1457,7 @@
       currentChatRequest.pendingBuffer = '';
       currentChatRequest.entries = [];
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
+      if (quickStopAgentBtn) quickStopAgentBtn.disabled = false;
       return;
     }
 
@@ -1543,6 +1560,24 @@
       return;
     }
 
+    if (msg.type === 'interrupted'){
+      if (chatStatusEl) chatStatusEl.textContent = '已中断';
+      if (textChatStatus) textChatStatus.textContent = '已中断';
+      showResultBubble('error', '(已中断)');
+      if (quickStopAgentBtn) quickStopAgentBtn.disabled = true;
+      if (currentChatRequest.resumeAfter){
+        resumeRecording();
+        currentChatRequest.resumeAfter = false;
+      }
+      currentChatRequest.reject(new Error('Stream interrupted'));
+      currentChatRequest = null;
+      return;
+    }
+
+    if (msg.type === 'interrupt_ack'){
+      return;
+    }
+
     if (msg.type === 'error'){
       if (chatStatusEl) chatStatusEl.textContent = '聊天错误';
       if (textChatStatus) textChatStatus.textContent = '聊天错误';
@@ -1588,6 +1623,11 @@
     if (!textChatInput || !textChatSendBtn) return;
     const text = (textChatInput.value || '').trim();
     if (!text || textChatSending) return;
+    // Auto-interrupt if agent is currently processing
+    if (quickStopAgentBtn && !quickStopAgentBtn.disabled) {
+      interruptAgent();
+      await new Promise(r => setTimeout(r, 80));
+    }
     textChatSending = true;
     textChatSendBtn.disabled = true;
     try{
@@ -2704,6 +2744,7 @@
   if (quickStopMediaBtn) quickStopMediaBtn.addEventListener('click', ()=>{
     interruptPlayback();
   });
+  if (quickStopAgentBtn) quickStopAgentBtn.addEventListener('click', ()=>{ interruptAgent(); });
   if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ playRandomMotion(); });
   if (quickScaleUpBtn) quickScaleUpBtn.addEventListener('click', ()=>{ nudgeScale(0.05); });
   if (quickScaleDownBtn) quickScaleDownBtn.addEventListener('click', ()=>{ nudgeScale(-0.05); });

@@ -107,7 +107,7 @@ async def invoke_agent_locked(target_agent, payload, config=None):
         await _sleep_backoff(attempt)
 
 
-async def stream_chat_agent_events(target_agent, payload, config=None):
+async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_event: asyncio.Event | None = None):
     if config is None:
         config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
     max_attempts = 3
@@ -119,6 +119,9 @@ async def stream_chat_agent_events(target_agent, payload, config=None):
                 async for event in target_agent.astream_events(payload, config=config, version="v2"):
                     if not isinstance(event, dict):
                         continue
+                    if abort_event and abort_event.is_set():
+                        log.info("Agent stream aborted by user")
+                        raise asyncio.CancelledError("User interrupted")
                     event_name = str(event.get("event") or "").strip().lower()
                     data = event.get("data") or {}
                     if event_name == "on_chat_model_stream":

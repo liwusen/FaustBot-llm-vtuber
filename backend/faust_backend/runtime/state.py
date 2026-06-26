@@ -13,6 +13,22 @@ agent = None
 agent_lock = asyncio.Lock()
 THREAD_ID = 84
 
+# ── 中断信号 ──
+_agent_abort: asyncio.Event | None = None
+
+
+def get_abort_event() -> asyncio.Event:
+    global _agent_abort
+    if _agent_abort is None:
+        _agent_abort = asyncio.Event()
+    return _agent_abort
+
+
+def reset_abort_event() -> asyncio.Event:
+    global _agent_abort
+    _agent_abort = asyncio.Event()
+    return _agent_abort
+
 # ── SQLite 持久化 ──
 conn = None
 checkpointer = None
