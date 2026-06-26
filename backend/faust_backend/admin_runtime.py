@@ -285,6 +285,33 @@ def sync_template_files(agent_name: str) -> Dict[str, bool]:
             result[filename] = False
     return result
 
+ARAYA_PROMPT_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md"]  # TASK.md not injected into prompt
+
+
+def sync_araya_template_files() -> Dict[str, bool]:
+    """Sync Araya prompt files from agents_template/araya/ to the Araya agent directory.
+
+    Returns {filename: updated} for each file.
+    """
+    agent_dir = _agent_dir("araya")
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    template_dir = Path(conf.PROJECT_ROOT) / "agents_template" / "araya"
+    result: Dict[str, bool] = {}
+    for filename in ARAYA_PROMPT_FILES:
+        src = template_dir / filename
+        dst = agent_dir / filename
+        if src.exists():
+            src_content = src.read_text(encoding="utf-8")
+            dst_content = dst.read_text(encoding="utf-8") if dst.exists() else ""
+            if src_content != dst_content:
+                dst.write_text(src_content, encoding="utf-8")
+                result[filename] = True
+            else:
+                result[filename] = False
+        else:
+            result[filename] = False
+    return result
+
 def list_agents() -> List[Dict[str, Any]]:
     current_agent = get_public_config().get("AGENT_NAME", "faust")
     items: List[Dict[str, Any]] = []
