@@ -7,7 +7,7 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 
 
-@register
+
 @tool
 def getDateTimeTool() -> str:
     """
@@ -22,7 +22,7 @@ def getDateTimeTool() -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S")
 
 
-@register
+
 @tool
 def userHostNameTool() -> str:
     """

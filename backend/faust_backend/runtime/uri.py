@@ -76,15 +76,25 @@ def parse(uri: str) -> ParsedURI:
     """Parse a URI string into its scheme, path, selector and query components.
 
     Input       → scheme     path              selector
+
     ─────────────────────────────────────────────────────
+    
     src/main.py → file       src/main.py       None
+
     src/main.py:50-100 → file  src/main.py    :50-100
+
     src/        → file       src/              None
+
     artifact://abc123        → artifact  abc123         None
+
     artifact://abc123:50-100 → artifact  abc123         :50-100
+
     memory://notes/math      → memory    notes/math     None
+
     memory://notes/math:50-100 → memory  notes/math     :50-100
+
     memory://   → memory     ""                None
+
     """
     raw = str(uri or "").strip()
     if not raw:
