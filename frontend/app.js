@@ -752,6 +752,13 @@
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
+  function isPointOverTextChatBar(clientX, clientY) {
+    const bar = document.getElementById('textChatBar');
+    if (!bar || bar.style.display === 'none') return false;
+    const rect = bar.getBoundingClientRect();
+    return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+  }
+
   function isPointerOnModel(clientX, clientY){
     if (modelType === 'vrm' && vrmScene) {
       return vrmScene.hitTest(clientX, clientY);
@@ -1547,6 +1554,7 @@
         await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
       }
       currentChatRequest.pendingBuffer = '';
+      if (quickStopAgentBtn) quickStopAgentBtn.disabled = true;
       if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
       if (textChatStatus) textChatStatus.textContent = '文字已发送';
       showResultBubble('ai', currentChatRequest.entries);
@@ -2440,10 +2448,11 @@
         const overAsrBubble = isPointOverAsrBubble(e.clientX, e.clientY);
         const overHilApproval = isPointOverHilApproval(e.clientX, e.clientY);
         const overVRMConfig = isPointOverVRMConfig(e.clientX, e.clientY);
+        const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = isPointOverNimbleWindow(e.clientX, e.clientY);
-        console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overNimble, onNimbleWindow });
-        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overNimble || onNimbleWindow || dragging || interactionLocked;
+        console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
+        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
         if (overInteractive){
           if (!interactiveActive){
             interactiveActive = true;
