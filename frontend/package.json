@@ -1,6 +1,6 @@
 {
   "name": "faust-live2d-frontend",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "private": true,
   "main": "electron-main.js",
   "license": "MIT",
