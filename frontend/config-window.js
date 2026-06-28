@@ -1521,11 +1521,6 @@ function renderMemoryTree(currentDir) {
     const selPath = state.kbSelectedPath || "";
     if (!selPath) return;
 
-    const detailBox = el("div", "card-help");
-    detailBox.style.padding = "8px";
-    detailBox.style.marginTop = "4px";
-    detailBox.style.background = "var(--bg-secondary, #f5f5f5)";
-    detailBox.style.borderRadius = "4px";
     // ── Structured metadata table ──
     const metaTable = el("div", "info-grid");
     metaTable.style.marginTop = "6px";
@@ -1780,7 +1775,7 @@ function renderMemoryTree(currentDir) {
         }
         await ensureModuleData("memory");
       } catch (err) { showBanner("error", "粘贴失败: " + String(err)); }
-    }, !state._kbClipboard ? "disabled" : "");
+    }, disabled: !state._kbClipboard});
     items.push(null); // separator
     items.push({ label: node.type === "file" ? "删除文件" : "删除目录", icon: "\u{1F5D1}", action: async () => {
       if (!window.confirm("确定删除 " + node.path + " ?")) return;
@@ -1798,16 +1793,16 @@ function renderMemoryTree(currentDir) {
       }
       const item = el("div", "context-menu-item");
       item.style.padding = "6px 16px";
-      item.style.cursor = "pointer";
+      item.style.cursor = it.disabled ? "default" : "pointer";
       item.style.display = "flex";
       item.style.alignItems = "center";
       item.style.gap = "8px";
       item.style.fontSize = "13px";
-      if (it.icon === "disabled") { item.style.opacity = "0.4"; }
+      if (it.disabled) { item.style.opacity = "0.4"; }
       item.innerHTML = (it.icon || "") + " " + it.label;
-      item.addEventListener("mouseenter", () => { item.style.background = "var(--bg-secondary, #f0f0f0)"; });
-      item.addEventListener("mouseleave", () => { item.style.background = "transparent"; });
-      if (it.icon !== "disabled") {
+      item.addEventListener("mouseenter", () => { if (!it.disabled) item.style.background = "var(--bg-secondary, #f0f0f0)"; });
+      item.addEventListener("mouseleave", () => { if (!it.disabled) item.style.background = "transparent"; });
+      if (!it.disabled) {
         item.addEventListener("click", async () => {
           menu.remove();
           await it.action();
@@ -1873,7 +1868,7 @@ function renderMemoryTree(currentDir) {
     } else if (evt.ctrlKey && evt.shiftKey && evt.key === "N") {
       evt.preventDefault();
       const defaultPath = (currentDir === "/" ? "" : currentDir.slice(1) + "/") + "new-folder";
-      // call doNewFolder
+      doNewFolder();
     } else if (evt.ctrlKey && evt.key === "n") {
       evt.preventDefault();
       const defaultPath = (currentDir === "/" ? "" : currentDir.slice(1) + "/") + "new.md";
@@ -1881,6 +1876,8 @@ function renderMemoryTree(currentDir) {
       openKbEditorModal(normalizeKbPath(defaultPath), "", { path: normalizeKbPath(defaultPath), declared_by: "config-center", indexed: true, tags: [] });
     }
   };
+  if (state._kbHandler) document.removeEventListener("keydown", state._kbHandler);
+  state._kbHandler = kbHandler;
   document.addEventListener("keydown", kbHandler);
 
 

@@ -798,6 +798,11 @@ class GraphStore:
                         new_item["chunk_id"] = new_cid
                         new_items.append(new_item)
                     _atomic_write_json(new_cf, new_items)
+                    # 更新全局 chunks_index
+                    chunks_index = self._load_chunks_index()
+                    for ni in new_items:
+                        chunks_index[ni["chunk_id"]] = ni
+                    self._save_chunks_index(chunks_index)
                 ndata = dict(self._graph.nodes[nid])
                 self._add_node(dest_nid, **ndata)
                 parent_dest_nid = _path_id(str(Path(dest).parent))
@@ -844,8 +849,19 @@ class GraphStore:
                         if cf.exists():
                             new_cf = self._chunks_file(new_child_path)
                             new_cf.parent.mkdir(parents=True, exist_ok=True)
-                            import shutil
-                            shutil.copy2(cf, new_cf)
+                            chunks_items = _read_json(cf, [])
+                            new_items = []
+                            for item in chunks_items:
+                                new_item = dict(item)
+                                new_item["node_path"] = new_child_path
+                                new_item["chunk_id"] = f"{new_child_path}::chunk::{item.get('chunk_index', 0)}::{uuid.uuid4().hex[:8]}"
+                                new_items.append(new_item)
+                            _atomic_write_json(new_cf, new_items)
+                            # update global chunks_index
+                            chunks_index = self._load_chunks_index()
+                            for ni in new_items:
+                                chunks_index[ni["chunk_id"]] = ni
+                            self._save_chunks_index(chunks_index)
                     except Exception:
                         pass
                     ndata = dict(self._graph.nodes[child_nid])
@@ -906,8 +922,68 @@ class GraphStore:
                 p_dest = _path_id(str(Path(dest).parent))
                 self._add_edge(p_dest, dest_nid, TREE_EDGE)
             else:
-                # directory move: treat as rename with new parent
-                return await self.file_rename(path, Path(norm).name)
+                # 目录移动：迭代子节点，转移到新目录
+                self._ensure_ancestors(dest)
+                children_to_move = []
+                for child_nid in list(self._graph.nodes):
+                    if not _is_path_id(child_nid):
+                        continue
+                    child_path = _id_to_path(child_nid)
+                    if child_path.startswith(norm + "/") or child_path == norm:
+                        children_to_move.append((child_nid, child_path))
+                children_to_move.sort(key=lambda x: len(x[1]), reverse=True)
+                seen_new = set()
+                for child_nid, child_path in children_to_move:
+                    suffix = child_path[len(norm):]
+                    new_child_path = _normalize_path(dest + suffix)
+                    new_child_nid = _path_id(new_child_path)
+                    if new_child_nid in seen_new:
+                        continue
+                    seen_new.add(new_child_nid)
+                    try:
+                        cp = self._content_path(child_path)
+                        if cp.exists():
+                            new_cp = self._content_path(new_child_path)
+                            new_cp.parent.mkdir(parents=True, exist_ok=True)
+                            cp.rename(new_cp)
+                    except Exception:
+                        pass
+                    try:
+                        mp = self._meta_path(child_path)
+                        if mp.exists():
+                            meta = _read_json(mp, {})
+                            meta["path"] = new_child_path
+                            meta["updated_at"] = _utc_iso()
+                            self._write_meta(new_child_path, meta)
+                            mp.unlink()
+                    except Exception:
+                        pass
+                    try:
+                        cf = self._chunks_file(child_path)
+                        if cf.exists():
+                            new_cf = self._chunks_file(new_child_path)
+                            new_cf.parent.mkdir(parents=True, exist_ok=True)
+                            cf.rename(new_cf)
+                    except Exception:
+                        pass
+                    ndata = dict(self._graph.nodes[child_nid])
+                    self._graph.remove_node(child_nid)
+                    self._add_node(new_child_nid, **ndata)
+                    if child_nid == nid:
+                        old_parent_nid = _path_id(str(Path(norm).parent))
+                        self._remove_edge(old_parent_nid, child_nid)
+                        p_dest = _path_id(str(Path(dest).parent))
+                        self._add_edge(p_dest, new_child_nid, TREE_EDGE)
+                    else:
+                        p_dest = _path_id(str(Path(new_child_path).parent))
+                        self._add_edge(p_dest, new_child_nid, TREE_EDGE)
+                # 更新 chunks index
+                chunks_index = self._load_chunks_index()
+                for cid, item in list(chunks_index.items()):
+                    np_str = str(item.get("node_path", ""))
+                    if np_str.startswith(norm + "/") or np_str == norm:
+                        item["node_path"] = np_str.replace(norm, dest, 1)
+                self._save_chunks_index(chunks_index)
             self._repair_tree()
         self.flush()
         log.info("file_move path=%s -> dest=%s type=%s", norm, dest, ntype)
@@ -1111,7 +1187,8 @@ class GraphStore:
         elif sort_by == "updated_at":
             candidates.sort(key=lambda x: x.get("updated_at", ""), reverse=(sort_order != "asc"))
         elif sort_by == "created_at":
-            candidates.sort(key=lambda x: x.get("declared_by", ""), reverse=(sort_order != "asc"))
+            # fallback to updated_at (created_at not tracked in meta)
+            candidates.sort(key=lambda x: x.get("updated_at", ""), reverse=(sort_order != "asc"))
 
         # Add line_count
         for c in candidates[:top_k]:

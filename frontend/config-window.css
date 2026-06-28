@@ -895,6 +895,7 @@ body {
 }
 .graph-entity-row:hover {
   background: #f2f6ff;
+}
 .graph-canvas-wrap {
 	position: relative;
 	min-height: 350px;
