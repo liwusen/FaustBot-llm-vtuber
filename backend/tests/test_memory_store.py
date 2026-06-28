@@ -393,3 +393,311 @@ class TestEntityAdd:
         assert memory_store._has_node(eid)
         assert memory_store.entity_delete(eid) is True
         assert not memory_store._has_node(eid)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 4: Rename / Copy / Move
+# ══════════════════════════════════════════════════════════════════════
+
+class TestPhase4RenameCopyMove:
+
+    def test_file_rename_basic(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/old_name.md", "hello world", index=False)
+            result = await memory_store.file_rename("/test/old_name.md", "new_name.md")
+            assert result["new_path"] == "/test/new_name.md"
+            assert result["type"] == "file"
+            # old node should not exist
+            assert not memory_store._has_node(store._path_id("/test/old_name.md"))
+            # new node should exist
+            assert memory_store._has_node(store._path_id("/test/new_name.md"))
+            # content is preserved
+            read_result = await memory_store.file_read("/test/new_name.md")
+            assert read_result["content"] == "hello world"
+        asyncio.run(_test())
+
+    def test_file_rename_same_name_noop(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/same.md", "content", index=False)
+            result = await memory_store.file_rename("/test/same.md", "same.md")
+            assert result["new_path"] == "/test/same.md"
+            assert memory_store._has_node(store._path_id("/test/same.md"))
+        asyncio.run(_test())
+
+    def test_file_rename_nonexistent_raises(self, memory_store):
+        async def _test():
+            try:
+                await memory_store.file_rename("/test/no_exist.md", "new.md")
+                assert False, "Should raise FileNotFoundError"
+            except FileNotFoundError:
+                pass
+        asyncio.run(_test())
+
+    def test_file_rename_to_existing_raises(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/existing.md", "content", index=False)
+            await memory_store.file_write("/test/target.md", "other", index=False)
+            try:
+                await memory_store.file_rename("/test/existing.md", "target.md")
+                assert False, "Should raise FileExistsError"
+            except FileExistsError:
+                pass
+        asyncio.run(_test())
+
+    def test_dir_rename_recursive(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/old_dir/sub/file1.md", "content1", index=False)
+            await memory_store.file_write("/old_dir/file2.md", "content2", index=False)
+            result = await memory_store.file_rename("/old_dir", "new_dir")
+            assert result["new_path"] == "/new_dir"
+            # child paths should exist under new dir
+            assert memory_store._has_node(store._path_id("/new_dir/sub/file1.md"))
+            assert memory_store._has_node(store._path_id("/new_dir/file2.md"))
+            # old paths should not exist
+            assert not memory_store._has_node(store._path_id("/old_dir/sub/file1.md"))
+            assert not memory_store._has_node(store._path_id("/old_dir/file2.md"))
+            # content preserved
+            r1 = await memory_store.file_read("/new_dir/sub/file1.md")
+            assert r1["content"] == "content1"
+            r2 = await memory_store.file_read("/new_dir/file2.md")
+            assert r2["content"] == "content2"
+        asyncio.run(_test())
+
+    def test_file_copy_basic(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/src.md", "source content", index=False)
+            result = await memory_store.file_copy("/test/src.md", "/test/dest.md")
+            assert result["dest"] == "/test/dest.md"
+            # both exist
+            r1 = await memory_store.file_read("/test/src.md")
+            r2 = await memory_store.file_read("/test/dest.md")
+            assert r1["content"] == "source content"
+            assert r2["content"] == "source content"
+        asyncio.run(_test())
+
+    def test_file_copy_to_existing_raises(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/source.md", "a", index=False)
+            await memory_store.file_write("/test/existing_target.md", "b", index=False)
+            try:
+                await memory_store.file_copy("/test/source.md", "/test/existing_target.md")
+                assert False, "Should raise FileExistsError"
+            except FileExistsError:
+                pass
+        asyncio.run(_test())
+
+    def test_file_copy_nonexistent_raises(self, memory_store):
+        async def _test():
+            try:
+                await memory_store.file_copy("/nonexistent/doc.md", "/dest/doc.md")
+                assert False, "Should raise FileNotFoundError"
+            except FileNotFoundError:
+                pass
+        asyncio.run(_test())
+
+    def test_dir_copy_recursive(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/src_dir/sub/a.md", "a content", index=False)
+            await memory_store.file_write("/src_dir/b.md", "b content", index=False)
+            result = await memory_store.file_copy("/src_dir", "/dest_dir")
+            assert result["dest"] == "/dest_dir"
+            # source still exists
+            assert memory_store._has_node(store._path_id("/src_dir/sub/a.md"))
+            # dest has copies
+            assert memory_store._has_node(store._path_id("/dest_dir/sub/a.md"))
+            assert memory_store._has_node(store._path_id("/dest_dir/b.md"))
+            r1 = await memory_store.file_read("/dest_dir/sub/a.md")
+            assert r1["content"] == "a content"
+        asyncio.run(_test())
+
+    def test_file_move_to_dir(self, memory_store):
+        async def _test():
+            await memory_store.mkdir("/target_dir")
+            await memory_store.file_write("/source_doc.md", "move me", index=False)
+            result = await memory_store.file_move("/source_doc.md", "/target_dir")
+            assert result["new_path"] == "/target_dir/source_doc.md"
+            # old gone
+            assert not memory_store._has_node(store._path_id("/source_doc.md"))
+            # new exists
+            assert memory_store._has_node(store._path_id("/target_dir/source_doc.md"))
+            r = await memory_store.file_read("/target_dir/source_doc.md")
+            assert r["content"] == "move me"
+        asyncio.run(_test())
+
+    def test_rename_copies_tags_and_meta(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/tagged.md", "content", index=False, tags=["tag1", "tag2"])
+            await memory_store.set_score_patch("/test/tagged.md", 0.1)
+            await memory_store.file_rename("/test/tagged.md", "renamed_tagged.md")
+            meta = memory_store._read_meta("/test/renamed_tagged.md")
+            assert "tag1" in meta.get("tags", [])
+            assert "tag2" in meta.get("tags", [])
+            assert meta.get("score_patch") == 0.1
+        asyncio.run(_test())
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 5: Advanced Search
+# ══════════════════════════════════════════════════════════════════════
+
+class TestPhase5AdvancedSearch:
+
+    def test_advanced_search_by_tags(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/doc1.md", "content 1", index=False, tags=["python", "web"])
+            await memory_store.file_write("/test/doc2.md", "content 2", index=False, tags=["python"])
+            await memory_store.file_write("/test/doc3.md", "content 3", index=False, tags=["rust"])
+            results = await memory_store.advanced_search(tags=["python"])
+            paths = [r["path"] for r in results]
+            assert "/test/doc1.md" in paths
+            assert "/test/doc2.md" in paths
+            assert "/test/doc3.md" not in paths
+        asyncio.run(_test())
+
+    def test_advanced_search_by_scope(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/scope_a/doc.md", "in scope a", index=False)
+            await memory_store.file_write("/scope_b/doc.md", "in scope b", index=False)
+            results = await memory_store.advanced_search(scope="/scope_a")
+            paths = [r["path"] for r in results]
+            assert "/scope_a/doc.md" in paths
+            assert "/scope_b/doc.md" not in paths
+        asyncio.run(_test())
+
+    def test_advanced_search_by_text_query(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/alpha.md", "alpha bravo charlie", index=False)
+            await memory_store.file_write("/test/other.md", "delta echo", index=False)
+            results = await memory_store.advanced_search(query="bravo")
+            paths = [r["path"] for r in results]
+            assert "/test/alpha.md" in paths
+            assert "/test/other.md" not in paths
+        asyncio.run(_test())
+
+    def test_advanced_search_and_tag_logic(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/a.md", "content", index=False, tags=["tag1", "tag2"])
+            await memory_store.file_write("/test/b.md", "content", index=False, tags=["tag1"])
+            await memory_store.file_write("/test/c.md", "content", index=False, tags=["tag2"])
+            # AND: both tags required
+            results_and = await memory_store.advanced_search(tags=["tag1", "tag2"], tag_logic="AND")
+            paths_and = [r["path"] for r in results_and]
+            assert "/test/a.md" in paths_and
+            assert "/test/b.md" not in paths_and
+            assert "/test/c.md" not in paths_and
+        asyncio.run(_test())
+
+    def test_advanced_search_or_tag_logic(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/a.md", "content", index=False, tags=["tag1", "tag2"])
+            await memory_store.file_write("/test/b.md", "content", index=False, tags=["tag1"])
+            # OR: any tag matches
+            results_or = await memory_store.advanced_search(tags=["tag2"], tag_logic="OR")
+            paths_or = [r["path"] for r in results_or]
+            assert "/test/a.md" in paths_or
+            assert "/test/b.md" not in paths_or
+        asyncio.run(_test())
+
+    def test_advanced_search_empty_query_returns_all_filtered(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/doc.md", "content", index=False, tags=["mytag"])
+            await memory_store.file_write("/other/doc.md", "content", index=False)
+            # No query, just scope = /test
+            results = await memory_store.advanced_search(scope="/test")
+            paths = [r["path"] for r in results]
+            assert "/test/doc.md" in paths
+            assert "/other/doc.md" not in paths
+        asyncio.run(_test())
+
+    def test_advanced_search_sort_by_updated_at(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/test/old.md", "old", index=False)
+            import time
+            time.sleep(0.01)
+            await memory_store.file_write("/test/new.md", "new", index=False)
+            results = await memory_store.advanced_search(sort_by="updated_at", sort_order="desc")
+            assert len(results) >= 2
+            # newer file should come first
+            assert results[0]["path"] == "/test/new.md"
+        asyncio.run(_test())
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 6: Extraction Status
+# ══════════════════════════════════════════════════════════════════════
+
+class TestPhase6ExtractionStatus:
+
+    def test_initial_status(self, memory_store):
+        status = memory_store.get_extraction_status()
+        assert status["pending"] == 0
+        assert status["running"] == 0
+        assert status["last_running"] is None
+        assert status["last_success"] is None
+        assert status["last_error"] is None
+
+    def test_register_and_complete(self, memory_store):
+        memory_store.register_extraction("/test/doc.md")
+        status = memory_store.get_extraction_status()
+        assert status["pending"] == 1
+        assert status["running"] == 1
+        assert status["last_running"] == "/test/doc.md"
+
+        memory_store.complete_extraction("/test/doc.md", success=True)
+        status = memory_store.get_extraction_status()
+        assert status["pending"] == 0
+        assert status["running"] == 0
+        assert status["last_success"] == "/test/doc.md"
+
+    def test_register_multiple_then_error(self, memory_store):
+        memory_store.register_extraction("/test/a.md")
+        memory_store.register_extraction("/test/b.md")
+        status = memory_store.get_extraction_status()
+        assert status["pending"] == 2
+        assert status["running"] == 2
+
+        memory_store.complete_extraction("/test/a.md", success=False, error="API error")
+        status = memory_store.get_extraction_status()
+        assert status["pending"] == 1
+        assert status["running"] == 1
+        assert "API error" in (status["last_error"] or "")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7: Entity Detail
+# ══════════════════════════════════════════════════════════════════════
+
+class TestPhase7EntityDetail:
+
+    def test_entity_detail_exists(self, memory_store):
+        eid = memory_store.entity_add("测试实体", entity_type="concept",
+                                       description="这是一个测试")
+        detail = memory_store.get_entity_detail(eid)
+        assert detail is not None
+        assert detail["name"] == "测试实体"
+        assert detail["entity_type"] == "concept"
+        assert detail["description"] == "这是一个测试"
+        assert detail["relations_count"] == 0
+        assert detail["id"] == eid
+
+    def test_entity_detail_not_found(self, memory_store):
+        detail = memory_store.get_entity_detail("nonexistent_id")
+        assert detail is None
+
+    def test_entity_detail_not_entity(self, memory_store):
+        nid = store._path_id("/not_an_entity")
+        memory_store._add_node(nid, type="file", name="test.txt")
+        detail = memory_store.get_entity_detail(nid)
+        assert detail is None
+
+    def test_entity_detail_shows_kb_refs(self, memory_store):
+        eid = memory_store.entity_add("test", kb_refs=["/notes/test.md", "/notes/ref.md"])
+        detail = memory_store.get_entity_detail(eid)
+        assert len(detail["kb_refs"]) >= 2
+
+    def test_entity_detail_shows_relations_count(self, memory_store):
+        eid1 = memory_store.entity_add("entity1")
+        eid2 = memory_store.entity_add("entity2")
+        memory_store.relation_add(eid1, eid2, rel_type="relates_to")
+        detail = memory_store.get_entity_detail(eid1)
+        assert detail["relations_count"] >= 1

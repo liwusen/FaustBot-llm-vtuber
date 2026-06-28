@@ -150,8 +150,14 @@ class GraphStore:
         self._write_lock = asyncio.Lock()
         self._dirty: bool = False
         self._bm25_index: BM25Okapi | None = None
-        self._bm25_docs: list[dict] = []
         self._bm25_corpus: list[list[str]] | None = None
+        self._extraction_status: dict = {
+            "pending": 0,
+            "running": 0,
+            "last_running": None,
+            "last_success": None,
+            "last_error": None,
+        }
         self._ensure_dirs()
         self._load()
 
@@ -632,6 +638,281 @@ class GraphStore:
         self.flush()
         return {"path": norm}
 
+
+    async def file_rename(self, path: str, new_name: str) -> dict:
+        """重命名文件或目录。目录会递归重命名所有子节点。"""
+        norm = _normalize_path(path)
+        parent = str(Path(norm).parent)
+        new_path = _normalize_path(str(Path(parent) / new_name)) if parent != "/" else f"/{new_name}"
+        new_path = _normalize_path(new_path)
+        if norm == new_path:
+            return {"path": norm, "new_path": new_path}  # no-op
+        nid = _path_id(norm)
+        new_nid = _path_id(new_path)
+        if not self._has_node(nid):
+            raise FileNotFoundError(f"节点不存在: {norm}")
+        if self._has_node(new_nid):
+            raise FileExistsError(f"目标路径已存在: {new_path}")
+        ntype = self._get_node_attr(nid, "type", "file")
+        async with self._write_lock:
+            if ntype == "file":
+                # 文件：移动内容+元数据+chunks
+                cp = self._content_path(norm)
+                if cp.exists():
+                    new_cp = self._content_path(new_path)
+                    new_cp.parent.mkdir(parents=True, exist_ok=True)
+                    cp.rename(new_cp)
+                mp = self._meta_path(norm)
+                if mp.exists():
+                    meta = self._read_meta(norm)
+                    meta["path"] = new_path
+                    meta["updated_at"] = _utc_iso()
+                    self._write_meta(new_path, meta)
+                    mp.unlink()
+                cf = self._chunks_file(norm)
+                if cf.exists():
+                    new_cf = self._chunks_file(new_path)
+                    new_cf.parent.mkdir(parents=True, exist_ok=True)
+                    cf.rename(new_cf)
+                    # update chunks_index references
+                    chunks_index = self._load_chunks_index()
+                    for cid, item in list(chunks_index.items()):
+                        if str(item.get("node_path")) == norm:
+                            item["node_path"] = new_path
+                    self._save_chunks_index(chunks_index)
+                parent_nid = _path_id(str(Path(norm).parent))
+                self._remove_edge(parent_nid, nid)
+                # 重新添加节点
+                ndata = dict(self._graph.nodes[nid])
+                ndata["name"] = new_name
+                self._graph.remove_node(nid)
+                self._add_node(new_nid, **ndata)
+                self._add_edge(_path_id(parent), new_nid, TREE_EDGE)
+            else:
+                # 目录：遍历所有子节点递归重命名
+                children_to_rename = []
+                for child_nid in list(self._graph.nodes):
+                    if not _is_path_id(child_nid):
+                        continue
+                    child_path = _id_to_path(child_nid)
+                    if child_path.startswith(norm + "/") or child_path == norm:
+                        children_to_rename.append((child_nid, child_path))
+                # 按路径深度排序（深->浅），避免父路径先变导致子路径错误
+                children_to_rename.sort(key=lambda x: x[1], reverse=True)
+                seen_new = set()
+                for child_nid, child_path in children_to_rename:
+                    suffix = child_path[len(norm):]  # e.g. "/sub/file.md"
+                    new_child_path = _normalize_path(new_path + suffix)
+                    new_child_nid = _path_id(new_child_path)
+                    if new_child_nid in seen_new:
+                        continue
+                    seen_new.add(new_child_nid)
+                    if child_nid == nid:
+                        ndata = dict(self._graph.nodes[child_nid])
+                        ndata["name"] = new_name
+                        self._graph.remove_node(child_nid)
+                        self._add_node(new_child_nid, **ndata)
+                        self._add_edge(_path_id(parent), new_child_nid, TREE_EDGE)
+                    else:
+                        # move path:/old/dir/sub -> path:/new/dir/sub
+                        try:
+                            sub_cp = self._content_path(child_path)
+                            if sub_cp.exists():
+                                new_sub_cp = self._content_path(new_child_path)
+                                new_sub_cp.parent.mkdir(parents=True, exist_ok=True)
+                                sub_cp.rename(new_sub_cp)
+                        except Exception:
+                            pass
+                        try:
+                            sub_mp = self._meta_path(child_path)
+                            if sub_mp.exists():
+                                sub_meta = _read_json(sub_mp, {})
+                                sub_meta["path"] = new_child_path
+                                sub_meta["updated_at"] = _utc_iso()
+                                self._write_meta(new_child_path, sub_meta)
+                                sub_mp.unlink()
+                        except Exception:
+                            pass
+                        try:
+                            sub_cf = self._chunks_file(child_path)
+                            if sub_cf.exists():
+                                new_cf = self._chunks_file(new_child_path)
+                                new_cf.parent.mkdir(parents=True, exist_ok=True)
+                                sub_cf.rename(new_cf)
+                        except Exception:
+                            pass
+                        ndata = dict(self._graph.nodes[child_nid])
+                        self._graph.remove_node(child_nid)
+                        self._add_node(new_child_nid, **ndata)
+                # 更新 chunks index 中的 node_path 引用
+                chunks_index = self._load_chunks_index()
+                for cid, item in list(chunks_index.items()):
+                    np = str(item.get("node_path", ""))
+                    if np.startswith(norm + "/") or np == norm:
+                        item["node_path"] = np.replace(norm, new_path, 1)
+                self._save_chunks_index(chunks_index)
+            # 修复父目录边缘
+            self._repair_tree()
+        self.flush()
+        log.info("file_rename path=%s -> new_path=%s type=%s", norm, new_path, ntype)
+        return {"path": norm, "new_path": new_path, "type": ntype}
+
+    async def file_copy(self, path: str, dest_path: str) -> dict:
+        """复制文件或目录到目标路径。"""
+        norm = _normalize_path(path)
+        dest = _normalize_path(dest_path)
+        nid = _path_id(norm)
+        dest_nid = _path_id(dest)
+        if not self._has_node(nid):
+            raise FileNotFoundError(f"源节点不存在: {norm}")
+        if self._has_node(dest_nid):
+            raise FileExistsError(f"目标路径已存在: {dest}")
+        ntype = self._get_node_attr(nid, "type", "file")
+        async with self._write_lock:
+            if ntype == "file":
+                # 复制文件
+                cp = self._content_path(norm)
+                if cp.exists():
+                    new_cp = self._content_path(dest)
+                    new_cp.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(cp, new_cp)
+                meta = self._read_meta(norm)
+                new_meta = dict(meta)
+                new_meta["path"] = dest
+                new_meta["updated_at"] = _utc_iso()
+                self._write_meta(dest, new_meta)
+                cf = self._chunks_file(norm)
+                if cf.exists():
+                    new_cf = self._chunks_file(dest)
+                    new_cf.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(cf, new_cf)
+                    # copy chunks index refs
+                    chunks_items = _read_json(cf, [])
+                    new_items = []
+                    for item in chunks_items:
+                        new_item = dict(item)
+                        new_item["node_path"] = dest
+                        new_cid = f"{dest}::chunk::{item.get('chunk_index', 0)}::{uuid.uuid4().hex[:8]}"
+                        new_item["chunk_id"] = new_cid
+                        new_items.append(new_item)
+                    _atomic_write_json(new_cf, new_items)
+                ndata = dict(self._graph.nodes[nid])
+                self._add_node(dest_nid, **ndata)
+                parent_dest_nid = _path_id(str(Path(dest).parent))
+                self._ensure_ancestors(dest)
+                self._add_edge(parent_dest_nid, dest_nid, TREE_EDGE)
+            else:
+                # 目录递归复制
+                self._ensure_ancestors(dest)
+                children_to_copy = []
+                for child_nid in list(self._graph.nodes):
+                    if not _is_path_id(child_nid):
+                        continue
+                    child_path = _id_to_path(child_nid)
+                    if child_path.startswith(norm + "/") or child_path == norm:
+                        children_to_copy.append((child_nid, child_path))
+                children_to_copy.sort(key=lambda x: len(x[1]))
+                seen_new = set()
+                for child_nid, child_path in children_to_copy:
+                    suffix = child_path[len(norm):]
+                    new_child_path = _normalize_path(dest + suffix)
+                    new_child_nid = _path_id(new_child_path)
+                    if new_child_nid in seen_new:
+                        continue
+                    seen_new.add(new_child_nid)
+                    try:
+                        cp = self._content_path(child_path)
+                        if cp.exists():
+                            new_cp = self._content_path(new_child_path)
+                            new_cp.parent.mkdir(parents=True, exist_ok=True)
+                            import shutil
+                            shutil.copy2(cp, new_cp)
+                    except Exception:
+                        pass
+                    try:
+                        meta = self._read_meta(child_path)
+                        new_meta = dict(meta)
+                        new_meta["path"] = new_child_path
+                        new_meta["updated_at"] = _utc_iso()
+                        self._write_meta(new_child_path, new_meta)
+                    except Exception:
+                        pass
+                    try:
+                        cf = self._chunks_file(child_path)
+                        if cf.exists():
+                            new_cf = self._chunks_file(new_child_path)
+                            new_cf.parent.mkdir(parents=True, exist_ok=True)
+                            import shutil
+                            shutil.copy2(cf, new_cf)
+                    except Exception:
+                        pass
+                    ndata = dict(self._graph.nodes[child_nid])
+                    self._add_node(new_child_nid, **ndata)
+                    # wire parent
+                    if child_nid != nid:  # not the root
+                        p_dest = _path_id(str(Path(new_child_path).parent))
+                        self._add_edge(p_dest, new_child_nid, TREE_EDGE)
+            self._repair_tree()
+        self.flush()
+        log.info("file_copy path=%s -> dest=%s type=%s", norm, dest, ntype)
+        return {"path": norm, "dest": dest, "type": ntype}
+
+    async def file_move(self, path: str, dest_dir: str) -> dict:
+        """移动文件或目录到目标目录。"""
+        norm = _normalize_path(path)
+        dest = _normalize_path(str(Path(dest_dir) / Path(norm).name))
+        if norm == dest:
+            return {"path": norm, "new_path": dest}
+        # implement as read + write + delete with dest parent
+        nid = _path_id(norm)
+        if not self._has_node(nid):
+            raise FileNotFoundError(f"节点不存在: {norm}")
+        dest_nid = _path_id(dest)
+        if self._has_node(dest_nid):
+            raise FileExistsError(f"目标路径已存在: {dest}")
+        ntype = self._get_node_attr(nid, "type", "file")
+        async with self._write_lock:
+            if ntype == "file":
+                cp = self._content_path(norm)
+                if cp.exists():
+                    new_cp = self._content_path(dest)
+                    new_cp.parent.mkdir(parents=True, exist_ok=True)
+                    cp.rename(new_cp)
+                mp = self._meta_path(norm)
+                if mp.exists():
+                    meta = self._read_meta(norm)
+                    meta["path"] = dest
+                    meta["updated_at"] = _utc_iso()
+                    self._write_meta(dest, meta)
+                    mp.unlink()
+                cf = self._chunks_file(norm)
+                if cf.exists():
+                    new_cf = self._chunks_file(dest)
+                    new_cf.parent.mkdir(parents=True, exist_ok=True)
+                    cf.rename(new_cf)
+                    chunks_index = self._load_chunks_index()
+                    for cid, item in list(chunks_index.items()):
+                        if str(item.get("node_path")) == norm:
+                            item["node_path"] = dest
+                    self._save_chunks_index(chunks_index)
+                parent_nid = _path_id(str(Path(norm).parent))
+                self._remove_edge(parent_nid, nid)
+                ndata = dict(self._graph.nodes[nid])
+                self._graph.remove_node(nid)
+                self._add_node(dest_nid, **ndata)
+                self._ensure_ancestors(dest)
+                p_dest = _path_id(str(Path(dest).parent))
+                self._add_edge(p_dest, dest_nid, TREE_EDGE)
+            else:
+                # directory move: treat as rename with new parent
+                return await self.file_rename(path, Path(norm).name)
+            self._repair_tree()
+        self.flush()
+        log.info("file_move path=%s -> dest=%s type=%s", norm, dest, ntype)
+        return {"path": norm, "new_path": dest, "type": ntype}
+
     async def mkdir(self, path: str, description: str = "") -> dict:
         norm = _normalize_path(path)
         nid = _path_id(norm)
@@ -662,6 +943,33 @@ class GraphStore:
         mp = self._meta_path(norm_path)
         mp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_json(mp, meta)
+
+    # ── extraction status ──
+
+    def register_extraction(self, doc_path: str) -> None:
+        """注册一个正在进行的实体提取任务。"""
+        self._extraction_status["pending"] = max(0, self._extraction_status.get("pending", 0)) + 1
+        self._extraction_status["running"] = max(0, self._extraction_status.get("running", 0)) + 1
+        self._extraction_status["last_running"] = doc_path
+        log.info("register_extraction doc_path=%s", doc_path)
+
+    def complete_extraction(self, doc_path: str, success: bool = True, error: str | None = None) -> None:
+        """完成一个实体提取任务。"""
+        self._extraction_status["pending"] = max(0, self._extraction_status.get("pending", 1) - 1)
+        self._extraction_status["running"] = max(0, self._extraction_status.get("running", 1) - 1)
+        if success:
+            self._extraction_status["last_success"] = doc_path
+            self._extraction_status["last_error"] = None
+        else:
+            self._extraction_status["last_error"] = f"{doc_path}: {error}" if error else doc_path
+        if self._extraction_status["running"] <= 0:
+            self._extraction_status["last_running"] = None
+        log.info("complete_extraction doc_path=%s success=%s error=%s", doc_path, success, error)
+
+    def get_extraction_status(self) -> dict:
+        """获取当前实体提取状态。"""
+        return dict(self._extraction_status)
+
 
     # ── tags / score_patch ──
 
@@ -696,6 +1004,154 @@ class GraphStore:
         self._set_node_attr(nid, score_patch=patch)
         self.flush()
         return {"path": norm, "meta": meta}
+
+
+    # ── advanced search ──
+
+    async def advanced_search(self, query: str | None = None,
+                               tags: list[str] | None = None,
+                               scope: str | None = None,
+                               date_from: str | None = None,
+                               date_to: str | None = None,
+                               declared_by: str | None = None,
+                               content_type: str | None = None,
+                               top_k: int = 20,
+                               sort_by: str = "relevance",
+                               sort_order: str = "desc",
+                               tag_logic: str = "AND") -> list[dict]:
+        """多条件组合搜索。查询可以为空（仅按条件筛选）。"""
+        scope_prefix = _normalize_path(scope or "").strip("/")
+        scope_prefix = f"/{scope_prefix}/" if scope_prefix else ""
+        required_tags = {t.casefold() for t in (tags or [])} if tags else set()
+        need_text_query = str(query or "").strip() if query else ""
+
+        # Collect all path nodes with meta
+        candidates: list[dict] = []
+        meta_dir = self.meta_dir
+        if meta_dir.exists():
+            for mp in sorted(meta_dir.rglob("*.meta.json")):
+                try:
+                    meta = _read_json(mp, {})
+                    if not meta or not meta.get("path"):
+                        continue
+                    p = _normalize_path(meta["path"])
+                    # scope filter
+                    if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
+                        continue
+                    # tags filter
+                    meta_tags = [t for t in (meta.get("tags") or []) if t]
+                    if required_tags:
+                        tag_set = {t.casefold() for t in meta_tags}
+                        if tag_logic == "AND":
+                            if not required_tags.issubset(tag_set):
+                                continue
+                        else:  # OR
+                            if not required_tags.intersection(tag_set):
+                                continue
+                    # date filter
+                    updated = (meta.get("updated_at") or "")
+                    if date_from and updated:
+                        if isinstance(date_from, str) and updated < date_from:
+                            # FIXME: use proper date comparison
+                            if not updated.startswith(date_from):
+                                continue
+                    if date_to and updated:
+                        if isinstance(date_to, str) and updated[:10] > date_to:
+                            continue
+                    # declared_by filter
+                    if declared_by and meta.get("declared_by", "") != declared_by:
+                        continue
+                    # content_type filter
+                    if content_type:
+                        ctype = str(self._get_node_attr(_path_id(p), "content_type", "") or "")
+                        if content_type == "text" and ctype and not ctype.startswith("text/"):
+                            continue
+                        if content_type == "image" and ctype and not ctype.startswith("image/"):
+                            continue
+                    nid = _path_id(p)
+                    description = str(meta.get("description", "") or self._get_node_attr(nid, "description", ""))
+                    candidate = {
+                        "path": p,
+                        "description": description,
+                        "tags": meta_tags,
+                        "updated_at": updated,
+                        "declared_by": str(meta.get("declared_by", "")),
+                        "score_patch": float(meta.get("score_patch", 0.0)),
+                    }
+                    # text match score
+                    if need_text_query:
+                        text_lower = need_text_query.lower()
+                        name_lower = Path(p).name.lower()
+                        score = 0.0
+                        if text_lower in name_lower:
+                            score = 1.0
+                        if text_lower in description.lower():
+                            score = max(score, 0.8)
+                        # also check content file
+                        cp = self._content_path(p)
+                        if cp.exists() and score < 0.5:
+                            try:
+                                content = cp.read_text(encoding="utf-8", errors="ignore")[:5000]
+                                if need_text_query.lower() in content.lower():
+                                    score = max(score, 0.6)
+                            except Exception:
+                                pass
+                        candidate["score"] = score
+                        if score == 0:
+                            continue  # text query present but no match
+                    else:
+                        candidate["score"] = 0.0
+                        # no text query - path, tag match is enough
+                    candidates.append(candidate)
+                except Exception:
+                    continue
+
+        if sort_by == "relevance" and need_text_query:
+            candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+        elif sort_by == "updated_at":
+            candidates.sort(key=lambda x: x.get("updated_at", ""), reverse=(sort_order != "asc"))
+        elif sort_by == "created_at":
+            candidates.sort(key=lambda x: x.get("declared_by", ""), reverse=(sort_order != "asc"))
+
+        # Add line_count
+        for c in candidates[:top_k]:
+            c["line_count"] = self._count_lines(c["path"])
+
+        return candidates[:top_k]
+
+    # ── entity detail ──
+
+    def get_entity_detail(self, entity_id: str) -> dict | None:
+        """获取单个实体的完整信息。"""
+        if not self._has_node(entity_id):
+            return None
+        ndata = self._graph.nodes[entity_id]
+        if ndata.get("type") != "entity":
+            return None
+        # count relations
+        rel_count = 0
+        for _ in self._graph.edges(entity_id):
+            rel_count += 1
+        kb_refs = list(ndata.get("kb_refs", []))
+        # get linked file paths
+        linked_files = []
+        for ref in kb_refs:
+            nref = _normalize_path(ref)
+            if nref != ref:
+                linked_files.append(nref)
+            else:
+                linked_files.append(ref)
+        return {
+            "id": entity_id,
+            "name": str(ndata.get("name", "")),
+            "entity_type": str(ndata.get("entity_type", "custom")),
+            "description": str(ndata.get("description", "")),
+            "properties": dict(ndata.get("properties", {})),
+            "kb_refs": kb_refs,
+            "linked_files": linked_files,
+            "relations_count": rel_count,
+            "created_at": str(ndata.get("created_at", "")),
+        }
 
     # ── BM25 index ──
 

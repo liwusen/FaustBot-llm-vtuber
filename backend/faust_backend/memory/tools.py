@@ -167,6 +167,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         entities = result.get("entities", [])
         relations = result.get("relations", [])
         m = get_memory()
+        m.register_extraction(doc_path)
 
         if entities and doc_path:
             names = [str(e.get("name", "")) for e in entities]
@@ -210,5 +211,11 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         m.flush()
         log.info("_bg_extract_and_save done entities=%d relations=%d",
                  len(entities) if entities else 0, len(relations) if relations else 0)
+        m.complete_extraction(doc_path, success=True)
     except Exception as e:
         log.error("bg_extract_and_save failed: %s", e)
+        try:
+            m_ref = get_memory()
+            m_ref.complete_extraction(doc_path, success=False, error=str(e))
+        except Exception:
+            pass

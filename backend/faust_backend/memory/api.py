@@ -350,3 +350,102 @@ async def memory_attachment_read(path: str = Query(...)):
     except FileNotFoundError as e:
         log.warning("GET /attachment not_found path=%s", path)
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── rename / copy / move ──
+
+@router.post("/rename")
+async def memory_rename(payload: dict):
+    path = str((payload or {}).get("path", "")).strip()
+    new_name = str((payload or {}).get("new_name", "")).strip()
+    if not path or not new_name:
+        raise HTTPException(status_code=400, detail="missing path or new_name")
+    try:
+        result = await _m().file_rename(path, new_name)
+        log.info("POST /rename path=%s new_name=%s", path, new_name)
+        return {"status": "ok", **result}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/copy")
+async def memory_copy(payload: dict):
+    path = str((payload or {}).get("path", "")).strip()
+    dest = str((payload or {}).get("dest", "")).strip()
+    if not path or not dest:
+        raise HTTPException(status_code=400, detail="missing path or dest")
+    try:
+        result = await _m().file_copy(path, dest)
+        log.info("POST /copy path=%s dest=%s", path, dest)
+        return {"status": "ok", **result}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.post("/move")
+async def memory_move(payload: dict):
+    path = str((payload or {}).get("path", "")).strip()
+    dest_dir = str((payload or {}).get("dest_dir", "")).strip()
+    if not path or not dest_dir:
+        raise HTTPException(status_code=400, detail="missing path or dest_dir")
+    try:
+        result = await _m().file_move(path, dest_dir)
+        log.info("POST /move path=%s dest_dir=%s", path, dest_dir)
+        return {"status": "ok", **result}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+# ── advanced search ──
+
+@router.post("/advanced-search")
+async def memory_advanced_search(payload: dict):
+    query = str((payload or {}).get("query", "")).strip() or None
+    tags = payload.get("tags")
+    if isinstance(tags, list) and not tags:
+        tags = None
+    scope = str((payload or {}).get("scope", "")).strip() or None
+    date_from = str((payload or {}).get("date_from", "")).strip() or None
+    date_to = str((payload or {}).get("date_to", "")).strip() or None
+    declared_by = str((payload or {}).get("declared_by", "")).strip() or None
+    content_type = str((payload or {}).get("content_type", "")).strip() or None
+    top_k = int(payload.get("top_k", 20))
+    sort_by = str(payload.get("sort_by", "relevance"))
+    sort_order = str(payload.get("sort_order", "desc"))
+    tag_logic = str(payload.get("tag_logic", "AND"))
+    items = await _m().advanced_search(
+        query=query, tags=tags, scope=scope,
+        date_from=date_from, date_to=date_to,
+        declared_by=declared_by, content_type=content_type,
+        top_k=top_k, sort_by=sort_by, sort_order=sort_order,
+        tag_logic=tag_logic,
+    )
+    log.info("POST /advanced-search query=%s tags=%s hits=%d", query, tags, len(items))
+    return {"status": "ok", "items": items}
+
+
+# ── extraction status ──
+
+@router.get("/extraction-status")
+async def memory_extraction_status():
+    status = _m().get_extraction_status()
+    log.info("GET /extraction-status pending=%d running=%d",
+             status.get("pending", 0), status.get("running", 0))
+    return {"status": "ok", **status}
+
+
+# ── entity detail ──
+
+@router.get("/graph/entity-detail")
+async def graph_entity_detail(entity_id: str = Query(...)):
+    result = _m().get_entity_detail(entity_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    log.info("GET /graph/entity-detail eid=%s name=%s", entity_id[:16], result.get("name"))
+    return {"status": "ok", "detail": result}
