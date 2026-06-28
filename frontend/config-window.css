@@ -294,6 +294,15 @@ body {
 	min-height: 320px;
 }
 
+.code-area-xl {
+	min-height: 60vh;
+	resize: vertical;
+}
+
+.cfg-modal {
+	max-width: 90vw;
+}
+
 .kv-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -886,24 +895,12 @@ body {
 }
 .graph-entity-row:hover {
   background: #f2f6ff;
-}
-.graph-rel-text {
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 11px;
-  color: var(--blue);
-  padding: 4px 8px;
-}
-
-/* ── 图谱 ── */
 .graph-canvas-wrap {
-  position: relative;
-  width: 100%;
-  height: 480px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: #f8faff;
-  margin-bottom: 10px;
+	position: relative;
+	min-height: 350px;
+	border: 1px solid var(--border-color, #ddd);
+	border-radius: 8px;
+	overflow: hidden;
 }
 .graph-canvas-wrap canvas {
   display: block;

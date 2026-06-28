@@ -183,7 +183,7 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
   indexChk.checked = true;
   const indexLbl = el("label", "switch-text", "保存后加入索引");
 
-  const area = el("textarea", "textarea code-area code-area-lg");
+  const area = el("textarea", "textarea code-area code-area-xl");
   area.value = String(initialContent || "");
 
   const metaBox = el("div", "card-help");
@@ -1440,8 +1440,8 @@ function renderMemoryTree(currentDir) {
     (state.graphEntities && state.graphEntities.length ? " | " + state.graphEntities.length + " 实体" : "") +
     (state.graphRelations && state.graphRelations.length ? " | " + state.graphRelations.length + " 关系" : ""),
     "<b>当前:</b> " + currentDir,
-  ].join("<br>");
-  addSection("统计", [statsLine]);
+    (state.kbTasks && state.kbTasks.length ? "<br><b>待处理任务:</b> " + state.kbTasks.length + " 个" : ""),
+  ].filter(Boolean).join("<br>");
 
   // ── Dir list ──
   const list = el("div", "list-box");
@@ -1526,26 +1526,100 @@ function renderMemoryTree(currentDir) {
     detailBox.style.marginTop = "4px";
     detailBox.style.background = "var(--bg-secondary, #f5f5f5)";
     detailBox.style.borderRadius = "4px";
-
-    // Detailed metadata
+    // ── Structured metadata table ──
+    const metaTable = el("div", "info-grid");
+    metaTable.style.marginTop = "6px";
+    const addMetaRow = (label, value) => {
+      if (!value && value !== 0) return;
+      const row = el("div", "info-item");
+      row.innerHTML = `<span class="info-key">${label}</span><span class="info-value">${value}</span>`;
+      metaTable.append(row);
+    };
     const meta = state.kbSelectedMeta || {};
     const timeStr = meta.updated_at ? new Date(meta.updated_at + (meta.updated_at.endsWith("Z") ? "" : "Z")).toLocaleString() : "-";
     const contentLen = (state.kbSelectedContent || "").length;
     const sizeStr = meta.content_type && meta.content_type.startsWith("image/") ? "\u{1F5BC} 图片" : (contentLen > 0 ? contentLen + " 字符" : "");
+    addMetaRow("路径", "<b>" + selPath + "</b>");
+    addMetaRow("创建者", meta.declared_by || "-");
+    addMetaRow("更新时间", timeStr);
+    addMetaRow("大小", sizeStr || "-");
+    addMetaRow("索引块", meta.chunk_count != null ? String(meta.chunk_count) : "0");
+    addMetaRow("权重", meta.score_patch != null ? String(meta.score_patch) : "0");
+    addMetaRow("索引状态", meta.indexed ? "\u2705 已索引" : "\u274C 未索引");
+    if (meta.content_type) addMetaRow("类型", meta.content_type);
+    if (meta.managed_by) addMetaRow("管理者", meta.managed_by);
+    if (meta.description) addMetaRow("描述", meta.description);
 
-    detailBox.innerHTML = [
-      "<b>" + selPath + "</b>",
-      "<div style='margin-top:2px;color:#555;font-size:12px'>",
-      meta.declared_by ? "创建: " + meta.declared_by + " | " : "",
-      meta.updated_at ? "更新: " + timeStr + " | " : "",
-      sizeStr ? sizeStr + " | " : "",
-      meta.chunk_count ? meta.chunk_count + " 索引块 | " : "",
-      meta.score_patch ? "权重 " + meta.score_patch : "",
-      "</div>",
-      meta.description ? "<div style='margin-top:4px;color:#333'>" + meta.description.slice(0, 200) + "</div>" : "",
-      meta.tags && meta.tags.length ? "<div style='margin-top:4px'>标签: " + meta.tags.join(", ") + "</div>" : "",
-    ].filter(Boolean).join("");
+    // ── Tags: editable chip list with real-time save ──
+    const tagsWrap = el("div", "tag-list");
+    tagsWrap.style.marginTop = "8px";
+    tagsWrap.style.display = "flex";
+    tagsWrap.style.flexWrap = "wrap";
+    tagsWrap.style.alignItems = "center";
+    tagsWrap.style.gap = "4px";
+    tagsWrap.append(el("span", "", "标签: "));
 
+    let currentTags = Array.isArray(meta.tags) ? [...meta.tags] : [];
+
+    const refreshTagChips = () => {
+      // remove existing chips (keep label)
+      while (tagsWrap.children.length > 1) tagsWrap.removeChild(tagsWrap.lastChild);
+      for (const tag of currentTags) {
+        const chip = el("span", "tag-chip", tag);
+        const removeBtn = el("span", "", " \u00D7");
+        removeBtn.style.cursor = "pointer";
+        removeBtn.style.marginLeft = "4px";
+        removeBtn.style.fontWeight = "bold";
+        removeBtn.style.color = "#c00";
+        removeBtn.title = "删除标签";
+        removeBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          currentTags = currentTags.filter(t => t !== tag);
+          try {
+            await cfgApi("POST", "/faust/memory/tags", { path: selPath, tags: currentTags });
+          } catch (err) {
+            console.warn("failed to remove tag", err);
+          }
+          refreshTagChips();
+        });
+        chip.append(removeBtn);
+        tagsWrap.append(chip);
+      }
+      // Add tag input + button
+      const tagInput = el("input", "input");
+      tagInput.placeholder = "新标签";
+      tagInput.style.width = "80px";
+      tagInput.style.height = "24px";
+      tagInput.style.fontSize = "12px";
+      tagInput.style.padding = "0 4px";
+      const addTagBtn = makeButton("+", async () => {
+        const newTag = tagInput.value.trim();
+        if (!newTag || currentTags.includes(newTag)) return;
+        currentTags.push(newTag);
+        tagInput.value = "";
+        try {
+          await cfgApi("POST", "/faust/memory/tags", { path: selPath, tags: currentTags });
+        } catch (err) {
+          console.warn("failed to add tag", err);
+        }
+        refreshTagChips();
+      }, "btn btn-ghost");
+      addTagBtn.style.height = "24px";
+      addTagBtn.style.padding = "0 8px";
+      addTagBtn.style.fontSize = "12px";
+      tagInput.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") addTagBtn.click();
+      });
+      tagsWrap.append(tagInput, addTagBtn);
+    };
+    refreshTagChips();
+
+    const detailBox = el("div", "card-help");
+    detailBox.style.padding = "8px";
+    detailBox.style.marginTop = "4px";
+    detailBox.style.background = "var(--bg-secondary, #f5f5f5)";
+    detailBox.style.borderRadius = "4px";
+    detailBox.append(metaTable, tagsWrap);
     // Edit button for files
     if (selPath) {
       const editBar = el("div", "toolbar");
@@ -1658,7 +1732,6 @@ function renderMemoryTree(currentDir) {
     menu.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
     menu.style.padding = "4px 0";
     menu.style.minWidth = "140px";
-
     const items = [];
     if (node.type === "file") {
       items.push({ label: "编辑", icon: "\u270F", action: async () => {
@@ -1670,6 +1743,45 @@ function renderMemoryTree(currentDir) {
       const target = normalizeKbPath((node.path || currentDir) + "/new.md");
       await openKbEditorModal(target, "", { path: target, declared_by: "config-center", indexed: true, tags: [] });
     }});
+    items.push(null); // separator
+    items.push({ label: "重命名", icon: "\u{1F3AB}", action: async () => {
+      const newName = window.prompt("新名称:", node.name);
+      if (!newName || newName === node.name) return;
+      try {
+        await cfgApi("POST", "/faust/memory/rename", { path: node.path, new_name: newName });
+        state.kbCurrentDir = kbParentPath(kbParentPath(node.path));
+        await ensureModuleData("memory");
+        showBanner("success", "已重命名为 " + newName);
+      } catch (err) { showBanner("error", "重命名失败: " + String(err)); }
+    }});
+    if (node.type === "file") {
+      items.push({ label: "复制", icon: "\u{1F4CB}", action: async () => {
+        state._kbClipboard = { mode: "copy", path: node.path, name: node.name };
+        showBanner("info", "已复制: " + node.name);
+      }});
+      items.push({ label: "剪切", icon: "\u2702", action: async () => {
+        state._kbClipboard = { mode: "cut", path: node.path, name: node.name };
+        showBanner("info", "已剪切: " + node.name);
+      }});
+    }
+    items.push({ label: "粘贴", icon: "\u{1F4CC}", action: async () => {
+      if (!state._kbClipboard) { showBanner("info", "剪贴板为空"); return; }
+      const clip = state._kbClipboard;
+      const targetDir = node.type === "dir" ? node.path : kbParentPath(node.path);
+      try {
+        if (clip.mode === "copy") {
+          const destPath = normalizeKbPath(targetDir + "/" + clip.name);
+          await cfgApi("POST", "/faust/memory/copy", { path: clip.path, dest: destPath });
+          showBanner("success", "已粘贴: " + clip.name);
+        } else if (clip.mode === "cut") {
+          await cfgApi("POST", "/faust/memory/move", { path: clip.path, dest_dir: targetDir });
+          state._kbClipboard = null;
+          showBanner("success", "已移动: " + clip.name);
+        }
+        await ensureModuleData("memory");
+      } catch (err) { showBanner("error", "粘贴失败: " + String(err)); }
+    }, !state._kbClipboard ? "disabled" : "");
+    items.push(null); // separator
     items.push({ label: node.type === "file" ? "删除文件" : "删除目录", icon: "\u{1F5D1}", action: async () => {
       if (!window.confirm("确定删除 " + node.path + " ?")) return;
       await cfgApi("DELETE", "/faust/memory/delete", null, { path: node.path });
@@ -1680,6 +1792,10 @@ function renderMemoryTree(currentDir) {
     }});
 
     for (const it of items) {
+      if (it === null) {
+        menu.append(el("div", "", { style: "border-top:1px solid var(--border-color,#ddd);margin:4px 8px" }));
+        continue;
+      }
       const item = el("div", "context-menu-item");
       item.style.padding = "6px 16px";
       item.style.cursor = "pointer";
@@ -1687,14 +1803,17 @@ function renderMemoryTree(currentDir) {
       item.style.alignItems = "center";
       item.style.gap = "8px";
       item.style.fontSize = "13px";
+      if (it.icon === "disabled") { item.style.opacity = "0.4"; }
       item.innerHTML = (it.icon || "") + " " + it.label;
       item.addEventListener("mouseenter", () => { item.style.background = "var(--bg-secondary, #f0f0f0)"; });
       item.addEventListener("mouseleave", () => { item.style.background = "transparent"; });
-      item.addEventListener("click", async () => {
-        menu.remove();
-        await it.action();
-        renderModule();
-      });
+      if (it.icon !== "disabled") {
+        item.addEventListener("click", async () => {
+          menu.remove();
+          await it.action();
+          renderModule();
+        });
+      }
       menu.append(item);
     }
 
@@ -1708,6 +1827,81 @@ function renderMemoryTree(currentDir) {
     document.addEventListener("click", close);
   }
 
+  // ── Keyboard shortcuts ──
+  const selNode = state.kbSelectedPath ? (() => {
+    const nodes = getKbChildren(state.kbTree, state.kbCurrentDir);
+    return nodes.find(n => n.path === state.kbSelectedPath) || null;
+  })() : null;
+  const kbHandler = (evt) => {
+    const isFile = selNode && selNode.type === "file";
+    if (evt.key === "F2" && selNode) {
+      evt.preventDefault();
+      const newName = window.prompt("新名称:", selNode.name);
+      if (!newName || newName === selNode.name) return;
+      cfgApi("POST", "/faust/memory/rename", { path: selNode.path, new_name: newName })
+        .then(() => { state.kbCurrentDir = kbParentPath(kbParentPath(selNode.path)); return ensureModuleData("memory"); })
+        .then(() => { renderModule(); showBanner("success", "已重命名为 " + newName); })
+        .catch(err => showBanner("error", "重命名失败: " + String(err)));
+    } else if (evt.key === "Delete" && selNode) {
+      evt.preventDefault();
+      if (!window.confirm("确定删除 " + selNode.path + " ?")) return;
+      cfgApi("DELETE", "/faust/memory/delete", null, { path: selNode.path })
+        .then(() => { state.kbSelectedPath = ""; state.kbCurrentDir = kbParentPath(selNode.path); return ensureModuleData("memory"); })
+        .then(() => renderModule());
+    } else if (evt.ctrlKey && evt.key === "c" && isFile) {
+      state._kbClipboard = { mode: "copy", path: selNode.path, name: selNode.name };
+      showBanner("info", "已复制: " + selNode.name);
+    } else if (evt.ctrlKey && evt.key === "x" && isFile) {
+      state._kbClipboard = { mode: "cut", path: selNode.path, name: selNode.name };
+      showBanner("info", "已剪切: " + selNode.name);
+    } else if (evt.ctrlKey && evt.key === "v" && state._kbClipboard) {
+      evt.preventDefault();
+      const clip = state._kbClipboard;
+      const targetDir = currentDir;
+      if (clip.mode === "copy") {
+        const destPath = normalizeKbPath(targetDir + "/" + clip.name);
+        cfgApi("POST", "/faust/memory/copy", { path: clip.path, dest: destPath })
+          .then(() => { showBanner("success", "已粘贴: " + clip.name); return ensureModuleData("memory"); })
+          .then(() => renderModule())
+          .catch(err => showBanner("error", "粘贴失败: " + String(err)));
+      } else if (clip.mode === "cut") {
+        cfgApi("POST", "/faust/memory/move", { path: clip.path, dest_dir: targetDir })
+          .then(() => { state._kbClipboard = null; showBanner("success", "已移动: " + clip.name); return ensureModuleData("memory"); })
+          .then(() => renderModule())
+          .catch(err => showBanner("error", "移动失败: " + String(err)));
+      }
+    } else if (evt.ctrlKey && evt.shiftKey && evt.key === "N") {
+      evt.preventDefault();
+      const defaultPath = (currentDir === "/" ? "" : currentDir.slice(1) + "/") + "new-folder";
+      // call doNewFolder
+    } else if (evt.ctrlKey && evt.key === "n") {
+      evt.preventDefault();
+      const defaultPath = (currentDir === "/" ? "" : currentDir.slice(1) + "/") + "new.md";
+      closeModal();
+      openKbEditorModal(normalizeKbPath(defaultPath), "", { path: normalizeKbPath(defaultPath), declared_by: "config-center", indexed: true, tags: [] });
+    }
+  };
+  document.addEventListener("keydown", kbHandler);
+
+
+  // ── Pending tasks display ──
+  if (state.kbTasks && state.kbTasks.length > 0) {
+    const taskBox = el("div", "list-box");
+    taskBox.style.maxHeight = "150px";
+    for (const t of state.kbTasks) {
+      const row = el("div", "list-row");
+      row.style.fontSize = "12px";
+      row.style.padding = "4px 8px";
+      const type = String(t.type || "?").slice(0, 20);
+      const target = String(t.target || "-").slice(0, 40);
+      const status = String(t.status || "waiting");
+      const created = t.created_at ? new Date(t.created_at).toLocaleString() : "";
+      const statusColor = status === "done" ? "#2c9158" : status === "running" ? "#3f6be8" : status === "error" ? "#c00" : "#888";
+      row.innerHTML = `<span style="color:${statusColor};font-weight:bold">${status}</span> ${type} ${created ? "| " + created : ""}<br><span class="mono">${target}</span>`;
+      taskBox.append(row);
+    }
+    addSection("待处理任务 (" + state.kbTasks.length + ")", [taskBox]);
+  }
   // ── Import ──
   const importBar = el("div", "toolbar");
   importBar.append(makeButton("导入外部文件", async () => {
@@ -1739,7 +1933,19 @@ function renderMemoryGraph() {
     makeButton("−缩小", () => { if (gc) { gc._viewScale /= 1.2; gc.render(); } }, "btn btn-ghost"),
     makeButton("适应", () => { if (gc) gc.fitToScreen(); }, "btn btn-ghost"),
   );
-  addSection("操作", [tb]);
+  // ── Depth slider ──
+  const depthSlider = document.createElement("input");
+  depthSlider.type = "range";
+  depthSlider.min = "1";
+  depthSlider.max = "10";
+  depthSlider.value = "3";
+  depthSlider.style.width = "80px";
+  depthSlider.style.verticalAlign = "middle";
+  const depthLabel = el("span", "card-help", "深度: 3");
+  depthSlider.addEventListener("input", () => {
+    depthLabel.textContent = "深度: " + depthSlider.value;
+  });
+  tb.append(document.createTextNode(" | "), depthLabel, depthSlider);
 
   // ── Legend ──
   const legend = el("div", "graph-legend");
@@ -1786,7 +1992,7 @@ function renderMemoryGraph() {
           nodes.push({ id: ent.id, name: ent.name, entity_type: ent.entity_type, type: "entity", description: ent.description });
           // Expand each entity to find neighbors and all relations
           try {
-            const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: ent.id, depth: 2 });
+            const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: ent.id, depth: parseInt(depthSlider.value) || 3 });
             for (const n of expResp.items || []) {
               if (!seenIds.has(n.id)) {
                 seenIds.add(n.id);
@@ -1858,7 +2064,7 @@ function renderMemoryGraph() {
         if (gc._expanded[node.id]) return;
         gc._expanded[node.id] = true;
         statusText.textContent = "展开 " + node.name + "...";
-        cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: node.id, depth: GRAPH_EXPAND_DEPTH || 1 }).then(function (data) {
+        cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: node.id, depth: parseInt(depthSlider.value) || 3 }).then(function (data) {
           const items = data.items || [];
           const newEdges2 = data.edges || [];
           const newNodes = items.filter(function (it) {
@@ -1902,7 +2108,8 @@ function renderMemoryGraph() {
 
 function renderMemorySearch() {
   const searchInput = el("input", "input");
-  searchInput.placeholder = "输入关键词搜索";
+  searchInput.placeholder = "输入关键词（可选）";
+  searchInput.style.flex = "1";
   const resultBox = el("div", "list-box");
   resultBox.style.maxHeight = "500px";
 
@@ -1918,12 +2125,103 @@ function renderMemorySearch() {
     renderModule();
   };
 
+  const filterWrap = el("div");
+  filterWrap.style.marginTop = "8px";
+  filterWrap.style.padding = "8px";
+  filterWrap.style.background = "var(--bg-secondary, #f5f7fa)";
+  filterWrap.style.borderRadius = "6px";
+  const filterToggle = makeButton("▼ 展开筛选", () => {
+    const hidden = filterBody.style.display === "none";
+    filterBody.style.display = hidden ? "flex" : "none";
+    filterToggle.textContent = hidden ? "▲ 收起筛选" : "▼ 展开筛选";
+  }, "btn btn-ghost");
+  filterToggle.style.fontSize = "12px";
+  const filterBody = el("div");
+  filterBody.style.display = "none";
+  filterBody.style.flexWrap = "wrap";
+  filterBody.style.gap = "8px";
+  filterBody.style.marginTop = "6px";
+  filterBody.style.alignItems = "end";
+
+  const mkField = (label, inputEl) => {
+    const wrap = el("div");
+    wrap.style.display = "flex";
+    wrap.style.flexDirection = "column";
+    wrap.style.gap = "2px";
+    const lbl = el("label", "", label);
+    lbl.style.fontSize = "11px";
+    lbl.style.color = "#666";
+    wrap.append(lbl, inputEl);
+    return wrap;
+  };
+  const tagInput = el("input", "input");
+  tagInput.placeholder = "标签（逗号分隔）";
+  tagInput.style.width = "120px";
+  const scopeInput = el("input", "input");
+  scopeInput.placeholder = "目录路径";
+  scopeInput.style.width = "100px";
+  scopeInput.value = state.kbCurrentDir && state.kbCurrentDir !== "/" ? state.kbCurrentDir : "";
+  const dateFrom = document.createElement("input");
+  dateFrom.type = "date";
+  dateFrom.style.width = "130px";
+  const dateTo = document.createElement("input");
+  dateTo.type = "date";
+  dateTo.style.width = "130px";
+  const dateWrap = el("div");
+  dateWrap.style.display = "flex";
+  dateWrap.style.alignItems = "center";
+  dateWrap.style.gap = "4px";
+  dateWrap.append(dateFrom, el("span", "", "~"), dateTo);
+  const byInput = el("input", "input");
+  byInput.placeholder = "创建者";
+  byInput.style.width = "100px";
+  const sortSelect = el("select", "select");
+  sortSelect.style.width = "100px";
+  for (const [v, l] of [["relevance", "相关性"], ["updated_at", "更新时间"], ["created_at", "创建时间"]]) {
+    const opt = document.createElement("option");
+    opt.value = v; opt.textContent = l; sortSelect.append(opt);
+  }
+  const sortOrderSelect = el("select", "select");
+  sortOrderSelect.style.width = "80px";
+  for (const [v, l] of [["desc", "降序"], ["asc", "升序"]]) {
+    const opt = document.createElement("option");
+    opt.value = v; opt.textContent = l; sortOrderSelect.append(opt);
+  }
+  const tagLogicSelect = el("select", "select");
+  tagLogicSelect.style.width = "60px";
+  for (const [v, l] of [["AND", "AND"], ["OR", "OR"]]) {
+    const opt = document.createElement("option");
+    opt.value = v; opt.textContent = l; tagLogicSelect.append(opt);
+  }
+  filterBody.append(
+    mkField("标签", tagInput), mkField("逻辑", tagLogicSelect),
+    mkField("目录", scopeInput), mkField("日期范围", dateWrap),
+    mkField("创建者", byInput), mkField("排序", sortSelect),
+    mkField("顺序", sortOrderSelect),
+  );
+  filterWrap.append(filterToggle, filterBody);
+
+  const highlightInText = (text, query) => {
+    if (!text || !query) return text || "";
+    const q = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return String(text).replace(new RegExp(`(${q})`, 'gi'), '<mark>$1</mark>');
+  };
+
   const doSearch = async () => {
-    const q = searchInput.value.trim();
-    if (!q) { showBanner("info", "请输入关键词。"); return; }
+    const q = searchInput.value.trim() || null;
+    const tagsStr = tagInput.value.trim();
+    const tags = tagsStr ? tagsStr.split(",").map(t => t.trim()).filter(Boolean) : null;
+    const scope = scopeInput.value.trim() || null;
+    const dateFromVal = dateFrom.value || null;
+    const dateToVal = dateTo.value || null;
+    const declaredBy = byInput.value.trim() || null;
+    const sortBy = sortSelect.value;
+    const sortOrder = sortOrderSelect.value;
+    const tagLogic = tagLogicSelect.value;
     resultBox.innerHTML = `<div class="empty-state">搜索中...</div>`;
     try {
-      const data = await cfgApi("POST", "/faust/memory/search-compact", { query: q, top_k: 5 });
+      const payload = { query: q, tags, scope, date_from: dateFromVal, date_to: dateToVal, declared_by: declaredBy, sort_by: sortBy, sort_order: sortOrder, tag_logic: tagLogic, top_k: 20 };
+      const data = await cfgApi("POST", "/faust/memory/advanced-search", payload);
       resultBox.innerHTML = "";
       const items = data.items || [];
       if (!items.length) { resultBox.append(el("div", "empty-state", "未找到匹配内容。")); return; }
@@ -1932,15 +2230,16 @@ function renderMemorySearch() {
         row.style.padding = "10px 12px";
         const left = el("div", "field-wrap");
         const scoreStr = it.score != null && it.score > 0 ? " score=" + it.score.toFixed(2) : "";
-        const lcStr = it.line_count > 0 ? it.line_count + " 行" : (it.line_count === 0 && it.description ? "（关联文件）" : "");
-        left.append(
-          el("div", "mono", iconByExt(it.path) + " " + it.path),
-          el("div", "card-help", [
-            lcStr && lcStr,
-            scoreStr && scoreStr,
-          ].filter(Boolean).join(" | ") || ""),
-          el("div", "card-help", String(it.description || "").slice(0, 200))
-        );
+        const lcStr = it.line_count > 0 ? it.line_count + " 行" : "";
+        const pathHtml = highlightInText(it.path, q);
+        const descHtml = highlightInText(it.description, q);
+        const tagsHtml = (it.tags || []).map(t => `<span class="tag-chip" style="font-size:10px;padding:1px 6px">${t}</span>`).join(" ");
+        left.innerHTML = [
+          `<div class="mono">${iconByExt(it.path)} ${pathHtml}</div>`,
+          `<div class="card-help" style="font-size:11px">${[lcStr, scoreStr, it.updated_at ? new Date(it.updated_at).toLocaleDateString() : "", it.declared_by ? "by " + it.declared_by : ""].filter(Boolean).join(" | ")}</div>`,
+          descHtml ? `<div class="card-help">${descHtml.slice(0, 200)}</div>` : "",
+          tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : "",
+        ].join("");
         row.append(left);
         row.addEventListener("click", () => openResult(it.path));
         resultBox.append(row);
@@ -1949,9 +2248,21 @@ function renderMemorySearch() {
   };
   searchInput.addEventListener("keydown", (evt) => { if (evt.key === "Enter") doSearch(); });
 
+  const clearFilters = () => {
+    searchInput.value = "";
+    tagInput.value = "";
+    scopeInput.value = "";
+    dateFrom.value = ""; dateTo.value = "";
+    byInput.value = "";
+    sortSelect.value = "relevance";
+    sortOrderSelect.value = "desc";
+    tagLogicSelect.value = "AND";
+    resultBox.innerHTML = "";
+  };
+
   const bar = el("div", "toolbar");
-  bar.append(searchInput, makeButton("搜索", doSearch, "btn btn-primary"));
-  addSection("统一搜索", [bar, resultBox]);
+  bar.append(searchInput, makeButton("搜索", doSearch, "btn btn-primary"), makeButton("清除", clearFilters, "btn btn-ghost"));
+  addSection("多条件搜索", [bar, filterWrap, resultBox]);
 }
 
 function renderArayaModule() {
