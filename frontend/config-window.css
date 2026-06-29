@@ -269,6 +269,62 @@ body {
 	border-bottom: none;
 }
 
+/* 文件浏览表格视图 */
+.explorer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.explorer-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 2px solid var(--border-color, #ddd);
+  font-weight: 600;
+  color: #555;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary, #fff);
+}
+.explorer-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border-color, #eee);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.explorer-table tr {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.explorer-table tr:hover {
+  background: #f2f6ff;
+}
+.explorer-table tr.selected {
+  background: #edf3ff;
+}
+.explorer-table .col-name {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+}
+.explorer-table .col-type {
+  color: #666;
+  font-size: 12px;
+  width: 60px;
+}
+.explorer-table .col-desc {
+  color: #666;
+  font-size: 12px;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .list-row.selected {
 	background: #edf3ff;
 }

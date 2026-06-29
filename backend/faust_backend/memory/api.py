@@ -406,15 +406,22 @@ async def memory_move(payload: dict):
 
 @router.post("/advanced-search")
 async def memory_advanced_search(payload: dict):
-    query = str((payload or {}).get("query", "")).strip() or None
+    def _v(key: str, default: str | None = None) -> str | None:
+        val = (payload or {}).get(key)
+        if val is None:
+            return None
+        s = str(val).strip()
+        return s or None
+
+    query = _v("query")
     tags = payload.get("tags")
     if isinstance(tags, list) and not tags:
         tags = None
-    scope = str((payload or {}).get("scope", "")).strip() or None
-    date_from = str((payload or {}).get("date_from", "")).strip() or None
-    date_to = str((payload or {}).get("date_to", "")).strip() or None
-    declared_by = str((payload or {}).get("declared_by", "")).strip() or None
-    content_type = str((payload or {}).get("content_type", "")).strip() or None
+    scope = _v("scope")
+    date_from = _v("date_from")
+    date_to = _v("date_to")
+    declared_by = _v("declared_by")
+    content_type = _v("content_type")
     top_k = int(payload.get("top_k", 20))
     sort_by = str(payload.get("sort_by", "relevance"))
     sort_order = str(payload.get("sort_order", "desc"))

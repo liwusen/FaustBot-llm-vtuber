@@ -1,0 +1,178 @@
+// Agent module renderer
+
+async function ensureModuleData(moduleId) {
+  if (moduleId === "overview") {
+    try {
+      const [pl, sv, err] = await Promise.all([
+        cfgApi("GET", "/faust/admin/plugins"),
+        cfgApi("GET", "/faust/admin/services"),
+        cfgApi("GET", "/faust/admin/log/recent-errors"),
+      ]);
+      state.plugins = pl.items || [];
+      state.services = sv.items || [];
+      state.recentErrors = err.errors || [];
+    } catch (e) {
+      console.warn("overview data fetch error", e);
+    }
+  }
+  if (moduleId === "live2d") {
+    const m = await cfgApi("GET", "/faust/admin/live2d/models");
+    state.live2dModels = m.items || [];
+  }
+  if (moduleId === "agent") {
+    const a = await cfgApi("GET", "/faust/admin/agents");
+    state.agents = a.items || [];
+    if (!state.selectedAgent && state.agents.length) {
+      state.selectedAgent = state.agents.find((x) => x.is_current)?.name || state.agents[0].name;
+    }
+    if (state.selectedAgent) {
+      const d = await cfgApi("GET", `/faust/admin/agents/${encodeURIComponent(state.selectedAgent)}`);
+      state.agentDetail = d.detail || null;
+    }
+  }
+  if (moduleId === "memory") {
+    const treeRes = await cfgApi("GET", "/faust/memory/tree", null, { scope: state.kbScope || null });
+    state.kbTree = treeRes.tree || null;
+    state.kbCurrentDir = normalizeKbPath(state.kbCurrentDir || "/");
+    if (!findKbNodeByPath(state.kbTree, state.kbCurrentDir)) {
+      state.kbCurrentDir = "/";
+    }
+    const taskRes = await cfgApi("GET", "/faust/memory/tasks");
+    state.kbTasks = taskRes.items || [];
+    if (state.kbSelectedPath) {
+      try {
+        const nodeRes = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
+        state.kbSelectedContent = String(nodeRes.content || "");
+        state.kbSelectedMeta = nodeRes.meta || {};
+      } catch (_e) {
+        state.kbSelectedPath = "";
+        state.kbSelectedContent = "";
+        state.kbSelectedMeta = null;
+      }
+    } else {
+      state.kbSelectedContent = "";
+      state.kbSelectedMeta = null;
+    }
+    try {
+      const [entities, relations] = await Promise.all([
+        cfgApi("GET", "/faust/memory/graph/entities"),
+        cfgApi("GET", "/faust/memory/graph/relations"),
+      ]);
+      state.graphEntities = entities.items || [];
+      state.graphRelations = relations.items || [];
+    } catch (e) {
+      state.graphEntities = [];
+      state.graphRelations = [];
+    }
+  }
+  if (moduleId === "runtime") {
+    try {
+      const sv = await cfgApi("GET", "/faust/admin/services", null, { include_log: true });
+      state.services = sv.items || [];
+      if (state.selectedService) {
+        const sd = await cfgApi("GET", `/faust/admin/services/${encodeURIComponent(state.selectedService)}`, null, { include_log: true });
+        state.serviceDetail = sd.item || null;
+      }
+    } catch (e) {
+      console.warn("runtime data fetch error", e);
+    }
+  }
+  if (moduleId === "triggers") {
+    try {
+      const tr = await cfgApi("GET", "/faust/admin/triggers");
+      state.triggers = tr.items || [];
+    } catch (e) {
+      console.warn("triggers data fetch error", e);
+    }
+  }
+  if (moduleId === "plugins") {
+    const pl = await cfgApi("GET", "/faust/admin/plugins");
+    state.plugins = pl.items || [];
+    if (!state.selectedPluginId && state.plugins.length) {
+      state.selectedPluginId = String(state.plugins[0].id || "");
+    }
+    const selected = state.plugins.find((x) => String(x.id) === String(state.selectedPluginId));
+    state.pluginConfigDraft = {};
+    if (selected && selected.config && selected.config.values) {
+      for (const [k, v] of Object.entries(selected.config.values)) {
+        state.pluginConfigDraft[k] = v;
+      }
+    }
+  }
+}
+
+function renderAgentModule() {
+  const actions = el("div", "toolbar");
+  actions.append(
+    makeButton("刷新", async () => { await ensureModuleData("agent"); renderModule(); }),
+    makeButton("新建", async () => {
+      const name = window.prompt("请输入 Agent 名称");
+      if (!name || !name.trim()) return;
+      await cfgApi("POST", "/faust/admin/agents", { agent_name: name.trim() });
+      await ensureModuleData("agent");
+      showBanner("success", `已创建 Agent: ${name.trim()}`);
+      renderModule();
+    }),
+    makeButton("切换为当前", async () => {
+      if (!state.selectedAgent) return;
+      await cfgApi("POST", "/faust/admin/agents/switch", { agent_name: state.selectedAgent });
+      await reloadAll();
+      showBanner("success", `已切换 Agent: ${state.selectedAgent}`);
+    }, "btn btn-secondary"),
+    makeButton("删除", async () => {
+      if (!state.selectedAgent) return;
+      const ok = window.confirm(`确定删除 ${state.selectedAgent} ?`);
+      if (!ok) return;
+      await cfgApi("DELETE", `/faust/admin/agents/${encodeURIComponent(state.selectedAgent)}`);
+      state.selectedAgent = "";
+      await ensureModuleData("agent");
+      renderModule();
+    }),
+    makeButton("删除 Checkpoint", async () => {
+      if (!state.selectedAgent) return;
+      const ok = window.confirm(`确定删除 ${state.selectedAgent} 的 checkpoint?`);
+      if (!ok) return;
+      await cfgApi("DELETE", `/faust/admin/agents/${encodeURIComponent(state.selectedAgent)}/checkpoint`);
+      showBanner("success", "Checkpoint 已删除。");
+    })
+  );
+  addSection("Agent 操作", [actions]);
+
+  const list = el("div", "list-box");
+  for (const item of state.agents) {
+    const row = el("div", `list-row clickable ${state.selectedAgent === item.name ? "selected" : ""}`.trim());
+    row.append(el("span", "mono", `[${item.is_current ? "CURRENT" : "AGENT"}] ${item.name}`));
+    const ops = el("div", "toolbar compact");
+    ops.addEventListener("click", (evt) => evt.stopPropagation());
+    ops.append(makeButton("编辑文件", async () => {
+      state.selectedAgent = String(item.name || "");
+      await ensureModuleData("agent");
+      openAgentFilesModal(state.selectedAgent, (state.agentDetail && state.agentDetail.files) || {});
+    }));
+    row.append(ops);
+    row.addEventListener("click", async () => {
+      state.selectedAgent = String(item.name || "");
+      await ensureModuleData("agent");
+      renderModule();
+    });
+    list.append(row);
+  }
+  addSection("Agent 列表", [list]);
+
+  if (!state.agentDetail || !state.agentDetail.files) {
+    addSection("Agent 文件", [el("div", "empty-state", "请选择 Agent 后编辑文件。")]);
+    return;
+  }
+
+  const files = state.agentDetail.files || {};
+  const controls = el("div", "toolbar");
+  controls.append(
+    makeButton("编辑 Agent 文件", () => openAgentFilesModal(state.selectedAgent, files), "btn btn-primary"),
+    makeButton("打开 Agent 目录", async () => {
+      const root = await window.api.getFaustbotRoot();
+      const dir = `${root}/agents/${state.selectedAgent}`;
+      await window.api.configOpenPath(dir);
+    })
+  );
+  addSection("Agent 文件操作", [controls, el("div", "card-help", "文件编辑已迁移到弹窗。")]);
+}
