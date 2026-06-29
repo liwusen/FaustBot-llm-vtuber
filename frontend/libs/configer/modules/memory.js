@@ -633,6 +633,10 @@ function renderMemoryGraph() {
   });
   depthSlider.addEventListener("change", () => {
     depthLabel.textContent = "深度: " + depthSlider.value;
+    if (!state.kbSelectedPath) {
+      statusText.textContent = "请在树上选中一个文件后再调整深度";
+      return;
+    }
     statusText.textContent = "重新请求深度 " + depthSlider.value + "...";
     if (gc && gc.simulation) {
       gc._expanded = {};
@@ -641,6 +645,7 @@ function renderMemoryGraph() {
     initGraph();
   });
   tb.append(document.createTextNode(" | "), depthLabel, depthSlider);
+  addSection("", [tb]);
 
   // ── Legend ──
   const legend = el("div", "graph-legend");
@@ -904,7 +909,6 @@ function renderMemorySearch() {
     const scope = scopeInput.value.trim() || null;
     const dateFromVal = dateFrom.value || null;
     const dateToVal = dateTo.value || null;
-    const declaredBy = byInput.value.trim() || null;
     const sortBy = sortSelect.value;
     const sortOrder = sortOrderSelect.value;
     const tagLogic = tagLogicSelect.value;
@@ -914,7 +918,31 @@ function renderMemorySearch() {
       const data = await cfgApi("POST", "/faust/memory/advanced-search", payload);
       resultBox.innerHTML = "";
       const items = data.items || [];
-      if (!items.length) { resultBox.append(el("div", "empty-state", "未找到匹配内容。")); return; }
+      if (!items.length) {
+        const emptyMsg = el("div", "empty-state", "未找到匹配内容。");
+        // 尝试获取KB文件总数作为诊断
+        (async () => {
+          try {
+            const treeData = await cfgApi("GET", "/faust/memory/tree");
+            if (treeData && treeData.tree) {
+              const countFiles = (nodes) => {
+                let n = 0;
+                for (const c of nodes || []) {
+                  if (c.type === "file") n++;
+                  if (c.children) n += countFiles(c.children);
+                }
+                return n;
+              };
+              const total = countFiles([treeData.tree]);
+              const hint = el("div", "card-help", `KB 中共有 ${total} 个文件。`);
+              hint.style.marginTop = "8px";
+              resultBox.append(hint);
+            }
+          } catch (_) {}
+        })();
+        resultBox.append(emptyMsg);
+        return;
+      }
       for (const it of items) {
         const row = el("div", "list-row clickable");
         row.style.padding = "10px 12px";

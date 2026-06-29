@@ -18,6 +18,8 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
 
   const area = el("textarea", "textarea code-area code-area-xl");
   area.value = String(initialContent || "");
+  area.style.height = "65vh";
+  area.style.minHeight = "300px";
 
   const metaBox = el("div", "card-help");
   const refreshMetaText = () => {
