@@ -22,14 +22,20 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
     via artifact://<id> reference in the summary footer.
     """
     store = get_output_store()
-    original_func = tool.func if hasattr(tool, 'func') else getattr(tool, '_run', None)
-    original_coro = getattr(tool, 'coroutine', None) or getattr(tool, '_arun', None)
     tool_name = tool.name
 
-    # --- async path ---
-    if original_coro:
+    # Capture original implementations.  A sync @tool has both _run (sync)
+    # and _arun (auto-generated async wrapper).  LangGraph may call either
+    # path, so we MUST wrap both; the old if/elif only wrapped _arun for
+    # sync tools, causing _run → self.func() to bypass OutputStore entirely.
+    original_func = tool.func if hasattr(tool, 'func') else getattr(tool, '_run', None)
+    original_coro = getattr(tool, 'coroutine', None) or getattr(tool, '_arun', None)
 
-        async def _wrapped_async_run(*args, **kwargs):
+    import inspect as _inspect
+
+    if original_coro and _inspect.iscoroutinefunction(original_coro):
+
+        async def _wrapped_arun(*args, **kwargs):
             try:
                 result = await original_coro(*args, **kwargs)
             except Exception as e:
@@ -40,8 +46,9 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
                 return f"工具执行出错\n[完整输出: artifact://{output_id}]"
             return _store_and_summarize(store, tool_name, result)
 
-        setattr(tool, '_arun', _wrapped_async_run)
-    elif original_func:
+        tool._arun = _wrapped_arun
+
+    if original_func and not _inspect.iscoroutinefunction(original_func):
 
         def _wrapped_run(*args, **kwargs):
             try:
