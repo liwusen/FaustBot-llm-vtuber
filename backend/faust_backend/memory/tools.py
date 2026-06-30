@@ -146,28 +146,42 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         from pathlib import Path
         from faust_backend.memory.store import _path_id
         from faust_backend.memory.config import ENTITY_DEDUP_THRESHOLD
-        from openai import AsyncOpenAI
+        import httpx
         prompt_path = Path(__file__).parent / "extraction_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "Extract entities and relations as JSON."
-        client = AsyncOpenAI(
-            api_key=conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY,
-            base_url=conf.CHAT_API_BASE or "https://api.openai.com/v1",
-        )
-        response = await client.chat.completions.create(
-            model=conf.CHAT_MODEL or "gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-        )
-        raw = str(response.choices[0].message.content or "{}")
+        api_key = conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
+        api_base = (conf.CHAT_API_BASE or "https://api.openai.com/v1").rstrip("/")
+        api_model = conf.CHAT_MODEL or "gpt-4o"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        doc_path = ("/" + str(doc_path).strip("/")) if doc_path else ""
+        m = get_memory()
+        if doc_path:
+            m.register_extraction(doc_path)
+
+        async with httpx.AsyncClient(timeout=60.0) as hc:
+            payload = {
+                "model": api_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                "temperature": 0.1,
+            }
+            resp = await hc.post(f"{api_base}/chat/completions", headers=headers, json=payload)
+            if resp.status_code != 200:
+                log.warning("LLM extraction API error %d: %s", resp.status_code, resp.text[:300])
+                # 如果 qwen 不支持 json_object，异常已经被底层捕获
+                # 直接返回空结果
+                raw = "{}"
+            else:
+                data = resp.json()
+                raw = str(data.get("choices", [{}])[0].get("message", {}).get("content", "{}"))
         result = json.loads(raw)
         entities = result.get("entities", [])
         relations = result.get("relations", [])
-        m = get_memory()
-
         if entities and doc_path:
             names = [str(e.get("name", "")) for e in entities]
             name_vecs = await m._embed_texts(names)
@@ -210,5 +224,11 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         m.flush()
         log.info("_bg_extract_and_save done entities=%d relations=%d",
                  len(entities) if entities else 0, len(relations) if relations else 0)
+        m.complete_extraction(doc_path, success=True)
     except Exception as e:
         log.error("bg_extract_and_save failed: %s", e)
+        try:
+            m_ref = get_memory()
+            m_ref.complete_extraction(doc_path, success=False, error=str(e))
+        except Exception:
+            pass

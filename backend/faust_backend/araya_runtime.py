@@ -624,7 +624,7 @@ class ArayaRuntime:
                     self._init_agent()
                 agt = self._agent
                 payload = {"messages": [{"role": "user", "content": instruction}]}
-                config = {"configurable": {"thread_id": int(time.time())}, "recursion_limit": 35}
+                config = {"configurable": {"thread_id": int(time.time())}, "recursion_limit": 500}
 
                 yield {"event": "step", "data": json.dumps({"type": "llm_start"})}
 

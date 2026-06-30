@@ -44,49 +44,31 @@
       </section>
     </main>
   </div>
-
-  <script>
-    window.__CONFIG_CENTER_READY__ = false;
-    window.__CONFIG_CENTER_BOOT_ERROR__ = "";
-    window.addEventListener("error", function (evt) {
-      try {
-        window.__CONFIG_CENTER_BOOT_ERROR__ = String((evt && evt.message) || "未知前端错误");
-      } catch (e) {}
-    });
-    setTimeout(function () {
-      if (window.__CONFIG_CENTER_READY__) return;
-      var root = document.getElementById("cardsRoot");
-      if (!root) return;
-      var err = window.__CONFIG_CENTER_BOOT_ERROR__ || "配置脚本未成功启动。";
-      root.innerHTML = "";
-      var box = document.createElement("article");
-      box.className = "card full-span";
-      var title = document.createElement("h3");
-      title.className = "card-title";
-      title.textContent = "配置中心加载失败";
-      var help = document.createElement("p");
-      help.className = "card-help";
-      help.textContent = "请重启前端进程后重试；如果问题仍存在，请将该错误反馈给开发者。";
-      var detail = document.createElement("textarea");
-      detail.className = "textarea code-area";
-      detail.readOnly = true;
-      detail.value = "错误信息: " + err;
-      box.appendChild(title);
-      box.appendChild(help);
-      box.appendChild(detail);
-      root.appendChild(box);
-    }, 1800);
-  </script>
   <script src="./libs/configer/constants.js"></script>
   <script src="./libs/configer/dom-utils.js"></script>
   <script src="./libs/configer/modal.js"></script>
+  <script src="./libs/configer/state-core.js"></script>
   <script src="./libs/configer/ui-cards.js"></script>
-  <script src="./libs/configer/kb-utils.js"></script>
-  <script src="./libs/configer/trigger-utils.js"></script>
   <script src="./libs/configer/list-utils.js"></script>
+  <script src="./libs/configer/kb-utils.js"></script>
+  <script src="./libs/configer/field-render.js"></script>
+  <script src="./libs/configer/deeplink.js"></script>
+  <script src="./libs/configer/kb-editor.js"></script>
+  <script src="./libs/configer/kb-search.js"></script>
+  <script src="./libs/configer/tts-voice.js"></script>
+  <script src="./libs/configer/trigger-utils.js"></script>
+  <script src="./libs/configer/trigger-editor.js"></script>
   <script src="./libs/configer/araya-slider.js"></script>
   <script src="./libs/configer/skill-utils.js"></script>
   <script src="./libs/configer/graph-renderer.js"></script>
+  <script src="./libs/configer/modules/agent.js"></script>
+  <script src="./libs/configer/modules/memory.js"></script>
+  <script src="./libs/configer/modules/araya.js"></script>
+  <script src="./libs/configer/modules/runtime.js"></script>
+  <script src="./libs/configer/modules/triggers.js"></script>
+  <script src="./libs/configer/modules/skills.js"></script>
+  <script src="./libs/configer/modules/plugins.js"></script>
+  <script src="./libs/configer/modules/overview.js"></script>
   <script src="./config-window.js"></script>
 </body>
 </html>

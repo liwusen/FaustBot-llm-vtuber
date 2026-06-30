@@ -359,8 +359,16 @@ GraphCanvas.prototype._hitTest = function (wx, wy) {
 
 GraphCanvas.prototype.setData = function (nodes, edges) {
   var self = this;
+  // 将单向边转为双向（正反向各一条）
+  var bidirEdges = edges.slice();
+  for (var i = 0; i < edges.length; i++) {
+    bidirEdges.push({
+      source: edges[i].target, target: edges[i].source,
+      type: edges[i].type, key: (edges[i].key || '') + '_r'
+    });
+  }
   this.simulation.stop();
-  this.simulation.setData(nodes, edges);
+  this.simulation.setData(nodes, bidirEdges);
   this._expanded = {};
   var cx = this._width / 2, cy = this._height / 2;
   nodes.forEach(function (n) {
@@ -374,17 +382,18 @@ GraphCanvas.prototype.setData = function (nodes, edges) {
 
 GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
   var self = this;
+  // Find an existing parent node from the edges
   var parentId = null;
   if (newEdges && newEdges.length) {
     for (var i = 0; i < newEdges.length; i++) {
       var e = newEdges[i];
-      var found = null;
       for (var j = 0; j < this.simulation.nodes.length; j++) {
         if (this.simulation.nodes[j].id === e.source || this.simulation.nodes[j].id === e.target) {
-          found = e; break;
+          parentId = this.simulation.nodes[j].id;
+          break;
         }
       }
-      if (found) { parentId = found.source; break; }
+      if (parentId) break;
     }
   }
   var parentNode = null;
@@ -394,7 +403,20 @@ GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
     }
   }
   this.simulation.addNodes(newNodes, parentNode);
-  this.simulation.addEdges(newEdges);
+  // Convert single-direction edges to bidirectional (same pattern as setData)
+  var bidirEdges = [];
+  if (newEdges && newEdges.length) {
+    for (var ei = 0; ei < newEdges.length; ei++) {
+      bidirEdges.push(newEdges[ei]);
+      bidirEdges.push({
+        source: newEdges[ei].target, target: newEdges[ei].source,
+        type: newEdges[ei].type, key: (newEdges[ei].key || '') + '_r'
+      });
+    }
+  }
+  if (bidirEdges.length) {
+    this.simulation.addEdges(bidirEdges);
+  }
   if (parentNode) this._expanded[parentNode.id] = true;
   this.render();
   this.simulation.stop();
@@ -412,6 +434,10 @@ GraphCanvas.prototype.focusNode = function (id) {
       return;
     }
   }
+};
+
+GraphCanvas.prototype.clearExpanded = function () {
+  this._expanded = {};
 };
 
 GraphCanvas.prototype.highlightIds = function (ids) {

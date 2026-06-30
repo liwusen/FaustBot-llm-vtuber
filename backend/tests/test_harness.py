@@ -669,6 +669,156 @@ class TestMiddlewareMultimodal:
         assert "artifact://" in data["text"]
 
 
+
+class TestMiddlewareTruncation:
+    """Verify wrap_tool_output actually truncates output for the paths LangGraph uses."""
+
+    def setup_method(self):
+        from faust_backend.runtime.output_store import reset_output_store
+        reset_output_store()
+
+    def _long_output(self) -> str:
+        return "\n".join(f"line {i:04d}" for i in range(200))
+
+    def test_sync_tool_run_truncates(self):
+        """Sync @tool _run() → long output should be truncated with artifact ref."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def big_tool(x: str) -> str:
+            """Returns lots of lines."""
+            return self._long_output()
+
+        wrapped = wrap_tool_output(big_tool)
+        result = wrapped._run("ignored")
+
+        assert "artifact://" in result
+        assert len(result) < len(self._long_output())
+        assert "[完整输出:" in result
+
+    def test_sync_tool_invoke_truncates(self):
+        """Sync @tool invoke() — the path LangGraph actually calls — must truncate."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def big_tool(x: str) -> str:
+            """Returns lots of lines."""
+            return self._long_output()
+
+        wrapped = wrap_tool_output(big_tool)
+        result = wrapped.invoke({"x": "ignored"})
+
+        assert "artifact://" in result
+        assert len(result) < len(self._long_output())
+        assert "[完整输出:" in result
+
+    def test_sync_tool_arun_also_truncates(self):
+        """Sync @tool _arun() async path must also truncate."""
+        import asyncio
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def big_tool(x: str) -> str:
+            """Returns lots of lines."""
+            return self._long_output()
+
+        wrapped = wrap_tool_output(big_tool)
+        result = asyncio.run(wrapped._arun("ignored"))
+
+        assert "artifact://" in result
+        assert len(result) < len(self._long_output())
+
+    def test_short_output_passes_through(self):
+        """Short single-line output (<=120 chars) should NOT create an artifact."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def small_tool(x: str) -> str:
+            """Returns short."""
+            return "OK"
+
+        wrapped = wrap_tool_output(small_tool)
+        result = wrapped.invoke({"x": "test"})
+
+        assert result == "OK"
+        assert "artifact://" not in result
+
+    def test_multiline_short_output_still_truncates(self):
+        """Multi-line but short-per-line — still needs artifact if >5 lines."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def ml_tool(x: str) -> str:
+            """Returns 10 short lines."""
+            return "\n".join(str(i) for i in range(10))
+
+        wrapped = wrap_tool_output(ml_tool)
+        result = wrapped.invoke({"x": "test"})
+
+        assert "artifact://" in result
+
+    def test_tool_exception_becomes_error_artifact(self):
+        """When a tool raises, the exception is stored as an artifact."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def crash_tool(x: str) -> str:
+            """Always crashes."""
+            msg = "BOOM"
+            raise RuntimeError(msg)
+
+        wrapped = wrap_tool_output(crash_tool)
+        result = wrapped._run("test")
+
+        assert "工具执行出错" in result
+        assert "artifact://" in result
+
+    def test_async_tool_arun_truncates(self):
+        """Async @tool — _arun path must truncate."""
+        import asyncio
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        async def async_big(x: str) -> str:
+            """Async large output."""
+            return self._long_output()
+
+        wrapped = wrap_tool_output(async_big)
+        result = asyncio.run(wrapped._arun("ignored"))
+
+        assert "artifact://" in result
+        assert len(result) < len(self._long_output())
+
+    def test_both_run_and_arun_wrapped_independently(self):
+        """After wrapping, _run and _arun must both exist and both truncate.
+
+        This is the regression test for the bug where sync tools only had
+        _arun wrapped, leaving _run (the path LangGraph uses) unwrapped.
+        """
+        import asyncio
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def dual_tool(x: str) -> str:
+            """Dual."""
+            return self._long_output()
+
+        wrapped = wrap_tool_output(dual_tool)
+
+        sync_result = wrapped._run("x")
+        assert "artifact://" in sync_result
+
+        async_result = asyncio.run(wrapped._arun("x"))
+        assert "artifact://" in async_result
+
 class TestReadImage:
     def test_read_image_returns_multimodal_json(self):
         import json, tempfile

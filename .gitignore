@@ -1,54 +1,22 @@
 node_modules/
 __pycache__/
-
-
-logs/
-
-
-asr-hub/
-
-tts-hub/
-*.private.json
-faust_checkpoint.db
-faust_checkpoint.db*
-diary/
-#---frontend-live2d-models/
-frontend/2D/
-#LightRAG Backend Service
-__dev__/
-#nano-vectordb based RAG Service
-rag_storage_nano/
-
 package-lock.json
 
-*.vrm
+asr-hub/
+tts-hub/
+
+*.private.json
+
+__dev__/
 
 *.log
-*.db
-
-record/
-
+*.log.*
 *.zip
-
-
-
-#data files
-rag_chat_history_records.json
-rag_doc_tracker.json
-triggers.json
-skill.d/
-backend/plugins/plugins.state.json
 
 .runtime/
 dist/
-#--faust-knowledge-base
-kb/
-kb_index/
-kb_meta/
-#
-cloud_inference_server/
-
-version.json
-
 
 *.bundle.js
+
+2D/
+frontend/models/

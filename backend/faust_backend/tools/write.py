@@ -59,13 +59,18 @@ def write(path: str, content: str) -> str:
 
     content = str(content or "")
     raw = path_str
+    log.info("write INPUT path=%s content_len=%d", path_str, len(content))
 
     # memory:// backend
     if raw.startswith("memory://"):
-        return _write_memory(raw[len("memory://"):].strip("/"), content)
+        result = _write_memory(raw[len("memory://"):].strip("/"), content)
+        log.info("write OUTPUT %s", result[:120])
+        return result
 
     # Filesystem backend
-    return _write_file(raw, content)
+    result = _write_file(raw, content)
+    log.info("write OUTPUT %s", result[:120])
+    return result
 
 
 def _write_file(raw: str, content: str) -> str:
@@ -115,5 +120,11 @@ def _write_memory(path: str, content: str) -> str:
     except Exception as e:
         return f"写入记忆库出错: {e}"
 
+    # 触发 LLM 实体抽取（后台异步）
+    try:
+        from faust_backend.memory.tools import _bg_extract_and_save, _run_bg
+        _run_bg("auto_extract", _bg_extract_and_save(content, path))
+    except Exception:
+        pass
+
     size = len(content.encode("utf-8"))
-    return f"已写入 memory://{path} ({size} bytes)"

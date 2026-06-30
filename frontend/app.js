@@ -42,8 +42,8 @@
   const vrmConfigResetBtn = document.getElementById('vrmConfigResetBtn');
   const quickController = document.getElementById('modelQuickController');
   const quickToggleAsrBtn = document.getElementById('quickToggleAsr');
-  const quickStopMediaBtn = document.getElementById('quickStopMedia');
-  const quickStopAgentBtn = document.getElementById('quickStopAgentBtn');
+  const quickStopBtn = document.getElementById('quickStopBtn');
+  let agentIsProcessing = false;
   const quickRandomMotionBtn = document.getElementById('quickRandomMotion');
   const quickScaleUpBtn = document.getElementById('quickScaleUp');
   const quickScaleDownBtn = document.getElementById('quickScaleDown');
@@ -826,9 +826,14 @@
       currentChatRequest.reject(new Error('User interrupted'));
       currentChatRequest = null;
     }
-    if (quickStopAgentBtn) quickStopAgentBtn.disabled = true;
+    agentIsProcessing = false;
     if (chatStatusEl) chatStatusEl.textContent = '就绪';
     resetStreamTtsState();
+  }
+
+  function interruptAll(){
+    interruptPlayback();
+    interruptAgent();
   }
 
   function toggleAsr(){
@@ -1259,11 +1264,11 @@
       } else if (cmd === 'TOGGLE_ASR'){
         toggleAsr();
       } else if (cmd === 'STOP_AUDIO'){
-        interruptPlayback();
+        interruptAll();
       } else if (cmd === 'INTERRUPT_SPEECH'){
-        interruptPlayback();
+        interruptAll();
       } else if (cmd === 'INTERRUPT_CHAT'){
-        interruptAgent();
+        interruptAll();
       } else if (cmd === 'FOCUS_TEXT_CHAT'){
         focusTextChatInput();
       } else if (cmd === 'RANDOM_MOTION'){
@@ -1464,7 +1469,7 @@
       currentChatRequest.pendingBuffer = '';
       currentChatRequest.entries = [];
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
-      if (quickStopAgentBtn) quickStopAgentBtn.disabled = false;
+      agentIsProcessing = true;
       return;
     }
 
@@ -1554,7 +1559,7 @@
         await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
       }
       currentChatRequest.pendingBuffer = '';
-      if (quickStopAgentBtn) quickStopAgentBtn.disabled = true;
+      agentIsProcessing = false;
       if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
       if (textChatStatus) textChatStatus.textContent = '文字已发送';
       showResultBubble('ai', currentChatRequest.entries);
@@ -1572,7 +1577,7 @@
       if (chatStatusEl) chatStatusEl.textContent = '已中断';
       if (textChatStatus) textChatStatus.textContent = '已中断';
       showResultBubble('error', '(已中断)');
-      if (quickStopAgentBtn) quickStopAgentBtn.disabled = true;
+      agentIsProcessing = false;
       if (currentChatRequest.resumeAfter){
         resumeRecording();
         currentChatRequest.resumeAfter = false;
@@ -1632,7 +1637,7 @@
     const text = (textChatInput.value || '').trim();
     if (!text || textChatSending) return;
     // Auto-interrupt if agent is currently processing
-    if (quickStopAgentBtn && !quickStopAgentBtn.disabled) {
+    if (agentIsProcessing) {
       interruptAgent();
       await new Promise(r => setTimeout(r, 80));
     }
@@ -2750,10 +2755,7 @@
   if (quickToggleAsrBtn) quickToggleAsrBtn.addEventListener('click', ()=>{
     toggleAsr();
   });
-  if (quickStopMediaBtn) quickStopMediaBtn.addEventListener('click', ()=>{
-    interruptPlayback();
-  });
-  if (quickStopAgentBtn) quickStopAgentBtn.addEventListener('click', ()=>{ interruptAgent(); });
+  if (quickStopBtn) quickStopBtn.addEventListener('click', ()=>{ interruptAll(); });
   if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ playRandomMotion(); });
   if (quickScaleUpBtn) quickScaleUpBtn.addEventListener('click', ()=>{ nudgeScale(0.05); });
   if (quickScaleDownBtn) quickScaleDownBtn.addEventListener('click', ()=>{ nudgeScale(-0.05); });

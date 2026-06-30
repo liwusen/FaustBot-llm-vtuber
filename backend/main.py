@@ -1,5 +1,7 @@
 from faust_backend.logger import get_logger
 log = get_logger("faust.main")
+import datetime
+log.info("当前时间: %s", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 import os
 from fastapi import FastAPI
