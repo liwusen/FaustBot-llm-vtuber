@@ -25,6 +25,7 @@ const state = {
   triggers: [],
   selectedTriggerId: "",
   memoryView: "tree",
+  kbGraphSelectedEntityId: "",
   skills: [],
   selectedSkillSlug: "",
   skillsAgent: "",

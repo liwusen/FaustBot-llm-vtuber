@@ -382,27 +382,18 @@ GraphCanvas.prototype.setData = function (nodes, edges) {
 
 GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
   var self = this;
+  // Find an existing parent node from the edges
   var parentId = null;
   if (newEdges && newEdges.length) {
     for (var i = 0; i < newEdges.length; i++) {
       var e = newEdges[i];
-      var found = null;
       for (var j = 0; j < this.simulation.nodes.length; j++) {
         if (this.simulation.nodes[j].id === e.source || this.simulation.nodes[j].id === e.target) {
-          found = e; break;
+          parentId = this.simulation.nodes[j].id;
+          break;
         }
       }
-      if (found) { parentId = found.source; break; }
-  this.simulation.addNodes(newNodes, parentNode);
-  // 将单向边转为双向
-  var bidirNewEdges = newEdges.slice();
-  for (var ei = 0; ei < newEdges.length; ei++) {
-    bidirNewEdges.push({
-      source: newEdges[ei].target, target: newEdges[ei].source,
-      type: newEdges[ei].type, key: (newEdges[ei].key || '') + '_r'
-    });
-  }
-  this.simulation.addEdges(bidirNewEdges);
+      if (parentId) break;
     }
   }
   var parentNode = null;
@@ -412,7 +403,20 @@ GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
     }
   }
   this.simulation.addNodes(newNodes, parentNode);
-  this.simulation.addEdges(newEdges);
+  // Convert single-direction edges to bidirectional (same pattern as setData)
+  var bidirEdges = [];
+  if (newEdges && newEdges.length) {
+    for (var ei = 0; ei < newEdges.length; ei++) {
+      bidirEdges.push(newEdges[ei]);
+      bidirEdges.push({
+        source: newEdges[ei].target, target: newEdges[ei].source,
+        type: newEdges[ei].type, key: (newEdges[ei].key || '') + '_r'
+      });
+    }
+  }
+  if (bidirEdges.length) {
+    this.simulation.addEdges(bidirEdges);
+  }
   if (parentNode) this._expanded[parentNode.id] = true;
   this.render();
   this.simulation.stop();
