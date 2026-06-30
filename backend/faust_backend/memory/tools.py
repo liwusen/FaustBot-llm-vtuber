@@ -156,6 +156,11 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        doc_path = ("/" + str(doc_path).strip("/")) if doc_path else ""
+        m = get_memory()
+        if doc_path:
+            m.register_extraction(doc_path)
+
         async with httpx.AsyncClient(timeout=60.0) as hc:
             payload = {
                 "model": api_model,
@@ -177,9 +182,6 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         result = json.loads(raw)
         entities = result.get("entities", [])
         relations = result.get("relations", [])
-        m = get_memory()
-        m.register_extraction(doc_path)
-
         if entities and doc_path:
             names = [str(e.get("name", "")) for e in entities]
             name_vecs = await m._embed_texts(names)
