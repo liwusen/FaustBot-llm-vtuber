@@ -22,7 +22,7 @@ function renderOverviewModule() {
   const pluginsTotal = plugins.length;
 
   const services = state.services || [];
-  const servicesRunning = services.filter((s) => s.running).length;
+  const servicesRunning = services.filter((s) => s.is_running).length;
   const servicesTotal = services.length;
 
   // ── 基础信息 ──
