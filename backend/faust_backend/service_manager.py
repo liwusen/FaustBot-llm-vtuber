@@ -124,7 +124,6 @@ def start_service(service_key: str, wait: bool = True):
         # stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW,
         shell=False,
-        daemon=True
     )
     if wait:
         started_info = wait_for_service(service)
