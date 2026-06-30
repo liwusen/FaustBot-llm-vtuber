@@ -70,6 +70,8 @@ def edit(path: str, patch: str) -> str:
     import asyncio as _asyncio
     from faust_backend.config_loader import PROJECT_ROOT
 
+    log.info("edit INPUT path=%s patch_len=%d", path, len(patch))
+
     # Detect memory:// scheme
     is_memory = path.startswith("memory://")
     if is_memory:
@@ -80,9 +82,14 @@ def edit(path: str, patch: str) -> str:
             result = _asyncio.run(store.file_read(mem_path))
             original = result.get("content", "")
         except FileNotFoundError:
-            return f"[记忆文档不存在: {mem_path}]"
+            _msg = f"文档不存在: memory://{mem_path}\n"
+            _msg += "建议: 先用 write(\"memory://{mem_path}\", content) 创建文档，再编辑。"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
         except Exception as e:
-            return f"读取记忆文档出错: {e}"
+            _msg = f"无法读取记忆文档 memory://{mem_path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
     else:
         file_path = Path(path)
         if not file_path.is_absolute():
@@ -90,14 +97,25 @@ def edit(path: str, patch: str) -> str:
         file_path = file_path.resolve()
         try:
             original = file_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            _msg = f"文件不存在: {file_path}\n"
+            _msg += "建议: 先用 read(\"{path}\") 确认路径，或 write(\"{path}\", content) 创建文件。"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
         except Exception as e:
-            return f"读取文件出错: {e}"
+            _msg = f"无法读取文件 {file_path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
 
     # Parse patch
     try:
         ops = _parse_patch(patch)
     except ValueError as e:
-        return f"Patch 解析错误: {e}"
+        _msg = f"Patch 格式错误: {e}\n"
+        _msg += "支持的指令: SWAP N.=M:, DEL N.=M, INS.PRE N:, INS.POST N:\n"
+        _msg += "每行正文必须以 '+' 开头，多个操作以空行分隔。"
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
 
     # Apply
     lines = original.split("\n")
@@ -139,14 +157,22 @@ def edit(path: str, patch: str) -> str:
             except Exception:
                 pass
         except Exception as e:
-            return f"写入记忆文档出错: {e}"
-        return f"已编辑 memory://{mem_path}: {changes} 行变更"
+            _msg = f"无法写入记忆文档 memory://{mem_path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
+        _msg = f"已编辑 memory://{mem_path}\n变更: {changes} 行 (原文件 {len(lines)} 行 → 新文件 {len(result.split(chr(10)))} 行)"
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
     else:
         try:
             file_path.write_text(result, encoding="utf-8")
         except Exception as e:
-            return f"写入文件出错: {e}"
-        return f"已编辑 {file_path.name}: {changes} 行变更"
+            _msg = f"无法写入文件 {file_path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
+        _msg = f"已编辑 {file_path}\n变更: {changes} 行 (原文件 {len(lines)} 行 → 新文件 {len(result.split(chr(10)))} 行)"
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
 
 def _parse_patch(patch_text: str) -> list[dict]:
     """Parse patch instructions into a list of operations."""
@@ -154,7 +180,9 @@ def _parse_patch(patch_text: str) -> list[dict]:
     current = None
     current_body: list[str] = []
 
+    lineno = 0
     for raw_line in patch_text.split("\n"):
+        lineno += 1
         line = raw_line.strip()
         if not line:
             if current is not None:
@@ -175,8 +203,6 @@ def _parse_patch(patch_text: str) -> list[dict]:
                 ops.append(current)
                 current = None
                 current_body = []
-            else:
-                raise ValueError(f"Patch 正文行必须以 '+' 开头: {line}")
 
         if current is None:
             # New operation header
@@ -199,7 +225,7 @@ def _parse_patch(patch_text: str) -> list[dict]:
                 kind = "INS_PRE" if header == "INS.PRE" else "INS_POST"
                 current = {"kind": kind, "start": pos, "end": pos, "offset": pos}
             else:
-                raise ValueError(f"未知的编辑指令: {header}")
+                raise ValueError(f"第{lineno}行: 未知指令 \"{header}\"，支持: SWAP, DEL, INS.PRE, INS.POST")
 
     if not ops:
         raise ValueError("Patch 不包含任何操作")

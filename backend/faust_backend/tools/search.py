@@ -10,6 +10,7 @@ The `paths` parameter determines the backend:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -23,7 +24,7 @@ log = get_logger("faust.tools.search")
 
 @register
 @tool
-def search(pattern: str, *, paths: list[str] | None = None) -> str:
+def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
     """Search content across filesystem and memory store in one call.
 
     This unifies the old memorySearchTool and filesystem grep into a single
@@ -63,13 +64,26 @@ def search(pattern: str, *, paths: list[str] | None = None) -> str:
         return "错误: 搜索模式不能为空"
 
     if paths is None:
-        paths = ["."]
-
+        paths_list: list[str] = ["."]
+    elif isinstance(paths, list):
+        paths_list = [str(p) for p in paths]
+    elif isinstance(paths, str):
+        # LLM may pass a JSON string like '["memory://"]' or a plain path
+        try:
+            parsed = json.loads(paths)
+            if isinstance(parsed, list):
+                paths_list = [str(p) for p in parsed]
+            else:
+                paths_list = [str(parsed)]
+        except (json.JSONDecodeError, ValueError):
+            paths_list = [paths]
+    else:
+        paths_list = [str(paths)]
+    log.info("search INPUT pattern=%s paths=%s", pattern[:100], paths_list)
     mem_scopes: list[str] = []
     fs_paths: list[str] = []
 
-    for p in paths:
-        p = str(p).strip()
+    for p in paths_list:
         if p.startswith("memory://"):
             scope = p[len("memory://"):].strip("/") or "/"
             mem_scopes.append(f"/{scope}" if scope != "/" else "/")
@@ -87,7 +101,9 @@ def search(pattern: str, *, paths: list[str] | None = None) -> str:
     if not mem_scopes and not fs_paths:
         return "错误: 没有有效的搜索路径"
 
-    return "\n\n".join(r for r in results if r)
+    result = "\n\n".join(r for r in results if r)
+    log.info("search OUTPUT len=%d", len(result))
+    return result
 
 
 def _search_memory(query: str, scopes: list[str]) -> str:

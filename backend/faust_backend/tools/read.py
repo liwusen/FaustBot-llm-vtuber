@@ -64,7 +64,7 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
 
     **Reading images (multimodal vs plain text):**
     - `read("screenshot.png")` → returns multimodal JSON with the image in base64,
-      allowing vision-capable models to see it.
+      allowing vision-capable models to see it. If you are not a vision-capable model, you MUST NOT use this.
     - `read("screenshot.png", force_plain_text=True)` → returns only the file metadata
       (name, size) as plain text, WITHOUT the base64 image data.
     - Use `force_plain_text=True` when: you only need the image metadata, or when
@@ -82,16 +82,23 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
         For artifacts: full or ranged tool output.
         For memory: document content or file tree.
     """
+    log.info("read INPUT uri=%s force_plain_text=%s", uri, force_plain_text)
     parsed = parse(uri)
     log.debug("read parsed: scheme=%s path=%r selector=%r force_plain_text=%r",
               parsed.scheme, parsed.path, parsed.selector, force_plain_text)
 
     if parsed.scheme == SCHEME_ARTIFACT:
-        return _read_artifact(parsed, force_plain_text=force_plain_text)
+        result = _read_artifact(parsed, force_plain_text=force_plain_text)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
     elif parsed.scheme == SCHEME_MEMORY:
-        return _read_memory(parsed, force_plain_text=force_plain_text)
+        result = _read_memory(parsed, force_plain_text=force_plain_text)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
     else:
-        return _read_file(parsed, force_plain_text=force_plain_text)
+        result = _read_file(parsed, force_plain_text=force_plain_text)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
 
 
 def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:

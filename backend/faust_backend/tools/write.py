@@ -59,13 +59,18 @@ def write(path: str, content: str) -> str:
 
     content = str(content or "")
     raw = path_str
+    log.info("write INPUT path=%s content_len=%d", path_str, len(content))
 
     # memory:// backend
     if raw.startswith("memory://"):
-        return _write_memory(raw[len("memory://"):].strip("/"), content)
+        result = _write_memory(raw[len("memory://"):].strip("/"), content)
+        log.info("write OUTPUT %s", result[:120])
+        return result
 
     # Filesystem backend
-    return _write_file(raw, content)
+    result = _write_file(raw, content)
+    log.info("write OUTPUT %s", result[:120])
+    return result
 
 
 def _write_file(raw: str, content: str) -> str:

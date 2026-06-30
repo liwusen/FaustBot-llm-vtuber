@@ -52,6 +52,7 @@ def find(patterns: list[str]) -> str:
         Sorted list of matching paths, newest first.
 
     """
+    log.info("find INPUT patterns=%s", patterns)
     fs_globs: list[str] = []
     mem_globs: list[str] = []
 
@@ -71,9 +72,13 @@ def find(patterns: list[str]) -> str:
         results.append(_find_memory(mem_globs))
 
     if not results:
-        return "没有匹配任何文件"
+        result = "没有匹配任何文件"
+        log.info("find OUTPUT len=%d", len(result))
+        return result
 
-    return "\n\n".join(r for r in results if r)
+    result = "\n\n".join(r for r in results if r)
+    log.info("find OUTPUT len=%d", len(result))
+    return result
 
 
 def _find_filesystem(globs: list[str]) -> str:
@@ -126,7 +131,9 @@ def _find_memory(globs: list[str]) -> str:
     results: list[str] = []
 
     for g in globs:
-        # Treat the glob as a scope for tree listing
+        # Strip memory:// prefix (defensive: caller may not have stripped it)
+        if g.startswith("memory://"):
+            g = g[len("memory://"):]
         scope = g.rstrip("*").rstrip("/") or ""
         try:
             import asyncio

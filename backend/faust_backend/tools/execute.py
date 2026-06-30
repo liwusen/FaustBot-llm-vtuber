@@ -60,15 +60,19 @@ def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "") -> st
     lang = str(language or "").strip().lower()
     code = str(code or "")
     timeout = max(5, min(int(timeout), 300))
+    log.info("execute INPUT lang=%s code_len=%d timeout=%d cwd=%s", lang, len(code), timeout, cwd or '.')
 
     if lang == "shell":
-        return _run_shell(code, timeout, cwd)
+        result = _run_shell(code, timeout, cwd)
     elif lang == "python":
-        return _run_python(code, timeout, cwd)
+        result = _run_python(code, timeout, cwd)
     elif lang == "js":
-        return _run_js(code, timeout, cwd)
+        result = _run_js(code, timeout, cwd)
     else:
-        return f"不支持的语言: {language}。支持 shell / python / js"
+        result = f"不支持的语言: {language}。支持 shell / python / js"
+
+    log.info("execute OUTPUT len=%d", len(result))
+    return result
 
 
 def _resolve_cwd(cwd: str) -> str:
