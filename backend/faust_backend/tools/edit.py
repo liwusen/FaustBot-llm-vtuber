@@ -132,6 +132,12 @@ def edit(path: str, patch: str) -> str:
     if is_memory:
         try:
             _asyncio.run(store.file_write(mem_path, result))
+            # 触发 LLM 实体抽取
+            try:
+                from faust_backend.memory.tools import _bg_extract_and_save, _run_bg
+                _run_bg("auto_extract", _bg_extract_and_save(result, mem_path))
+            except Exception:
+                pass
         except Exception as e:
             return f"写入记忆文档出错: {e}"
         return f"已编辑 memory://{mem_path}: {changes} 行变更"

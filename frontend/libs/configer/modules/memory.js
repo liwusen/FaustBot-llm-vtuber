@@ -391,6 +391,13 @@ function renderMemoryTree(currentDir) {
             desc.textContent = ent.description.length > 80 ? ent.description.slice(0, 80) + "\u2026" : ent.description;
             label.append(desc);
           }
+          row.style.cursor = "pointer";
+          row.title = "点击查看实体图谱";
+          row.addEventListener("click", () => {
+            state.kbGraphSelectedEntityId = ent.id;
+            state.memoryView = "graph";
+            renderModule();
+          });
           row.append(label);
           entBox.append(row);
         }
@@ -612,6 +619,7 @@ function renderMemoryGraph() {
   searchInput.placeholder = "搜索实体名称";
   searchInput.style.maxWidth = "200px";
   let statusText = el("span", "card-help", "加载中...");
+  const log = function(msg) { console.log("[Graph] " + msg); };
 
   const tb = el("div", "graph-toolbar");
   tb.append(searchInput, makeButton("搜索", doSearch, "btn btn-primary"), statusText,
@@ -633,16 +641,47 @@ function renderMemoryGraph() {
   });
   depthSlider.addEventListener("change", () => {
     depthLabel.textContent = "深度: " + depthSlider.value;
-    if (!state.kbSelectedPath) {
-      statusText.textContent = "请在树上选中一个文件后再调整深度";
+    const centerId = state.kbGraphSelectedEntityId || (gc && gc._selectedNode && gc._selectedNode.id) || "";
+    log("[depthSlider] centerId=" + centerId + " selPath=" + (state.kbSelectedPath||"") + " value=" + depthSlider.value);
+    if (!centerId && !state.kbSelectedPath) {
+      statusText.textContent = "请先在树上选中文件或在图谱上点击实体";
       return;
     }
-    statusText.textContent = "重新请求深度 " + depthSlider.value + "...";
-    if (gc && gc.simulation) {
-      gc._expanded = {};
-      gc.simulation.nodes.forEach(function (n) { gc._expanded[n.id] = true; });
+    statusText.textContent = "重新 BFS 深度 " + depthSlider.value + "...";
+    if (centerId) {
+      const depth = parseInt(depthSlider.value) || 3;
+      log("[depthSlider] BFS from " + centerId + " depth=" + depth);
+      cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: centerId, depth: depth }).then(function (data) {
+        log("[depthSlider] expand items=" + (data.items||[]).length + " edges=" + (data.edges||[]).length);
+        const items = data.items || [];
+        const rawEdges = data.edges || [];
+        const selNode = gc._selectedNode || {};
+        const selName = selNode.name || centerId;
+        const allNodes = [{ id: centerId, name: selName, entity_type: selNode.entity_type || "entity", type: "entity" }];
+        const seenIds = new Set([centerId]);
+        for (const n of items) {
+          if (!seenIds.has(n.id)) {
+            seenIds.add(n.id);
+            allNodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+          }
+        }
+        const cleanEdges = [];
+        const seenEdgeKeys = new Set();
+        for (const e of rawEdges) {
+          const ek = e.key || e.source + "->" + e.target;
+          if (!seenEdgeKeys.has(ek)) {
+            seenEdgeKeys.add(ek);
+            cleanEdges.push({ source: e.source, target: e.target, type: e.type, key: ek });
+          }
+        }
+        gc.clearExpanded();
+        gc.setData(allNodes, cleanEdges);
+        gc.focusNode(centerId);
+        statusText.textContent = "实体: " + allNodes.length + " | 关系: " + cleanEdges.length + " (深度: " + depth + ")";
+      }).catch(function () { statusText.textContent = "BFS失败"; });
+    } else {
+      initGraph();
     }
-    initGraph();
   });
   tb.append(document.createTextNode(" | "), depthLabel, depthSlider);
   addSection("", [tb]);
@@ -673,12 +712,75 @@ function renderMemoryGraph() {
 
   async function initGraph() {
     try {
+      log("[initGraph] selEntity=" + (state.kbGraphSelectedEntityId||"") + " selPath=" + (state.kbSelectedPath||"") + " depth=" + depthSlider.value);
       statusText.textContent = "请求数据中...";
       let nodes = [];
       let edges = [];
+      const selEntity = state.kbGraphSelectedEntityId || "";
       const selPath = state.kbSelectedPath || "";
 
-      if (selPath) {
+      if (selEntity) {
+        // ── BFS from selected entity ──
+        const depth = parseInt(depthSlider.value) || 3;
+        log("[initGraph] selEntity BFS: id=" + selEntity + " depth=" + depth);
+        const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: selEntity, depth: depth });
+        log("[initGraph] expand returned items=" + (expResp.items||[]).length + " edges=" + (expResp.edges||[]).length);
+        const items = expResp.items || [];
+        const expEdges = expResp.edges || [];
+        nodes.push({ id: selEntity, name: "(中心)", entity_type: "selected", type: "entity" });
+        try {
+          const nbResp = await cfgApi("GET", "/faust/memory/graph/neighbors", null, { entity_id: selEntity, depth: 0 });
+          log("[initGraph] neighbors depth=0 items=" + (nbResp.items||[]).length);
+          for (const n of (nbResp.items || [])) {
+            if (n.id === selEntity) { nodes[0].name = n.name || "(中心)"; nodes[0].entity_type = n.entity_type || n.type || "selected"; nodes[0].description = n.description; break; }
+          }
+        } catch (_) {}
+        const seenIds = new Set([selEntity]);
+        for (const n of items) {
+          if (!seenIds.has(n.id)) {
+            seenIds.add(n.id);
+            nodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+          }
+        }
+        for (const e of expEdges) {
+          edges.push({ source: e.source, target: e.target, type: e.type, key: e.key || e.source + "->" + e.target });
+        }
+      } else if (selPath) {
+        log("[initGraph] selPath branch: " + selPath);
+        const [entResp] = await Promise.all([
+          cfgApi("GET", "/faust/memory/graph/entity-children", null, { path: selPath })
+        ]);
+        const entChildren = entResp.items || [];
+        log("[initGraph] entity-children count=" + entChildren.length);
+        if (entChildren.length === 0) {
+          // 无实体子节点：回退到显示文件节点本身的 BFS 邻域
+          const fileNid = "path:" + selPath.replace(/^\//, "");
+          const depth = parseInt(depthSlider.value) || 3;
+          log("[initGraph] fallback: expanding file node " + fileNid + " depth=" + depth);
+          try {
+            const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: fileNid, depth: depth });
+            log("[initGraph] fallback expand items=" + (expResp.items||[]).length + " edges=" + (expResp.edges||[]).length);
+            const items = expResp.items || [];
+            const expEdges = expResp.edges || [];
+            const fileName = selPath.split("/").pop() || selPath;
+            const seenIds = new Set([fileNid]);
+            nodes.push({ id: fileNid, name: fileName, entity_type: "file", type: "entity" });
+            for (const n of items) {
+              if (!seenIds.has(n.id)) {
+                seenIds.add(n.id);
+                nodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+              }
+            }
+            const seenEdgeKeys = new Set();
+            for (const e of expEdges) {
+              const ek = e.key || e.source + "->" + e.target;
+              if (!seenEdgeKeys.has(ek)) {
+                seenEdgeKeys.add(ek);
+                edges.push({ source: e.source, target: e.target, type: e.type, key: ek });
+              }
+            }
+          } catch (_) {}
+        } else {
         const [entResp] = await Promise.all([
           cfgApi("GET", "/faust/memory/graph/entity-children", null, { path: selPath })
         ]);
@@ -733,6 +835,7 @@ function renderMemoryGraph() {
             }
           }
         } catch (_) {}
+        }
       } else {
         const [fullData] = await Promise.all([
           cfgApi("GET", "/faust/memory/graph/full"),
@@ -756,24 +859,42 @@ function renderMemoryGraph() {
       gc.onNodeClick(function (node) {
         gc._selectedNode = node;
         gc.render();
-        if (gc._expanded[node.id]) return;
-        gc._expanded[node.id] = true;
-        statusText.textContent = "展开 " + node.name + "...";
-        cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: node.id, depth: parseInt(depthSlider.value) || 3 }).then(function (data) {
+        log("[onNodeClick] id=" + node.id + " name=" + node.name + " depth=" + depthSlider.value);
+        state.kbGraphSelectedEntityId = node.id;
+        statusText.textContent = "BFS展开 " + node.name + "...";
+        const depth = parseInt(depthSlider.value) || 3;
+        cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: node.id, depth: depth }).then(function (data) {
+          log("[onNodeClick] expand items=" + (data.items||[]).length + " edges=" + (data.edges||[]).length);
           const items = data.items || [];
-          const newEdges2 = data.edges || [];
-          const newNodes = items.filter(function (it) {
-            return !gc.simulation.nodes.some(function (n) { return n.id === it.id; });
-          }).map(function (it) {
-            return { id: it.id, name: it.name, entity_type: it.entity_type || it.type, type: "entity" };
-          });
-          if (newNodes.length) {
-            gc.addNodes(newNodes, newEdges2);
+          const rawEdges = data.edges || [];
+          const selName = node.name || node.id;
+          const allNodes = [{ id: node.id, name: selName, entity_type: node.entity_type || "selected", type: "entity" }];
+          const seenIds = new Set([node.id]);
+          for (const n of items) {
+            if (!seenIds.has(n.id)) {
+              seenIds.add(n.id);
+              allNodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+            }
           }
-          statusText.textContent = "实体: " + gc.simulation.nodes.length + " | 关系: " + gc.simulation.edges.length;
-        }).catch(function () { statusText.textContent = "展开失败"; });
+          const cleanEdges = [];
+          const seenEdgeKeys = new Set();
+          for (const e of rawEdges) {
+            const ek = e.key || e.source + "->" + e.target;
+            if (!seenEdgeKeys.has(ek)) {
+              seenEdgeKeys.add(ek);
+              cleanEdges.push({ source: e.source, target: e.target, type: e.type, key: ek });
+            }
+          }
+          gc.clearExpanded();
+          gc.setData(allNodes, cleanEdges);
+          gc.focusNode(node.id);
+          statusText.textContent = "实体: " + allNodes.length + " | 关系: " + cleanEdges.length + " (深度: " + depth + ")";
+        }).catch(function () { statusText.textContent = "BFS展开失败"; });
       });
 
+      if (selEntity) {
+        gc.focusNode(selEntity);
+      }
       gc.fitToScreen();
     } catch (e) {
       statusText.textContent = "加载失败: " + (e.message || e);
@@ -784,14 +905,53 @@ function renderMemoryGraph() {
   async function doSearch() {
     const q = searchInput.value.trim();
     if (!q || !gc) return;
+    log("[doSearch] query=" + q);
     statusText.textContent = "搜索中...";
     try {
       const data = await cfgApi("GET", "/faust/memory/graph/search", null, { query: q, top_k: 20 });
       const items = data.items || [];
+      log("[doSearch] results=" + items.length);
       const ids = items.map(function (it) { return it.id; });
       gc.highlightIds(ids);
-      if (items.length) gc.focusNode(items[0].id);
-      statusText.textContent = "找到 " + items.length + " 个匹配实体";
+      if (items.length) {
+        const first = items[0];
+        state.kbGraphSelectedEntityId = first.id;
+        gc.focusNode(first.id);
+        statusText.textContent = "BFS展开 " + (first.name || first.id) + "...";
+        const depth = parseInt(depthSlider.value) || 3;
+        log("[doSearch] BFS depth=" + depth + " from " + first.id);
+        try {
+          const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: first.id, depth: depth });
+          log("[doSearch] expand items=" + (expResp.items||[]).length + " edges=" + (expResp.edges||[]).length);
+          const expItems = expResp.items || [];
+          const expEdges = expResp.edges || [];
+          const allNodes = [{ id: first.id, name: first.name || first.id, entity_type: first.entity_type || "entity", type: "entity" }];
+          const seenIds = new Set([first.id]);
+          for (const n of expItems) {
+            if (!seenIds.has(n.id)) {
+              seenIds.add(n.id);
+              allNodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+            }
+          }
+          const cleanEdges = [];
+          const seenEdgeKeys = new Set();
+          for (const e of expEdges) {
+            const ek = e.key || e.source + "->" + e.target;
+            if (!seenEdgeKeys.has(ek)) {
+              seenEdgeKeys.add(ek);
+              cleanEdges.push({ source: e.source, target: e.target, type: e.type, key: ek });
+            }
+          }
+          gc.clearExpanded();
+          gc.setData(allNodes, cleanEdges);
+          gc.focusNode(first.id);
+          statusText.textContent = "找到 " + items.length + " 个匹配 | BFS=" + allNodes.length + " 节点 (深度:" + depth + ")";
+        } catch (_) {
+          statusText.textContent = "找到 " + items.length + " 个匹配 (BFS失败)";
+        }
+      } else {
+        statusText.textContent = "未找到匹配实体";
+      }
     } catch (e) {
       statusText.textContent = "搜索失败";
     }
@@ -959,6 +1119,19 @@ function renderMemorySearch() {
           tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : "",
         ].join("");
         row.append(left);
+        const graphBtn = makeButton("🔗 图谱", () => {
+          state.kbSelectedPath = normalizeKbPath(it.path);
+          state.kbGraphSelectedEntityId = "";
+          state.memoryView = "graph";
+          renderModule();
+        }, "btn btn-ghost");
+        graphBtn.style.marginLeft = "auto";
+        graphBtn.style.fontSize = "11px";
+        graphBtn.style.padding = "2px 8px";
+        graphBtn.style.flexShrink = "0";
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.append(graphBtn);
         row.addEventListener("click", () => openResult(it.path));
         resultBox.append(row);
       }

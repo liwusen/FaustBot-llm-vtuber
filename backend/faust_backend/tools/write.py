@@ -115,5 +115,11 @@ def _write_memory(path: str, content: str) -> str:
     except Exception as e:
         return f"写入记忆库出错: {e}"
 
+    # 触发 LLM 实体抽取（后台异步）
+    try:
+        from faust_backend.memory.tools import _bg_extract_and_save, _run_bg
+        _run_bg("auto_extract", _bg_extract_and_save(content, path))
+    except Exception:
+        pass
+
     size = len(content.encode("utf-8"))
-    return f"已写入 memory://{path} ({size} bytes)"

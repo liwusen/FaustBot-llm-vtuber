@@ -359,8 +359,16 @@ GraphCanvas.prototype._hitTest = function (wx, wy) {
 
 GraphCanvas.prototype.setData = function (nodes, edges) {
   var self = this;
+  // 将单向边转为双向（正反向各一条）
+  var bidirEdges = edges.slice();
+  for (var i = 0; i < edges.length; i++) {
+    bidirEdges.push({
+      source: edges[i].target, target: edges[i].source,
+      type: edges[i].type, key: (edges[i].key || '') + '_r'
+    });
+  }
   this.simulation.stop();
-  this.simulation.setData(nodes, edges);
+  this.simulation.setData(nodes, bidirEdges);
   this._expanded = {};
   var cx = this._width / 2, cy = this._height / 2;
   nodes.forEach(function (n) {
@@ -385,6 +393,16 @@ GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
         }
       }
       if (found) { parentId = found.source; break; }
+  this.simulation.addNodes(newNodes, parentNode);
+  // 将单向边转为双向
+  var bidirNewEdges = newEdges.slice();
+  for (var ei = 0; ei < newEdges.length; ei++) {
+    bidirNewEdges.push({
+      source: newEdges[ei].target, target: newEdges[ei].source,
+      type: newEdges[ei].type, key: (newEdges[ei].key || '') + '_r'
+    });
+  }
+  this.simulation.addEdges(bidirNewEdges);
     }
   }
   var parentNode = null;
@@ -412,6 +430,10 @@ GraphCanvas.prototype.focusNode = function (id) {
       return;
     }
   }
+};
+
+GraphCanvas.prototype.clearExpanded = function () {
+  this._expanded = {};
 };
 
 GraphCanvas.prototype.highlightIds = function (ids) {
