@@ -1126,14 +1126,11 @@ class GraphStore:
                                 continue
                     # date filter
                     updated = (meta.get("updated_at") or "")
-                    if date_from and updated:
-                        if isinstance(date_from, str) and updated < date_from:
-                            # FIXME: use proper date comparison
-                            if not updated.startswith(date_from):
-                                continue
-                    if date_to and updated:
-                        if isinstance(date_to, str) and updated[:10] > date_to:
-                            continue
+                    updated_date = updated[:10] if updated else ""
+                    if date_from and updated_date and updated_date < date_from:
+                        continue
+                    if date_to and updated_date and updated_date > date_to:
+                        continue
                     # declared_by filter
                     if declared_by and meta.get("declared_by", "") != declared_by:
                         continue
