@@ -1547,6 +1547,7 @@ class GraphStore:
                     if predecessor not in seen:
                         nxt.add(predecessor)
             current = nxt
+            seen.update(nxt)
             if not current:
                 break
         seen.discard(entity_id)
