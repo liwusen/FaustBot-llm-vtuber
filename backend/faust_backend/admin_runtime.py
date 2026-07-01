@@ -225,13 +225,22 @@ def _ensure_agent_core_files(agent_dir: Path, template: Dict[str, str] | None = 
     (agent_dir / "kb_index").mkdir(parents=True, exist_ok=True)
     for filename in AGENT_CORE_FILES:
         path = agent_dir / filename
+        is_faust = agent_dir.name == "faust"
         if filename in AGENT_TEMPLATE_FILES:
-            # Locked template files: always overwrite from source
-            src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
-            if src.exists():
-                path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            if is_faust:
+                # Locked template files: always overwrite from source
+                src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
+                if src.exists():
+                    path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                elif not path.exists():
+                    path.write_text(f"# {filename}\n", encoding="utf-8")
             elif not path.exists():
-                path.write_text(f"# {filename}\n", encoding="utf-8")
+                # Non-faust agents: only create from template on first use
+                src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
+                if src.exists():
+                    path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                else:
+                    path.write_text(template.get(filename, f"# {filename}\n"), encoding="utf-8")
         elif not path.exists():
             # Editable files: pull from template only on first creation
             src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
@@ -357,7 +366,7 @@ def get_agent_files(agent_name: str) -> Dict[str, Dict[str, Any]]:
     for filename in AGENT_CORE_FILES:
         result[filename] = {
             "content": (agent_dir / filename).read_text(encoding="utf-8"),
-            "readonly": filename in AGENT_TEMPLATE_FILES,
+            "readonly": agent_name == "faust" and filename in AGENT_TEMPLATE_FILES,
         }
     return result
 def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, str]:
@@ -367,13 +376,12 @@ def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, str]:
         raise FileNotFoundError(f"agent 不存在: {agent_name}")
     _ensure_agent_core_files(agent_dir)
     for filename in list(files.keys()):
-        if filename in AGENT_TEMPLATE_FILES:
+        if agent_name == "faust" and filename in AGENT_TEMPLATE_FILES:
             # Template files are force-bound — silently skip
             continue
         if filename in AGENT_CORE_FILES:
             (agent_dir / filename).write_text(str(files[filename]), encoding="utf-8")
     return get_agent_files(agent_name)
-
 
 def get_agent_detail(agent_name: str) -> Dict[str, Any]:
     return {
