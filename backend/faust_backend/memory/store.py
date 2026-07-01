@@ -1370,14 +1370,20 @@ class GraphStore:
             api_key = conf.EMBED_API_KEY or conf.CHAT_API_KEY
             base_url = conf.EMBED_API_BASE or "https://api.openai.com/v1"
             self._openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return self._openai_client
 
-    async def _embed_texts(self, texts: list[str]) -> np.ndarray:
+    async def _embed_texts(self, texts: list[str], max_batch_size: int = 8) -> np.ndarray:
         if not texts:
             return np.zeros((0, EMBED_DIM), dtype=np.float32)
         client = self._get_openai()
-        response = await client.embeddings.create(model=EMBED_MODEL, input=texts, dimensions=EMBED_DIM)
+        for batch in self.chunk_list(texts, chunk_size=max_batch_size):
+            response = await client.embeddings.create(model=EMBED_MODEL, input=batch, dimensions=EMBED_DIM)
         return np.array([item.embedding for item in response.data], dtype=np.float32)
-
+    
+    def chunk_list(self, lst, chunk_size=10):
+        """返回一个列表，其中每个元素是大小为 chunk_size 的子列表"""
+        return [lst[i:i+chunk_size] for i in range(0, len(lst), chunk_size)]
+    
     async def _embed_and_index(self, chunk_items: list[dict]) -> None:
         if not chunk_items:
             return
@@ -1546,7 +1552,6 @@ class GraphStore:
                     if predecessor not in seen:
                         nxt.add(predecessor)
             current = nxt
-            seen.update(nxt)
             if not current:
                 break
         seen.discard(entity_id)
@@ -1577,6 +1582,7 @@ class GraphStore:
                 continue
             if "_name_vec" not in ndata:
                 missing.append((nid, str(ndata.get("name", ""))))
+                log.warning("entity missing name_vec eid=%s name=%s", nid[:16], ndata.get("name", ""))
         if not missing:
             return
         names = [name for _, name in missing]

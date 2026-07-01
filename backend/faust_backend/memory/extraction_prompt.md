@@ -30,7 +30,8 @@
   比如 文档中提到 小明有一只猫，那么应该把实体命名为 小明的猫 而不是 猫
 
 ## 输出格式
-严格按照JSON格式输出
+
+必须严格按照JSON格式输出
 ```json
 {"entities": [{"name": "...", "type": "...", "description": "...", "properties": {}}], "relations": [{"source": "...", "target": "...", "type": "..."}]}
 ```
