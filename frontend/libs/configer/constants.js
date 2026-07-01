@@ -99,16 +99,16 @@ META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 E
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY"];
   { id: "overview", title: "概览", desc: "当前 Agent、模型、运行时状态摘要。" },
-  { id: "ai", title: "AI Provider", desc: "模型、接口地址与密钥配置。" },
+  { id: "ai", title: "AI 服务商", desc: "模型、接口地址与密钥配置。" },
   { id: "live2d", title: "模型", desc: "模型类型切换、位置、缩放与显示行为。" },
   { id: "speech", title: "语音", desc: "ASR/TTS 模式与参数配置。" },
-  { id: "agent", title: "Agent", desc: "角色文件编辑、切换与创建。" },
+  { id: "agent", title: "角色", desc: "角色文件编辑、切换与创建。" },
   { id: "memory", title: "记忆", desc: "知识库树、图谱、搜索一体化管理。" },
   { id: "araya", title: "Araya", desc: "Araya 状态监控与触发。" },
-  { id: "runtime", title: "Runtime", desc: "服务状态与运行时控制。" },
-  { id: "triggers", title: "Triggers", desc: "计划任务列表与编辑。" },
-  { id: "skills", title: "Skills", desc: "Skill 安装、启停、删除。" },
-  { id: "plugins", title: "Plugins", desc: "插件启停、重载、配置。" },
+  { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
+  { id: "triggers", title: "触发器", desc: "计划任务列表与编辑。" },
+  { id: "skills", title: "技能", desc: "Skill 安装、启停、删除。" },
+  { id: "plugins", title: "插件", desc: "插件启停、重载、配置。" },
   { id: "advanced", title: "高级", desc: "未归类字段与扩展配置。" },
 ];
 

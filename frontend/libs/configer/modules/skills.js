@@ -34,7 +34,7 @@ function renderSkillsModule() {
         showBanner("error", "请先填写 Agent 名称。");
         return;
       }
-      const zipPath = await window.api.configOpenFile({ title: "选择 Skill ZIP", filters: [{ name: "ZIP", extensions: ["zip"] }] });
+      const zipPath = await window.api.configOpenFile({ title: "选择 Skill ZIP 文件", filters: [{ name: "ZIP", extensions: ["zip"] }] });
       if (!zipPath) return;
       const overwrite = window.confirm("若已存在是否覆盖安装?");
       await cfgApi("POST", "/faust/admin/skills/install-zip", { zip_path: zipPath, agent_name: agentName, overwrite });

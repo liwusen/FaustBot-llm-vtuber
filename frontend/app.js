@@ -664,7 +664,7 @@
   function updateQuickAsrButton(){
     if (!quickToggleAsrBtn) return;
     const labelEl = quickToggleAsrBtn.querySelector('.qc-label');
-    if (labelEl) labelEl.textContent = asrRunning ? '停听' : 'ASR';
+    if (labelEl) labelEl.textContent = asrRunning ? '停听' : '语音识别';
     quickToggleAsrBtn.classList.toggle('active', !!asrRunning);
     quickToggleAsrBtn.title = asrRunning ? '停止语音识别' : '启动语音识别';
   }
@@ -1657,9 +1657,9 @@
   function formatResultBubbleText(source, text){
     const raw = String(text || '').trim();
     if (!raw) return '';
-    if (source === 'user') return `用户:${raw}`;
+    if (source === 'user') return `用户：${raw}`;
     if (source === 'error') return `!错误!:${raw}`;
-    return `AI:${raw}`;
+    return `AI：${raw}`;
   }
 
   function formatToolBubbleValue(value){
@@ -2825,19 +2825,19 @@
         { label: '摆动幅度', path: 'arms.swingAmplitude', min: 0, max: 0.2, step: 0.005, val: cfg.arms.swingAmplitude },
         { label: '摆动速度', path: 'arms.swingSpeed', min: 0.1, max: 2, step: 0.1, val: cfg.arms.swingSpeed },
       ]},
-      { key: 'rightHand', title: '右手手指 (curl)', rows: [
-        { label: '拇指 curl', path: 'hands.right.thumbCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.thumbCurl : 0) },
-        { label: '食指 curl', path: 'hands.right.indexCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.indexCurl : 0) },
-        { label: '中指 curl', path: 'hands.right.middleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.middleCurl : 0) },
-        { label: '无名指 curl', path: 'hands.right.ringCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.ringCurl : 0) },
-        { label: '小指 curl', path: 'hands.right.littleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.littleCurl : 0) },
+      { key: 'rightHand', title: '右手手指（弯曲）', rows: [
+        { label: '拇指弯曲', path: 'hands.right.thumbCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.thumbCurl : 0) },
+        { label: '食指弯曲', path: 'hands.right.indexCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.indexCurl : 0) },
+        { label: '中指弯曲', path: 'hands.right.middleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.middleCurl : 0) },
+        { label: '无名指弯曲', path: 'hands.right.ringCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.ringCurl : 0) },
+        { label: '小指弯曲', path: 'hands.right.littleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.littleCurl : 0) },
       ]},
-      { key: 'leftHand', title: '左手手指 (curl)', rows: [
-        { label: '拇指 curl', path: 'hands.left.thumbCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.thumbCurl : 0) },
-        { label: '食指 curl', path: 'hands.left.indexCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.indexCurl : 0) },
-        { label: '中指 curl', path: 'hands.left.middleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.middleCurl : 0) },
-        { label: '无名指 curl', path: 'hands.left.ringCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.ringCurl : 0) },
-        { label: '小指 curl', path: 'hands.left.littleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.littleCurl : 0) },
+      { key: 'leftHand', title: '左手手指（弯曲）', rows: [
+        { label: '拇指弯曲', path: 'hands.left.thumbCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.thumbCurl : 0) },
+        { label: '食指弯曲', path: 'hands.left.indexCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.indexCurl : 0) },
+        { label: '中指弯曲', path: 'hands.left.middleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.middleCurl : 0) },
+        { label: '无名指弯曲', path: 'hands.left.ringCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.ringCurl : 0) },
+        { label: '小指弯曲', path: 'hands.left.littleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.littleCurl : 0) },
       ]},
       { key: 'body', title: '身体', rows: [
         { label: '前后摇摆', path: 'body.spineSwayX', min: 0, max: 0.02, step: 0.001, val: cfg.body.spineSwayX },

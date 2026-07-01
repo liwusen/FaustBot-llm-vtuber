@@ -43,10 +43,10 @@ function refreshDirtyUI() {
   const count = state.dirty.public.size + state.dirty.private.size;
   if (count <= 0) {
     els.dirtyBadge.classList.add("hidden");
-    els.dirtyBadge.textContent = "0 unsaved change";
+    els.dirtyBadge.textContent = "0 项未保存修改";
   } else {
     els.dirtyBadge.classList.remove("hidden");
-    els.dirtyBadge.textContent = `${count} unsaved change${count > 1 ? "s" : ""}`;
+    els.dirtyBadge.textContent = `${count} 项未保存修改`;
   }
 }
 
@@ -143,8 +143,8 @@ function makeFieldCard(scope, key, value) {
       const filePath = await window.api.configOpenFile({
         title: "选择 TTS 参考音频",
         filters: [
-          { name: "Audio", extensions: ["wav", "mp3", "flac", "m4a", "ogg"] },
-          { name: "All Files", extensions: ["*"] },
+          { name: "音频文件", extensions: ["wav", "mp3", "flac", "m4a", "ogg"] },
+          { name: "所有文件", extensions: ["*"] },
         ],
       });
       if (!filePath) return;

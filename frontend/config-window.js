@@ -239,7 +239,7 @@ async function applyRuntime() {
 async function reloadFromDisk() {
   const dirtyCount = state.dirty.public.size + state.dirty.private.size;
   if (dirtyCount > 0) {
-    const ok = window.confirm("当前有未保存修改，继续 Reload 会丢失这些修改。是否继续？");
+    const ok = window.confirm("当前有未保存修改，继续重新加载会丢失这些修改。是否继续？");
     if (!ok) return;
   }
   await reloadAll();

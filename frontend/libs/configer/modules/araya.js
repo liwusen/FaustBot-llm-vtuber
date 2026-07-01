@@ -62,7 +62,7 @@ function renderArayaModule() {
         activeEventSource = null;
         try {
           const data = JSON.parse(evt.data);
-          progressArea.textContent += `\n\n\u2713 完成! (耗时 ${data.duration || "?"}s)`;
+          progressArea.textContent += `\n\n\u2713 完成!（耗时 ${data.duration || "?"} 秒）`;
         } catch (e) {
           progressArea.textContent += "\n\n\u2713 完成!";
         }

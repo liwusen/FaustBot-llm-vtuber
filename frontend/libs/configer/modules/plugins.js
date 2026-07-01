@@ -18,7 +18,7 @@ function renderPluginsModule() {
     makeButton("刷新", async () => { await ensureModuleData("plugins"); renderModule(); }),
     makeButton("重载插件", async () => { await cfgApi("POST", "/faust/admin/plugins/reload", { apply_runtime: true, no_initial_chat: true }); await ensureModuleData("plugins"); renderModule(); }, "btn btn-secondary"),
     makeButton("从 ZIP 安装", async () => {
-      const zipPath = await window.api.configOpenFile({ title: "选择插件 ZIP", filters: [{ name: "ZIP", extensions: ["zip"] }] });
+      const zipPath = await window.api.configOpenFile({ title: "选择插件 ZIP 文件", filters: [{ name: "ZIP", extensions: ["zip"] }] });
       if (!zipPath) return;
       const overwrite = window.confirm("若插件已存在是否覆盖安装?");
       await cfgApi("POST", "/faust/admin/plugins/install-zip", { zip_path: zipPath, overwrite, apply_runtime: true, no_initial_chat: true, reset_dialog: false });
@@ -74,7 +74,7 @@ function renderPluginsModule() {
   const triggerControl = selected.trigger_control && typeof selected.trigger_control === "object" ? selected.trigger_control : {};
   els.cardsRoot.append(
     makeInfoCard("插件基本信息", [
-      { label: "ID", value: selected.id },
+      { label: "标识", value: selected.id },
       { label: "名称", value: selected.name },
       { label: "版本", value: selected.version },
       { label: "作者", value: selected.author },
@@ -84,10 +84,10 @@ function renderPluginsModule() {
       { label: "描述", value: selected.description },
     ]),
     makeInfoCard("健康状态", [
-      { label: "status", value: health.status || "unknown" },
-      { label: "error", value: health.error || "-" },
-      { label: "append filter", value: triggerControl.supports_append_filter },
-      { label: "fire filter", value: triggerControl.supports_fire_filter },
+      { label: "状态", value: health.status || "unknown" },
+      { label: "错误信息", value: health.error || "-" },
+      { label: "追加过滤器", value: triggerControl.supports_append_filter },
+      { label: "触发过滤器", value: triggerControl.supports_fire_filter },
     ])
   );
   els.cardsRoot.append(makeTagListCard("权限", selected.permissions || []));
