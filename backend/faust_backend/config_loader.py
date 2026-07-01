@@ -114,6 +114,7 @@ def load_configs():
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
+    global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
@@ -135,7 +136,6 @@ def load_configs():
     SEARCH_API_KEY = private_config.get('SEARCH_API_KEY', '')
     FAUSTBOT_CLOUD_SERVICE_KEY = private_config.get('FAUSTBOT_CLOUD_SERVICE_KEY', '')
 
-    PT_EVAL_TRIGGER_ENABLED = config.get('PY_EVAL_TRIGGER_ENABLED', False)
     AGENT_NAME = config.get('AGENT_NAME', 'faust')
     SECURITY_SYS_ENABLED = config.get('SECURITY_SYS_ENABLED', False)
     KB_ENABLED = bool(config.get('KB_ENABLED', True))
@@ -143,6 +143,9 @@ def load_configs():
     RERANK_TOP_K = int(config.get('RERANK_TOP_K', 5) or 5)
     BM25_ONLY = bool(config.get('BM25_ONLY', False))
     ARAYA_ENABLED = bool(config.get('ARAYA_ENABLED', True))
+    MM_BRIDGE_MAX_SCAN = int(config.get('MM_BRIDGE_MAX_SCAN', 6) or 6)
+    MM_BRIDGE_REMOVE_SOURCE = bool(config.get('MM_BRIDGE_REMOVE_SOURCE', False))
+    MM_BRIDGE_KEEP_TURNS = int(config.get('MM_BRIDGE_KEEP_TURNS', 2) or 2)
     ARAYA_IDLE_MINUTES = float(config.get('ARAYA_IDLE_MINUTES', 30) or 30)
     TTS_MODE = str(config.get('TTS_MODE', 'local') or 'local').strip().lower()
     ASR_MODE = str(config.get('ASR_MODE', 'local') or 'local').strip().lower()

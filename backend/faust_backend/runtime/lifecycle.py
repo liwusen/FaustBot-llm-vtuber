@@ -159,10 +159,12 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
 
 
 def _compose_runtime_extensions():
+    from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
     base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
     pm = state.plugin_manager
     tools = pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME) if pm else base_tools
     middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
+    middlewares.append(MultimodalBridgeMiddleware())
     return tools, middlewares
 
 

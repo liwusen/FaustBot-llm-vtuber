@@ -32,6 +32,7 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "KB_ASYNC_INDEX_ON_WRITE",
     "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH",
 }
+PUBLIC_CONFIG_DEFAULTS = {
     "CHAT_MODEL": "gpt-4o",
     "CHAT_API_BASE": "https://www.dmxapi.cn/v1",
     "EMBED_API_BASE": "https://www.dmxapi.cn/v1",
@@ -43,6 +44,9 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "RERANK_TOP_K": 5,
     "BM25_ONLY": False,
     "ARAYA_ENABLED": True,
+    "MM_BRIDGE_MAX_SCAN": 6,
+    "MM_BRIDGE_REMOVE_SOURCE": False,
+    "MM_BRIDGE_KEEP_TURNS": 2,
     "ARAYA_IDLE_MINUTES": 30,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,
