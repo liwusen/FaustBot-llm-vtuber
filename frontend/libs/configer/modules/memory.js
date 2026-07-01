@@ -741,7 +741,7 @@ function renderMemoryGraph() {
         log("[initGraph] entity-children count=" + entChildren.length);
         if (entChildren.length === 0) {
           // 无实体子节点：回退到显示文件节点本身的 BFS 邻域
-          const fileNid = "path:" + selPath.replace(/^\//, "");
+          const fileNid = "path:/" + selPath.replace(/^\//, "");
           const depth = parseInt(depthSlider.value) || 3;
           log("[initGraph] fallback: expanding file node " + fileNid + " depth=" + depth);
           try {
