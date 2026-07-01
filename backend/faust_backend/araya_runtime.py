@@ -246,7 +246,7 @@ class ArayaRuntime:
 
         def _m():
             from faust_backend.memory import get_memory
-            return get_memory(refresh=True)
+            return get_memory()
 
         @tool
         def arayaGetTimeTool() -> dict:
@@ -485,14 +485,14 @@ class ArayaRuntime:
             arayaSetScorePatchTool,
             arayaChangedNodesTool,
             arayaSearchEntityTool,
-            arayaListEntitiesTool,
+        #    arayaListEntitiesTool,
             arayaGetNeighborsTool,
             arayaAddEntityTool,
             arayaDeleteEntityTool,
             arayaAddRelationTool,
             arayaRemoveRelationTool,
-            arayaListRelationsTool,
-            arayaAttachmentWriteTool,
+        #    arayaListRelationsTool,
+        #    arayaAttachmentWriteTool,
             arayaAttachmentReadTool,
         ]
 
@@ -613,6 +613,7 @@ class ArayaRuntime:
                 f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
                 f"必要时请维护 /auto_index.md，并对 knowledge graph 中的实体和关系进行整合/修剪。\n"
                 f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
+                f"每个修改过的文件只需要完整处理一次，处理完成后绝对不要重复处理。\n"
             )
 
             yield {"event": "step", "data": json.dumps({"type": "start", "reason": reason, "target_agent": self._target_agent_name})}
