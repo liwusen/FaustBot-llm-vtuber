@@ -250,8 +250,16 @@ class ArayaRuntime:
 
         @tool
         def arayaGetTimeTool() -> dict:
-            """获取当前时间戳和 ISO 格式的 UTC 时间字符串。"""
-            return {"time": time.time(), "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            """获取当前时间戳和 ISO 格式的 UTC 时间字符串,以及上次触发的时间戳和 ISO 格式的 UTC 时间字符串。"""
+            state = self._load_state()
+            last_trigger_ts = float(state.get("last_trigger_ts") or 0.0)
+            log.info("arayaGetTimeTool called, last_trigger_ts=%s", last_trigger_ts)
+            return {
+                "time": time.time(),
+                "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "last_trigger_ts": last_trigger_ts,
+                "last_trigger_time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_trigger_ts))
+            }
 
         # ── tree / file tools ──
 
