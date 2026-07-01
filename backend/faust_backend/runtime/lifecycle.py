@@ -164,6 +164,8 @@ def _compose_runtime_extensions():
     pm = state.plugin_manager
     tools = pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME) if pm else base_tools
     middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
+    # Filter out any stale mm_bridge instances from old plugin state
+    middlewares = [m for m in middlewares if not isinstance(m, MultimodalBridgeMiddleware)]
     middlewares.append(MultimodalBridgeMiddleware())
     return tools, middlewares
 
