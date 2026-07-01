@@ -51,5 +51,5 @@ if __name__ == "__main__":
     #    frontend_2d_path="./2D")
     download_and_extract_live2d_model(
        url="https://cubism.live2d.com/sample-data/bin/hiyori_pro/hiyori_pro_zh.zip",
-       frontend_2d_path="./2D")
+       frontend_2d_path="./models/2D")
     print("[Live2dDownloader]所有模型下载和解压完成。")

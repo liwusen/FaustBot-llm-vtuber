@@ -1,14 +1,11 @@
 // Extracted constants for config-window. Loaded before config-window.js
 var META = {
-  GUI_OPERATOR_LLM_MODEL: { label: "GUI 操作模型", help: "用于 GUI 自动操作能力的模型名称。" },
-  GUI_OPERATOR_LLM_BASE: { label: "GUI 操作接口地址", help: "GUI 自动操作模型使用的 API Base URL。" },
   CHAT_MODEL: { label: "主对话模型", help: "Faust 主聊天与推理使用的模型名称。" },
   CHAT_API_BASE: { label: "主对话接口地址", help: "主对话模型对应的 API Base URL。" },
-  SECURITY_VERIFIER_API_ENDPOINT: { label: "安全校验接口地址", help: "安全审查模型使用的 API Base URL。" },
-  SECURITY_VERIFIER_LLM_MODEL: { label: "安全校验模型", help: "用于高风险操作前校验的模型名称。" },
+  EMBED_MODEL: { label: "Embedding 模型", help: "知识库文本向量化使用的 embedding 模型名称。" },
+  EMBED_API_BASE: { label: "Embedding 接口地址", help: "知识库向量化使用的 API Base URL。" },
   SECURITY_SYS_ENABLED: { label: "启用安全系统", help: "开启后，部分高风险调用会先经过安全审查。" },
   KB_ENABLED: { label: "启用记忆", help: "开启后允许使用树形记忆库与向量检索能力。" },
-  KB_EMBED_MODEL: { label: "KB 向量模型", help: "知识库文本向量化使用的 embedding 模型名称。" },
   KB_ASYNC_INDEX_ON_WRITE: { label: "KB 异步索引", help: "开启后知识库写入会以后台任务方式异步索引。" },
   ARAYA_ENABLED: { label: "启用 Araya", help: "开启后允许独立记忆维护 Agent 自动触发。" },
   ARAYA_IDLE_MINUTES: { label: "Araya 空闲触发分钟", help: "主 Agent 连续空闲达到该值后允许自动运行。" },
@@ -41,21 +38,14 @@ var META = {
   OPENAI_ASR_TIMESTAMP_GRANULARITIES: { label: "OpenAI ASR 时间戳粒度", help: "verbose_json 模式下的时间戳粒度。" },
   CHAT_API_KEY: { label: "主对话密钥", help: "主聊天模型使用的 API Key。" },
   SEARCH_API_KEY: { label: "搜索密钥", help: "联网搜索工具使用的 API Key。" },
-  GUI_OPERATOR_LLM_KEY: { label: "GUI 操作密钥", help: "GUI 自动操作模型使用的 API Key。" },
-  SECURITY_VERIFIER_LLM_KEY: { label: "安全校验密钥", help: "安全校验模型使用的 API Key。" },
-  KB_OPENAI_API_KEY: { label: "KB 密钥", help: "知识库 embedding 使用的 API Key。" },
-  OPENAI_TTS_API_KEY: { label: "OpenAI TTS 密钥", help: "OpenAI 兼容 TTS 服务使用的 API Key。" },
-  OPENAI_ASR_API_KEY: { label: "OpenAI ASR 密钥", help: "OpenAI 兼容 ASR 服务使用的 API Key。" },
+  EMBED_API_KEY: { label: "Embedding 密钥", help: "知识库 embedding 使用的 API Key。" },
   FAUSTBOT_CLOUD_SERVICE_KEY: { label: "FaustBot Cloud Service Key", help: "调用 FaustBot Cloud 所使用的 FSK- 前缀服务密钥。" },
   AGENT_NAME: { label: "当前 Agent", help: "指定当前加载的角色目录名称。" },
   TTS_REFER_WAV_PATH: { label: "TTS 参考音频路径", help: "本地 TTS 的参考音频文件路径。" },
   TTS_PROMPT_TEXT: { label: "TTS 参考文本", help: "参考音频对应的文本内容。" },
   TTS_PROMPT_LANGUAGE: { label: "TTS 参考语言", help: "参考音频文本语言。" },
   RERANK_ENABLED: { label: "启用 Reranker", help: "开启后对搜索结果进行重排序以提升相关性。" },
-  RERANK_API_BASE: { label: "Reranker 接口地址", help: "Reranker 服务的 API Base URL。" },
-  RERANK_MODEL: { label: "Reranker 模型", help: "用于重排序的模型名称，默认 Qwen3-Reranker-4B。" },
   RERANK_TOP_K: { label: "Rerank 保留数", help: "重排序后保留的 top-k 结果数量。" },
-  RERANK_API_KEY: { label: "Reranker 密钥", help: "调用 Reranker 服务所需的 API Key。" },
   BM25_ONLY: { label: "BM25 Only 模式", help: "开启后仅使用 BM25 关键词检索，不调用外部 Embedding API 和 Reranker。适用于离线/无 API Key 场景。" },
 };
 
@@ -72,7 +62,7 @@ var FIELD_OPTIONS = {
 
 var AGENT_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"];
 var TEXTAREA_KEYS = new Set(["OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_PROMPT", "TTS_PROMPT_TEXT"]);
-var SECRET_KEYS = new Set(["CHAT_API_KEY", "SEARCH_API_KEY", "GUI_OPERATOR_LLM_KEY", "SECURITY_VERIFIER_LLM_KEY", "KB_OPENAI_API_KEY", "RERANK_API_KEY", "OPENAI_TTS_API_KEY", "OPENAI_ASR_API_KEY", "FAUSTBOT_CLOUD_SERVICE_KEY"]);
+var SECRET_KEYS = new Set(["CHAT_API_KEY", "SEARCH_API_KEY", "EMBED_API_KEY", "FAUSTBOT_CLOUD_SERVICE_KEY"]);
 
 var ADVANCED_KEYS = new Set([
   // OpenAI TTS 推理参数
@@ -87,11 +77,9 @@ var ADVANCED_KEYS = new Set([
   // Cloud 超时
   "FAUSTBOT_CLOUD_TIMEOUT_SECONDS",
   // AI 安全/高级
-  "SECURITY_VERIFIER_API_ENDPOINT", "SECURITY_VERIFIER_LLM_MODEL",
-  "GUI_OPERATOR_LLM_MODEL", "GUI_OPERATOR_LLM_BASE",
-  "KB_ASYNC_INDEX_ON_WRITE", "KB_EMBED_MODEL", "ARAYA_IDLE_MINUTES",
+  "KB_ASYNC_INDEX_ON_WRITE", "ARAYA_IDLE_MINUTES",
   // Reranker
-  "RERANK_API_BASE", "RERANK_MODEL", "RERANK_TOP_K",
+  "RERANK_TOP_K",
   // BM25 Only
   "BM25_ONLY",
   // Live2D 微调
@@ -99,8 +87,8 @@ var ADVANCED_KEYS = new Set([
   "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG",
 ]);
 
-var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "GUI_OPERATOR_LLM_MODEL", "GUI_OPERATOR_LLM_BASE", "SECURITY_VERIFIER_API_ENDPOINT", "SECURITY_VERIFIER_LLM_MODEL", "SECURITY_SYS_ENABLED", "KB_ENABLED", "KB_EMBED_MODEL", "KB_ASYNC_INDEX_ON_WRITE", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_API_BASE", "RERANK_MODEL", "RERANK_TOP_K", "BM25_ONLY"];
-var AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "GUI_OPERATOR_LLM_KEY", "SECURITY_VERIFIER_LLM_KEY", "KB_OPENAI_API_KEY", "RERANK_API_KEY"];
+var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "KB_ASYNC_INDEX_ON_WRITE", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY"];
+var AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
 
@@ -109,9 +97,8 @@ META.EDGE_TTS_VOICE = { label: "Edge TTS 音色", help: "Microsoft Edge TTS 使�
 META.EDGE_TTS_RATE = { label: "Edge TTS 语速", help: "Edge TTS 的速率设置，例如 0% 或 -10% 或 20%。" };
 META.EDGE_TTS_PITCH = { label: "Edge TTS 音高", help: "Edge TTS 的音高设置，例如 0% 或 -5% 或 10%。" };
 META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 Edge TTS 的超时秒数。" };
-var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "OPENAI_TTS_API_KEY", "OPENAI_ASR_API_KEY"];
 
-var MODULES = [
+var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY"];
   { id: "overview", title: "概览", desc: "当前 Agent、模型、运行时状态摘要。" },
   { id: "ai", title: "AI Provider", desc: "模型、接口地址与密钥配置。" },
   { id: "live2d", title: "模型", desc: "模型类型切换、位置、缩放与显示行为。" },

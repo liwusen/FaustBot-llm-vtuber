@@ -1367,10 +1367,9 @@ class GraphStore:
 
     def _get_openai(self) -> AsyncOpenAI:
         if self._openai_client is None:
-            api_key = conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
-            base_url = conf.CHAT_API_BASE or "https://api.openai.com/v1"
+            api_key = conf.EMBED_API_KEY or conf.CHAT_API_KEY
+            base_url = conf.EMBED_API_BASE or "https://api.openai.com/v1"
             self._openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        return self._openai_client
 
     async def _embed_texts(self, texts: list[str]) -> np.ndarray:
         if not texts:
@@ -1959,14 +1958,13 @@ class GraphStore:
             return items
         try:
             import httpx
-            api_key = conf.RERANK_API_KEY or conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
+            api_key = conf.CHAT_API_KEY
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"{conf.RERANK_API_BASE}/rerank",
+                    f"{conf.CHAT_API_BASE}/rerank",
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={
-                        "model": conf.RERANK_MODEL,
-                        "query": query,
+                        "model": conf.CHAT_MODEL,
                         "documents": texts,
                         "top_n": min(top_k * 2, len(items)),
                     },

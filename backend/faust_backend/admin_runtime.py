@@ -21,30 +21,22 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "OPENAI_ASR_SILENCE_MS",
     "OPENAI_ASR_MIN_SPEECH_MS",
     "OPENAI_ASR_PREROLL_MS",
-}
-
-AGENT_TEMPLATE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]  # read-only, bound to template
-AGENT_EDITABLE_FILES: list[str] = []  # no user-editable file
-AGENT_CORE_FILES = AGENT_TEMPLATE_FILES + AGENT_EDITABLE_FILES
-AGENT_SYNC_FILES = AGENT_CORE_FILES  # all files synced from template on rebuild
+    "GUI_OPERATOR_LLM_MODEL",
+    "GUI_OPERATOR_LLM_BASE",
+    "SECURITY_VERIFIER_API_ENDPOINT",
+    "SECURITY_VERIFIER_LLM_MODEL",
+    "KB_EMBED_MODEL",
+    "RERANK_API_BASE",
 PUBLIC_CONFIG_DEFAULTS = {
-    "GUI_OPERATOR_LLM_MODEL": "gui-plus",
-    "GUI_OPERATOR_LLM_BASE": "https://www.dmxapi.cn/v1/chat/completions",
     "CHAT_MODEL": "gpt-4o",
     "CHAT_API_BASE": "https://www.dmxapi.cn/v1",
+    "EMBED_API_BASE": "https://www.dmxapi.cn/v1",
+    "EMBED_MODEL": "text-embedding-3-small",
     "AGENT_NAME": "faust",
-    "SECURITY_VERIFIER_API_ENDPOINT": "https://www.dmxapi.cn/v1",
-    "SECURITY_VERIFIER_LLM_MODEL": "qwen3.5-flash",
     "SECURITY_SYS_ENABLED": False,
     "KB_ENABLED": True,
-    "KB_EMBED_MODEL": "text-embedding-3-small",
     "KB_ASYNC_INDEX_ON_WRITE": True,
-    "MEMORY_GRAPH_ENABLED": True,
-    "MEMORY_IMAGE_ENABLED": True,
-    "MEMORY_IMAGE_VLM_MODEL": "gpt-4o",
     "RERANK_ENABLED": False,
-    "RERANK_API_BASE": "https://api.openai.com/v1",
-    "RERANK_MODEL": "Qwen3-Reranker-4B",
     "RERANK_TOP_K": 5,
     "BM25_ONLY": False,
     "ARAYA_ENABLED": True,
@@ -85,12 +77,7 @@ PUBLIC_CONFIG_DEFAULTS = {
 PRIVATE_CONFIG_DEFAULTS = {
     "CHAT_API_KEY": "",
     "SEARCH_API_KEY": "",
-    "GUI_OPERATOR_LLM_KEY": "",
-    "SECURITY_VERIFIER_LLM_KEY": "",
-    "KB_OPENAI_API_KEY": "",
-    "RERANK_API_KEY": "",
-    "OPENAI_TTS_API_KEY": "",
-    "OPENAI_ASR_API_KEY": "",
+    "EMBED_API_KEY": "",
     "FAUSTBOT_CLOUD_SERVICE_KEY": "",
 }
 
@@ -143,9 +130,6 @@ def get_public_config() -> Dict[str, Any]:
 def get_private_config(mask_secrets: bool = True) -> Dict[str, Any]:
     ensure_private_config_exists()
     data = _read_json(PRIVATE_CONFIG_PATH, PRIVATE_CONFIG_DEFAULTS)
-    legacy_chat = data.get("DEEPSEEK_API_KEY")
-    if legacy_chat and not data.get("CHAT_API_KEY"):
-        data["CHAT_API_KEY"] = legacy_chat
     if not mask_secrets:
         return data
     masked = {}
@@ -178,11 +162,6 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     public_cfg = get_public_config()
     private_cfg = _read_json(PRIVATE_CONFIG_PATH, PRIVATE_CONFIG_DEFAULTS)
 
-    # 兼容老键：若历史配置只有 DEEPSEEK_API_KEY，则迁移到 CHAT_API_KEY。
-    if private_cfg.get("DEEPSEEK_API_KEY") and not private_cfg.get("CHAT_API_KEY"):
-        private_cfg["CHAT_API_KEY"] = private_cfg.get("DEEPSEEK_API_KEY")
-    private_cfg.pop("DEEPSEEK_API_KEY", None)
-
     for key, value in public_in.items():
         skey = str(key)
         public_cfg[skey] = value
@@ -190,16 +169,11 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in OBSOLETE_PUBLIC_CONFIG_KEYS:
         public_cfg.pop(key, None)
 
-
     for key, value in private_in.items():
         skey = str(key)
         if value == "********":
             continue
-        if skey == "DEEPSEEK_API_KEY":
-            skey = "CHAT_API_KEY"
         private_cfg[skey] = value
-
-    private_cfg.pop("DEEPSEEK_API_KEY", None)
 
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
     _write_json(PRIVATE_CONFIG_PATH, private_cfg)

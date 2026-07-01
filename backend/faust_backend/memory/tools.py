@@ -149,7 +149,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         import httpx
         prompt_path = Path(__file__).parent / "extraction_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else "Extract entities and relations as JSON."
-        api_key = conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
+        api_key = conf.CHAT_API_KEY
         api_base = (conf.CHAT_API_BASE or "https://api.openai.com/v1").rstrip("/")
         api_model = conf.CHAT_MODEL or "gpt-4o"
         headers = {
