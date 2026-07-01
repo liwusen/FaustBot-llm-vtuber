@@ -100,6 +100,7 @@ META.EDGE_TTS_PITCH = { label: "Edge TTS 音高", help: "Edge TTS 的音高设�
 META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 Edge TTS 的超时秒数。" };
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY"];
+var MODULES = [
   { id: "overview", title: "概览", desc: "当前 Agent、模型、运行时状态摘要。" },
   { id: "ai", title: "AI 服务商", desc: "模型、接口地址与密钥配置。" },
   { id: "live2d", title: "模型", desc: "模型类型切换、位置、缩放与显示行为。" },
