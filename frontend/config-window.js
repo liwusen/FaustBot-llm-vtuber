@@ -113,11 +113,25 @@ if (typeof renderOverviewModule === "undefined") {
 // App dispatcher — orchestration layer (kept in main file)
 // ═══════════════════════════════════════════════════════════════════
 
-async function renderModule() {
+async function renderModule(force = false) {
   const current = MODULES.find((m) => m.id === state.activeModule) || MODULES[0];
   els.moduleTitle.textContent = current.title;
   els.moduleDesc.textContent = current.desc;
-  clearRoot();
+
+  const container = getModuleContainer(current.id);
+  switchModule(current.id);
+  const boot = document.getElementById("bootPlaceholder");
+  if (boot) boot.style.display = "none";
+
+
+  // 持久模块（白名单）已渲染且非强制 → 只切换显示
+  // 非持久模块始终重新渲染（容器已在 switchModule 离开时清空）
+  if (!force && PERSISTENT_MODULES.includes(current.id) && state.moduleContainers[current.id] && state.moduleContainers[current.id].rendered) return;
+
+  // 首次渲染或强制刷新：清空容器，设置激活容器，调用渲染函数
+  container.innerHTML = "";
+  setActiveContainer(container);
+
   try {
     await ensureModuleData(current.id);
     if (current.id === "overview") {
@@ -141,6 +155,7 @@ async function renderModule() {
     } else {
       renderSimpleJsonModule("数据", state);
     }
+    state.moduleContainers[current.id].rendered = true;
   } catch (err) {
     addSection("错误", [el("div", "empty-state", `模块加载失败: ${String(err && err.message ? err.message : err)}`)]);
   }
@@ -185,7 +200,8 @@ async function reloadAll() {
     await loadConfig();
     await loadRuntimeSummary();
     hideBanner();
-    await renderModule();
+    invalidateAllContainers();
+    await renderModule(true);
   } catch (err) {
     showBanner("error", `刷新失败: ${String(err && err.message ? err.message : err)}`);
   } finally {
@@ -214,7 +230,8 @@ async function saveConfig() {
     }
     await loadConfig();
     await loadRuntimeSummary();
-    await renderModule();
+    invalidateAllContainers();
+    await renderModule(true);
     showBanner("success", "配置已保存。" );
   } catch (err) {
     showBanner("error", `保存失败: ${String(err && err.message ? err.message : err)}`);

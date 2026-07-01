@@ -11,7 +11,7 @@ function renderSkillsModule() {
     makeButton("刷新", async () => {
       state.skillsAgent = agentInput.value.trim();
       await ensureModuleData("skills");
-      renderModule();
+      refreshModule();
     }),
     makeButton("安装(Slug)", async () => {
       const agentName = (agentInput.value || "").trim() || state.skillsAgent || state.runtime.current_agent || state.config.public.AGENT_NAME || "";
@@ -26,7 +26,7 @@ function renderSkillsModule() {
       state.skillsAgent = agentName;
       await ensureModuleData("skills");
       showBanner("success", `Skill ${slug.trim()} 已安装。`);
-      renderModule();
+      refreshModule();
     }, "btn btn-primary"),
     makeButton("从 ZIP 安装", async () => {
       const agentName = (agentInput.value || "").trim() || state.skillsAgent || state.runtime.current_agent || state.config.public.AGENT_NAME || "";
@@ -41,7 +41,7 @@ function renderSkillsModule() {
       state.skillsAgent = agentName;
       await ensureModuleData("skills");
       showBanner("success", "Skill ZIP 安装完成。" );
-      renderModule();
+      refreshModule();
     }),
     makeButton("打开目录", async () => {
       const agentName = (agentInput.value || "").trim() || state.skillsAgent;
@@ -65,17 +65,17 @@ function renderSkillsModule() {
     row.addEventListener("click", async () => {
       state.selectedSkillSlug = slug;
       await ensureModuleData("skills");
-      renderModule();
+      refreshModule();
     });
     const ops = el("div", "toolbar compact");
     ops.append(
-      makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/enable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); renderModule(); }),
-      makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/disable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); renderModule(); }),
+      makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/enable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); refreshModule(); }),
+      makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/disable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); refreshModule(); }),
       makeButton("删除", async () => {
         if (!window.confirm(`确定删除 Skill ${slug} ?`)) return;
         await cfgApi("DELETE", `/faust/admin/skills/${encodeURIComponent(slug)}`, null, { agent_name: state.skillsAgent });
         await ensureModuleData("skills");
-        renderModule();
+        refreshModule();
       })
     );
     row.append(ops);
@@ -91,29 +91,27 @@ function renderSkillsModule() {
   const meta = detail.meta && typeof detail.meta === "object" ? detail.meta : {};
   const files = Array.isArray(detail.files) ? detail.files : [];
 
-  els.cardsRoot.append(
-    makeInfoCard("Skill 基本信息", [
-      { label: "Slug", value: detail.slug },
-      { label: "版本", value: meta.version || "-" },
-      { label: "启用状态", value: detail.enabled },
-      { label: "安装时间", value: detail.installed_at },
-      { label: "来源", value: detail.source },
-      { label: "路径", value: detail.path },
-    ]),
-    makeInfoCard("Meta 字段", [
-      { label: "名称", value: meta.name || meta.title || "-" },
-      { label: "作者", value: meta.author || "-" },
-      { label: "描述", value: meta.description || "-" },
-      { label: "仓库", value: meta.repo || meta.homepage || "-" },
-      { label: "入口", value: meta.entry || "-" },
-      { label: "许可证", value: meta.license || "-" },
-    ])
-  );
+  appendToActiveModule(makeInfoCard("Skill 基本信息", [
+    { label: "Slug", value: detail.slug },
+    { label: "版本", value: meta.version || "-" },
+    { label: "启用状态", value: detail.enabled },
+    { label: "安装时间", value: detail.installed_at },
+    { label: "来源", value: detail.source },
+    { label: "路径", value: detail.path },
+  ]),
+  makeInfoCard("Meta 字段", [
+    { label: "名称", value: meta.name || meta.title || "-" },
+    { label: "作者", value: meta.author || "-" },
+    { label: "描述", value: meta.description || "-" },
+    { label: "仓库", value: meta.repo || meta.homepage || "-" },
+    { label: "入口", value: meta.entry || "-" },
+    { label: "许可证", value: meta.license || "-" },
+  ]));
 
-  els.cardsRoot.append(makeTagListCard("Meta 标签", meta.tags || []));
+  appendToActiveModule(makeTagListCard("Meta 标签", meta.tags || []));
 
   const fileRows = files.map((f) => [f, f.endsWith(".md") ? "文档" : "文件"]);
-  els.cardsRoot.append(makeSimpleTableCard("Skill 文件清单", ["路径", "类型"], fileRows));
+  appendToActiveModule(makeSimpleTableCard("Skill 文件清单", ["路径", "类型"], fileRows));
   const skillDocBar = el("div", "toolbar");
   skillDocBar.append(
     makeButton("编辑 SKILL.md", () => openSkillMdModal(String(detail.slug || ""), String(detail.skill_md || ""), state.skillsAgent), "btn btn-primary"),

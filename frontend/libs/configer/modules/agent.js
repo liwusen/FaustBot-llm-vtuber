@@ -104,14 +104,14 @@ async function ensureModuleData(moduleId) {
 function renderAgentModule() {
   const actions = el("div", "toolbar");
   actions.append(
-    makeButton("刷新", async () => { await ensureModuleData("agent"); renderModule(); }),
+    makeButton("刷新", async () => { await ensureModuleData("agent"); refreshModule(); }),
     makeButton("新建", async () => {
       const name = window.prompt("请输入 Agent 名称");
       if (!name || !name.trim()) return;
       await cfgApi("POST", "/faust/admin/agents", { agent_name: name.trim() });
       await ensureModuleData("agent");
       showBanner("success", `已创建 Agent: ${name.trim()}`);
-      renderModule();
+      refreshModule();
     }),
     makeButton("切换为当前", async () => {
       if (!state.selectedAgent) return;
@@ -126,7 +126,7 @@ function renderAgentModule() {
       await cfgApi("DELETE", `/faust/admin/agents/${encodeURIComponent(state.selectedAgent)}`);
       state.selectedAgent = "";
       await ensureModuleData("agent");
-      renderModule();
+      refreshModule();
     }),
     makeButton("删除 Checkpoint", async () => {
       if (!state.selectedAgent) return;
@@ -153,7 +153,7 @@ function renderAgentModule() {
     row.addEventListener("click", async () => {
       state.selectedAgent = String(item.name || "");
       await ensureModuleData("agent");
-      renderModule();
+      refreshModule();
     });
     list.append(row);
   }

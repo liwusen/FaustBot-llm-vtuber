@@ -8,16 +8,16 @@ function renderMemoryModule() {
   const tabBar = el("div", "toolbar");
   const treeTab = makeButton("\u{1F4C1} 树状浏览", async () => {
     state.memoryView = "tree";
-    renderModule();
+    refreshModule();
   }, view === "tree" ? "btn btn-primary" : "btn btn-ghost");
   const graphTab = makeButton("\u{1F517} 知识图谱", async () => {
     state.memoryView = "graph";
     await ensureModuleData("memory");
-    renderModule();
+    refreshModule();
   }, view === "graph" ? "btn btn-primary" : "btn btn-ghost");
   const searchTab = makeButton("\u{1F50D} 统一搜索", async () => {
     state.memoryView = "search";
-    renderModule();
+    refreshModule();
   }, view === "search" ? "btn btn-primary" : "btn btn-ghost");
   tabBar.append(treeTab, graphTab, searchTab);
   addSection("记忆", [tabBar]);
@@ -34,7 +34,7 @@ function renderMemoryModule() {
 function renderMemoryTree(currentDir) {
   const doRefresh = async () => {
     await ensureModuleData("memory");
-    renderModule();
+    refreshModule();
   };
 
   const doNewFile = async () => {
@@ -64,7 +64,7 @@ function renderMemoryTree(currentDir) {
       state.kbCurrentDir = normalizeKbPath(p);
       await ensureModuleData("memory");
       closeModal();
-      renderModule();
+      refreshModule();
     };
     const tb = el("div", "toolbar");
     tb.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
@@ -80,7 +80,7 @@ function renderMemoryTree(currentDir) {
     state.kbSelectedContent = "";
     state.kbCurrentDir = kbParentPath(p);
     await ensureModuleData("memory");
-    renderModule();
+    refreshModule();
   };
 
   // ── Build node count summary ──
@@ -166,11 +166,11 @@ function renderMemoryTree(currentDir) {
     tbody.append(tr);
   };
   addRow("\u{1F4C1}", "/ (根目录)", "目录", "", currentDir === "/" ? "selected" : "",
-    () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; renderModule(); });
+    () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; refreshModule(); });
   const parentPath2 = kbParentPath(currentDir);
   if (parentPath2 !== currentDir) {
     addRow("\u{1F4C2}", ".. (上一级)", "目录", "", "",
-      () => { state.kbCurrentDir = parentPath2; state.kbSelectedPath = ""; renderModule(); });
+      () => { state.kbCurrentDir = parentPath2; state.kbSelectedPath = ""; refreshModule(); });
   }
   const nodes = getKbChildren(state.kbTree, currentDir);
   if (!nodes.length) {
@@ -199,7 +199,7 @@ function renderMemoryTree(currentDir) {
           state.kbSelectedPath = "";
           state.kbSelectedMeta = null;
         }
-        renderModule();
+        refreshModule();
       },
       (evt) => {
         state.kbSelectedPath = node.path;
@@ -397,7 +397,7 @@ function renderMemoryTree(currentDir) {
           row.addEventListener("click", () => {
             state.kbGraphSelectedEntityId = ent.id;
             state.memoryView = "graph";
-            renderModule();
+            refreshModule();
           });
           row.append(label);
           entBox.append(row);
@@ -480,7 +480,7 @@ function renderMemoryTree(currentDir) {
       state.kbSelectedPath = "";
       state.kbCurrentDir = kbParentPath(node.path);
       await ensureModuleData("memory");
-      renderModule();
+      refreshModule();
     }});
 
     for (const it of items) {
@@ -505,7 +505,7 @@ function renderMemoryTree(currentDir) {
         item.addEventListener("click", async () => {
           menu.remove();
           await it.action();
-          renderModule();
+          refreshModule();
         });
       }
       menu.append(item);
@@ -534,14 +534,14 @@ function renderMemoryTree(currentDir) {
       if (!newName || newName === selNode.name) return;
       cfgApi("POST", "/faust/memory/rename", { path: selNode.path, new_name: newName })
         .then(() => { state.kbCurrentDir = kbParentPath(kbParentPath(selNode.path)); return ensureModuleData("memory"); })
-        .then(() => { renderModule(); showBanner("success", "已重命名为 " + newName); })
+        .then(() => { refreshModule(); showBanner("success", "已重命名为 " + newName); })
         .catch(err => showBanner("error", "重命名失败: " + String(err)));
     } else if (evt.key === "Delete" && selNode) {
       evt.preventDefault();
       if (!window.confirm("确定删除 " + selNode.path + " ?")) return;
       cfgApi("DELETE", "/faust/memory/delete", null, { path: selNode.path })
         .then(() => { state.kbSelectedPath = ""; state.kbCurrentDir = kbParentPath(selNode.path); return ensureModuleData("memory"); })
-        .then(() => renderModule());
+        .then(() => refreshModule());
     } else if (evt.ctrlKey && evt.key === "c" && isFile) {
       state._kbClipboard = { mode: "copy", path: selNode.path, name: selNode.name };
       showBanner("info", "已复制: " + selNode.name);
@@ -556,12 +556,12 @@ function renderMemoryTree(currentDir) {
         const destPath = normalizeKbPath(targetDir + "/" + clip.name);
         cfgApi("POST", "/faust/memory/copy", { path: clip.path, dest: destPath })
           .then(() => { showBanner("success", "已粘贴: " + clip.name); return ensureModuleData("memory"); })
-          .then(() => renderModule())
+          .then(() => refreshModule())
           .catch(err => showBanner("error", "粘贴失败: " + String(err)));
       } else if (clip.mode === "cut") {
         cfgApi("POST", "/faust/memory/move", { path: clip.path, dest_dir: targetDir })
           .then(() => { state._kbClipboard = null; showBanner("success", "已移动: " + clip.name); return ensureModuleData("memory"); })
-          .then(() => renderModule())
+          .then(() => refreshModule())
           .catch(err => showBanner("error", "移动失败: " + String(err)));
       }
     } else if (evt.ctrlKey && evt.shiftKey && evt.key === "N") {
@@ -605,7 +605,7 @@ function renderMemoryTree(currentDir) {
     await cfgApi("POST", "/faust/memory/declare-update", { file_path: filePath, kb_path: kbPath.trim() || null });
     await ensureModuleData("memory");
     showBanner("success", "文件已导入。");
-    renderModule();
+    refreshModule();
   }));
   addSection("导入", [importBar]);
 }
@@ -970,7 +970,7 @@ function renderMemorySearch() {
     const d = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
     state.kbSelectedContent = String(d.content || "");
     state.kbSelectedMeta = d.meta || {};
-    renderModule();
+    refreshModule();
   };
 
   const filterWrap = el("div");
@@ -1121,7 +1121,7 @@ function renderMemorySearch() {
             const entities = entResp.items || [];
             state.kbGraphSelectedEntityId = entities.length > 0 ? entities[0].id : "";
           } catch (_) { state.kbGraphSelectedEntityId = ""; }
-          renderModule();
+          refreshModule();
         }, "btn btn-ghost");
         graphBtn.style.marginLeft = "auto";
         graphBtn.style.fontSize = "11px";
@@ -1217,7 +1217,7 @@ async function openEntityDetailModal(entityId) {
           state.kbSelectedPath = normalizeKbPath(f);
           state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
           state.memoryView = "tree";
-          renderModule();
+          refreshModule();
         });
         fileList.append(frow);
       }
@@ -1231,7 +1231,7 @@ async function openEntityDetailModal(entityId) {
         closeModal();
         state.kbGraphSelectedEntityId = entityId;
         state.memoryView = "graph";
-        renderModule();
+        refreshModule();
       }, "btn btn-primary"),
       makeButton("关闭", closeModal),
     );

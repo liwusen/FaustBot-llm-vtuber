@@ -220,6 +220,14 @@ body {
 	align-items: start;
 }
 
+.module-container {
+	display: grid;
+	gap: 12px;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	align-items: start;
+	grid-column: 1 / -1;
+}
+
 .full-span {
 	grid-column: 1 / -1;
 }
@@ -755,6 +763,10 @@ body {
 		grid-template-columns: 1fr;
 	}
 }
+
+	.module-container {
+		grid-template-columns: 1fr;
+	}
 
 /* Edge TTS 语音管理Modal样式 */
 .edge-tts-voice-modal {

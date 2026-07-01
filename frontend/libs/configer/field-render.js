@@ -43,10 +43,10 @@ function refreshDirtyUI() {
   const count = state.dirty.public.size + state.dirty.private.size;
   if (count <= 0) {
     els.dirtyBadge.classList.add("hidden");
-    els.dirtyBadge.textContent = "0 项未保存修改";
+    els.dirtyBadge.textContent = "0 项配置已修改";
   } else {
     els.dirtyBadge.classList.remove("hidden");
-    els.dirtyBadge.textContent = `${count} 项未保存修改`;
+    els.dirtyBadge.textContent = `${count} 项配置已修改`;
   }
 }
 
@@ -244,10 +244,10 @@ function renderConfigModule(moduleId) {
 
   // 渲染基础配置
   for (const key of basicPub) {
-    els.cardsRoot.append(makeFieldCard("public", key, state.config.public[key]));
+    appendToActiveModule(makeFieldCard("public", key, state.config.public[key]));
   }
   for (const key of basicPri) {
-    els.cardsRoot.append(makeFieldCard("private", key, state.config.private[key]));
+    appendToActiveModule(makeFieldCard("private", key, state.config.private[key]));
   }
 
   // --- 折叠高级配置 ---
@@ -266,8 +266,8 @@ function renderConfigModule(moduleId) {
       body.classList.toggle("open");
       divider.classList.toggle("open");
     });
-    els.cardsRoot.append(divider);
-    els.cardsRoot.append(body);
+    appendToActiveModule(divider);
+    appendToActiveModule(body);
   }
 
   if (moduleId === "speech") {
@@ -275,13 +275,13 @@ function renderConfigModule(moduleId) {
     ttsCard.append(el("h3", "card-title", "TTS 服务即时应用"));
     ttsCard.append(el("p", "card-help", "local TTS 模式下可把参考音频参数即时同步到 5000 端口服务。"));
     ttsCard.append(makeButton("应用参考音频到 TTS 服务", applyTtsReferToService, "btn btn-secondary"));
-    els.cardsRoot.append(ttsCard);
+    appendToActiveModule(ttsCard);
 
     const edgeTtsCard = el("article", "card");
     edgeTtsCard.append(el("h3", "card-title", "Edge TTS 语音选择器"));
     edgeTtsCard.append(el("p", "card-help", "点击打开语音选择器，浏览和选择可用的 Edge TTS 语音。"));
     edgeTtsCard.append(makeButton("选择 Edge TTS 语音", openEdgeTTSVoiceModal, "btn btn-primary"));
-    els.cardsRoot.append(edgeTtsCard);
+    appendToActiveModule(edgeTtsCard);
   }
 
   if (moduleId === "advanced") {
@@ -295,7 +295,7 @@ function renderConfigModule(moduleId) {
         console.error("toggleLogPanel failed", e);
       }
     }, "btn btn-primary"));
-    els.cardsRoot.append(logCard);
+    appendToActiveModule(logCard);
   }
 
   if (moduleId === "live2d") {
@@ -334,7 +334,7 @@ function renderConfigModule(moduleId) {
       }
     }
     m2.append(list);
-    els.cardsRoot.append(m);
-    els.cardsRoot.append(m2);
+    appendToActiveModule(m);
+    appendToActiveModule(m2);
   }
 }

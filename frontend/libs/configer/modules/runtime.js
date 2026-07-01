@@ -15,7 +15,7 @@ function renderRuntimeModule() {
     }, "btn btn-primary"),
     makeButton("刷新服务列表", async () => {
       await ensureModuleData("runtime");
-      renderModule();
+      refreshModule();
     })
   );
   addSection("运行时控制", [bar]);
@@ -31,17 +31,17 @@ function renderRuntimeModule() {
       makeButton("查看", async () => {
         state.selectedService = key;
         await ensureModuleData("runtime");
-        renderModule();
+        refreshModule();
       }),
-      makeButton("启动", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/start`, {}); await ensureModuleData("runtime"); renderModule(); }),
-      makeButton("停止", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/stop`, {}); await ensureModuleData("runtime"); renderModule(); }),
-      makeButton("重启", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/restart`, {}); await ensureModuleData("runtime"); renderModule(); })
+      makeButton("启动", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/start`, {}); await ensureModuleData("runtime"); refreshModule(); }),
+      makeButton("停止", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/stop`, {}); await ensureModuleData("runtime"); refreshModule(); }),
+      makeButton("重启", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/restart`, {}); await ensureModuleData("runtime"); refreshModule(); })
     );
     row.append(ops);
     row.addEventListener("click", async () => {
       state.selectedService = key;
       await ensureModuleData("runtime");
-      renderModule();
+      refreshModule();
     });
     list.append(row);
   }

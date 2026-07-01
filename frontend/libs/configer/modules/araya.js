@@ -13,12 +13,10 @@ function renderArayaModule() {
   const progressArea = el("div", "araya-progress", "");
   progressArea.style.cssText = "margin:8px 0;padding:8px;background:#f5f7fa;border-radius:6px;font-size:13px;color:#555;white-space:pre-wrap;min-height:20px;display:none";
 
-  let activeEventSource = null;
-
   const triggerSlider = createArayaTriggerSlider(async () => {
-    if (activeEventSource) {
-      activeEventSource.close();
-      activeEventSource = null;
+    if (state.arayaEventSource) {
+      state.arayaEventSource.close();
+      state.arayaEventSource = null;
     }
 
     const baseUrl = (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900";
@@ -29,7 +27,7 @@ function renderArayaModule() {
 
     return new Promise((resolve, reject) => {
       const es = new EventSource(url);
-      activeEventSource = es;
+      state.arayaEventSource = es;
 
       es.addEventListener("step", (evt) => {
         try {
@@ -59,22 +57,23 @@ function renderArayaModule() {
 
       es.addEventListener("done", (evt) => {
         es.close();
-        activeEventSource = null;
+        state.arayaEventSource = null;
         try {
           const data = JSON.parse(evt.data);
           progressArea.textContent += `\n\n\u2713 完成!（耗时 ${data.duration || "?"} 秒）`;
         } catch (e) {
           progressArea.textContent += "\n\n\u2713 完成!";
         }
-        ensureModuleData("araya");
-        renderModule();
-        showBanner("success", "Araya 执行完成。");
+        ensureModuleData("araya").then(() => {
+          refreshModule();
+          showBanner("success", "Araya 执行完成。");
+        });
         resolve();
       });
 
       es.addEventListener("error", (evt) => {
         es.close();
-        activeEventSource = null;
+        state.arayaEventSource = null;
         let msg = "未知错误";
         try {
           if (evt.data) {
@@ -83,9 +82,10 @@ function renderArayaModule() {
           }
         } catch (e) {}
         progressArea.textContent += `\n\n\u2717 错误: ${msg}`;
-        ensureModuleData("araya");
-        renderModule();
-        showBanner("error", `Araya 错误: ${msg}`);
+        ensureModuleData("araya").then(() => {
+          refreshModule();
+          showBanner("error", `Araya 错误: ${msg}`);
+        });
         reject(new Error(msg));
       });
     });
@@ -105,7 +105,7 @@ function renderArayaModule() {
     }, "btn btn-primary"),
     makeButton("刷新状态", async () => {
       await ensureModuleData("araya");
-      renderModule();
+      refreshModule();
     }),
     triggerSlider
   );
@@ -141,7 +141,7 @@ function renderArayaModule() {
     { label: "错误", value: lastLog.error },
   ]);
 
-  els.cardsRoot.append(summaryCard, idleCard, logCard);
+  addSection("Araya 状态", [summaryCard, idleCard, logCard]);
 
   const msgs = Array.isArray(lastLog.messages) ? lastLog.messages : [];
   const lastMsgs = el("textarea", "textarea code-area");
