@@ -194,7 +194,7 @@ def print_globals():
     for k, v in vars(mod).items():
         if not k.startswith("_") and k.isupper() and isinstance(v, (str, int, float, bool, dict, list)):
             print(f"{k}: {v}")
-argparser = argparse.ArgumentParser(description="FAUST Backend Main Service\n命令行参数可以覆盖配置文件中的设置，优先级高于配置文件。\nThis agent has super cow powers")
+argparser = argparse.ArgumentParser(description="FaustBot Backend Main Service\n命令行参数可以覆盖配置文件中的设置，优先级高于配置文件。\nThis software has super cow powers")
 argparser.add_argument("--agent",type=str,default="NONE",action="store",help="Agent name to use")
 argparser.add_argument("--no-run-other-backend-services",action="store_true",help="Whether to run other backend services as subprocess like ASR/TTS (default: False)")
 argparser.add_argument("--save-in-memory",action="store_true",help="Memory Checkpointer and Store for debugging (default: False)")
@@ -222,7 +222,7 @@ if args.MOO:
 ..."Have you mooed today?"...""")
     print(random.choice(LIST))
     print("[config_loader]Apt-get:MOO!")
-    sys.exit(325)
+    sys.exit(1)
 AGENT_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
 if __name__=="__main__":
     print_globals()
