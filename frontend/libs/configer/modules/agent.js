@@ -99,6 +99,15 @@ async function ensureModuleData(moduleId) {
       }
     }
   }
+  if (moduleId === "araya") {
+    try {
+      const data = await cfgApi("GET", "/faust/araya/status");
+      state.araya = data.araya || null;
+    } catch (e) {
+      console.warn("araya data fetch error", e);
+      state.araya = null;
+    }
+  }
 }
 
 function renderAgentModule() {

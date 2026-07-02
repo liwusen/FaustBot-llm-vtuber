@@ -193,7 +193,7 @@ body.click-through .hil-approval-shell {
 }
 
 #textChatBar {
-  position: absolute;
+  position: fixed;
   left: 50%;
   bottom: 28px;
   z-index: 1800;

@@ -101,6 +101,8 @@ function renderArayaModule() {
         enabled: enabled.checked,
         idle_minutes: Number(idle.value || 30),
       });
+      await ensureModuleData("araya");
+      refreshModule();
       showBanner("success", "Araya 设置已保存。");
     }, "btn btn-primary"),
     makeButton("刷新状态", async () => {

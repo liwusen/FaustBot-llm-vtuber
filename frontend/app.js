@@ -2312,8 +2312,14 @@
       model.on('pointermove', (e) => {
         if (!dragging) return;
         const pos = e.data.global;
-        model.x = pos.x - dragOffset.x;
-        model.y = pos.y - dragOffset.y;
+        let rawX = pos.x - dragOffset.x;
+        let rawY = pos.y - dragOffset.y;
+        // Constrain drag so controls (positioned at model-relative offset) stay on-screen
+        const margin = 160; // CSS pixels — enough room for controller + chat bar
+        rawX = Math.max(margin, Math.min(app.renderer.width - margin, rawX));
+        rawY = Math.max(margin, Math.min(app.renderer.height - margin, rawY));
+        model.x = rawX;
+        model.y = rawY;
         updateQuickControllerPosition();
       });
 
