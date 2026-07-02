@@ -83,6 +83,9 @@ PUBLIC_CONFIG_DEFAULTS = {
     "TTS_REFER_WAV_PATH": str(Path(conf.PROJECT_ROOT) / "voices" / "neuro.wav"),
     "TTS_PROMPT_TEXT": "Hold on please, I'm busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.",
     "TTS_PROMPT_LANGUAGE": "en",
+    "THINKING_ENABLED": False,
+    "THINKING_PRESET": "none",
+    "THINKING_INTENSITY": "medium",
 }
 PRIVATE_CONFIG_DEFAULTS = {
     "CHAT_API_KEY": "",

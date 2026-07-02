@@ -409,6 +409,86 @@ body.click-through .hil-approval-shell {
   overflow-x: auto;
 }
 
+/* ── Reasoning / thinking card ── */
+
+.reasoning-card {
+  margin-top: 8px;
+}
+
+.reasoning-details {
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(129, 140, 248, 0.28);
+  border-left: 3px solid rgba(99, 102, 241, 0.55);
+  overflow: hidden;
+}
+
+.reasoning-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 12px;
+  user-select: none;
+  font-size: 13px;
+  color: #6366f1;
+}
+
+.reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+
+.reasoning-summary::before {
+  content: '\25B6';
+  display: inline-block;
+  font-size: 10px;
+  color: #818cf8;
+  transition: transform 0.16s ease;
+}
+
+.reasoning-details[open] .reasoning-summary::before {
+  transform: rotate(90deg);
+}
+
+.reasoning-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.reasoning-title {
+  flex: 1;
+  font-weight: 600;
+}
+
+.reasoning-badge {
+  font-size: 11px;
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.12);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-weight: 600;
+}
+
+.reasoning-body {
+  padding: 0 12px 12px;
+}
+
+.reasoning-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #4338ca;
+  background: rgba(255,255,255,0.55);
+  border-radius: 10px;
+  border: 1px solid rgba(199, 210, 254, 0.7);
+  padding: 10px 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
 #asrText::-webkit-scrollbar {
   width: 6px;
 }

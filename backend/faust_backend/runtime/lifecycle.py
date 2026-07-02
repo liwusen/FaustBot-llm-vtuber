@@ -128,6 +128,15 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
                         chunk = data.get("chunk")
                         if not chunk or not state.is_ai_message_chunk(chunk):
                             continue
+                        # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
+                        additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+                        reasoning = (
+                            additional_kwargs.get("reasoning_content")
+                            or additional_kwargs.get("reasoning")
+                            or additional_kwargs.get("think")
+                        )
+                        if reasoning:
+                            yield {"type": "reasoning_delta", "content": reasoning}
                         delta_text = state.message_content_to_text(chunk.content)
                         if delta_text:
                             yield {"type": "delta", "content": delta_text}
@@ -171,13 +180,37 @@ def _compose_runtime_extensions():
 
 
 def _build_chat_model(*, model_name: str):
-    return ChatOpenAI(
+    """Build a ChatOpenAI instance for the main agent.
+
+    When THINKING_ENABLED is True, uses ReasoningChatOpenAI subclass
+    (which preserves reasoning_content in additional_kwargs) and merges
+    provider-specific thinking parameters from thinking_presets.
+    """
+
+    kwargs: dict[str, Any] = dict(
         model=model_name,
         api_key=conf.CHAT_API_KEY,
         base_url=conf.CHAT_API_BASE,
         request_timeout=60,
         max_retries=1,
     )
+    if conf.THINKING_ENABLED and conf.THINKING_PRESET != "none":
+        from faust_backend.thinking_presets import (
+            ReasoningChatOpenAI,
+            get_thinking_params,
+        )
+
+        intensity = getattr(conf, "THINKING_INTENSITY", "medium")
+        thinking_params = get_thinking_params(conf.THINKING_PRESET, intensity)
+        if "reasoning_effort" in thinking_params:
+            kwargs["reasoning_effort"] = thinking_params.pop("reasoning_effort")
+        model_kw = thinking_params.pop("model_kwargs", {})
+        extra = {**thinking_params.pop("extra_body", {}), **kwargs.get("extra_body", {})}
+        if extra:
+            kwargs["extra_body"] = extra
+        kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}
+        return ReasoningChatOpenAI(**kwargs)
+    return ChatOpenAI(**kwargs)
 
 
 def _create_agent_with_extensions(*, model_name: str, checkpointer):

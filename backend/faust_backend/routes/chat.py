@@ -59,6 +59,12 @@ async def chat_websocket(websocket: WebSocket):
             ):
                 if not isinstance(event, dict):
                     continue
+                if event.get("type") == "reasoning_delta":
+                    await websocket.send_text(json.dumps({
+                        "type": "reasoning_delta",
+                        "content": event.get("content", ""),
+                    }, ensure_ascii=False))
+                    continue
                 if event.get("type") == "delta":
                     delta_text = state.message_content_to_text(event.get("content"))
                     if not delta_text:

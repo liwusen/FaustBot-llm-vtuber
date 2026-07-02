@@ -1528,6 +1528,25 @@
       return;
     }
 
+    if (msg.type === 'reasoning_delta'){
+      if (!currentChatRequest.entries) currentChatRequest.entries = [];
+      const lastEntry = currentChatRequest.entries[currentChatRequest.entries.length - 1];
+      if (lastEntry && lastEntry.type === 'reasoning') {
+        lastEntry.text = String(lastEntry.text || '') + (msg.content || '');
+        // Preserve expanded state from asrBubbleState
+        if (Array.isArray(asrBubbleState.entries)) {
+          const idx = currentChatRequest.entries.indexOf(lastEntry);
+          if (idx >= 0 && asrBubbleState.entries[idx]) {
+            lastEntry.expanded = !!asrBubbleState.entries[idx].expanded;
+          }
+        }
+      } else {
+        currentChatRequest.entries.push({ type: 'reasoning', text: msg.content || '', expanded: false });
+      }
+      showResultBubble('ai', currentChatRequest.entries);
+      return;
+    }
+
     if (msg.type === 'delta'){
       const chunk = normalizeTtsText(msg.content || '');
       currentChatRequest.replyText += chunk;
@@ -1684,8 +1703,29 @@
   function renderResultBubbleHtml(source, entries){
     const blocks = [];
     const items = Array.isArray(entries) ? entries : [];
+    let reasoningIdx = 0;
     for (const item of items){
       if (!item || typeof item !== 'object') continue;
+      if (item.type === 'reasoning') {
+        const reasoningText = escapeHtml(item.text || '');
+        const expandedAttr = item.expanded ? ' open' : '';
+        blocks.push(
+          '<section class="reasoning-card">' +
+            '<details class="reasoning-details" data-r="' + reasoningIdx + '"' + expandedAttr + '>' +
+              '<summary class="reasoning-summary">' +
+                '<span class="reasoning-icon">&#x1F9E0;</span>' +
+                '<span class="reasoning-title">思考过程</span>' +
+                '<span class="reasoning-badge">' + reasoningText.length + ' 字</span>' +
+              '</summary>' +
+              '<div class="reasoning-body">' +
+                '<div class="reasoning-content">' + reasoningText + '</div>' +
+              '</div>' +
+            '</details>' +
+          '</section>'
+        );
+        reasoningIdx++;
+        continue;
+      }
       if (item.type === 'text') {
         const formatted = formatResultBubbleText(source, item.text || '');
         if (formatted) {
@@ -1731,6 +1771,13 @@
           text: String(item.text || ''),
         };
       }
+      if (item.type === 'reasoning') {
+        return {
+          type: 'reasoning',
+          text: String(item.text || ''),
+          expanded: !!item.expanded,
+        };
+      }
       if (item.type === 'tool') {
         return {
           type: 'tool',
@@ -1748,14 +1795,35 @@
 
   function handleResultBubbleToggle(ev){
     const details = ev.target;
-    if (!details || !details.classList || !details.classList.contains('tool-call-details')) return;
-    const callId = String(details.dataset.callId || '');
-    if (!callId || !Array.isArray(asrBubbleState.entries)) return;
-    for (const entry of asrBubbleState.entries){
-      if (entry && entry.type === 'tool' && String(entry.callId || '') === callId) {
-        entry.expanded = details.open;
-        break;
+    if (!details || !details.classList) return;
+    // Tool call details
+    if (details.classList.contains('tool-call-details')) {
+      const callId = String(details.dataset.callId || '');
+      if (!callId || !Array.isArray(asrBubbleState.entries)) return;
+      for (const entry of asrBubbleState.entries){
+        if (entry && entry.type === 'tool' && String(entry.callId || '') === callId) {
+          entry.expanded = details.open;
+          break;
+        }
       }
+      return;
+    }
+    // Reasoning card details
+    if (details.classList.contains('reasoning-details')) {
+      const rIdx = parseInt(details.dataset.r, 10);
+      if (!isNaN(rIdx) && Array.isArray(asrBubbleState.entries)) {
+        let count = -1;
+        for (const entry of asrBubbleState.entries) {
+          if (entry && entry.type === 'reasoning') {
+            count++;
+            if (count === rIdx) {
+              entry.expanded = details.open;
+              break;
+            }
+          }
+        }
+      }
+      return;
     }
   }
 

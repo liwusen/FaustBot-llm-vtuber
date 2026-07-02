@@ -115,6 +115,7 @@ def load_configs():
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS
+    global THINKING_ENABLED, THINKING_PRESET, THINKING_INTENSITY
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
@@ -176,7 +177,9 @@ def load_configs():
     EDGE_TTS_RATE = str(config.get('EDGE_TTS_RATE', '0%') or '0%').strip()
     EDGE_TTS_PITCH = str(config.get('EDGE_TTS_PITCH', '0%') or '0%').strip()
     EDGE_TTS_TIMEOUT_SECONDS = int(config.get('EDGE_TTS_TIMEOUT_SECONDS', 120) or 120)
-
+    THINKING_ENABLED = bool(config.get('THINKING_ENABLED', False))
+    THINKING_PRESET = str(config.get('THINKING_PRESET', 'none') or 'none').strip()
+    THINKING_INTENSITY = str(config.get('THINKING_INTENSITY', 'medium') or 'medium').strip()
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
 
