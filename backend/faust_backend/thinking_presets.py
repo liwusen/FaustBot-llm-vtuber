@@ -15,23 +15,23 @@ from langchain_core.outputs import ChatGenerationChunk
 
 THINKING_PRESETS = {
     "none": {},
-    "openai": {
+    "openai": {#reasoning_effort only, no extra_body
         "low":    {"reasoning_effort": "low"},
         "medium": {"reasoning_effort": "medium"},
         "high":   {"reasoning_effort": "high"},
     },
-    # Qwen (Alibaba Cloud Bailian / dmxapi) passes thinking config
+    # Qwen (Alibaba Cloud Bailian) passes thinking config
     # through extra_body per provider docs.
-    "qwen": {
+    "qwen": {#extra_body,thinking_level
         "low":    {"extra_body": {"enable_thinking": True, "thinking_level": "low"}},
         "medium": {"extra_body": {"enable_thinking": True, "thinking_level": "medium"}},
         "high":   {"extra_body": {"enable_thinking": True, "thinking_level": "high"}},
     },
-    # DeepSeek R1 enables thinking via extra_body too.
-    "deepseek": {
-        "low":    {"extra_body": {"thinking": {"type": "enabled"}}},
-        "medium": {"extra_body": {"thinking": {"type": "enabled"}}},
-        "high":   {"extra_body": {"thinking": {"type": "enabled"}}},
+    # DeepSeek enables thinking via extra_body too.
+    "deepseek": {#extra_body,reasoning_effort
+        "low":    {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
+        "medium": {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
+        "high":   {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
     },
 }
 
