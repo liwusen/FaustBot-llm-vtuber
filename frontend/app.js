@@ -4,6 +4,7 @@ import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResult
 import { initLogPanel } from './libs/log-panel.js';
 import { initLiveMode } from './libs/live-mode.js';
 import { initNimbleWindows } from './libs/nimble-window.js';
+import { initHilApproval } from './libs/hil-approval.js';
 
 
 
@@ -55,8 +56,6 @@ import { initNimbleWindows } from './libs/nimble-window.js';
   const quickScaleUpBtn = document.getElementById('quickScaleUp');
   const quickScaleDownBtn = document.getElementById('quickScaleDown');
   let Live2DModel=null;
-  let hilApprovalQueue = [];
-  let activeHilApproval = null;
   let textChatSending = false;
   let availableMotions = [];
   let hoverModel = false;
@@ -107,175 +106,6 @@ import { initNimbleWindows } from './libs/nimble-window.js';
 
 
 
-  function ensureHilApprovalHost(){
-    let host = document.getElementById('hil-approval-host');
-    if (host) return host;
-    host = document.createElement('div');
-    host.id = 'hil-approval-host';
-    host.style.position = 'fixed';
-    host.style.left = '0';
-    host.style.top = '0';
-    host.style.zIndex = '2600';
-    host.style.pointerEvents = 'none';
-    document.body.appendChild(host);
-    return host;
-  }
-
-  function updateHilApprovalPosition(){
-    const host = document.getElementById('hil-approval-host');
-    if (!host) return;
-    const shell = host.querySelector('.hil-approval-shell');
-    if (!shell) return;
-    const bubbleVisible = !!(asrBubbleEl && asrBubbleEl.style.display !== 'none');
-    const anchorRect = bubbleVisible && asrBubbleEl ? asrBubbleEl.getBoundingClientRect() : null;
-    const shellRect = shell.getBoundingClientRect();
-    const preferredWidth = Math.min(Math.max(anchorRect ? anchorRect.width : 320, 320), 560);
-    shell.style.width = Math.round(preferredWidth) + 'px';
-    const measuredRect = shell.getBoundingClientRect();
-    const width = measuredRect.width || preferredWidth;
-    const height = measuredRect.height || 320;
-    const gap = 14;
-    let left = anchorRect ? (anchorRect.left + anchorRect.width / 2 - width / 2) : ((window.innerWidth - width) / 2);
-    let top = anchorRect ? (anchorRect.top - height - gap) : 80;
-    left = Math.max(12, Math.min(window.innerWidth - width - 12, left));
-    top = Math.max(12, Math.min(window.innerHeight - height - 12, top));
-    host.style.left = Math.round(left) + 'px';
-    host.style.top = Math.round(top) + 'px';
-  }
-
-  function isPointOverHilApproval(clientX, clientY){
-    const host = document.getElementById('hil-approval-host');
-    if (!host) return false;
-    const panel = host.querySelector('.hil-approval-shell');
-    if (!panel) return false;
-    const rect = panel.getBoundingClientRect();
-    return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
-  }
-
-  async function submitHilApprovalDecision(requestId, approved, reason){
-    const r = await fetch(HIL_FEEDBACK_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        request_id: requestId,
-        feedback: !!approved,
-        reason: String(reason || '').trim() || (approved ? 'approved' : 'rejected'),
-      })
-    });
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok || j.error) throw new Error((j && (j.detail || j.error)) || `HTTP ${r.status}`);
-    return j;
-  }
-
-  function closeHilApproval(requestId){
-    const host = document.getElementById('hil-approval-host');
-    if (host) host.innerHTML = '';
-    if (activeHilApproval && activeHilApproval.request_id === requestId) {
-      activeHilApproval = null;
-    } else {
-      hilApprovalQueue = hilApprovalQueue.filter((item)=>item && item.request_id !== requestId);
-    }
-    window.setTimeout(()=>renderNextHilApproval(), 0);
-  }
-
-  function renderNextHilApproval(){
-    if (activeHilApproval || !hilApprovalQueue.length) return;
-    const payload = hilApprovalQueue.shift();
-    if (!payload || !payload.request_id) return;
-    activeHilApproval = payload;
-    const host = ensureHilApprovalHost();
-    host.innerHTML = '';
-
-    const overlay = document.createElement('div');
-    overlay.className = 'hil-approval-overlay';
-
-    const shell = document.createElement('section');
-    shell.className = 'hil-approval-shell';
-    shell.dataset.requestId = payload.request_id;
-    shell.dataset.severity = String(payload.severity || 'warning');
-
-    const title = document.createElement('h3');
-    title.className = 'hil-approval-title';
-    title.textContent = String(payload.title || '需要人工确认');
-
-    const badge = document.createElement('span');
-    badge.className = 'hil-approval-badge';
-    badge.textContent = String(payload.severity || 'warning').toUpperCase();
-
-    const summary = document.createElement('pre');
-    summary.className = 'hil-approval-summary';
-    summary.textContent = String(payload.summary || '');
-
-    const requestMeta = document.createElement('div');
-    requestMeta.className = 'hil-approval-meta';
-    requestMeta.textContent = `请求ID: ${payload.request_id}`;
-
-    const reasonInput = document.createElement('textarea');
-    reasonInput.className = 'hil-approval-reason';
-    reasonInput.placeholder = '可选：填写审批备注或拒绝原因';
-
-    const actionRow = document.createElement('div');
-    actionRow.className = 'hil-approval-actions';
-
-    const rejectBtn = document.createElement('button');
-    rejectBtn.type = 'button';
-    rejectBtn.className = 'hil-approval-btn secondary';
-    rejectBtn.textContent = '拒绝';
-
-    const approveBtn = document.createElement('button');
-    approveBtn.type = 'button';
-    approveBtn.className = 'hil-approval-btn primary';
-    approveBtn.textContent = '批准';
-
-    const setBusy = (busy)=>{
-      approveBtn.disabled = busy;
-      rejectBtn.disabled = busy;
-      reasonInput.disabled = busy;
-    };
-
-    rejectBtn.onclick = async ()=>{
-      setBusy(true);
-      try{
-        await submitHilApprovalDecision(payload.request_id, false, reasonInput.value || 'rejected_by_user');
-        closeHilApproval(payload.request_id);
-      }catch(e){
-        console.error('submit HIL reject failed', e);
-        setBusy(false);
-      }
-    };
-
-    approveBtn.onclick = async ()=>{
-      setBusy(true);
-      try{
-        await submitHilApprovalDecision(payload.request_id, true, reasonInput.value || 'approved_by_user');
-        closeHilApproval(payload.request_id);
-      }catch(e){
-        console.error('submit HIL approve failed', e);
-        setBusy(false);
-      }
-    };
-
-    actionRow.appendChild(rejectBtn);
-    actionRow.appendChild(approveBtn);
-
-    shell.appendChild(badge);
-    shell.appendChild(title);
-    shell.appendChild(summary);
-    shell.appendChild(requestMeta);
-    shell.appendChild(reasonInput);
-    shell.appendChild(actionRow);
-    overlay.appendChild(shell);
-    host.appendChild(overlay);
-    updateHilApprovalPosition();
-  }
-
-  function enqueueHilApproval(payload){
-    if (!payload || !payload.request_id) return;
-    if (activeHilApproval && activeHilApproval.request_id === payload.request_id) return;
-    if (hilApprovalQueue.some((item)=>item && item.request_id === payload.request_id)) return;
-    hilApprovalQueue.push(payload);
-    renderNextHilApproval();
-  }
 
   // 创建 PIXI 应用
   const app = new PIXI.Application({
@@ -786,7 +616,7 @@ import { initNimbleWindows } from './libs/nimble-window.js';
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
   const nimbleWin = initNimbleWindows({ callbackEndpoint: NIMBLE_CALLBACK_ENDPOINT, closeEndpoint: NIMBLE_CLOSE_ENDPOINT });
-  
+  const hil = initHilApproval({ feedbackEndpoint: HIL_FEEDBACK_ENDPOINT });
   let chatWs = null;
   let chatWsReady = null;
   let currentChatRequest = null;
@@ -858,13 +688,13 @@ import { initNimbleWindows } from './libs/nimble-window.js';
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_CLOSE payload', e, arg); return; }
         if (payload && payload.callback_id) {
           nimbleWin.close(payload.callback_id, false);
-          closeHilApproval(payload.callback_id);
+          hil.close(payload.callback_id);
         }
       } else if (cmd === 'HIL_APPROVAL'){
         if (!arg) return;
         let payload = null;
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid HIL_APPROVAL payload', e, arg); return; }
-        enqueueHilApproval({
+        hil.enqueue({
           request_id: String(payload?.request_id || payload?.ID || '').trim(),
           title: String(payload?.title || payload?.request || '需要人工确认').trim(),
           summary: String(payload?.summary || '').trim(),
@@ -1426,7 +1256,7 @@ import { initNimbleWindows } from './libs/nimble-window.js';
         asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
         asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
         asrTextEl.style.fontSize = '20px';
-        updateHilApprovalPosition();
+        hil.updatePosition();
       }catch(e){/*ignore*/}
       return;
     }
@@ -1454,7 +1284,7 @@ import { initNimbleWindows } from './libs/nimble-window.js';
       asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
       asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
       asrTextEl.style.fontSize = '20px';
-      updateHilApprovalPosition();
+      hil.updatePosition();
     }catch(e){/*ignore*/}
   }
 
@@ -2011,7 +1841,7 @@ import { initNimbleWindows } from './libs/nimble-window.js';
     try{
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
       applyModelScale();
-      updateHilApprovalPosition();
+      hil.updatePosition();
     }catch(e){}
   });
 
@@ -2048,7 +1878,7 @@ import { initNimbleWindows } from './libs/nimble-window.js';
         hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);
         hoverModel = isPointerOnModel(e.clientX, e.clientY);
         const overAsrBubble = isPointOverAsrBubble(e.clientX, e.clientY);
-        const overHilApproval = isPointOverHilApproval(e.clientX, e.clientY);
+        const overHilApproval = hil.isPointOver(e.clientX, e.clientY);
         const overVRMConfig = isPointOverVRMConfig(e.clientX, e.clientY);
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
