@@ -383,10 +383,14 @@ async def lifespan(app: FastAPI):
         await nimble.restore_persistent_sessions()
     except Exception as e:
         log.warning("恢复持久化 Nimble 窗口失败: %s", e)
-    try:
-        await minecraft_client.ensure_started()
-    except Exception as e:
-        log.warning("Minecraft 桥启动时未连接: %s", e)
+    if conf.config.get("MC_BRIDGE_ENABLED", False):
+        try:
+            await minecraft_client.ensure_started()
+        except Exception as e:
+            log.warning("Minecraft 桥启动时未连接: %s", e)
+    else:
+        log.info("Minecraft 桥未启用 (MC_BRIDGE_ENABLED=false)")
+
     if state.plugin_heartbeat_task is None:
         state.plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
     live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))

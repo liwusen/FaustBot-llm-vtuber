@@ -113,7 +113,9 @@ var MODULES = [
   { id: "agent", title: "角色", desc: "角色文件编辑、切换与创建。" },
   { id: "memory", title: "记忆", desc: "知识库树、图谱、搜索一体化管理。" },
   { id: "araya", title: "Araya", desc: "Araya 状态监控与触发。" },
-  { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
+  { id: "components", title: "组件", desc: "管理 FunASR、TTS 和 Minecraft 组件状态与启停。" },
+  // runtime 从侧边栏移除，入口在高级页面
+  // { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
   { id: "triggers", title: "触发器", desc: "计划任务列表与编辑。" },
   { id: "skills", title: "技能", desc: "Skill 安装、启停、删除。" },
   { id: "plugins", title: "插件", desc: "插件启停、重载、配置。" },

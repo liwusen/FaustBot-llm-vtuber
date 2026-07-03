@@ -28,6 +28,9 @@ from faust_backend.routes.audio import router as audio_router
 from faust_backend.routes.system import router as system_router
 from faust_backend.routes.logger_ws import router as logger_ws_router
 
+# ── 组件管理路由 ──
+from faust_backend.component_api import router as component_router
+
 # ── 外部模块路由 ──
 import faust_backend.araya_api as araya_api
 import faust_backend.live_api as live_api
@@ -53,6 +56,7 @@ routers = [
     admin_services_router, admin_agents_router, admin_skills_router,
     admin_triggers_router, admin_plugins_router, admin_logs_router,
     chat_router, hil_nimble_router, audio_router, system_router, logger_ws_router,
+    component_router,
 ]
 for r in routers:
     app.include_router(r)
@@ -70,6 +74,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ── 启动后台服务 ──
 start_services()
+from faust_backend.component_manager import init_component_guard
+init_component_guard()
 
 log.info("所有库加载完成")
 

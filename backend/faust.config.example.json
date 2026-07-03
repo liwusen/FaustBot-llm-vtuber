@@ -15,6 +15,7 @@
     "MM_BRIDGE_KEEP_TURNS": 2,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": true,
+    "MC_BRIDGE_ENABLED": false,
     "MODEL_TYPE": "live2d",
     "LIVE2D_MODEL_PATH": "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json",
     "LIVE2D_MODEL_SCALE": 0.2,

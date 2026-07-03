@@ -136,8 +136,30 @@ async function renderModule(force = false) {
     await ensureModuleData(current.id);
     if (current.id === "overview") {
       renderOverviewModule();
-    } else if (["ai", "live2d", "speech", "advanced"].includes(current.id)) {
+    } else if (["ai", "live2d", "speech"].includes(current.id)) {
       renderConfigModule(current.id);
+    } else if (current.id === "advanced") {
+      renderConfigModule(current.id);
+      // 高级页面底部添加 Runtime 管理入口
+      const container = getModuleContainer("advanced");
+      const section = document.createElement("div");
+      section.style.cssText = "margin-top:16px;padding:16px;background:var(--bg1);border:1px solid var(--border);border-radius:8px";
+      const title = document.createElement("div");
+      title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:8px";
+      title.textContent = "Runtime 管理";
+      const desc = document.createElement("div");
+      desc.style.cssText = "font-size:12px;color:var(--muted);margin-bottom:8px";
+      desc.textContent = "管理服务启动、停止、重启和日志查看";
+      const btn = document.createElement("button");
+      btn.textContent = "打开 Runtime 管理";
+      btn.style.cssText = "padding:8px 16px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-size:13px";
+      btn.onclick = () => {
+        state.activeModule = "runtime";
+        renderNav();
+        renderModule();
+      };
+      section.append(title, desc, btn);
+      container.append(section);
     } else if (current.id === "agent") {
       renderAgentModule();
     } else if (current.id === "memory") {
@@ -152,6 +174,8 @@ async function renderModule(force = false) {
       renderSkillsModule();
     } else if (current.id === "plugins") {
       renderPluginsModule();
+    } else if (current.id === "components") {
+      renderComponentsModule();
     } else {
       renderSimpleJsonModule("数据", state);
     }

@@ -108,6 +108,15 @@ async function ensureModuleData(moduleId) {
       state.araya = null;
     }
   }
+  if (moduleId === "components") {
+    try {
+      const data = await cfgApi("GET", "/faust/components/status");
+      state.componentStatus = data;
+    } catch (e) {
+      console.warn("components data fetch error", e);
+      state.componentStatus = null;
+    }
+  }
 }
 
 function renderAgentModule() {

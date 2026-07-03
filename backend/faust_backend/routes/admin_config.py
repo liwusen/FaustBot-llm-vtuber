@@ -19,10 +19,20 @@ async def admin_save_config(payload: dict):
 
 @router.post("/faust/admin/config/reload")
 async def admin_reload_config(payload: dict | None = None):
+    # 捕获旧配置用于服务变更检测
+    from faust_backend.config_loader import config as old_config
+    old_config_copy = dict(old_config)
+
     info = await rebuild_runtime(
         reset_dialog=bool((payload or {}).get("reset_dialog", False)),
         no_initial_chat=bool((payload or {}).get("no_initial_chat", True)),
     )
+
+    # 配置变更后检查服务启停
+    from faust_backend.config_loader import config as new_config
+    from faust_backend.component_manager import check_and_manage_services
+    await check_and_manage_services(old_config_copy, dict(new_config))
+
     return {
         "status": "ok",
         "runtime": info,
