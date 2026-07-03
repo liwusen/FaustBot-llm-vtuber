@@ -3,6 +3,7 @@ import { normalizeTtsText, decodeWsPayload, extractCompletedSentences } from './
 import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries } from './libs/bubble-utils.js';
 import { initLogPanel } from './libs/log-panel.js';
 import { initLiveMode } from './libs/live-mode.js';
+import { initNimbleWindows } from './libs/nimble-window.js';
 
 
 
@@ -54,8 +55,6 @@ import { initLiveMode } from './libs/live-mode.js';
   const quickScaleUpBtn = document.getElementById('quickScaleUp');
   const quickScaleDownBtn = document.getElementById('quickScaleDown');
   let Live2DModel=null;
-  let nimbleWindows = new Map();
-  let activeNimbleContext = null;
   let hilApprovalQueue = [];
   let activeHilApproval = null;
   let textChatSending = false;
@@ -100,268 +99,13 @@ import { initLiveMode } from './libs/live-mode.js';
     return normalized;
   }
 
-  function isInteractiveElement(el){
-    const tag = el.tagName;
-    if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'A'].includes(tag)) return true;
-    if (el.hasAttribute('onclick') || el.hasAttribute('onmousedown') || el.hasAttribute('onmouseup')) return true;
-    if (el.isContentEditable) return true;
-    if (el.getAttribute('role') === 'button') return true;
-    return false;
-  }
 
-  function isPointOverNimble(clientX, clientY){
-    const host = document.getElementById('nimble-host');
-    if (!host) return false;
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return false;
-    const win = el.closest('.nimble-window');
-    if (!win) return false;
-    // elements with nimble-pass-through class let clicks pass through to desktop
-    if (el.closest('.nimble-pass-through')) return false;
-    // In fullscreen mode, only genuinely interactive elements block click-through
-    if (win.classList.contains('nimble-fullscreen')) {
-      return isInteractiveElement(el);
-    }
-    return true;
-  }
 
-  function ensureNimbleHost(){
-    let host = document.getElementById('nimble-host');
-    if (host) return host;
-    host = document.createElement('div');
-    host.id = 'nimble-host';
-    host.style.position = 'fixed';
-    host.style.right = '24px';
-    host.style.top = '120px';
-    host.style.zIndex = '1600';
-    host.style.display = 'flex';
-    host.style.flexDirection = 'column';
-    host.style.gap = '12px';
-    host.style.pointerEvents = 'auto';
-    document.body.appendChild(host);
-    return host;
-  }
 
-  let nimbleDragState = null;
 
-  document.addEventListener('mousemove', (e)=>{
-    if (!nimbleDragState) return;
-    const { shell, offsetX, offsetY } = nimbleDragState;
-    shell.style.left = (e.clientX - offsetX) + 'px';
-    shell.style.top = (e.clientY - offsetY) + 'px';
-    shell.style.right = 'auto';
-  });
 
-  document.addEventListener('mouseup', ()=>{
-    if (!nimbleDragState) return;
-    const { shell } = nimbleDragState;
-    shell.style.cursor = '';
-    shell.style.userSelect = '';
-    nimbleDragState = null;
-  });
 
-  function installNimbleAPI(callbackId, shell, header){
-    activeNimbleContext = { callbackId };
-    const getState = () => ({
-      width: shell.style.width,
-      height: shell.style.height,
-      left: shell.style.left,
-      top: shell.style.top,
-      position: shell.style.position,
-      draggable: header ? header.classList.contains('nimble-draggable') : false,
-      fullscreen: shell.classList.contains('nimble-fullscreen'),
-    });
-    window.nimble = {
-      submit: async (data, closeWindow = true)=>{
-        const r = await fetch(NIMBLE_CALLBACK_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: callbackId, data, close: closeWindow })
-        });
-        const j = await r.json().catch(()=>({}));
-        if (!r.ok || j.error) throw new Error(j.error || `nimble submit failed: ${r.status}`);
-        if (closeWindow) closeNimbleWindow(callbackId, false);
-        return j;
-      },
-      close: async (reason='closed_by_user')=>{
-        const r = await fetch(NIMBLE_CLOSE_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: callbackId, reason })
-        });
-        const j = await r.json().catch(()=>({}));
-        if (!r.ok || j.error) throw new Error(j.error || `nimble close failed: ${r.status}`);
-        closeNimbleWindow(callbackId, false);
-        return j;
-      },
-      resize(width, height){
-        shell.style.width = width;
-        shell.style.height = height;
-      },
-      move(x, y){
-        shell.style.left = x;
-        shell.style.top = y;
-        shell.style.right = 'auto';
-      },
-      setDraggable(enabled){
-        if (!header) return;
-        header.classList.toggle('nimble-draggable', enabled);
-        header.style.cursor = enabled ? 'grab' : '';
-      },
-      setFullscreen(enabled){
-        if (enabled){
-          shell._nimblePrev = {
-            width: shell.style.width,
-            height: shell.style.height,
-            left: shell.style.left,
-            top: shell.style.top,
-            right: shell.style.right,
-            position: shell.style.position,
-          };
-          shell.style.position = 'fixed';
-          shell.style.top = '0';
-          shell.style.left = '0';
-          shell.style.right = '0';
-          shell.style.width = '100vw';
-          shell.style.height = '100vh';
-          shell.style.maxWidth = 'none';
-          shell.style.maxHeight = 'none';
-          shell.style.borderRadius = '0';
-          shell.style.zIndex = '9999';
-          shell.style.background = 'transparent';
-          shell.style.backdropFilter = 'none';
-          shell.classList.add('nimble-fullscreen');
-        } else {
-          const prev = shell._nimblePrev || {};
-          shell.style.position = prev.position || 'relative';
-          shell.style.top = prev.top || '';
-          shell.style.left = prev.left || '';
-          shell.style.right = prev.right || '';
-          shell.style.width = prev.width || '360px';
-          shell.style.height = prev.height || '';
-          shell.style.maxWidth = '40vw';
-          shell.style.maxHeight = '70vh';
-          shell.style.borderRadius = '14px';
-          shell.style.zIndex = '';
-          shell.style.background = 'rgba(20,24,30,0.92)';
-          shell.style.backdropFilter = 'blur(8px)';
-          shell.classList.remove('nimble-fullscreen');
-        }
-      },
-      getConfig(){
-        const rect = shell.getBoundingClientRect();
-        return {
-          callbackId,
-          width: rect.width,
-          height: rect.height,
-          x: rect.left,
-          y: rect.top,
-          zIndex: shell.style.zIndex,
-          ...getState(),
-        };
-      },
-    };
-  }
 
-  function closeNimbleWindow(callbackId, notifyBackend = true, reason = 'closed_locally'){
-    const win = nimbleWindows.get(callbackId);
-    if (win && win.parentNode) win.parentNode.removeChild(win);
-    nimbleWindows.delete(callbackId);
-    if (activeNimbleContext && activeNimbleContext.callbackId === callbackId){
-      activeNimbleContext = null;
-    }
-    if (!notifyBackend) return;
-    fetch(NIMBLE_CLOSE_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_id: callbackId, reason })
-    }).catch((e)=>console.warn('nimble close notify failed', e));
-  }
-
-  function showNimbleWindow(payload){
-    if (!payload || !payload.callback_id) return;
-    const host = ensureNimbleHost();
-    closeNimbleWindow(payload.callback_id, false);
-
-    const shell = document.createElement('div');
-    shell.className = 'nimble-window';
-    shell.dataset.callbackId = payload.callback_id;
-    shell.style.width = '360px';
-    shell.style.maxWidth = '40vw';
-    shell.style.maxHeight = '70vh';
-    shell.style.overflow = 'hidden';
-    shell.style.background = 'rgba(20,24,30,0.92)';
-    shell.style.border = '1px solid rgba(255,255,255,0.12)';
-    shell.style.borderRadius = '14px';
-    shell.style.boxShadow = '0 10px 30px rgba(0,0,0,0.4)';
-    shell.style.color = '#fff';
-    shell.style.backdropFilter = 'blur(8px)';
-
-    const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.justifyContent = 'space-between';
-    header.style.alignItems = 'center';
-    header.style.padding = '10px 12px';
-    header.style.background = 'rgba(255,255,255,0.06)';
-    header.style.fontWeight = '700';
-    header.textContent = payload.title || '灵动交互';
-
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = '×';
-    closeBtn.style.marginLeft = '12px';
-    closeBtn.style.background = 'transparent';
-    closeBtn.style.color = '#fff';
-    closeBtn.style.border = 'none';
-    closeBtn.style.fontSize = '20px';
-    closeBtn.style.cursor = 'pointer';
-    closeBtn.onclick = ()=> closeNimbleWindow(payload.callback_id, true, 'closed_by_user');
-    header.appendChild(closeBtn);
-
-    const body = document.createElement('div');
-    body.style.padding = '12px';
-    body.style.overflow = 'auto';
-    body.style.maxHeight = 'calc(70vh - 48px)';
-
-    // assemble shell first, then set HTML + run scripts (so shell is in DOM)
-    shell.appendChild(header);
-    shell.appendChild(body);
-    host.appendChild(shell);
-    nimbleWindows.set(payload.callback_id, shell);
-
-    installNimbleAPI(payload.callback_id, shell, header);
-    try{
-      body.innerHTML = payload.html || '<div>空窗口</div>';
-    }catch(e){
-      body.textContent = '灵动窗口 HTML 渲染失败: ' + String(e);
-    }
-    // re-execute script tags (innerHTML does not execute them)
-    try{
-      body.querySelectorAll('script').forEach((oldScript) => {
-        const newScript = document.createElement('script');
-        if (oldScript.src) {
-          newScript.src = oldScript.src;
-        } else {
-          newScript.textContent = oldScript.textContent;
-        }
-        oldScript.parentNode.replaceChild(newScript, oldScript);
-      });
-    }catch(e){
-      console.warn('nimble script exec error', e);
-    }
-
-    // drag support: mousedown on header starts drag
-    header.addEventListener('mousedown', (e)=>{
-      if (!header.classList.contains('nimble-draggable')) return;
-      if (e.button !== 0) return;
-      const rect = shell.getBoundingClientRect();
-      const offsetX = e.clientX - rect.left;
-      const offsetY = e.clientY - rect.top;
-      nimbleDragState = { shell, offsetX, offsetY };
-      shell.style.cursor = 'grabbing';
-      shell.style.userSelect = 'none';
-      e.preventDefault();
-    });
-  }
 
   function ensureHilApprovalHost(){
     let host = document.getElementById('hil-approval-host');
@@ -741,11 +485,6 @@ import { initLiveMode } from './libs/live-mode.js';
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
-  function isPointOverNimbleWindow(clientX, clientY){
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return false;
-    return !!el.closest('.nimble-window');
-  }
   function isPointOverAsrBubble(clientX, clientY){
     if (!asrBubbleEl || asrBubbleEl.style.display === 'none') return false;
     const rect = asrBubbleEl.getBoundingClientRect();
@@ -1046,6 +785,8 @@ import { initLiveMode } from './libs/live-mode.js';
   const NIMBLE_CALLBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/callback`;
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
+  const nimbleWin = initNimbleWindows({ callbackEndpoint: NIMBLE_CALLBACK_ENDPOINT, closeEndpoint: NIMBLE_CLOSE_ENDPOINT });
+  
   let chatWs = null;
   let chatWsReady = null;
   let currentChatRequest = null;
@@ -1110,13 +851,13 @@ import { initLiveMode } from './libs/live-mode.js';
         if (!arg) return;
         let payload = null;
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_SHOW payload', e, arg); return; }
-        showNimbleWindow(payload);
+        nimbleWin.show(payload);
       } else if (cmd === 'NIMBLE_CLOSE'){
         if (!arg) return;
         let payload = null;
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_CLOSE payload', e, arg); return; }
         if (payload && payload.callback_id) {
-          closeNimbleWindow(payload.callback_id, false);
+          nimbleWin.close(payload.callback_id, false);
           closeHilApproval(payload.callback_id);
         }
       } else if (cmd === 'HIL_APPROVAL'){
@@ -2310,8 +2051,8 @@ import { initLiveMode } from './libs/live-mode.js';
         const overHilApproval = isPointOverHilApproval(e.clientX, e.clientY);
         const overVRMConfig = isPointOverVRMConfig(e.clientX, e.clientY);
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
-        const overNimble = isPointOverNimble(e.clientX, e.clientY);
-        const onNimbleWindow = isPointOverNimbleWindow(e.clientX, e.clientY);
+        const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
+        const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
         console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
         const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
         if (overInteractive){
