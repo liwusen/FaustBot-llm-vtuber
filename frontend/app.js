@@ -1,3 +1,9 @@
+import { resampleFloat32, concatFloat32Arrays, floatTo16BitPCM, writeString, encodeWAV, interleaveAndEncodeWav } from './libs/audio-utils.js';
+import { normalizeTtsText, decodeWsPayload, extractCompletedSentences } from './libs/text-utils.js';
+import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries } from './libs/bubble-utils.js';
+import { initLogPanel } from './libs/log-panel.js';
+import { initLiveMode } from './libs/live-mode.js';
+
 
 
 (() => {
@@ -988,74 +994,7 @@
       vadEndTimer = setTimeout(()=> finalizeSpeechSegment(probability), VAD_END_DEBOUNCE_MS);
     }
   }
-  // convert Float32Array -> Int16 WAV blob at TARGET_SAMPLE_RATE
-  function interleaveAndEncodeWav(float32Array, inputSampleRate){
-    // resample to TARGET_SAMPLE_RATE
-    const resampled = resampleFloat32(float32Array, inputSampleRate, TARGET_SAMPLE_RATE);
-    const wavBuffer = encodeWAV(resampled, TARGET_SAMPLE_RATE);
-    return new Blob([wavBuffer], { type: 'audio/wav' });
-  }
-
-  function resampleFloat32(buffer, srcRate, dstRate){
-    if (srcRate === dstRate) return buffer;
-    const ratio = srcRate / dstRate;
-    const newLen = Math.round(buffer.length / ratio);
-    const out = new Float32Array(newLen);
-    for (let i = 0; i < newLen; i++){
-      const idx = i * ratio;
-      const i0 = Math.floor(idx);
-      const i1 = Math.min(Math.ceil(idx), buffer.length - 1);
-      const t = idx - i0;
-      out[i] = (1 - t) * buffer[i0] + t * buffer[i1];
-    }
-    return out;
-  }
-
-  function concatFloat32Arrays(arrays){
-    let total = 0;
-    for (const a of arrays) total += a.length;
-    const out = new Float32Array(total);
-    let offset = 0;
-    for (const a of arrays){ out.set(a, offset); offset += a.length; }
-    return out;
-  }
-
-  function floatTo16BitPCM(output, offset, input){
-    for (let i = 0; i < input.length; i++, offset += 2) {
-      let s = Math.max(-1, Math.min(1, input[i]));
-      s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      output.setInt16(offset, s, true);
-    }
-  }
-
-  function writeString(view, offset, string){
-    for (let i = 0; i < string.length; i++){
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  }
-
-  function encodeWAV(samples, sampleRate){
-    const buffer = new ArrayBuffer(44 + samples.length * 2);
-    const view = new DataView(buffer);
-    /* RIFF identifier */ writeString(view, 0, 'RIFF');
-    /* file length */ view.setUint32(4, 36 + samples.length * 2, true);
-    /* RIFF type */ writeString(view, 8, 'WAVE');
-    /* format chunk identifier */ writeString(view, 12, 'fmt ');
-    /* format chunk length */ view.setUint32(16, 16, true);
-    /* sample format (raw) */ view.setUint16(20, 1, true);
-    /* channel count */ view.setUint16(22, 1, true);
-    /* sample rate */ view.setUint32(24, sampleRate, true);
-    /* byte rate (sampleRate * blockAlign) */ view.setUint32(28, sampleRate * 2, true);
-    /* block align (channelCount * bytesPerSample) */ view.setUint16(32, 2, true);
-    /* bits per sample */ view.setUint16(34, 16, true);
-    /* data chunk identifier */ writeString(view, 36, 'data');
-    /* data chunk length */ view.setUint32(40, samples.length * 2, true);
-    floatTo16BitPCM(view, 44, samples);
-    return view;
-  }
-
   async function uploadBufferAndShowResult(float32Arr, sampleRate){
-    try{
       const blob = interleaveAndEncodeWav(float32Arr, sampleRate);
       console.debug('Uploading WAV blob', { size: blob.size, sampleRate });
       const fd = new FormData();
@@ -1117,27 +1056,6 @@
   let streamTtsPlaybackPromise = null;
   let streamTtsSessionId = 0;
   const streamTtsSentenceEndRe = /[。！？!?；;]+$/;
-
-  function normalizeTtsText(text){
-    return String(text ?? '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .replace(/\\n/g, '\n');
-  }
-
-  function decodeWsPayload(data){
-    if (typeof data === 'string') return data;
-    try{
-      if (data instanceof ArrayBuffer) return new TextDecoder('utf-8').decode(data);
-      if (ArrayBuffer.isView(data)) return new TextDecoder('utf-8').decode(data);
-      if (data && typeof Blob !== 'undefined' && data instanceof Blob) {
-        return data.text();
-      }
-    }catch(e){
-      console.warn('decodeWsPayload failed, fallback to String(data)', e);
-    }
-    return String(data ?? '');
-  }
 
   // --- handle incoming faust commands forwarded from main process ---
   // Commands are simple text payloads like:
@@ -1342,22 +1260,6 @@
     }finally{
       streamTtsDrainPromise = null;
     }
-  }
-
-  function extractCompletedSentences(buffer){
-    buffer = normalizeTtsText(buffer);
-    const results = [];
-    let start = 0;
-    for (let i = 0; i < buffer.length; i++){
-      const ch = buffer[i];
-      if ('。！？!?；;\n'.includes(ch)){
-        const sentence = buffer.slice(start, i + 1).trim();
-        if (sentence) results.push(sentence);
-        start = i + 1;
-      }
-    }
-    console.log('extractCompletedSentences', { buffer, completed: results, rest: buffer.slice(start) });
-    return { completed: results, rest: buffer.slice(start) };
   }
 
   function openChatWs(){
@@ -1671,126 +1573,6 @@
       textChatSendBtn.disabled = false;
       if (textChatStatus && textChatStatus.textContent === '发送中...') textChatStatus.textContent = '文字待命';
     }
-  }
-
-  function formatResultBubbleText(source, text){
-    const raw = String(text || '').trim();
-    if (!raw) return '';
-    if (source === 'user') return `用户：${raw}`;
-    if (source === 'error') return `!错误!:${raw}`;
-    return `AI：${raw}`;
-  }
-
-  function formatToolBubbleValue(value){
-    if (value === null || value === undefined) return '';
-    if (typeof value === 'string') return value;
-    try{
-      return JSON.stringify(value, null, 2);
-    }catch(e){
-      return String(value);
-    }
-  }
-
-  function escapeHtml(text){
-    return String(text || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function renderResultBubbleHtml(source, entries){
-    const blocks = [];
-    const items = Array.isArray(entries) ? entries : [];
-    let reasoningIdx = 0;
-    for (const item of items){
-      if (!item || typeof item !== 'object') continue;
-      if (item.type === 'reasoning') {
-        const reasoningText = escapeHtml(item.text || '');
-        const expandedAttr = item.expanded ? ' open' : '';
-        blocks.push(
-          '<section class="reasoning-card">' +
-            '<details class="reasoning-details" data-r="' + reasoningIdx + '"' + expandedAttr + '>' +
-              '<summary class="reasoning-summary">' +
-                '<span class="reasoning-icon">&#x1F9E0;</span>' +
-                '<span class="reasoning-title">思考过程</span>' +
-                '<span class="reasoning-badge">' + reasoningText.length + ' 字</span>' +
-              '</summary>' +
-              '<div class="reasoning-body">' +
-                '<div class="reasoning-content">' + reasoningText + '</div>' +
-              '</div>' +
-            '</details>' +
-          '</section>'
-        );
-        reasoningIdx++;
-        continue;
-      }
-      if (item.type === 'text') {
-        const formatted = formatResultBubbleText(source, item.text || '');
-        if (formatted) {
-          blocks.push(`<div class="result-bubble-main">${escapeHtml(formatted)}</div>`);
-        }
-        continue;
-      }
-      if (item.type !== 'tool') continue;
-      const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
-      const argsText = escapeHtml(formatToolBubbleValue(Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
-      const outputText = escapeHtml(formatToolBubbleValue(item.output ? item.output : ''));
-      const expandedAttr = item.expanded ? ' open' : '';
-      const stateText = item.done ? '已完成' : '调用中';
-      const callIdAttr = escapeHtml(item.callId || `${toolName}-${blocks.length}`);
-      blocks.push(
-        `<section class="tool-call-card${item.done ? ' is-done' : ' is-running'}">` +
-          `<div class="tool-call-divider" aria-hidden="true"></div>` +
-          `<details class="tool-call-details" data-call-id="${callIdAttr}"${expandedAttr}>` +
-            `<summary class="tool-call-summary">` +
-              `<span class="tool-call-title">调用工具:${toolName}</span>` +
-              `<span class="tool-call-status">${stateText}</span>` +
-            `</summary>` +
-            `<div class="tool-call-body">` +
-              `<div class="tool-call-section-label">参数</div>` +
-              `<pre class="tool-call-pre">${argsText || '(空)'}</pre>` +
-              `<div class="tool-call-section-label">返回值</div>` +
-              `<pre class="tool-call-pre">${outputText || (item.done ? '(空)' : '等待返回...')}</pre>` +
-            `</div>` +
-          `</details>` +
-        `</section>`
-      );
-    }
-    return blocks.join('');
-  }
-
-  function cloneBubbleEntries(entries){
-    if (!Array.isArray(entries)) return [];
-    return entries.map((item)=>{
-      if (!item || typeof item !== 'object') return null;
-      if (item.type === 'text') {
-        return {
-          type: 'text',
-          text: String(item.text || ''),
-        };
-      }
-      if (item.type === 'reasoning') {
-        return {
-          type: 'reasoning',
-          text: String(item.text || ''),
-          expanded: !!item.expanded,
-        };
-      }
-      if (item.type === 'tool') {
-        return {
-          type: 'tool',
-          callId: String(item.callId || ''),
-          toolName: String(item.toolName || '未知工具'),
-          args: Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {},
-          output: String(item.output || ''),
-          done: !!item.done,
-          expanded: !!item.expanded,
-        };
-      }
-      return null;
-    }).filter(Boolean);
   }
 
   function handleResultBubbleToggle(ev){
@@ -3078,106 +2860,12 @@
   let vrmConfigGizmoCleanup = null;
   updateQuickAsrButton();
 
-  // ── 日志面板 ──
-  const LOG_WS_URL = (window.BACKEND_BASE || 'ws://127.0.0.1:13900') + '/faust/logger/ws';
-  const logPanel = document.getElementById('logPanel');
-  const logContent = document.getElementById('logContent');
-  const logLevelFilter = document.getElementById('logLevelFilter');
-  const logClearBtn = document.getElementById('logClearBtn');
-  const logCloseBtn = document.getElementById('logCloseBtn');
-  const openLogBtn = document.getElementById('openLogPanelBtn');
-  let logWs = null;
-  let logReconnectTimer = null;
+  // ── 日志面板（已抽取到 libs/log-panel.js） ──
+  const logPanelCtrl = initLogPanel();
+  logPanelCtrl.init();
 
-  function connectLogWs() {
-    if (logWs && (logWs.readyState === WebSocket.OPEN || logWs.readyState === WebSocket.CONNECTING)) return;
-    try {
-      logWs = new WebSocket(LOG_WS_URL);
-      logWs.onmessage = (ev) => {
-        try { addLogEntry(JSON.parse(ev.data)); } catch (e) {}
-      };
-      logWs.onclose = () => {
-        logWs = null;
-        clearTimeout(logReconnectTimer);
-        logReconnectTimer = setTimeout(connectLogWs, 3000);
-      };
-      logWs.onerror = () => { if (logWs) logWs.close(); };
-    } catch (e) {
-      clearTimeout(logReconnectTimer);
-      logReconnectTimer = setTimeout(connectLogWs, 5000);
-    }
-  }
-
-  function addLogEntry(entry) {
-    const levelno = entry.levelno || 20;
-    const filterLevel = parseInt((logLevelFilter && logLevelFilter.value) || '0', 10);
-    if (filterLevel > 0 && levelno < filterLevel) return;
-
-    const placeholder = logContent && logContent.querySelector('.log-placeholder');
-    if (placeholder) placeholder.remove();
-
-    const line = document.createElement('div');
-    line.className = 'log-line LEVEL_' + (entry.level || 'INFO');
-    line.textContent = '[' + (entry.timestamp || '') + '] [' + (entry.level || '') + '] ' + (entry.name || '') + ': ' + (entry.message || '');
-    if (logContent) {
-      logContent.appendChild(line);
-      logContent.scrollTop = logContent.scrollHeight;
-      while (logContent.children.length > 500) logContent.removeChild(logContent.firstChild);
-    }
-  }
-
-  if (openLogBtn) {
-    openLogBtn.addEventListener('click', () => {
-      const isHidden = logPanel && logPanel.style.display === 'none';
-      if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
-      if (logWs) { logWs.close(); logWs = null; }
-      if (isHidden) connectLogWs();
-    });
-  }
-  if (logCloseBtn) {
-    logCloseBtn.addEventListener('click', () => {
-      if (logPanel) logPanel.style.display = 'none';
-      if (logWs) { logWs.close(); logWs = null; }
-    });
-  }
-  if (logClearBtn) {
-    logClearBtn.addEventListener('click', () => {
-      if (logContent) logContent.innerHTML = '<div class="log-placeholder">日志已清除</div>';
-    });
-  }
-  if (logPanel && logPanel.style.display !== 'none') connectLogWs();
-
-  // Listen for toggle-log-panel event from config window
-  if (window.faust && typeof window.faust.onToggleLogPanel === 'function') {
-    window.faust.onToggleLogPanel(() => {
-      const isHidden = logPanel && logPanel.style.display === 'none';
-      if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
-      if (logWs) { logWs.close(); logWs = null; }
-      if (isHidden) connectLogWs();
-    });
-  }
-
-  // ── 直播模式：隐藏/显示文字输入框 ──
-  let liveModePollTimer = null;
-  let lastLiveModeState = false;
-  const textChatBar = document.getElementById('textChatBar');
-
-  async function pollLiveMode() {
-    try {
-      const resp = await fetch('http://127.0.0.1:13900/faust/live/status');
-      const data = await resp.json();
-      const isLive = Boolean(data.live_mode);
-      if (isLive !== lastLiveModeState) {
-        lastLiveModeState = isLive;
-        if (textChatBar) {
-          textChatBar.style.display = isLive ? 'none' : '';
-        }
-      }
-    } catch (e) {
-    }
-  }
-
-  liveModePollTimer = setInterval(pollLiveMode, 3000);
-  pollLiveMode();
+  // ── 直播模式（已抽取到 libs/live-mode.js） ──
+  const liveModeCtrl = initLiveMode();
+  liveModeCtrl.start();
 
 })();
