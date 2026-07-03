@@ -6,6 +6,7 @@ import { initLiveMode } from './libs/live-mode.js';
 import { initNimbleWindows } from './libs/nimble-window.js';
 import { initHilApproval } from './libs/hil-approval.js';
 import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
+import { initAudioPlayback } from './libs/audio-playback.js';
 
 
 
@@ -227,20 +228,6 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
     return ['ParamMouthOpenY'];
   }
 
-  function setModelLipSyncValue(value){
-    if (!currentModel) return;
-    const mouth = Math.max(0, Math.min(1, Number(value) || 0));
-    const ids = Array.isArray(currentLipSyncParamIds) && currentLipSyncParamIds.length ? currentLipSyncParamIds : ['ParamMouthOpenY'];
-    try{
-      if (currentModel.internalModel && currentModel.internalModel.coreModel && typeof currentModel.internalModel.coreModel.setParameterValueById === 'function'){
-        for (const paramId of ids) currentModel.internalModel.coreModel.setParameterValueById(paramId, mouth);
-        return;
-      }
-      if (typeof currentModel.setMouthOpenY === 'function'){
-        currentModel.setMouthOpenY(mouth);
-      }
-    }catch(e){ /* ignore if model API differs */ }
-  }
 
   function updateQuickAsrButton(){
     if (!quickToggleAsrBtn) return;
@@ -388,8 +375,7 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
   }
 
   function interruptPlayback(){
-    try{ stopAudio(); }catch(e){}
-    try{ stopBackgroundAudio(); }catch(e){}
+    try{ audio.stopAudio(); }catch(e){}
     try{ resetStreamTtsState(); }catch(e){}
     try{ if (ttsStatus) ttsStatus.textContent = '已打断'; }catch(e){}
   }
@@ -449,6 +435,17 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
   const ASR_ENDPOINT = `http://${BACKEND_HOST}:${BACKEND_PORT}/faust/audio/asr`;
   const TTS_ENDPOINT = `http://${BACKEND_HOST}:${BACKEND_PORT}/faust/audio/tts`;
   const SPEECH_CONFIG_ENDPOINT = `http://${BACKEND_HOST}:${BACKEND_PORT}/faust/audio/config`;
+  const audio = initAudioPlayback({
+    ttsEndpoint: TTS_ENDPOINT,
+    getTtsLang: () => getCurrentTtsLang(),
+    getModelType: () => modelType,
+    getVrmScene: () => vrmScene,
+    getCurrentModel: () => currentModel,
+    getLipSyncParamIds: () => currentLipSyncParamIds,
+    showOverlay,
+    stopBackgroundAudio: () => stopBackgroundAudio(),
+  });
+  
   // VAD websocket state
   const DEFAULT_VAD_WS_PATH = '/faust/audio/ws/vad';
   let vadWs = null;
@@ -650,7 +647,7 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
         try{
           const r = await fetch(arg);
           const blob = await r.blob();
-          startMouthSyncFromFile(blob);
+          audio.startMouthSyncFromFile(blob);
         }catch(e){
           console.error('PLAYMUSIC fetch/play failed', e);
         }
@@ -671,12 +668,10 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
         const lang = getCurrentTtsLang();
         useVAD = false;
         showResultBubble('ai', arg);
-        await synthesizeAndPlay(arg, lang);
-        useVAD = true;
+        await audio.synthesizeAndPlay(arg, lang);
       } else if (cmd === 'STOP'){
         // stop audio and optionally stop asr
-        try{ stopAudio(); }catch(e){}
-        try{ stopMicAsr(); }catch(e){}
+        try{ audio.stopAudio(); }catch(e){}
         try{ stopBackgroundAudio(); }catch(e){}
       } else if (cmd === 'NIMBLE_SHOW'){
         if (!arg) return;
@@ -863,23 +858,6 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
     return new Blob([ab], { type: contentType });
   }
 
-  function playSingleBlobOrdered(blob){
-    return new Promise((resolve)=>{
-      try{ stopAudio(); }catch(e){}
-      startMouthSyncFromFile(blob);
-      if (ttsStatus) ttsStatus.textContent = '播放中';
-      try{
-        if (audioEl && typeof audioEl.addEventListener === 'function'){
-          const onEnd = ()=>{ try{ audioEl.removeEventListener('ended', onEnd); }catch(e){} resolve(); };
-          audioEl.addEventListener('ended', onEnd);
-        } else {
-          const waiter = setInterval(()=>{
-            if (!audioEl || audioEl.ended){ clearInterval(waiter); resolve(); }
-          }, 200);
-        }
-      }catch(e){ resolve(); }
-    });
-  }
 
   async function flushStreamTtsQueue(){
     if (streamTtsPlaybackPromise) return streamTtsPlaybackPromise;
@@ -890,7 +868,7 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
         if (item.status === 'pending') break;
         streamTtsPending.delete(streamTtsNextPlayId);
         if (item.status === 'ready' && item.blob){
-          await playSingleBlobOrdered(item.blob);
+          await audio.playOrdered(item.blob);
         }
         streamTtsNextPlayId += 1;
       }
@@ -1968,218 +1946,8 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
     }
   });
 
-  // Audio mouth-sync: setup audio element and WebAudio analyser
-  let audioEl = null;
-  let audioCtx = null;
-  let analyser = null;
-  let dataArray = null;
-  let sourceNode = null;
-  let rafId = null;
-
-  function stopAudio(){
-    if (audioEl){
-      try{ audioEl.pause(); audioEl.currentTime = 0; }catch(e){}
-    }
-    if (modelType === 'vrm' && vrmScene) {
-      vrmScene.stopLipSync();
-    } else if (currentModel){
-      try{
-        setModelLipSyncValue(0);
-      }catch(e){}
-    }
-    if (rafId) cancelAnimationFrame(rafId);
-    if (sourceNode){ try{ sourceNode.disconnect(); }catch(e){} sourceNode=null }
-    if (analyser){ analyser.disconnect(); analyser=null }
-    if (audioCtx){ try{ audioCtx.close(); }catch(e){} audioCtx=null }
-  }
-
-  // TTS: call backend API (port 5000) to synthesize text and play the returned audio
-  async function synthesizeAndPlay(text, lang){
-    // Splits text into chunks and sends parallel TTS requests, playing chunks
-    // progressively as they arrive to reduce latency. Returns a promise that
-    // resolves after all playback has finished.
-    if (!text || text.trim().length === 0) return;
-    const TTS_SPLIT_LIMIT = 100; // characters per chunk (tunable)
-    const endpoint = TTS_ENDPOINT;
-
-    // helper: split text into chunks trying to respect sentence boundaries
-    function splitText(input, maxLen){
-      input = normalizeTtsText(input).trim();
-      const out = [];
-      if (input.length <= maxLen) return [input];
-      // prefer splitting on Chinese/Japanese/English sentence punctuation or commas/space
-      const splitRe = /([。！？!?；;，,，、\n]+)/g;
-      let parts = input.split(splitRe).filter(s=>s && s.trim().length>0);
-      // recombine parts into chunks under maxLen
-      let cur = '';
-      for (let p of parts){
-        if ((cur + p).length <= maxLen){ cur += p; }
-        else {
-          if (cur) out.push(cur);
-          if (p.length > maxLen){
-            // fallback: hard-split long fragment
-            for (let i=0;i<p.length;i+=maxLen){ out.push(p.slice(i,i+maxLen)); }
-            cur = '';
-          } else {
-            cur = p;
-          }
-        }
-      }
-      if (cur) out.push(cur);
-      // if nothing produced, fallback to naive split
-      if (out.length === 0){
-        for (let i=0;i<input.length;i+=maxLen) out.push(input.slice(i,i+maxLen));
-      }
-      return out;
-    }
-
-    // We'll fetch chunks in parallel but play them in original order.
-    // Prepare per-index blobs and waiters so we can start playback as soon
-    // as chunk 0 is ready while later chunks continue downloading.
-    const blobs = new Array();
-    const waiters = new Array();
-    for (let i=0;i<0;i++){} // keep block structure
-
-    function makeWaiter(){
-      let resolveFn = null;
-      const p = new Promise((res)=>{ resolveFn = res; });
-      return { promise: p, resolve: resolveFn };
-    }
-
-    // helper to play a single blob and wait until it finishes
-    function playSingleBlob(blob){
-      return new Promise((resolve)=>{
-        try{ stopAudio(); }catch(e){}
-        startMouthSyncFromFile(blob);
-        if (ttsStatus) ttsStatus.textContent = '播放中';
-        try{
-          if (audioEl && typeof audioEl.addEventListener === 'function'){
-            const onEnd = ()=>{ try{ audioEl.removeEventListener('ended', onEnd); }catch(e){} resolve(); };
-            audioEl.addEventListener('ended', onEnd);
-          } else {
-            const waiter = setInterval(()=>{
-              if (!audioEl || audioEl.ended){ clearInterval(waiter); resolve(); }
-            }, 200);
-          }
-        }catch(e){ console.warn('attach onended failed', e); resolve(); }
-      });
-    }
-
-    // start: split text and issue parallel fetches
-    const chunks = splitText(text, TTS_SPLIT_LIMIT);
-    if (chunks.length === 0) return;
-
-    if (ttsBtn) ttsBtn.disabled = true;
-    if (ttsStatus) ttsStatus.textContent = '合成中...';
-
-    // track fetch completion and playback completion
-    let fetchesPending = chunks.length;
-    let fetchHadError = false;
-
-    // create waiters for each chunk so we can play chunks in order
-    for (let i=0;i<chunks.length;i++){ waiters[i] = makeWaiter(); blobs[i] = null; }
-
-    const fetchPromises = chunks.map((chunk, i) => (async ()=>{
-      const payload = { text: chunk, text_language: lang || getCurrentTtsLang(), lang: lang || getCurrentTtsLang() };
-      try{
-        const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!r.ok){
-          const txt = await r.text();
-          console.warn('TTS chunk failed', r.status, txt);
-          fetchHadError = true;
-        } else {
-          const contentType = r.headers.get('content-type') || 'audio/wav';
-          const ab = await r.arrayBuffer();
-          const blob = new Blob([ab], { type: contentType });
-          blobs[i] = blob;
-        }
-      }catch(err){ console.warn('TTS chunk fetch err', err); fetchHadError = true; }
-      finally{ fetchesPending -= 1; try{ waiters[i].resolve(); }catch(e){} }
-    })());
-
-    try{
-      // play chunks strictly in original order; wait for each chunk's fetch to finish
-      for (let i=0;i<chunks.length;i++){
-        try{ await waiters[i].promise; }catch(e){}
-        if (blobs[i]){
-          await playSingleBlob(blobs[i]);
-        } else {
-          console.warn('Skipping missing TTS chunk', i);
-        }
-      }
-
-      try{ await Promise.all(fetchPromises); }catch(e){}
-      if (fetchHadError) showOverlay('部分 TTS 分段合成失败，已跳过错误片段');
-    }catch(e){ console.warn('TTS allDone err', e); }
-    finally{
-      if (ttsBtn) ttsBtn.disabled = false;
-      if (ttsStatus) ttsStatus.textContent = '已完成';
-    }
-
-    return; // resolved when playback finished
-  }
-
-  function startMouthSyncFromFile(file){
-    stopAudio();
-    if (!file) return;
-    audioEl = new Audio(URL.createObjectURL(file));
-    audioEl.crossOrigin = 'anonymous';
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    try{ audioCtx.resume && audioCtx.resume(); }catch(e){}
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 2048;
-    dataArray = new Uint8Array(analyser.fftSize);
-    sourceNode = audioCtx.createMediaElementSource(audioEl);
-    sourceNode.connect(analyser);
-    analyser.connect(audioCtx.destination);
-    audioEl.onended = ()=>{
-      if (modelType === 'vrm' && vrmScene) {
-        vrmScene.stopLipSync();
-      } else {
-        try{
-          setModelLipSyncValue(0);
-        }catch(e){}
-      }
-    };
-    audioEl.play().catch(()=>{ /* autoplay may be blocked */ });
-
-    if (modelType === 'vrm' && vrmScene) {
-      vrmScene.startLipSync(analyser);
-      return;
-    }
-
-    function tick(){
-      analyser.getByteTimeDomainData(dataArray);
-      // compute RMS
-      let sum=0;
-      for(let i=0;i<dataArray.length;i++){ const v = (dataArray[i]-128)/128; sum+=v*v }
-      const rms = Math.sqrt(sum / dataArray.length);
-      // map rms to mouth open parameter (0..1)
-      const mouth = Math.min(1, Math.max(0, (rms*5)));
-      if (currentModel){
-        try{
-          setModelLipSyncValue(mouth);
-        }catch(e){ /* ignore if model API differs */ }
-      }
-      rafId = requestAnimationFrame(tick);
-    }
-    rafId = requestAnimationFrame(tick);
-  }
-
-  if (playAudioBtn) playAudioBtn.addEventListener('click', ()=>{
-    const f = audioFile.files && audioFile.files[0];
-    if (!f){ alert('请选择音频文件'); return }
-    startMouthSyncFromFile(f);
-  });
-  if (stopAudioBtn) stopAudioBtn.addEventListener('click', ()=>{ stopAudio(); });
-  // TTS button
-  if (ttsBtn){
-    ttsBtn.addEventListener('click', ()=>{
-      const text = ttsText ? ttsText.value : '';
-      const lang = ttsLang ? ttsLang.value : 'zh';
-      synthesizeAndPlay(text, lang);
-    });
-  }
+  audio.initEvents();
+  
   if (quickToggleAsrBtn) quickToggleAsrBtn.addEventListener('click', ()=>{
     toggleAsr();
   });
