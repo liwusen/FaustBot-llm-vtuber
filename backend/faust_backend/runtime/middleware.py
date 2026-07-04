@@ -14,6 +14,7 @@ from typing import Any, Callable
 from langchain_core.tools import BaseTool
 
 from faust_backend.runtime.output_store import get_output_store
+from faust_backend.runtime import state
 
 def wrap_tool_output(tool: BaseTool) -> BaseTool:
     """Wrap a LangChain tool so its output goes through OutputStore.
@@ -36,8 +37,25 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
     if original_coro and _inspect.iscoroutinefunction(original_coro):
 
         async def _wrapped_arun(*args, **kwargs):
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                try:
+                    modified = pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
+                    if modified and isinstance(modified, list) and modified[0] is not None:
+                        kwargs = modified[0] if isinstance(modified[0], dict) else kwargs
+                except Exception:
+                    pass
             try:
                 result = await original_coro(*args, **kwargs)
+                if pm:
+                    try:
+                        post_results = pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
+                        if post_results and isinstance(post_results, list):
+                            for r in post_results:
+                                if r is not None:
+                                    result = r
+                    except Exception:
+                        pass
             except Exception as e:
                 output_id = store.put(
                     str(e), tool_name=tool_name,
@@ -50,8 +68,25 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
     if original_func and not _inspect.iscoroutinefunction(original_func):
 
         def _wrapped_run(*args, **kwargs):
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                try:
+                    modified = pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
+                    if modified and isinstance(modified, list) and modified[0] is not None:
+                        kwargs = modified[0] if isinstance(modified[0], dict) else kwargs
+                except Exception:
+                    pass
             try:
                 result = original_func(*args, **kwargs)
+                if pm:
+                    try:
+                        post_results = pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
+                        if post_results and isinstance(post_results, list):
+                            for r in post_results:
+                                if r is not None:
+                                    result = r
+                    except Exception:
+                        pass
             except Exception as e:
                 output_id = store.put(
                     str(e), tool_name=tool_name,

@@ -14,7 +14,11 @@ async def admin_get_config():
 
 @router.post("/faust/admin/config")
 async def admin_save_config(payload: dict):
-    return admin_runtime.save_config(payload or {})
+    result = admin_runtime.save_config(payload or {})
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm._call_pluggy_hook('config_changed', key='all', old=None, new=payload, ctx=None)
+    return result
 
 
 @router.post("/faust/admin/config/reload")
@@ -32,6 +36,9 @@ async def admin_reload_config(payload: dict | None = None):
     from faust_backend.config_loader import config as new_config
     from faust_backend.component_manager import check_and_manage_services
     await check_and_manage_services(old_config_copy, dict(new_config))
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm._call_pluggy_hook('config_changed', key='all', old=old_config_copy, new=dict(new_config), ctx=None)
 
     return {
         "status": "ok",

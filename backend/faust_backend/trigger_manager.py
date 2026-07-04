@@ -73,6 +73,10 @@ def _emit_trigger(trigger_payload: dict):
     if payload is None:
         return False
     trigger_queue.put(payload)
+    from faust_backend.runtime import state
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm._call_pluggy_hook('trigger_fire', payload=payload, ctx=None)
     return True
 
 class BaseTrigger(BaseModel):
@@ -325,6 +329,10 @@ def append_trigger(trigger: dict | str):
             log.error("无效的 trigger JSON 字符串: %s", e)
             raise
     trigger = _apply_append_filters(trigger)
+    from faust_backend.runtime import state
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm._call_pluggy_hook('trigger_append', payload=trigger, ctx=None)
     if trigger is None:
         raise ValueError("Trigger blocked by append filters")
     global _store

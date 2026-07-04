@@ -396,6 +396,20 @@ class GraphStore:
         return results
 
     async def file_read(self, path: str) -> dict:
+        # ── memory_read_pre hook ──
+        try:
+            from faust_backend.runtime import state
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                results = pm._call_pluggy_hook('memory_read_pre', query=path, filters=None, ctx=None)
+                if results:
+                    for r in results:
+                        if r is not None and isinstance(r, str):
+                            path = r
+                            break
+        except Exception:
+            pass
+
         norm = _normalize_path(path)
         nid = _path_id(norm)
         if not self._has_node(nid):
@@ -418,13 +432,44 @@ class GraphStore:
                     content = ""
         description = self._get_node_attr(nid, "description", "")
         meta = self._read_meta(norm)
+
+        result = {"path": norm, "content": content, "description": description, "meta": meta}
+
+        # ── memory_read_post hook ──
+        try:
+            from faust_backend.runtime import state as _state
+            pm = getattr(_state, 'plugin_manager', None)
+            if pm:
+                post_results = pm._call_pluggy_hook('memory_read_post', query=path, results=[result], ctx=None)
+                if post_results:
+                    for r in post_results:
+                        if r is not None:
+                            result = r
+                            break
+        except Exception:
+            pass
+
         log.info("file_read path=%s content_len=%d", norm, len(content))
-        return {"path": norm, "content": content, "description": description, "meta": meta}
+        return result
 
     async def file_write(self, path: str, content: str, *,
                          description: str = "",
                          declared_by: str = "agent", index: bool = True,
                          tags: list[str] | None = None) -> dict:
+        # ── memory_write_pre hook ──
+        try:
+            from faust_backend.runtime import state
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                results = pm._call_pluggy_hook('memory_write_pre', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, ctx=None)
+                if results:
+                    for r in results:
+                        if r is not None and isinstance(r, str):
+                            content = r
+                            break
+        except Exception:
+            pass
+
         norm = _normalize_path(path)
         nid = _path_id(norm)
         name = Path(norm).name
@@ -497,7 +542,18 @@ class GraphStore:
 
         self.flush()
         log.info("file_write done path=%s chunks=%d", norm, len(chunks) if index else 0)
-        return {"path": norm, "meta": meta}
+        result = {"path": norm, "meta": meta}
+
+        # ── memory_write_post hook ──
+        try:
+            from faust_backend.runtime import state as _state
+            pm = getattr(_state, 'plugin_manager', None)
+            if pm:
+                pm._call_pluggy_hook('memory_write_post', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, id=nid, ctx=None)
+        except Exception:
+            pass
+
+        return result
 
     async def attachment_write(self, path: str, image_base64: str, *,
                                 description: str = "",
