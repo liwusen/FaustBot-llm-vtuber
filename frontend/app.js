@@ -562,6 +562,7 @@ import { initAudioPlayback } from './libs/audio-playback.js';
     }
   }
   async function uploadBufferAndShowResult(float32Arr, sampleRate){
+    try{
       const blob = interleaveAndEncodeWav(float32Arr, sampleRate);
       console.debug('Uploading WAV blob', { size: blob.size, sampleRate });
       const fd = new FormData();
@@ -1682,7 +1683,7 @@ import { initAudioPlayback } from './libs/audio-playback.js';
       model.scale.set(1.0);
       model.anchor.set(0.5, 1.0);
       model.x = app.renderer.width - 200;
-      model.y = app.renderer.height - 10;
+      model.y = app.renderer.height - 20;
       model.interactive = true;
       model.buttonMode = true;
       model.cursor = 'grab';
@@ -1714,10 +1715,15 @@ import { initAudioPlayback } from './libs/audio-playback.js';
         const pos = e.data.global;
         let rawX = pos.x - dragOffset.x;
         let rawY = pos.y - dragOffset.y;
-        // Constrain drag so controls (positioned at model-relative offset) stay on-screen
-        const margin = 160; // CSS pixels — enough room for controller + chat bar
-        rawX = Math.max(margin, Math.min(app.renderer.width - margin, rawX));
-        rawY = Math.max(margin, Math.min(app.renderer.height - margin, rawY));
+        // Constrain drag so controls stay on-screen
+        // X/sides: 160px — room for controller + chat bar
+        // Top: 160px — controls anchored above model need headroom
+        // Bottom: 20px — model anchor is at bottom (0.5,1.0), allow near screen edge
+        const marginTop = 160;
+        const marginBottom = 20;
+        const marginX = 160;
+        rawX = Math.max(marginX, Math.min(app.renderer.width - marginX, rawX));
+        rawY = Math.max(marginTop, Math.min(app.renderer.height - marginBottom, rawY));
         model.x = rawX;
         model.y = rawY;
         updateQuickControllerPosition();
@@ -1770,7 +1776,7 @@ import { initAudioPlayback } from './libs/audio-playback.js';
   if (resetBtn) resetBtn.addEventListener('click', () => {
     if (!currentModel) return;
     currentModel.x = app.renderer.width - 200;
-    currentModel.y = app.renderer.height - 10;
+    currentModel.y = app.renderer.height - 20;
     updateQuickControllerPosition();
     persistModelPositionToBackend();
   });
@@ -1815,7 +1821,7 @@ import { initAudioPlayback } from './libs/audio-playback.js';
   window.addEventListener('resize', ()=>{
     if (!currentModel) return;
     currentModel.x = Math.min(currentModel.x, app.renderer.width - 50);
-    currentModel.y = Math.min(currentModel.y, app.renderer.height - 10);
+    currentModel.y = Math.min(currentModel.y, app.renderer.height - 20);
     // auto-scale with resize
     try{
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);

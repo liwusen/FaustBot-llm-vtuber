@@ -248,12 +248,14 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
 
   function isPointOverNimble(clientX, clientY) {
     const host = document.getElementById('nimble-host');
-    if (!host) return false;
+    if (!host || host.style.display === 'none') return false;
     const el = document.elementFromPoint(clientX, clientY);
     if (!el) return false;
-    const win = el.closest('.nimble-window');
-    if (!win) return false;
+    // Element is inside nimble-host — either a .nimble-window child or the host container itself
+    if (!host.contains(el) && el !== host) return false;
     if (el.closest('.nimble-pass-through')) return false;
+    const win = el.closest('.nimble-window');
+    if (!win) return true;  // over host gap/padding — still nimble area
     if (win.classList.contains('nimble-fullscreen')) {
       return isInteractiveElement(el);
     }
@@ -261,9 +263,11 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
   }
 
   function isPointOverWindow(clientX, clientY) {
+    const host = document.getElementById('nimble-host');
+    if (!host) return false;
     const el = document.elementFromPoint(clientX, clientY);
     if (!el) return false;
-    return !!el.closest('.nimble-window');
+    return host.contains(el) || el === host;
   }
 
   function isInteractiveElement(el) {
