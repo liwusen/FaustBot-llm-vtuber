@@ -218,6 +218,66 @@ async function loadRuntimeSummary() {
   state.runtime = data.runtime || {};
 }
 
+// ── Plugin 前端资源加载 ──
+
+async function loadPluginAssets() {
+  try {
+    const resp = await fetch("/faust/admin/plugins/assets");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const assets = data.assets || [];
+    for (const a of assets) {
+      if (a.type === "js" && a.path) {
+        const s = document.createElement("script");
+        s.src = a.path;
+        s.defer = true;
+        s.setAttribute("data-plugin", a.plugin_id || "");
+        document.head.appendChild(s);
+      } else if (a.type === "css" && a.path) {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = a.path;
+        l.setAttribute("data-plugin", a.plugin_id || "");
+        document.head.appendChild(l);
+      }
+    }
+  } catch { /* plugin assets optional */ }
+}
+
+// ── pluginUI API（插件注入前台页面/卡片用） ──
+
+if (!window.pluginUI) {
+  window.pluginUI = {
+    _pages: [],
+    _cards: [],
+
+    addPage(spec) {
+      if (!spec || !spec.id || !spec.label) return;
+      // 去重：同名插件同 id 不重复注册
+      const key = `${spec.plugin || ""}:${spec.id}`;
+      if (this._pages.find((p) => p._key === key)) return;
+      this._pages.push({ ...spec, _key: key });
+      // 动态注入 MODULES 列表
+      if (typeof MODULES !== "undefined" && !MODULES.find((m) => m.id === spec.id)) {
+        MODULES.push({ id: spec.id, title: spec.label, desc: spec.desc || "" });
+        renderNav();
+      }
+    },
+
+    addCard(moduleId, spec) {
+      if (!moduleId || !spec || !spec.title) return;
+      const key = `${spec.plugin || ""}:${moduleId}:${spec.title}`;
+      if (this._cards.find((c) => c._key === key)) return;
+      this._cards.push({ ...spec, moduleId, _key: key });
+    },
+
+    modifyPage(moduleId, fn) {
+      if (typeof fn !== "function") return;
+      fn(MODULES.find((m) => m.id === moduleId));
+    },
+  };
+}
+
 async function reloadAll() {
   setBusy(true);
   try {
@@ -317,6 +377,7 @@ function bindActions() {
 async function init() {
   renderNav();
   bindActions();
+  await loadPluginAssets();
   await reloadAll();
 }
 

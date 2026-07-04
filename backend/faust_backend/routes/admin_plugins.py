@@ -7,6 +7,19 @@ router = APIRouter(tags=["admin-plugins"])
 router.description = "Plugin 管理：列出/重载/启用/禁用/配置/安装（市场/ZIP）/打包/删除插件"
 
 
+
+@router.get("/faust/admin/plugins/assets")
+async def admin_plugins_assets():
+    """返回所有插件注册的前端资源清单（JS/CSS）。"""
+    pm = state.plugin_manager
+    if not pm:
+        return {"status": "ok", "assets": []}
+    try:
+        assets = pm.collect_frontend_assets()
+        return {"status": "ok", "assets": assets}
+    except Exception as e:
+        return {"status": "ok", "assets": [], "error": str(e)}
+
 @router.get("/faust/admin/plugins")
 async def admin_list_plugins():
     pm = state.plugin_manager
