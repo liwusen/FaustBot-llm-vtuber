@@ -68,6 +68,24 @@ app.include_router(update_api.router)
 app.include_router(memory_api.router)
 edge_tts_api.register_edge_tts_routes(app)
 
+# ── 插件前端静态资源挂载 ──
+from fastapi.staticfiles import StaticFiles
+_plugin_frontend_dirs = [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "default_plugins"),
+    os.path.join(os.path.expanduser("~"), ".faustbot", "plugins"),
+]
+_mounted_frontend = set()
+for _pf_dir in _plugin_frontend_dirs:
+    if os.path.isdir(_pf_dir):
+        for _pid in sorted(os.listdir(_pf_dir)):
+            _pf_path = os.path.join(_pf_dir, _pid, "frontend")
+            if os.path.isdir(_pf_path) and _pid not in _mounted_frontend:
+                try:
+                    app.mount(f"/faust/plugins/{_pid}/frontend", StaticFiles(directory=_pf_path), name=f"plugin_frontend_{_pid}")
+                    _mounted_frontend.add(_pid)
+                except Exception as e:
+                    log.warning("挂载插件前端资源失败 %s: %s", _pid, e)
+
 # ── 环境与配置 ──
 PORT = 13900
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
