@@ -29,8 +29,6 @@ def _ensure_default_plugins() -> None:
     dst = _plugin_user_dir()
     if not dst.exists():
         dst.mkdir(parents=True, exist_ok=True)
-    if any(dst.iterdir()):
-        return
     candidates = [
         Path(conf.PROJECT_ROOT) / "default_plugins",
         Path(conf.PROJECT_ROOT).parent / "backend" / "default_plugins",

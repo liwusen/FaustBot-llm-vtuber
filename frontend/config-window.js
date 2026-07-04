@@ -222,26 +222,32 @@ async function loadRuntimeSummary() {
 
 async function loadPluginAssets() {
   try {
-    const resp = await fetch("/faust/admin/plugins/assets");
-    if (!resp.ok) return;
-    const data = await resp.json();
+    if (!window.api || typeof window.api.configRequest !== "function") {
+      console.warn("[loadPluginAssets] window.api.configRequest not available");
+      return;
+    }
+    const data = await window.api.configRequest("GET", "/faust/admin/plugins/assets");
+    if (!data) return;
     const assets = data.assets || [];
+    const baseUrl = window.api.backendBaseUrl || "http://127.0.0.1:13900";
     for (const a of assets) {
       if (a.type === "js" && a.path) {
         const s = document.createElement("script");
-        s.src = a.path;
+        s.src = baseUrl + a.path;
         s.defer = true;
         s.setAttribute("data-plugin", a.plugin_id || "");
         document.head.appendChild(s);
       } else if (a.type === "css" && a.path) {
         const l = document.createElement("link");
         l.rel = "stylesheet";
-        l.href = a.path;
+        l.href = baseUrl + a.path;
         l.setAttribute("data-plugin", a.plugin_id || "");
         document.head.appendChild(l);
       }
     }
-  } catch { /* plugin assets optional */ }
+  } catch (e) {
+    console.warn("[loadPluginAssets] Error:", e);
+  }
 }
 
 // ── pluginUI API（插件注入前台页面/卡片用） ──

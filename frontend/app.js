@@ -1496,6 +1496,8 @@ import { initAudioPlayback } from './libs/audio-playback.js';
   if (textChatSendBtn) textChatSendBtn.addEventListener('click', ()=>{ sendTextChatMessage(); });
   if (textChatInput) textChatInput.addEventListener('keydown', (e)=>{
     if (e.key === 'Enter' && !e.shiftKey){
+      // 如果 autocomplete 下拉框已打开，让 autocomplete 处理器接管 Enter
+      if (acDropdown) return;
       e.preventDefault();
       sendTextChatMessage();
     }

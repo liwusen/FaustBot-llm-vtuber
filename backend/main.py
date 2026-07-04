@@ -56,7 +56,7 @@ routers = [
     admin_config_router, admin_runtime_router, admin_models_router,
     admin_services_router, admin_agents_router, admin_skills_router,
     admin_triggers_router, admin_plugins_router, admin_logs_router,
-    chat_router, hil_nimble_router, audio_router, system_router, autocomplete_router, logger_ws_router,
+    chat_router, hil_nimble_router, audio_router, system_router, autocomplete_router, component_router, logger_ws_router,
 ]
 for r in routers:
     app.include_router(r)
