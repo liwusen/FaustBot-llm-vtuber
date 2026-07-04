@@ -1523,6 +1523,12 @@ import { initAudioPlayback } from './libs/audio-playback.js';
 
   async function acFetch(text, cursor) {
     try {
+      // Use IPC-based request (works in Electron file:// context)
+      if (window.api && typeof window.api.configRequest === "function") {
+        const data = await window.api.configRequest("POST", "/faust/autocomplete", { text, cursor });
+        return (data && data.items) || [];
+      }
+      // Fallback: direct fetch (works in browser dev mode)
       const resp = await fetch('/faust/autocomplete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
