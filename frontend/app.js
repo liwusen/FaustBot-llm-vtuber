@@ -1520,16 +1520,11 @@ import { initAudioPlayback } from './libs/audio-playback.js';
     acItems = [];
     acIndex = -1;
   }
+  const AUTOCOMPLETE_ENDPOINT = 'http://127.0.0.1:13900/faust/autocomplete';
 
   async function acFetch(text, cursor) {
     try {
-      // Use IPC-based request (works in Electron file:// context)
-      if (window.api && typeof window.api.configRequest === "function") {
-        const data = await window.api.configRequest("POST", "/faust/autocomplete", { text, cursor });
-        return (data && data.items) || [];
-      }
-      // Fallback: direct fetch (works in browser dev mode)
-      const resp = await fetch('/faust/autocomplete', {
+      const resp = await fetch(AUTOCOMPLETE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, cursor }),
@@ -1630,6 +1625,21 @@ import { initAudioPlayback } from './libs/audio-playback.js';
 
     textChatInput.addEventListener('blur', () => {
       setTimeout(acRemoveDropdown, 200);
+    });
+
+    // Fallback: also trigger on keyup for `/' key specifically
+    textChatInput.addEventListener('keyup', (e) => {
+      if (e.key === '/' && !acDropdown) {
+        // Manually trigger the input handler logic
+        const val = textChatInput.value;
+        const cursor = textChatInput.selectionStart || val.length;
+        clearTimeout(acPending);
+        acPending = setTimeout(async () => {
+          acPending = null;
+          const items = await acFetch(val, cursor);
+          acRender(items);
+        }, 100);
+      }
     });
   }
 
@@ -1994,7 +2004,7 @@ import { initAudioPlayback } from './libs/audio-playback.js';
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
-        console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
+        //console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
         const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
         if (overInteractive){
           if (!interactiveActive){
