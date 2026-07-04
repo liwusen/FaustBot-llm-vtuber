@@ -816,3 +816,15 @@ body.click-through .hil-approval-shell {
 body.click-through #vrmConfigPanel {
   pointer-events: auto;
 }
+
+/* ── Slash-command autocomplete dropdown ── */
+.autocomplete-dropdown {
+  font-family: inherit;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.autocomplete-dropdown .ac-item:hover {
+  background: rgba(100,140,255,0.18) !important;
+}
+body.click-through .autocomplete-dropdown {
+  pointer-events: auto;
+}

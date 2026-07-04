@@ -1507,6 +1507,124 @@ import { initAudioPlayback } from './libs/audio-playback.js';
     }
   });
 
+  // ── Slash-command autocomplete ──
+  let acDropdown = null;
+  let acItems = [];
+  let acIndex = -1;
+  let acPending = null;
+
+  function acRemoveDropdown() {
+    if (acDropdown) { acDropdown.remove(); acDropdown = null; }
+    acItems = [];
+    acIndex = -1;
+  }
+
+  async function acFetch(text, cursor) {
+    try {
+      const resp = await fetch('/faust/autocomplete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, cursor }),
+      });
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      return data.items || [];
+    } catch { return []; }
+  }
+
+  function acRender(items) {
+    acRemoveDropdown();
+    if (!items.length || !textChatInput) return;
+    acItems = items;
+    acIndex = -1;
+    const rect = textChatInput.getBoundingClientRect();
+    acDropdown = document.createElement('div');
+    acDropdown.className = 'autocomplete-dropdown';
+    acDropdown.style.cssText =
+      `position:fixed;left:${rect.left}px;top:${rect.bottom + 4}px;` +
+      `width:${rect.width}px;max-height:200px;overflow-y:auto;` +
+      `background:rgba(30,30,40,0.92);border:1px solid rgba(255,255,255,0.15);` +
+      `border-radius:8px;z-index:9999;padding:4px 0;font-size:13px;`;
+    items.forEach((item, i) => {
+      const div = document.createElement('div');
+      div.className = 'ac-item';
+      div.dataset.index = i;
+      div.style.cssText =
+        `padding:6px 12px;cursor:pointer;color:#ccc;display:flex;align-items:center;gap:8px;`;
+      const labelSpan = document.createElement('span');
+      labelSpan.style.cssText = 'color:#e8e8e8;font-weight:600;flex-shrink:0;';
+      labelSpan.textContent = item.label;
+      div.appendChild(labelSpan);
+      if (item.detail) {
+        const detailSpan = document.createElement('span');
+        detailSpan.style.cssText = 'color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        detailSpan.textContent = item.detail;
+        div.appendChild(detailSpan);
+      }
+      div.addEventListener('click', () => acSelect(i));
+      div.addEventListener('mousedown', (e) => e.preventDefault());
+      acDropdown.appendChild(div);
+    });
+    document.body.appendChild(acDropdown);
+    acHighlight(0);
+  }
+
+  function acHighlight(idx) {
+    if (!acDropdown) return;
+    const items = acDropdown.querySelectorAll('.ac-item');
+    items.forEach((el, i) => {
+      el.style.background = i === idx ? 'rgba(100,140,255,0.25)' : 'transparent';
+    });
+    acIndex = idx;
+    if (idx >= 0 && items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+  }
+
+  function acSelect(idx) {
+    if (idx < 0 || idx >= acItems.length || !textChatInput) return;
+    const item = acItems[idx];
+    textChatInput.value = item.insert_text;
+    acRemoveDropdown();
+    textChatInput.focus();
+    const len = item.insert_text.length;
+    textChatInput.setSelectionRange(len, len);
+  }
+
+  if (textChatInput) {
+    textChatInput.addEventListener('input', () => {
+      const val = textChatInput.value;
+      const cursor = textChatInput.selectionStart || val.length;
+      if (!val.startsWith('/')) { acRemoveDropdown(); return; }
+      clearTimeout(acPending);
+      acPending = setTimeout(async () => {
+        acPending = null;
+        const items = await acFetch(val, cursor);
+        acRender(items);
+      }, 150);
+    });
+
+    textChatInput.addEventListener('keydown', (e) => {
+      if (!acDropdown) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        acHighlight(Math.min(acIndex + 1, acItems.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        acHighlight(Math.max(acIndex - 1, 0));
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (acIndex >= 0 && acIndex < acItems.length) {
+          e.preventDefault();
+          acSelect(acIndex);
+        }
+      } else if (e.key === 'Escape') {
+        acRemoveDropdown();
+      }
+    });
+
+    textChatInput.addEventListener('blur', () => {
+      setTimeout(acRemoveDropdown, 200);
+    });
+  }
+
   // update asrText position each frame if visible
   function rafUpdate(){
     if (asrBubbleEl && asrBubbleEl.style.display !== 'none') updateAsrTextPosition();
