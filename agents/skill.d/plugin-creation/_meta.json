@@ -1,0 +1,8 @@
+{
+  "slug": "plugin-creation",
+  "name": "插件创建指南",
+  "version": "1.0.0",
+  "description": "Agent 自建插件技能：使用 write + execute(curl) 创建、安装和测试 FaustBot 插件",
+  "usage": "当用户要求添加新功能或自动化任务时，使用本技能创建插件",
+  "builtin": true
+}
