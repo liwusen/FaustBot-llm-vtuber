@@ -26,6 +26,7 @@ from faust_backend.routes.chat import router as chat_router
 from faust_backend.routes.hil_nimble import router as hil_nimble_router
 from faust_backend.routes.audio import router as audio_router
 from faust_backend.routes.system import router as system_router
+from faust_backend.routes.autocomplete import router as autocomplete_router
 from faust_backend.routes.logger_ws import router as logger_ws_router
 
 # ── 组件管理路由 ──
@@ -55,8 +56,7 @@ routers = [
     admin_config_router, admin_runtime_router, admin_models_router,
     admin_services_router, admin_agents_router, admin_skills_router,
     admin_triggers_router, admin_plugins_router, admin_logs_router,
-    chat_router, hil_nimble_router, audio_router, system_router, logger_ws_router,
-    component_router,
+    chat_router, hil_nimble_router, audio_router, system_router, autocomplete_router, logger_ws_router,
 ]
 for r in routers:
     app.include_router(r)

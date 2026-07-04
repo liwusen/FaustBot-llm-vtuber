@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import os
@@ -9,9 +10,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pluggy
+
 import faust_backend.trigger_manager as trigger_manager
 
+from .hooks import CoreHooks, hookimpl
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
+from .plugin_base import FaustPlugin
 
 import faust_backend.config_loader as conf
 
@@ -63,6 +68,16 @@ class PluginManager:
         self._hot_reload_interval_sec = 2.0
         self._last_reload_ts = 0.0
         self._plugin_fingerprint: dict[str, float] = {}
+        # ── pluggy integration ──
+        self._pluggy_manager = pluggy.PluginManager("faustbot")
+        self._pluggy_manager.add_hookspecs(CoreHooks)
+        self._faust_plugins: dict[str, FaustPlugin] = {}
+        self._pluggy_loaded = False
+
+        # ── Scheduler ──
+        self._scheduler_task: asyncio.Task | None = None
+        self._scheduled_jobs: dict[str, dict] = {}
+        self._schedule_lock = asyncio.Lock()
         self._load_state()
 
     def _load_state(self) -> None:
@@ -378,12 +393,16 @@ class PluginManager:
             plugin = record.get("plugin")
             ctx = record.get("ctx")
             try:
+                if isinstance(plugin, FaustPlugin):
+                    self._pluggy_manager.unregister(plugin)
                 if plugin and hasattr(plugin, "on_unload"):
                     plugin.on_unload(ctx)
             except Exception:
                 pass
 
         self._plugins = {}
+        self._faust_plugins = {}
+        self._pluggy_loaded = False
         errors: list[dict[str, str]] = []
 
         for plugin_dir in sorted(self.plugins_dir.iterdir()):
@@ -405,8 +424,17 @@ class PluginManager:
                 else:
                     manifest = plugin.manifest
 
-                if hasattr(plugin, "on_load"):
-                    plugin.on_load(ctx)
+                # ── pluggy registration for FaustPlugin instances ──
+                if isinstance(plugin, FaustPlugin):
+                    self._pluggy_manager.register(plugin, name=manifest.plugin_id)
+                    self._faust_plugins[manifest.plugin_id] = plugin
+                    self._pluggy_loaded = True
+                    # Call plugin_loaded hook
+                    self._pluggy_manager.hook.plugin_loaded(ctx=ctx)
+                else:
+                    # Old-style plugins
+                    if hasattr(plugin, "on_load"):
+                        plugin.on_load(ctx)
 
                 self._call_plugin_startup(plugin, ctx)
 
@@ -422,6 +450,12 @@ class PluginManager:
                 }
             except Exception as e:
                 errors.append({"plugin": manifest.plugin_id, "error": str(e)})
+
+        # ── Load schedules from pluggy plugins ──
+        self._load_schedules()
+
+        # ── Check pip deps ──
+        self._install_pip_deps()
 
         self._save_state()
         self._plugin_fingerprint = self._build_plugins_fingerprint()
@@ -638,3 +672,135 @@ class PluginManager:
                 errors.append({"plugin": plugin_id, "error": str(e)})
 
         return {"called": called, "errors": errors}
+
+    # ── pluggy hook dispatch helpers ──
+
+    def _call_pluggy_hook(self, hook_name: str, **kwargs) -> list:
+        if not self._pluggy_loaded:
+            return []
+        try:
+            hook = getattr(self._pluggy_manager.hook, hook_name, None)
+            if hook is None:
+                return []
+            result = hook(**kwargs)
+            return result if isinstance(result, list) else [result]
+        except Exception:
+            return []
+
+    def _load_schedules(self) -> None:
+        """Load schedules from pluggy-registered plugins."""
+        if not self._pluggy_loaded:
+            return
+        for plugin_id, plugin in self._faust_plugins.items():
+            try:
+                schedules = plugin.register_schedules()
+                if not schedules:
+                    continue
+                for s in schedules:
+                    s_id = str(s.get("id") or f"{plugin_id}_{id(s)}")
+                    s["_plugin"] = plugin_id
+                    self._scheduled_jobs[s_id] = s
+            except Exception:
+                pass
+
+    def _install_pip_deps(self) -> dict[str, Any]:
+        """Install pip dependencies declared by plugins."""
+        if not self._pluggy_loaded:
+            return {"installed": [], "errors": []}
+        installed: list[str] = []
+        errors: list[dict[str, str]] = []
+        import importlib.metadata as importlib_metadata
+        import subprocess
+        import sys
+
+        for plugin_id, plugin in self._faust_plugins.items():
+            try:
+                deps = plugin.register_pip_deps()
+                if not deps:
+                    continue
+                to_install: list[str] = []
+                for dep in deps:
+                    pkg_name = dep.split(">=")[0].split("==")[0].split("!=")[0].strip()
+                    try:
+                        importlib_metadata.version(pkg_name)
+                    except importlib_metadata.PackageNotFoundError:
+                        to_install.append(dep)
+                if not to_install:
+                    continue
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", *to_install],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode == 0:
+                    installed.extend(to_install)
+                else:
+                    errors.append({"plugin": plugin_id, "deps": to_install, "error": result.stderr[:200]})
+            except Exception as e:
+                errors.append({"plugin": plugin_id, "error": str(e)})
+        return {"installed": installed, "errors": errors}
+
+    # ── Route mounting ──
+
+    def collect_routes(self) -> list:
+        """Collect FastAPI routers from pluggy-registered plugins."""
+        if not self._pluggy_loaded:
+            return []
+        routers: list = []
+        for plugin_id, plugin in self._faust_plugins.items():
+            try:
+                plugin_routes = plugin.register_routes()
+                if plugin_routes:
+                    routers.extend(plugin_routes)
+            except Exception:
+                pass
+        return routers
+
+    def collect_frontend_assets(self) -> list[dict]:
+        """Collect frontend assets from pluggy-registered plugins."""
+        if not self._pluggy_loaded:
+            return []
+        assets: list[dict] = []
+        for plugin_id, plugin in self._faust_plugins.items():
+            try:
+                plugin_assets = plugin.register_frontend()
+                if plugin_assets:
+                    for a in plugin_assets:
+                        a.setdefault("plugin_id", plugin_id)
+                        assets.append(a)
+            except Exception:
+                pass
+        return assets
+
+    # ── Scheduler ──
+
+    async def _scheduler_loop(self) -> None:
+        """Asyncio task that runs scheduled callbacks."""
+        while True:
+            try:
+                await asyncio.sleep(5.0)
+                async with self._schedule_lock:
+                    for s_id, s in list(self._scheduled_jobs.items()):
+                        try:
+                            callback = s.get("callback")
+                            if not callable(callback):
+                                continue
+                            # interval-based scheduling
+                            interval = s.get("interval")
+                            if not isinstance(interval, (int, float)) or interval <= 0:
+                                continue
+                            callback()
+                        except Exception:
+                            pass
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(1.0)
+
+    def start_scheduler(self) -> None:
+        if self._scheduler_task is None or self._scheduler_task.done():
+            self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+
+    def stop_scheduler(self) -> None:
+        if self._scheduler_task and not self._scheduler_task.done():
+            self._scheduler_task.cancel()
+            self._scheduler_task = None

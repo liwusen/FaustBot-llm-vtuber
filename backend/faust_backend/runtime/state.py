@@ -97,6 +97,19 @@ def makeup_init_prompt():
         if os.path.exists(fpath):
             with open(fpath, "r", encoding="utf-8") as f:
                 parts.append(f.read())
+
+    # ── Skill YAML injection ──
+    try:
+        import faust_backend.skill_manager as skill_manager
+        skill_manager._ensure_builtin_skills()
+        yaml_summary = skill_manager.list_skills_yaml()
+        if yaml_summary:
+            parts.append("\n\n## 可用技能列表（Skill）\n")
+            parts.append("用户输入 `/skill:<slug>` 表示想用该技能。需要细节时用 read(\"memory://skills/<slug>/SKILL.md\") 读全文。\n\n")
+            parts.append(yaml_summary)
+    except Exception as e:
+        log.warning("Skill YAML 注入失败: %s", e)
+
     PROMPT = "".join(parts)
 
 
