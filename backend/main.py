@@ -40,7 +40,7 @@ import faust_backend.memory.api as memory_api
 import faust_backend.edge_tts_api as edge_tts_api
 
 # ── FastAPI 应用 ──
-app = FastAPI(title="FaustBot Backend Main Service",lifespan=lifespan,version="1.4")
+app = FastAPI(title="FaustBot Backend Main Service",lifespan=lifespan,version="2.0",description="FaustBot 后端主服务，提供核心功能和 API 接口。")
 
 # ── CORS ──
 app.add_middleware(
