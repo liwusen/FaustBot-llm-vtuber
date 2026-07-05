@@ -69,6 +69,7 @@ def _apply_fire_filters(trigger_payload: dict):
 
 
 def _emit_trigger(trigger_payload: dict):
+    log.debug("触发 trigger: %s", trigger_payload)
     payload = _apply_fire_filters(trigger_payload)
     if payload is None:
         return False
@@ -269,7 +270,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                             except Exception:
                                 pass
                     else:
-                        continue
+                        _emit_trigger(trig.model_dump())
                 except Exception as e:
                     log.error("Watchdog 循环错误 %s: %s", getattr(trig, 'id', None), e)
         time.sleep(poll_interval)
