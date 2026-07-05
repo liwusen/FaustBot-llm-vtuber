@@ -105,7 +105,10 @@ def makeup_init_prompt():
         yaml_summary = skill_manager.list_skills_yaml()
         if yaml_summary:
             parts.append("\n\n## 可用技能列表（Skill）\n")
-            parts.append("用户输入 `/skill:<slug>` 表示想用该技能。需要细节时用 read(\"memory://skills/<slug>/SKILL.md\") 读全文。\n\n")
+            parts.append("用户输入 `/skill:<slug>` 表示想用该技能。收到该指令后：\n")
+            parts.append("1. 用 read(\"skill.d/<slug>/SKILL.md\") 读取技能完整说明\n")
+            parts.append("2. 按说明执行任务\n")
+            parts.append("3. 无需再次询问用户确认，直接执行\n\n")
             parts.append(yaml_summary)
     except Exception as e:
         log.warning("Skill YAML 注入失败: %s", e)

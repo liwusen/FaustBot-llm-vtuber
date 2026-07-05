@@ -1592,54 +1592,47 @@ import { initAudioPlayback } from './libs/audio-playback.js';
     textChatInput.setSelectionRange(len, len);
   }
 
+  console.log('[ac] textChatInput:', !!textChatInput);
   if (textChatInput) {
+    // ── input event: trigger autocomplete when value starts with / ──
     textChatInput.addEventListener('input', () => {
       const val = textChatInput.value;
-      const cursor = textChatInput.selectionStart || val.length;
       if (!val.startsWith('/')) { acRemoveDropdown(); return; }
+      const cursor = textChatInput.selectionStart || val.length;
       clearTimeout(acPending);
       acPending = setTimeout(async () => {
         acPending = null;
+        console.log('[ac] input trigger, fetching for:', JSON.stringify(val));
         const items = await acFetch(val, cursor);
+        console.log('[ac] input trigger, got items:', items.length);
         acRender(items);
-      }, 150);
+      }, 200);
     });
 
+    // ── keydown: dropdown navigation and Enter send ──
     textChatInput.addEventListener('keydown', (e) => {
-      if (!acDropdown) return;
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        acHighlight(Math.min(acIndex + 1, acItems.length - 1));
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        acHighlight(Math.max(acIndex - 1, 0));
-      } else if (e.key === 'Enter' || e.key === 'Tab') {
-        if (acIndex >= 0 && acIndex < acItems.length) {
-          e.preventDefault();
-          acSelect(acIndex);
+      if (acDropdown) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); acHighlight(Math.min(acIndex + 1, acItems.length - 1)); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); acHighlight(Math.max(acIndex - 1, 0)); return; }
+        if (e.key === 'Enter') {
+          if (acIndex >= 0 && acIndex < acItems.length) {
+            e.preventDefault();
+            acSelect(acIndex);
+            return;
+          }
         }
-      } else if (e.key === 'Escape') {
-        acRemoveDropdown();
+        if (e.key === 'Escape') { acRemoveDropdown(); return; }
+      }
+      // Enter send (dropdown hidden or no selection)
+      if (e.key === 'Enter' && !e.shiftKey) {
+        console.log('[ac] Enter send');
+        e.preventDefault();
+        sendTextChatMessage();
       }
     });
 
     textChatInput.addEventListener('blur', () => {
       setTimeout(acRemoveDropdown, 200);
-    });
-
-    // Fallback: also trigger on keyup for `/' key specifically
-    textChatInput.addEventListener('keyup', (e) => {
-      if (e.key === '/' && !acDropdown) {
-        // Manually trigger the input handler logic
-        const val = textChatInput.value;
-        const cursor = textChatInput.selectionStart || val.length;
-        clearTimeout(acPending);
-        acPending = setTimeout(async () => {
-          acPending = null;
-          const items = await acFetch(val, cursor);
-          acRender(items);
-        }, 100);
-      }
     });
   }
 

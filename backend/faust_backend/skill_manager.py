@@ -330,9 +330,9 @@ def set_skill_enabled(slug: str, enabled: bool, *, agent_name: str | None = None
 def _builtin_skill_dir() -> Path:
     """Return the project-level built-in skills directory.
 
-    Uses ``conf.PROJECT_ROOT / "agents" / "skill.d"``.
+    Skills are stored at repo root ``agents/skill.d/`` (sibling of ``backend/``).
     """
-    return Path(conf.PROJECT_ROOT) / "agents" / "skill.d"
+    return Path(conf.PROJECT_ROOT).parent / "agents" / "skill.d"
 
 
 def list_skills_yaml(agent_name: str | None = None) -> str:
