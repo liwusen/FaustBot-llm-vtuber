@@ -59,3 +59,5 @@ edge_tts
 rank_bm25
 #
 funasr>=0.9.6
+#
+pluggy
