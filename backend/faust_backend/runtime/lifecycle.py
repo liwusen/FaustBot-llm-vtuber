@@ -368,6 +368,9 @@ async def lifespan(app: FastAPI):
         await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(args.no_startup_chat))
         log.info("启动运行时摘要: %s", startup_info)
+        # Mount plugin routes on the FastAPI app with /faust/plugins/{plugin_id}/ prefix
+        if state.plugin_manager:
+            state.plugin_manager.mount_routes(app)
     except Exception as e:
         state.agent = None
         state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))

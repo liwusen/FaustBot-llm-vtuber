@@ -177,7 +177,28 @@ async function renderModule(force = false) {
     } else if (current.id === "components") {
       renderComponentsModule();
     } else {
-      renderSimpleJsonModule("数据", state);
+      // Plugin module: use page render function from addPage(), or cards from addCard()
+      const pluginPage = window.pluginUI._pages.find(p => p.id === current.id);
+      if (pluginPage && typeof pluginPage.render === 'function') {
+        const container = getModuleContainer(current.id);
+        setActiveContainer(container);
+        pluginPage.render(container);
+      } else {
+        const pluginCards = window.pluginUI._cards.filter(c => c.moduleId === current.id);
+        if (pluginCards.length > 0) {
+          for (const card of pluginCards) {
+            if (typeof card.render === 'function') {
+              const cardContainer = el("div");
+              card.render(cardContainer);
+              addSection(card.title || "插件卡片", [cardContainer]);
+            } else {
+              addSection(card.title || "插件卡片", [el("div", "card-content", card.content || card.html || "")]);
+            }
+          }
+        } else {
+          renderSimpleJsonModule("数据", state);
+        }
+      }
     }
     state.moduleContainers[current.id].rendered = true;
   } catch (err) {
@@ -230,12 +251,19 @@ async function loadPluginAssets() {
     if (!data) return;
     const assets = data.assets || [];
     const baseUrl = window.api.backendBaseUrl || "http://127.0.0.1:13900";
+    // Expose backend base URL to plugins so they can make API calls
+    if (window.pluginUI) window.pluginUI.backendBaseUrl = baseUrl;
+    const loadPromises = [];
     for (const a of assets) {
       if (a.type === "js" && a.path) {
         const s = document.createElement("script");
         s.src = baseUrl + a.path;
-        s.defer = true;
         s.setAttribute("data-plugin", a.plugin_id || "");
+        const p = new Promise((resolve, reject) => {
+          s.onload = () => { console.log("[plugin] loaded JS:", a.path); resolve(); };
+          s.onerror = () => { console.warn("[plugin] failed to load JS:", a.path); resolve(); };
+        });
+        loadPromises.push(p);
         document.head.appendChild(s);
       } else if (a.type === "css" && a.path) {
         const l = document.createElement("link");
@@ -244,6 +272,11 @@ async function loadPluginAssets() {
         l.setAttribute("data-plugin", a.plugin_id || "");
         document.head.appendChild(l);
       }
+    }
+    // Wait for all plugin scripts to load before allowing renderModule to run
+    if (loadPromises.length > 0) {
+      await Promise.all(loadPromises);
+      console.log("[plugin] all JS assets loaded");
     }
   } catch (e) {
     console.warn("[loadPluginAssets] Error:", e);

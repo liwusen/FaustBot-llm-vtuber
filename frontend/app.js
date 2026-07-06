@@ -7,6 +7,7 @@ import { initNimbleWindows } from './libs/nimble-window.js';
 import { initHilApproval } from './libs/hil-approval.js';
 import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
 import { initAudioPlayback } from './libs/audio-playback.js';
+import { initAutocomplete } from './libs/autocomplete.js';
 
 
 
@@ -1493,15 +1494,6 @@ import { initAudioPlayback } from './libs/audio-playback.js';
   // wire up buttons (use the ASRController-like API)
   if (startAsrBtn) startAsrBtn.addEventListener('click', ()=> startRecording());
   if (stopAsrBtn) stopAsrBtn.addEventListener('click', ()=> stopRecording());
-  if (textChatSendBtn) textChatSendBtn.addEventListener('click', ()=>{ sendTextChatMessage(); });
-  if (textChatInput) textChatInput.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter' && !e.shiftKey){
-      // 如果 autocomplete 下拉框已打开，让 autocomplete 处理器接管 Enter
-      if (acDropdown) return;
-      e.preventDefault();
-      sendTextChatMessage();
-    }
-  });
   document.addEventListener('keydown', (e)=>{
     if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')){
       e.preventDefault();
@@ -1509,132 +1501,8 @@ import { initAudioPlayback } from './libs/audio-playback.js';
     }
   });
 
-  // ── Slash-command autocomplete ──
-  let acDropdown = null;
-  let acItems = [];
-  let acIndex = -1;
-  let acPending = null;
-
-  function acRemoveDropdown() {
-    if (acDropdown) { acDropdown.remove(); acDropdown = null; }
-    acItems = [];
-    acIndex = -1;
-  }
-  const AUTOCOMPLETE_ENDPOINT = 'http://127.0.0.1:13900/faust/autocomplete';
-
-  async function acFetch(text, cursor) {
-    try {
-      const resp = await fetch(AUTOCOMPLETE_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, cursor }),
-      });
-      if (!resp.ok) return [];
-      const data = await resp.json();
-      return data.items || [];
-    } catch { return []; }
-  }
-
-  function acRender(items) {
-    acRemoveDropdown();
-    if (!items.length || !textChatInput) return;
-    acItems = items;
-    acIndex = -1;
-    const rect = textChatInput.getBoundingClientRect();
-    acDropdown = document.createElement('div');
-    acDropdown.className = 'autocomplete-dropdown';
-    acDropdown.style.cssText =
-      `position:fixed;left:${rect.left}px;top:${rect.bottom + 4}px;` +
-      `width:${rect.width}px;max-height:200px;overflow-y:auto;` +
-      `background:rgba(30,30,40,0.92);border:1px solid rgba(255,255,255,0.15);` +
-      `border-radius:8px;z-index:9999;padding:4px 0;font-size:13px;`;
-    items.forEach((item, i) => {
-      const div = document.createElement('div');
-      div.className = 'ac-item';
-      div.dataset.index = i;
-      div.style.cssText =
-        `padding:6px 12px;cursor:pointer;color:#ccc;display:flex;align-items:center;gap:8px;`;
-      const labelSpan = document.createElement('span');
-      labelSpan.style.cssText = 'color:#e8e8e8;font-weight:600;flex-shrink:0;';
-      labelSpan.textContent = item.label;
-      div.appendChild(labelSpan);
-      if (item.detail) {
-        const detailSpan = document.createElement('span');
-        detailSpan.style.cssText = 'color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        detailSpan.textContent = item.detail;
-        div.appendChild(detailSpan);
-      }
-      div.addEventListener('click', () => acSelect(i));
-      div.addEventListener('mousedown', (e) => e.preventDefault());
-      acDropdown.appendChild(div);
-    });
-    document.body.appendChild(acDropdown);
-    acHighlight(0);
-  }
-
-  function acHighlight(idx) {
-    if (!acDropdown) return;
-    const items = acDropdown.querySelectorAll('.ac-item');
-    items.forEach((el, i) => {
-      el.style.background = i === idx ? 'rgba(100,140,255,0.25)' : 'transparent';
-    });
-    acIndex = idx;
-    if (idx >= 0 && items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
-  }
-
-  function acSelect(idx) {
-    if (idx < 0 || idx >= acItems.length || !textChatInput) return;
-    const item = acItems[idx];
-    textChatInput.value = item.insert_text;
-    acRemoveDropdown();
-    textChatInput.focus();
-    const len = item.insert_text.length;
-    textChatInput.setSelectionRange(len, len);
-  }
-
-  console.log('[ac] textChatInput:', !!textChatInput);
-  if (textChatInput) {
-    // ── input event: trigger autocomplete when value starts with / ──
-    textChatInput.addEventListener('input', () => {
-      const val = textChatInput.value;
-      if (!val.startsWith('/')) { acRemoveDropdown(); return; }
-      const cursor = textChatInput.selectionStart || val.length;
-      clearTimeout(acPending);
-      acPending = setTimeout(async () => {
-        acPending = null;
-        console.log('[ac] input trigger, fetching for:', JSON.stringify(val));
-        const items = await acFetch(val, cursor);
-        console.log('[ac] input trigger, got items:', items.length);
-        acRender(items);
-      }, 200);
-    });
-
-    // ── keydown: dropdown navigation and Enter send ──
-    textChatInput.addEventListener('keydown', (e) => {
-      if (acDropdown) {
-        if (e.key === 'ArrowDown') { e.preventDefault(); acHighlight(Math.min(acIndex + 1, acItems.length - 1)); return; }
-        if (e.key === 'ArrowUp') { e.preventDefault(); acHighlight(Math.max(acIndex - 1, 0)); return; }
-        if (e.key === 'Enter') {
-          if (acIndex >= 0 && acIndex < acItems.length) {
-            e.preventDefault();
-            acSelect(acIndex);
-            return;
-          }
-        }
-        if (e.key === 'Escape') { acRemoveDropdown(); return; }
-      }
-      // Enter send (dropdown hidden or no selection)
-      if (e.key === 'Enter' && !e.shiftKey) {
-        console.log('[ac] Enter send');
-        e.preventDefault();
-        sendTextChatMessage();
-      }
-    });
-
-    textChatInput.addEventListener('blur', () => {
-      setTimeout(acRemoveDropdown, 200);
-    });
-  }
+  // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
+  initAutocomplete(textChatInput, sendTextChatMessage);
 
   // update asrText position each frame if visible
   function rafUpdate(){

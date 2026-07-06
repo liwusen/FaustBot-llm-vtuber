@@ -745,6 +745,12 @@ class PluginManager:
             return []
         routers: list = []
         for plugin_id, plugin in self._faust_plugins.items():
+            # Skip disabled plugins
+            record = self._plugins.get(plugin_id, {})
+            manifest = record.get("manifest")
+            default_enabled = getattr(manifest, "enabled", True) if manifest else True
+            if not self._plugin_enabled(plugin_id, default_enabled):
+                continue
             try:
                 plugin_routes = plugin.register_routes()
                 if plugin_routes:
@@ -753,12 +759,39 @@ class PluginManager:
                 pass
         return routers
 
+    def mount_routes(self, app) -> None:
+        """Mount plugin FastAPI routers on the given app with ``/faust/plugins/{plugin_id}/`` prefix.
+
+        This is called during server startup (lifespan) and respects enabled/disabled state.
+        """
+        if not self._pluggy_loaded:
+            return
+        for plugin_id, plugin in self._faust_plugins.items():
+            record = self._plugins.get(plugin_id, {})
+            manifest = record.get("manifest")
+            default_enabled = getattr(manifest, "enabled", True) if manifest else True
+            if not self._plugin_enabled(plugin_id, default_enabled):
+                continue
+            try:
+                plugin_routes = plugin.register_routes()
+                if plugin_routes:
+                    for r in plugin_routes:
+                        app.include_router(r, prefix=f"/faust/plugins/{plugin_id}")
+            except Exception:
+                pass
+
     def collect_frontend_assets(self) -> list[dict]:
         """Collect frontend assets from pluggy-registered plugins."""
         if not self._pluggy_loaded:
             return []
         assets: list[dict] = []
         for plugin_id, plugin in self._faust_plugins.items():
+            # Skip disabled plugins
+            record = self._plugins.get(plugin_id, {})
+            manifest = record.get("manifest")
+            default_enabled = getattr(manifest, "enabled", True) if manifest else True
+            if not self._plugin_enabled(plugin_id, default_enabled):
+                continue
             try:
                 plugin_assets = plugin.register_frontend()
                 if plugin_assets:

@@ -2,7 +2,7 @@
   // Frontend Example Plugin — injected UI
   const api = window.pluginUI;
   if (!api) return;
-
+  console.log('Frontend Example Plugin: pluginUI is available, injecting UI...');
   // Add a plugin page
   api.addPage({
     id: 'frontend-example',
@@ -11,7 +11,8 @@
     plugin: 'frontend-example',
     render: function(container) {
       container.innerHTML = '<div class="fe-container"><h3>Frontend Example Plugin</h3><p id="fe-status">加载中...</p></div>';
-      fetch('/faust/plugins/frontend-example/hello')
+      const apiBase = (window.pluginUI && window.pluginUI.backendBaseUrl) || 'http://127.0.0.1:13900';
+      fetch(apiBase + '/faust/plugins/frontend-example/hello')
         .then(r => r.json())
         .then(data => {
           document.getElementById('fe-status').textContent = JSON.stringify(data);
