@@ -229,6 +229,42 @@ import { initAutocomplete } from './libs/autocomplete.js';
     return ['ParamMouthOpenY'];
   }
 
+  function getLive2DViewportMetrics(){
+    if (!app || !app.renderer || !app.renderer.view) return null;
+    const canvasRect = app.renderer.view.getBoundingClientRect();
+    const screen = app.screen || app.renderer.screen || null;
+    const screenWidth = Number(screen && screen.width) || Number(app.renderer.width) || 0;
+    const screenHeight = Number(screen && screen.height) || Number(app.renderer.height) || 0;
+    if (!canvasRect || !screenWidth || !screenHeight) return null;
+    return {
+      canvasRect,
+      screenWidth,
+      screenHeight,
+      scaleX: canvasRect.width / screenWidth,
+      scaleY: canvasRect.height / screenHeight,
+    };
+  }
+
+  function live2DToClient(x, y){
+    const metrics = getLive2DViewportMetrics();
+    if (!metrics) return null;
+    return {
+      x: metrics.canvasRect.left + x * metrics.scaleX,
+      y: metrics.canvasRect.top + y * metrics.scaleY,
+      scaleX: metrics.scaleX,
+      scaleY: metrics.scaleY,
+    };
+  }
+
+  function clientToLive2D(clientX, clientY){
+    const metrics = getLive2DViewportMetrics();
+    if (!metrics) return null;
+    return {
+      x: (clientX - metrics.canvasRect.left) * (metrics.screenWidth / metrics.canvasRect.width),
+      y: (clientY - metrics.canvasRect.top) * (metrics.screenHeight / metrics.canvasRect.height),
+    };
+  }
+
 
   function updateQuickAsrButton(){
     if (!quickToggleAsrBtn) return;
@@ -264,14 +300,13 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      const scaleX = canvasRect.width / app.renderer.width;
-      const scaleY = canvasRect.height / app.renderer.height;
-      const left = canvasRect.left + b.x * scaleX + scaleX * b.width * 0.4;
-      const top = canvasRect.top + b.y * scaleY;
-      const height = b.height * scaleY;
-      const controllerScale = Math.max(0.72, Math.min(1.2, scaleX));
+      const topLeft = live2DToClient(b.x, b.y);
+      if (!topLeft) return;
+      const left = topLeft.x + topLeft.scaleX * b.width * 0.4;
+      const top = topLeft.y;
+      const height = b.height * topLeft.scaleY;
+      const controllerScale = Math.max(0.72, Math.min(1.2, topLeft.scaleX));
       const rect = quickController.getBoundingClientRect();
       const estimatedWidth = rect.width > 0 ? rect.width : 104;
       const estimatedHeight = rect.height > 0 ? rect.height : 340;
@@ -329,9 +364,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
     if (!currentModel || !app || !app.renderer) return false;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
-      const rx = (clientX - canvasRect.left) * (app.renderer.width / canvasRect.width);
-      const ry = (clientY - canvasRect.top) * (app.renderer.height / canvasRect.height);
+      const point = clientToLive2D(clientX, clientY);
+      if (!point) return false;
+      const rx = point.x;
+      const ry = point.y;
       const b = currentModel.getBounds();
       const inBounds = rx >= b.x && rx <= b.x + b.width && ry >= b.y && ry <= b.y + b.height;
       if (!inBounds) return false;
@@ -1243,11 +1279,11 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      // b.x/b.y are renderer coordinates; map to client
-      const clientX = canvasRect.left + (b.x + b.width/2) * (canvasRect.width / app.renderer.width);
-      const clientY = canvasRect.top + (b.y) * (canvasRect.height / app.renderer.height);
+      const anchor = live2DToClient(b.x + b.width / 2, b.y);
+      if (!anchor) return;
+      const clientX = anchor.x;
+      const clientY = anchor.y;
       // position slightly above head
       const offsetY = -108;
       const bubbleWidth = Math.max(asrBubbleEl.offsetWidth, 220);
@@ -1291,12 +1327,11 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      const scaleX = canvasRect.width / app.renderer.width;
-      const scaleY = canvasRect.height / app.renderer.height;
-      const clientX = canvasRect.left + (b.x + b.width * 0.5) * scaleX;
-      const waistY = canvasRect.top + (b.y + b.height * textChatBarYFactor) * scaleY;
+      const anchor = live2DToClient(b.x + b.width * 0.5, b.y + b.height * textChatBarYFactor);
+      if (!anchor) return;
+      const clientX = anchor.x;
+      const waistY = anchor.y;
       const rect = textChatBar.getBoundingClientRect();
       const estimatedWidth = rect.width > 0 ? rect.width : 420;
       const estimatedHeight = rect.height > 0 ? rect.height : 64;
