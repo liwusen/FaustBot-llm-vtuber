@@ -117,6 +117,23 @@ async function ensureModuleData(moduleId) {
       state.componentStatus = null;
     }
   }
+  if (moduleId === "skills") {
+    try {
+      const agentName = state.skillsAgent || "";
+      const params = agentName ? { agent_name: agentName } : {};
+      const sk = await cfgApi("GET", "/faust/admin/skills", null, params);
+      state.skills = sk.items || [];
+      state.skillDetail = null;
+      // Load skill detail if one is selected
+      if (state.selectedSkillSlug) {
+        const sd = await cfgApi("GET", `/faust/admin/skills/${encodeURIComponent(state.selectedSkillSlug)}`, null, params);
+        state.skillDetail = sd.detail || null;
+      }
+    } catch (e) {
+      console.warn("skills data fetch error", e);
+      state.skills = [];
+    }
+  }
 }
 
 function renderAgentModule() {
