@@ -55,7 +55,7 @@ async def installOpenClawSkillTool(slug: str, overwrite: bool = False) -> str:
 def listSkills(show_detail: bool = False) -> str:
     """列出当前 Agent 已安装的所有可用技能（Skill）。
     返回技能的 slug 和描述，帮助了解 Agent 具备哪些领域能力。
-    如需某个技能的详细说明，用 read("skill.d/<slug>/SKILL.md") 读取。
+    如需某个技能的详细说明，用 read("skill://<slug>/SKILL.md") 读取。
 
     Args:
         show_detail (bool): 是否显示每个技能的详细说明和 SKILL.md 路径。
@@ -81,7 +81,7 @@ def listSkills(show_detail: bool = False) -> str:
                 summary = f" - {desc[:80]}" if desc else ""
                 lines.append(f"  - {slug} {status}{summary}")
         if not show_detail:
-            lines.append("\n提示：使用 read(\"skill.d/<slug>/SKILL.md\") 查看技能完整说明。")
+            lines.append("\n提示：使用 read(\"skill://<slug>/SKILL.md\") 查看技能完整说明。")
         return "\n".join(lines)
     except Exception as e:
         return f"技能列表读取失败: {e}"

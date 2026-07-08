@@ -17,7 +17,14 @@ import pytest
 # Ensure the backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.runtime.uri import parse, SCHEME_FILE, SCHEME_ARTIFACT, SCHEME_MEMORY
+from faust_backend.runtime.uri import (
+    parse,
+    SCHEME_FILE,
+    SCHEME_ARTIFACT,
+    SCHEME_MEMORY,
+    SCHEME_SKILL,
+    SCHEME_FAUSTBOT,
+)
 from faust_backend.runtime.output_store import OutputStore, reset_output_store
 
 
@@ -92,6 +99,17 @@ class TestURIParse:
         p = parse("memory://?q=勾股定理&top_k=5")
         assert p.scheme == SCHEME_MEMORY
         assert p.query == {"q": ["勾股定理"], "top_k": ["5"]}
+
+    def test_skill_bare(self):
+        p = parse("skill://demo/SKILL.md")
+        assert p.scheme == SCHEME_SKILL
+        assert p.path == "demo/SKILL.md"
+
+    def test_faustbot_with_selector(self):
+        p = parse("faustbot://index.md:1-3")
+        assert p.scheme == SCHEME_FAUSTBOT
+        assert p.path == "index.md"
+        assert p.selector == ":1-3"
 
     def test_empty(self):
         p = parse("")
@@ -282,6 +300,73 @@ class MyClass:
         from faust_backend.tools.read import read
         result = read.invoke({"uri": "nonexistent_file_xyz.txt"})
         assert "不存在" in result
+
+    def test_read_faustbot_index(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "faustbot://index.md"})
+        assert "faustbot://tool_use.md" in result
+        assert "faustbot://source/{PATH}" in result
+
+    def test_read_faustbot_source(self, tmp_path):
+        from faust_backend.tools.read import read
+        import faust_backend.config_loader as conf
+
+        backend_root = tmp_path / "backend"
+        backend_root.mkdir(parents=True, exist_ok=True)
+        repo_file = tmp_path / "README.md"
+        repo_file.write_text("hello source", encoding="utf-8")
+
+        orig_root = conf.PROJECT_ROOT
+        conf.PROJECT_ROOT = str(backend_root)
+        try:
+            result = read.invoke({"uri": "faustbot://source/README.md"})
+            assert "hello source" in result
+        finally:
+            conf.PROJECT_ROOT = orig_root
+
+    def test_read_faustbot_source_rejects_escape(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "faustbot://source/../secret.txt"})
+        assert "不允许" in result
+
+    def test_read_skill_default_skill_md(self, tmp_path):
+        from faust_backend.tools.read import read
+        import faust_backend.config_loader as conf
+        from faust_backend.runtime import state
+
+        agent_root = tmp_path / "agents" / "demo_agent"
+        skill_root = agent_root / "skill.d" / "demo_skill"
+        skill_root.mkdir(parents=True, exist_ok=True)
+        (agent_root / "TASK.md").write_text("# task\n", encoding="utf-8")
+        (skill_root / "SKILL.md").write_text("skill content", encoding="utf-8")
+
+        orig_config_root = conf.CONFIG_ROOT
+        orig_agent_name = state.AGENT_NAME
+        orig_agent_root = state.AGENT_ROOT
+        conf.CONFIG_ROOT = str(tmp_path)
+        state.AGENT_NAME = "demo_agent"
+        state.AGENT_ROOT = str(agent_root)
+        try:
+            result = read.invoke({"uri": "skill://demo_skill"})
+            assert "skill content" in result
+        finally:
+            conf.CONFIG_ROOT = orig_config_root
+            state.AGENT_NAME = orig_agent_name
+            state.AGENT_ROOT = orig_agent_root
+
+    def test_read_skill_rejects_escape(self, tmp_path):
+        from faust_backend.tools.read import read
+        from faust_backend.runtime import state
+
+        agent_root = tmp_path / "agents" / "demo_agent"
+        (agent_root / "skill.d" / "demo_skill").mkdir(parents=True, exist_ok=True)
+        orig_agent_root = state.AGENT_ROOT
+        state.AGENT_ROOT = str(agent_root)
+        try:
+            result = read.invoke({"uri": "skill://demo_skill/../secret.txt"})
+            assert "不允许" in result
+        finally:
+            state.AGENT_ROOT = orig_agent_root
 
 
 # ============================================================

@@ -7,13 +7,24 @@ addressable resource.
 
 from __future__ import annotations
 
+import getpass
+import json
 import os
+import platform
+import sys
 from pathlib import Path
 
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-from faust_backend.runtime.uri import parse, SCHEME_FILE, SCHEME_ARTIFACT, SCHEME_MEMORY
+from faust_backend.runtime.uri import (
+    parse,
+    SCHEME_FILE,
+    SCHEME_ARTIFACT,
+    SCHEME_MEMORY,
+    SCHEME_SKILL,
+    SCHEME_FAUSTBOT,
+)
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
 from faust_backend.logger import get_logger
@@ -93,6 +104,14 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
         return result
     elif parsed.scheme == SCHEME_MEMORY:
         result = _read_memory(parsed, force_plain_text=force_plain_text)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
+    elif parsed.scheme == SCHEME_SKILL:
+        result = _read_skill(parsed, force_plain_text=force_plain_text)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
+    elif parsed.scheme == SCHEME_FAUSTBOT:
+        result = _read_faustbot(parsed, force_plain_text=force_plain_text)
         log.info("read OUTPUT len=%d", len(result))
         return result
     else:
@@ -184,6 +203,156 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
         selected = lines[start - 1:end]
         return "\n".join(selected)
     return content
+
+
+def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
+    del force_plain_text
+    from faust_backend.runtime import state
+
+    raw_path = str(parsed.path or "").strip("/")
+    if not raw_path:
+        return "[skill 路径不能为空: 需要 skill://<slug>/SKILL.md]"
+
+    parts = [part for part in raw_path.split("/") if part]
+    skill_name = parts[0] if parts else ""
+    if not skill_name:
+        return "[skill 名称不能为空]"
+
+    relative_parts = parts[1:] or ["SKILL.md"]
+    if any(part in (".", "..") for part in relative_parts):
+        return "[不允许越界访问 skill 目录]"
+
+    skill_root = Path(state.AGENT_ROOT) / "skill.d" / skill_name
+    target_path = (skill_root / Path(*relative_parts)).resolve()
+    try:
+        skill_root_resolved = skill_root.resolve()
+    except FileNotFoundError:
+        skill_root_resolved = skill_root
+    if not str(target_path).startswith(str(skill_root_resolved)):
+        return "[不允许访问 skill 目录外的文件]"
+    if not target_path.exists():
+        return f"[skill 文件不存在: {skill_name}/{'/'.join(relative_parts)}]"
+
+    file_uri = str(target_path)
+    if parsed.selector:
+        file_uri += parsed.selector
+    return _read_file(parse(file_uri))
+
+
+def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
+    del force_plain_text
+    path = str(parsed.path or "index.md").strip("/") or "index.md"
+
+    if path == "index.md":
+        content = "\n".join([
+            "# faustbot:// 只读索引",
+            "",
+            "可读取资源：",
+            "- faustbot://index.md",
+            "- faustbot://tool_use.md",
+            "- faustbot://mc.md",
+            "- faustbot://pc_info",
+            "- faustbot://source/{PATH}",
+            "",
+            "使用说明：",
+            "- 先读 faustbot://index.md 了解可用内容。",
+            "- 想看工具使用规范，读取 faustbot://tool_use.md。",
+            "- 想看 Minecraft 指南，读取 faustbot://mc.md。",
+            "- 想只读源码，读取 faustbot://source/{PATH}。",
+        ])
+        return _apply_selector_to_text(content, parsed.selector_lines)
+
+    if path == "tool_use.md":
+        content = _read_task_section("## 核心工具速查")
+        return _apply_selector_to_text(content, parsed.selector_lines)
+
+    if path == "mc.md":
+        content = _read_task_section("## Minecraft 操作系统说明")
+        return _apply_selector_to_text(content, parsed.selector_lines)
+
+    if path == "pc_info":
+        info = "\n".join([
+            "# pc_info",
+            f"username: {getpass.getuser()}",
+            f"platform: {platform.platform()}",
+            f"python: {sys.version.split()[0]}",
+            f"cwd: {os.getcwd()}",
+        ])
+        return _apply_selector_to_text(info, parsed.selector_lines)
+
+    if path.startswith("source/"):
+        return _read_faustbot_source(parsed)
+
+    return f"[未知 faustbot 资源: {path}]"
+
+
+def _read_faustbot_source(parsed) -> str:
+    source_rel = str(parsed.path or "").strip("/")[len("source/"):]
+    if not source_rel:
+        return _list_directory(_get_faustbot_source_root())
+    rel_path = Path(source_rel)
+    if any(part in (".", "..") for part in rel_path.parts):
+        return "[不允许访问 source 根目录外的路径]"
+    source_root = _get_faustbot_source_root().resolve()
+    target_path = (source_root / rel_path).resolve()
+    if not str(target_path).startswith(str(source_root)):
+        return "[不允许访问 source 根目录外的路径]"
+    if not target_path.exists():
+        return f"[source 文件不存在: {source_rel}]"
+    file_uri = str(target_path)
+    if parsed.selector:
+        file_uri += parsed.selector
+    return _read_file(parse(file_uri))
+
+
+def _get_faustbot_source_root() -> Path:
+    from faust_backend.config_loader import PROJECT_ROOT
+
+    backend_root = Path(PROJECT_ROOT)
+    repo_root = backend_root.parent
+    if getattr(sys, "frozen", False):
+        mirror_root = backend_root / "data" / "source"
+        if mirror_root.exists():
+            return mirror_root
+        raise FileNotFoundError("源码镜像未生成: backend/data/source")
+    return repo_root
+
+
+def _read_task_section(section_title: str) -> str:
+    from faust_backend.runtime import state
+
+    task_path = Path(state.AGENT_ROOT) / "TASK.md"
+    if not task_path.exists():
+        return f"[找不到 TASK.md: {task_path}]"
+    content = task_path.read_text(encoding="utf-8", errors="replace")
+    extracted = _extract_markdown_section(content, section_title)
+    return extracted or f"[TASK.md 中找不到章节: {section_title}]"
+
+
+def _extract_markdown_section(content: str, section_title: str) -> str:
+    lines = content.splitlines()
+    start = None
+    for idx, line in enumerate(lines):
+        if line.strip() == section_title.strip():
+            start = idx
+            break
+    if start is None:
+        return ""
+
+    end = len(lines)
+    for idx in range(start + 1, len(lines)):
+        if lines[idx].startswith("## "):
+            end = idx
+            break
+    return "\n".join(lines[start:end]).strip()
+
+
+def _apply_selector_to_text(content: str, selector_lines: tuple[int, int] | None) -> str:
+    if not selector_lines:
+        return content
+    start, end = selector_lines
+    lines = content.split("\n")
+    return "\n".join(lines[start - 1:end])
 
 
 def _read_file(parsed, *, force_plain_text: bool = False) -> str:
