@@ -43,6 +43,10 @@ class Plugin(FaustPlugin):
                 "path": "/faust/plugins/frontend-example/frontend/panel.js",
             },
             {
+                "type": "js",
+                "path": "/faust/plugins/frontend-example/frontend/app-hook.js",
+            },
+            {
                 "type": "css",
                 "path": "/faust/plugins/frontend-example/frontend/panel.css",
             },

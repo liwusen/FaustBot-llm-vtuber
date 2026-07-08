@@ -82,6 +82,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   let vrmScene = null;
   let modelType = 'live2d';
   let _vrmModulePromise = null;
+  let appPluginAssetsLoaded = false;
   async function getVRMModule() {
     if (!_vrmModulePromise) {
       _vrmModulePromise = import('./libs/vrm-renderer.bundle.js');
@@ -103,6 +104,117 @@ import { initAutocomplete } from './libs/autocomplete.js';
     return normalized;
   }
 
+  function emitAppPluginEvent(eventName, payload){
+    if (!window.faustAppUI || !(window.faustAppUI._listeners instanceof Map)) return;
+    const listeners = window.faustAppUI._listeners.get(eventName);
+    if (!Array.isArray(listeners)) return;
+    for (const listener of listeners) {
+      try {
+        listener(payload);
+      } catch (e) {
+        console.warn('[faustAppUI] listener failed', eventName, e);
+      }
+    }
+  }
+
+  async function runAppPluginCommandHandlers(cmd, arg){
+    if (!window.faustAppUI || !Array.isArray(window.faustAppUI._commandHandlers)) return false;
+    for (const handler of window.faustAppUI._commandHandlers) {
+      try {
+        const handled = await handler(cmd, arg);
+        if (handled) return true;
+      } catch (e) {
+        console.warn('[faustAppUI] command handler failed', cmd, e);
+      }
+    }
+    return false;
+  }
+
+  async function loadAppPluginAssets(){
+    if (appPluginAssetsLoaded) return;
+    try{
+      if (!window.api || typeof window.api.configRequest !== 'function') {
+        console.warn('[loadAppPluginAssets] window.api.configRequest not available');
+        return;
+      }
+      const data = await window.api.configRequest('GET', '/faust/admin/plugins/assets');
+      if (!data) return;
+      const assets = data.assets || [];
+      const baseUrl = window.api.backendBaseUrl || 'http://127.0.0.1:13900';
+      if (window.faustAppUI) window.faustAppUI.backendBaseUrl = baseUrl;
+      const pending = [];
+      for (const asset of assets) {
+        if (asset.type === 'js' && asset.path) {
+          const script = document.createElement('script');
+          script.src = baseUrl + asset.path;
+          script.setAttribute('data-plugin', asset.plugin_id || '');
+          pending.push(new Promise((resolve) => {
+            script.onload = () => resolve();
+            script.onerror = () => { console.warn('[faustAppUI] failed to load JS', asset.path); resolve(); };
+          }));
+          document.head.appendChild(script);
+        } else if (asset.type === 'css' && asset.path) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = baseUrl + asset.path;
+          link.setAttribute('data-plugin', asset.plugin_id || '');
+          document.head.appendChild(link);
+        }
+      }
+      if (pending.length) {
+        await Promise.all(pending);
+      }
+      appPluginAssetsLoaded = true;
+    }catch(e){
+      console.warn('[loadAppPluginAssets] Error:', e);
+    }
+  }
+
+  if (!window.faustAppUI) {
+    window.faustAppUI = {
+      backendBaseUrl: (window.api && window.api.backendBaseUrl) || 'http://127.0.0.1:13900',
+      _listeners: new Map(),
+      _commandHandlers: [],
+
+      on(eventName, listener){
+        if (!eventName || typeof listener !== 'function') return () => {};
+        const listeners = this._listeners.get(eventName) || [];
+        listeners.push(listener);
+        this._listeners.set(eventName, listeners);
+        return () => {
+          const current = this._listeners.get(eventName) || [];
+          this._listeners.set(eventName, current.filter((item) => item !== listener));
+        };
+      },
+
+      registerCommandHandler(handler){
+        if (typeof handler !== 'function') return () => {};
+        this._commandHandlers.push(handler);
+        return () => {
+          this._commandHandlers = this._commandHandlers.filter((item) => item !== handler);
+        };
+      },
+
+      getState(){
+        return {
+          modelType,
+          hasLive2DModel: !!currentModel,
+          hasVRMModel: !!vrmScene,
+          availableMotions: Array.isArray(availableMotions) ? [...availableMotions] : [],
+          agentIsProcessing,
+        };
+      },
+
+      showBubble(text, source = 'ai'){
+        showResultBubble(source, text);
+      },
+
+      triggerMotion(name){
+        return triggerModelMotion(name);
+      },
+    };
+  }
+
 
 
 
@@ -121,6 +233,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   });
 
   document.getElementById('app').appendChild(app.view);
+  loadAppPluginAssets();
 
   try{ window.PIXI = PIXI; }catch(e){/* ignore in non-browser env */}
 
@@ -740,6 +853,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
     const cmd = parts[0].toUpperCase();
     const arg = parts.slice(1).join(' ').trim();
     console.log('Faust command received:', cmd, arg);
+    emitAppPluginEvent('frontend_command', { cmd, arg });
+    if (await runAppPluginCommandHandlers(cmd, arg)) return;
     try{
       if (cmd === 'PLAYMUSIC'){
         if (!arg) return;
@@ -1014,6 +1129,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     let msg = null;
     try{ msg = JSON.parse(raw); }catch(e){ msg = { type: 'error', error: String(e) }; }
     if (!msg) return;
+    emitAppPluginEvent('chat_message', msg);
 
     if (msg.type === 'start'){
       resetStreamTtsState();
