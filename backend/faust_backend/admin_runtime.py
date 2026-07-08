@@ -60,6 +60,14 @@ PUBLIC_CONFIG_DEFAULTS = {
     "LIVE2D_MODEL_X": None,
     "LIVE2D_MODEL_Y": None,
     "VRM_MODEL_PATH": "",
+    "IMAGE_MODEL_CONFIG": {
+        "baseImages": [],
+        "emotions": [],
+        "tapImages": [],
+        "mouthShapes": [],
+        "motionDurationMs": 3000,
+        "tapDurationMs": 700,
+    },
     "TEXT_CHAT_BAR_Y_FACTOR": 0.53,
     "FRONTEND_QUICK_CONTROLLER_X_OFFSET": -12,
     "FRONTEND_CLICK_THROUGH": True,
@@ -198,6 +206,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 def list_available_models() -> List[Dict[str, str]]:
     frontend_root = PROJECT_ROOT.parent / "frontend"
     results: List[Dict[str, str]] = []
+    public_cfg = get_public_config()
 
     models_2d = frontend_root / "models" / "2D" if (frontend_root / "models" / "2D").exists() else frontend_root / "2D"
     if models_2d.exists():
@@ -210,6 +219,10 @@ def list_available_models() -> List[Dict[str, str]]:
         for vrm_file in models_vrm.rglob("*.vrm"):
             rel = vrm_file.relative_to(frontend_root).as_posix()
             results.append({"label": vrm_file.stem, "path": rel, "type": "vrm"})
+
+    image_cfg = public_cfg.get("IMAGE_MODEL_CONFIG") or {}
+    if isinstance(image_cfg, dict) and any(image_cfg.get(key) for key in ("baseImages", "emotions", "tapImages", "mouthShapes")):
+        results.append({"label": "Images 模型", "path": "IMAGE_MODEL_CONFIG", "type": "images"})
 
     return sorted(results, key=lambda x: x["path"])
 
@@ -412,13 +425,15 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
     payload = payload or {}
     public_cfg = get_public_config()
     model_type = str(payload.get("MODEL_TYPE") or public_cfg.get("MODEL_TYPE") or "live2d").strip().lower()
+    model_path_key = "VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH"
     model_path = str(
-        payload.get("VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH")
-        or public_cfg.get("VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH")
+        payload.get(model_path_key)
+        or public_cfg.get(model_path_key)
         or ""
     ).strip()
     if not model_path and model_type == "live2d":
         model_path = str(public_cfg.get("LIVE2D_MODEL_PATH") or "").strip()
+    image_model_config = payload.get("IMAGE_MODEL_CONFIG", public_cfg.get("IMAGE_MODEL_CONFIG"))
 
     model_scale = payload.get("LIVE2D_MODEL_SCALE", public_cfg.get("LIVE2D_MODEL_SCALE"))
     model_x = payload.get("LIVE2D_MODEL_X", public_cfg.get("LIVE2D_MODEL_X"))
@@ -426,7 +441,9 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
     text_chat_y_factor = payload.get("TEXT_CHAT_BAR_Y_FACTOR", public_cfg.get("TEXT_CHAT_BAR_Y_FACTOR"))
     quick_controller_x_offset = payload.get("FRONTEND_QUICK_CONTROLLER_X_OFFSET", public_cfg.get("FRONTEND_QUICK_CONTROLLER_X_OFFSET"))
 
-    if model_path:
+    if model_type == "images":
+        backend2frontend.FrontEndLoadModel("__faust_images__")
+    elif model_path:
         backend2frontend.FrontEndLoadModel(model_path)
     if model_scale not in (None, ""):
         backend2frontend.FrontEndSetModelScale(model_scale)
@@ -443,6 +460,7 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
             "MODEL_TYPE": model_type,
             "LIVE2D_MODEL_PATH": model_path if model_type == "live2d" else None,
             "VRM_MODEL_PATH": model_path if model_type == "vrm" else None,
+            "IMAGE_MODEL_CONFIG": image_model_config if model_type == "images" else None,
             "LIVE2D_MODEL_SCALE": model_scale,
             "LIVE2D_MODEL_X": model_x,
             "LIVE2D_MODEL_Y": model_y,

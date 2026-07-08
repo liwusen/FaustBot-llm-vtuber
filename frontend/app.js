@@ -244,6 +244,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   let baseScale = 1;
   let scaleFactor = parseFloat(modelScaleSlider ? modelScaleSlider.value : 1.0) || 1.0;
   let runtimeLive2DConfig = null;
+  let runtimeImageModelConfig = null;
   let lastPersistedModelPosition = null;
 
   async function loadRuntimeLive2DConfig(){
@@ -540,6 +541,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
       if (expressions.includes(motionName)) {
         triggered = !!vrmScene.setExpression(motionName);
       }
+    } else if (modelType === 'images' && currentModel && currentModel._faustImageModel) {
+      triggered = !!currentModel._faustImageModel.setEmotion(motionName);
     } else {
       if (availableMotions.includes(motionName)) {
         triggered = playMotionByName(motionName);
@@ -1757,6 +1760,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
       if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
       const { VRMScene } = await getVRMModule();
       if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
+      if (currentModel && currentModel.parent) {
+        currentModel.parent.removeChild(currentModel);
+        currentModel = null;
+      }
       if (!vrmScene) {
         if (app && app.view) app.view.style.display = 'none';
         vrmScene = new VRMScene();
@@ -1862,8 +1869,198 @@ import { initAutocomplete } from './libs/autocomplete.js';
     modelType = 'live2d';
   }
 
+  function normalizeImageModelConfig(rawConfig){
+    const cfg = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
+    return {
+      baseImages: Array.isArray(cfg.baseImages) ? cfg.baseImages.filter(Boolean).map(String) : [],
+      emotions: Array.isArray(cfg.emotions) ? cfg.emotions.map((item) => ({
+        name: String(item && item.name || '').trim(),
+        images: Array.isArray(item && item.images) ? item.images.filter(Boolean).map(String) : [],
+      })).filter((item) => item.name) : [],
+      tapImages: Array.isArray(cfg.tapImages) ? cfg.tapImages.filter(Boolean).map(String) : [],
+      mouthShapes: Array.isArray(cfg.mouthShapes) ? cfg.mouthShapes.map((item) => ({
+        path: String(item && item.path || '').trim(),
+        openness: Math.max(0, Math.min(1, Number(item && item.openness) || 0)),
+      })).filter((item) => item.path) : [],
+      motionDurationMs: Math.max(200, Number(cfg.motionDurationMs) || 3000),
+      tapDurationMs: Math.max(100, Number(cfg.tapDurationMs) || 700),
+    };
+  }
+
+  async function resolveImageModelConfig(rawConfig){
+    const cfg = normalizeImageModelConfig(rawConfig);
+    const resolveList = async (items) => {
+      const resolved = [];
+      for (const item of items) {
+        const path = await resolveFrontendAssetPath(item);
+        if (path) resolved.push(path);
+      }
+      return resolved;
+    };
+    const emotions = [];
+    for (const emotion of cfg.emotions) {
+      emotions.push({ name: emotion.name, images: await resolveList(emotion.images) });
+    }
+    const mouthShapes = [];
+    for (const shape of cfg.mouthShapes) {
+      const path = await resolveFrontendAssetPath(shape.path);
+      if (path) mouthShapes.push({ path, openness: shape.openness });
+    }
+    return {
+      baseImages: await resolveList(cfg.baseImages),
+      emotions,
+      tapImages: await resolveList(cfg.tapImages),
+      mouthShapes,
+      motionDurationMs: cfg.motionDurationMs,
+      tapDurationMs: cfg.tapDurationMs,
+    };
+  }
+
+  function pickRandomItem(items){
+    if (!Array.isArray(items) || !items.length) return '';
+    return items[Math.floor(Math.random() * items.length)] || '';
+  }
+
+  async function loadImageModel(rawConfig){
+    if (modelType !== 'images') {
+      switchToLive2DRenderer();
+      modelType = 'images';
+    }
+    const loadRequestId = ++activeModelLoadRequestId;
+    const resolvedConfig = await resolveImageModelConfig(rawConfig);
+    if (loadRequestId !== activeModelLoadRequestId) return;
+    const initialPath = pickRandomItem(resolvedConfig.baseImages)
+      || pickRandomItem(resolvedConfig.tapImages)
+      || (resolvedConfig.mouthShapes[0] && resolvedConfig.mouthShapes[0].path)
+      || '';
+    if (!initialPath) {
+      showOverlay('Images 模型未配置任何图片');
+      return;
+    }
+    const texture = PIXI.Texture.from(initialPath);
+    const sprite = new PIXI.Sprite(texture);
+    if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
+    currentModel = sprite;
+    runtimeImageModelConfig = resolvedConfig;
+    availableMotions = resolvedConfig.emotions.map((item) => item.name);
+    currentLipSyncParamIds = [];
+    sprite.anchor.set(0.5, 1.0);
+    sprite.x = app.renderer.width - 200;
+    sprite.y = app.renderer.height - 20;
+    sprite.interactive = true;
+    sprite.buttonMode = true;
+    sprite.cursor = 'grab';
+    sprite._faustImageModel = {
+      config: resolvedConfig,
+      emotionUntil: 0,
+      tapUntil: 0,
+      currentEmotion: '',
+      currentEmotionImage: '',
+      currentTapImage: '',
+      mouthOpen: 0,
+      lastTexturePath: initialPath,
+      setEmotion(name) {
+        const group = this.config.emotions.find((item) => item.name === name && item.images.length);
+        if (!group) return false;
+        this.currentEmotion = name;
+        this.currentEmotionImage = pickRandomItem(group.images);
+        this.emotionUntil = Date.now() + this.config.motionDurationMs;
+        this.refreshTexture();
+        return true;
+      },
+      triggerTap() {
+        if (!this.config.tapImages.length) return;
+        this.currentTapImage = pickRandomItem(this.config.tapImages);
+        this.tapUntil = Date.now() + this.config.tapDurationMs;
+        this.refreshTexture();
+      },
+      setMouthOpen(value) {
+        this.mouthOpen = Math.max(0, Math.min(1, Number(value) || 0));
+        this.refreshTexture();
+      },
+      getCurrentImagePath() {
+        const now = Date.now();
+        if (this.tapUntil > now && this.currentTapImage) return this.currentTapImage;
+        if (this.config.mouthShapes.length && this.mouthOpen > 0.01) {
+          let best = this.config.mouthShapes[0];
+          let bestDist = Math.abs(best.openness - this.mouthOpen);
+          for (const item of this.config.mouthShapes) {
+            const dist = Math.abs(item.openness - this.mouthOpen);
+            if (dist < bestDist) { best = item; bestDist = dist; }
+          }
+          if (best && best.path) return best.path;
+        }
+        if (this.emotionUntil > now && this.currentEmotionImage) return this.currentEmotionImage;
+        return pickRandomItem(this.config.baseImages) || this.lastTexturePath || initialPath;
+      },
+      refreshTexture() {
+        const nextPath = this.getCurrentImagePath();
+        if (!nextPath || nextPath === this.lastTexturePath) return;
+        this.lastTexturePath = nextPath;
+        sprite.texture = PIXI.Texture.from(nextPath);
+      },
+    };
+
+    sprite.on('pointerdown', (e) => {
+      if (clickThroughController) clickThroughController.forceInteractive();
+      setInteractionLock(true);
+      dragging = true;
+      sprite.cursor = 'grabbing';
+      const pos = e.data.global;
+      dragOffset.x = pos.x - sprite.x;
+      dragOffset.y = pos.y - sprite.y;
+      sprite._faustImageModel.triggerTap();
+    });
+    sprite.on('pointerup', () => {
+      dragging = false;
+      sprite.cursor = 'grab';
+      setInteractionLock(false);
+      persistModelPositionToBackend();
+    });
+    sprite.on('pointerupoutside', () => {
+      dragging = false;
+      sprite.cursor = 'grab';
+      setInteractionLock(false);
+      persistModelPositionToBackend();
+    });
+    sprite.on('pointermove', (e) => {
+      if (!dragging) return;
+      const pos = e.data.global;
+      let rawX = pos.x - dragOffset.x;
+      let rawY = pos.y - dragOffset.y;
+      const marginTop = 160;
+      const marginBottom = 20;
+      const marginX = 160;
+      rawX = Math.max(marginX, Math.min(app.renderer.width - marginX, rawX));
+      rawY = Math.max(marginTop, Math.min(app.renderer.height - marginBottom, rawY));
+      sprite.x = rawX;
+      sprite.y = rawY;
+      updateQuickControllerPosition();
+    });
+
+    app.stage.addChild(sprite);
+    clearOverlay();
+    baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
+    const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
+      ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
+      : null;
+    const configuredY = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_Y !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_Y !== null && runtimeLive2DConfig.LIVE2D_MODEL_Y !== ''
+      ? Number(runtimeLive2DConfig.LIVE2D_MODEL_Y)
+      : null;
+    if (Number.isFinite(configuredX)) sprite.x = configuredX;
+    if (Number.isFinite(configuredY)) sprite.y = configuredY;
+    applyModelScale();
+    updateTextChatBarPosition();
+    refreshQuickControllerVisibility();
+    if (modelPathInput) modelPathInput.value = '__faust_images__';
+  }
+
   function loadModel(path){
     const ext = String(path || '').toLowerCase().trim();
+    if (ext === '__faust_images__') {
+      loadImageModel(runtimeImageModelConfig || (runtimeLive2DConfig && runtimeLive2DConfig.IMAGE_MODEL_CONFIG) || {});
+      return;
+    }
     if (ext.endsWith('.vrm')) {
       loadVRMModel(path);
       return;
@@ -2012,6 +2209,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     const configuredQuickControllerXOffset = runtimeCfg && runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET !== undefined && runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET !== null && runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET !== ''
       ? Number(runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET)
       : null;
+    runtimeImageModelConfig = runtimeCfg && runtimeCfg.IMAGE_MODEL_CONFIG ? runtimeCfg.IMAGE_MODEL_CONFIG : null;
     if (Number.isFinite(configuredScale) && configuredScale > 0) {
       scaleFactor = configuredScale;
       if (modelScaleSlider) modelScaleSlider.value = String(scaleFactor);
@@ -2027,8 +2225,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
     const vrmModelPath = configuredModelType === 'vrm'
       ? (runtimeCfg && runtimeCfg.VRM_MODEL_PATH ? String(runtimeCfg.VRM_MODEL_PATH).trim() : '')
       : '';
-    const toLoad = configuredModelType === 'vrm' ? (vrmModelPath || configuredModel || defaultModel) : (configuredModel || defaultModel);
-    modelPathInput.value = toLoad;
+    const toLoad = configuredModelType === 'vrm'
+      ? (vrmModelPath || configuredModel || defaultModel)
+      : (configuredModelType === 'images' ? '__faust_images__' : (configuredModel || defaultModel));
+    modelPathInput.value = configuredModelType === 'images' ? '__faust_images__' : toLoad;
     // small delay so UI visible
     setTimeout(()=>{ loadModel(toLoad); }, 120);
   })();

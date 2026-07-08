@@ -27,6 +27,10 @@ export function initAudioPlayback({
     const ids = getLipSyncParamIds();
     const paramIds = Array.isArray(ids) && ids.length ? ids : ['ParamMouthOpenY'];
     try {
+      if (currentModel._faustImageModel && typeof currentModel._faustImageModel.setMouthOpen === 'function') {
+        currentModel._faustImageModel.setMouthOpen(mouth);
+        return;
+      }
       if (currentModel.internalModel && currentModel.internalModel.coreModel && typeof currentModel.internalModel.coreModel.setParameterValueById === 'function') {
         for (const paramId of paramIds) currentModel.internalModel.coreModel.setParameterValueById(paramId, mouth);
         return;

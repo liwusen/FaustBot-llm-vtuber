@@ -184,12 +184,19 @@ function pickModuleFields(moduleId) {
     const modelType = String(state.config.public.MODEL_TYPE || "live2d").toLowerCase();
     if (modelType === "vrm") {
       const vrmOnly = LIVE2D_KEYS.filter((k) => {
-        if (k === "LIVE2D_MODEL_PATH" || k === "LIVE2D_MODEL_X" || k === "LIVE2D_MODEL_Y") return false;
+        if (k === "LIVE2D_MODEL_PATH" || k === "LIVE2D_MODEL_X" || k === "LIVE2D_MODEL_Y" || k === "IMAGE_MODEL_CONFIG") return false;
         return publicKeys.includes(k);
       });
       return { publicKeys: vrmOnly, privateKeys: [] };
     }
-    return { publicKeys: LIVE2D_KEYS.filter((k) => publicKeys.includes(k)), privateKeys: [] };
+    if (modelType === "images") {
+      const imageOnly = LIVE2D_KEYS.filter((k) => {
+        if (k === "LIVE2D_MODEL_PATH" || k === "VRM_MODEL_PATH" || k === "IMAGE_MODEL_CONFIG") return false;
+        return publicKeys.includes(k);
+      });
+      return { publicKeys: imageOnly, privateKeys: [] };
+    }
+    return { publicKeys: LIVE2D_KEYS.filter((k) => publicKeys.includes(k) && k !== "IMAGE_MODEL_CONFIG"), privateKeys: [] };
   }
   if (moduleId === "speech") {
     const modeTts = String(state.config.public.TTS_MODE || "").toLowerCase();
@@ -304,33 +311,184 @@ function renderConfigModule(moduleId) {
     m.append(el("h3", "card-title", "模型类型"));
     const typeRow = el("div", "list-row");
     typeRow.append(el("span", "", "当前模型类型: " + modelType.toUpperCase()));
-    const switchType = modelType === "vrm" ? "live2d" : "vrm";
-    typeRow.append(makeButton(`切换到 ${switchType.toUpperCase()}`, async () => {
-      updateValue("public", "MODEL_TYPE", switchType);
-      renderModule();
-      await saveConfig();
-    }, "btn btn-ghost"));
+    for (const switchType of ["live2d", "vrm", "images"]) {
+      if (switchType === modelType) continue;
+      typeRow.append(makeButton(`切换到 ${switchType.toUpperCase()}`, async () => {
+        updateValue("public", "MODEL_TYPE", switchType);
+        renderModule();
+        await saveConfig();
+      }, "btn btn-ghost"));
+    }
     m.append(typeRow);
 
     const m2 = el("article", "card full-span");
     m2.append(el("h3", "card-title", "可用模型"));
     const list = el("div", "list-box");
-    const filtered = state.live2dModels.filter((item) => item.type === modelType);
-    if (!filtered.length) {
-      list.append(el("div", "empty-state", `暂无 ${modelType.toUpperCase()} 模型，可先点击右上角 Reload 或手动放置模型文件。`));
+    if (modelType === "images") {
+      const cfg = state.config.public.IMAGE_MODEL_CONFIG || {};
+      const baseCount = Array.isArray(cfg.baseImages) ? cfg.baseImages.length : 0;
+      const emoCount = Array.isArray(cfg.emotions) ? cfg.emotions.length : 0;
+      const tapCount = Array.isArray(cfg.tapImages) ? cfg.tapImages.length : 0;
+      const mouthCount = Array.isArray(cfg.mouthShapes) ? cfg.mouthShapes.length : 0;
+      const summary = el("div", "card-help", `默认图 ${baseCount} 张 | 情绪 ${emoCount} 组 | Tap 图 ${tapCount} 张 | 嘴型图 ${mouthCount} 张`);
+      const editorBar = el("div", "toolbar");
+      editorBar.append(makeButton("编辑 Images 模型", async () => {
+        const clone = JSON.parse(JSON.stringify(state.config.public.IMAGE_MODEL_CONFIG || { baseImages: [], emotions: [], tapImages: [], mouthShapes: [], motionDurationMs: 3000, tapDurationMs: 700 }));
+
+        function buildListSection(title, getItems, setItems, isMouthShape = false) {
+          const wrap = el("div", "card full-span");
+          wrap.append(el("h3", "card-title", title));
+          const body = el("div");
+          body.style.display = "flex";
+          body.style.flexDirection = "column";
+          body.style.gap = "8px";
+
+          const renderRows = () => {
+            body.innerHTML = "";
+            const items = getItems();
+            if (!items.length) body.append(el("div", "empty-state", "暂无项目"));
+            items.forEach((item, idx) => {
+              const row = el("div", "toolbar");
+              row.style.alignItems = "center";
+              if (isMouthShape) {
+                const pathInput = el("input", "input");
+                pathInput.value = item.path || "";
+                pathInput.placeholder = "图片路径";
+                pathInput.addEventListener("input", () => { item.path = pathInput.value; });
+                const opennessInput = el("input", "number");
+                opennessInput.type = "number";
+                opennessInput.min = "0";
+                opennessInput.max = "1";
+                opennessInput.step = "0.05";
+                opennessInput.value = String(item.openness ?? 0);
+                opennessInput.addEventListener("input", () => { item.openness = Number(opennessInput.value || 0); });
+                const pickBtn = makeButton("选择图片", async () => {
+                  const filePath = await window.api.configOpenFile({ title: "选择图片", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }] });
+                  if (!filePath) return;
+                  pathInput.value = filePath;
+                  item.path = filePath;
+                }, "btn btn-ghost");
+                row.append(pathInput, opennessInput, pickBtn);
+              } else {
+                const input = el("input", "input");
+                input.value = String(item || "");
+                input.placeholder = "图片路径";
+                input.addEventListener("input", () => { items[idx] = input.value; setItems(items); });
+                const pickBtn = makeButton("选择图片", async () => {
+                  const filePath = await window.api.configOpenFile({ title: "选择图片", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }] });
+                  if (!filePath) return;
+                  input.value = filePath;
+                  items[idx] = filePath;
+                  setItems(items);
+                }, "btn btn-ghost");
+                row.append(input, pickBtn);
+              }
+              row.append(makeButton("删除", () => {
+                const next = getItems().slice();
+                next.splice(idx, 1);
+                setItems(next);
+                renderRows();
+              }, "btn btn-ghost"));
+              body.append(row);
+            });
+          };
+
+          const addBtn = makeButton("添加", () => {
+            const next = getItems().slice();
+            next.push(isMouthShape ? { path: "", openness: 0 } : "");
+            setItems(next);
+            renderRows();
+          }, "btn btn-secondary");
+          wrap.append(addBtn, body);
+          renderRows();
+          return wrap;
+        }
+
+        const baseSection = buildListSection("默认图片", () => clone.baseImages || [], (next) => { clone.baseImages = next; });
+        const tapSection = buildListSection("Tap 图片", () => clone.tapImages || [], (next) => { clone.tapImages = next; });
+        const mouthSection = buildListSection("嘴型图片", () => clone.mouthShapes || [], (next) => { clone.mouthShapes = next; }, true);
+
+        const emotionsCard = el("article", "card full-span");
+        emotionsCard.append(el("h3", "card-title", "情绪变体"));
+        const emotionBody = el("div");
+        emotionBody.style.display = "flex";
+        emotionBody.style.flexDirection = "column";
+        emotionBody.style.gap = "10px";
+
+        const renderEmotions = () => {
+          emotionBody.innerHTML = "";
+          const items = Array.isArray(clone.emotions) ? clone.emotions : [];
+          if (!items.length) emotionBody.append(el("div", "empty-state", "暂无情绪分组"));
+          items.forEach((emotion, idx) => {
+            const box = el("div", "card");
+            const nameRow = el("div", "toolbar");
+            const nameInput = el("input", "input");
+            nameInput.value = emotion.name || "";
+            nameInput.placeholder = "情绪名称，如 happy";
+            nameInput.addEventListener("input", () => { emotion.name = nameInput.value; });
+            nameRow.append(nameInput, makeButton("删除分组", () => {
+              clone.emotions.splice(idx, 1);
+              renderEmotions();
+            }, "btn btn-ghost"));
+            box.append(nameRow);
+            const imagesSection = buildListSection("该情绪图片", () => emotion.images || [], (next) => { emotion.images = next; });
+            box.append(imagesSection);
+            emotionBody.append(box);
+          });
+        };
+
+        emotionsCard.append(makeButton("添加情绪分组", () => {
+          clone.emotions = Array.isArray(clone.emotions) ? clone.emotions : [];
+          clone.emotions.push({ name: "", images: [] });
+          renderEmotions();
+        }, "btn btn-secondary"), emotionBody);
+        renderEmotions();
+
+        const settingsBar = el("div", "toolbar");
+        const motionInput = el("input", "number");
+        motionInput.type = "number";
+        motionInput.value = String(clone.motionDurationMs || 3000);
+        motionInput.placeholder = "情绪持续 ms";
+        motionInput.addEventListener("input", () => { clone.motionDurationMs = Number(motionInput.value || 3000); });
+        const tapInput = el("input", "number");
+        tapInput.type = "number";
+        tapInput.value = String(clone.tapDurationMs || 700);
+        tapInput.placeholder = "Tap 持续 ms";
+        tapInput.addEventListener("input", () => { clone.tapDurationMs = Number(tapInput.value || 700); });
+        settingsBar.append(el("span", "card-help", "情绪持续(ms)"), motionInput, el("span", "card-help", "Tap 持续(ms)"), tapInput);
+
+        const actions = el("div", "toolbar");
+        actions.append(
+          makeButton("保存 Images 模型", async () => {
+            updateValue("public", "IMAGE_MODEL_CONFIG", clone);
+            updateValue("public", "MODEL_TYPE", "images");
+            closeModal();
+            renderModule();
+            await saveConfig();
+          }, "btn btn-primary"),
+          makeButton("关闭", closeModal)
+        );
+        openModal("编辑 Images 模型", [settingsBar, baseSection, emotionsCard, tapSection, mouthSection, actions]);
+      }, "btn btn-primary"));
+      list.append(summary, editorBar);
     } else {
-      for (const item of filtered) {
-        const row = el("div", "list-row");
-        const path = String(item.path || "");
-        row.append(el("span", "", `${item.label || "-"} | ${path}`));
-        const configKey = modelType === "vrm" ? "VRM_MODEL_PATH" : "LIVE2D_MODEL_PATH";
-        row.append(makeButton("使用", async () => {
-          updateValue("public", configKey, path);
-          updateValue("public", "MODEL_TYPE", modelType);
-          renderModule();
-          await saveConfig();
-        }, "btn btn-ghost"));
-        list.append(row);
+      const filtered = state.live2dModels.filter((item) => item.type === modelType);
+      if (!filtered.length) {
+        list.append(el("div", "empty-state", `暂无 ${modelType.toUpperCase()} 模型，可先点击右上角 Reload 或手动放置模型文件。`));
+      } else {
+        for (const item of filtered) {
+          const row = el("div", "list-row");
+          const path = String(item.path || "");
+          row.append(el("span", "", `${item.label || "-"} | ${path}`));
+          const configKey = modelType === "vrm" ? "VRM_MODEL_PATH" : "LIVE2D_MODEL_PATH";
+          row.append(makeButton("使用", async () => {
+            updateValue("public", configKey, path);
+            updateValue("public", "MODEL_TYPE", modelType);
+            renderModule();
+            await saveConfig();
+          }, "btn btn-ghost"));
+          list.append(row);
+        }
       }
     }
     m2.append(list);

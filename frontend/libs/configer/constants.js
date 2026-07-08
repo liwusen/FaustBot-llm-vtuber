@@ -8,12 +8,13 @@ var META = {
   KB_ENABLED: { label: "启用记忆", help: "开启后允许使用树形记忆库与向量检索能力。" },
   ARAYA_ENABLED: { label: "启用 Araya", help: "开启后允许独立记忆维护 Agent 自动触发。" },
   ARAYA_IDLE_MINUTES: { label: "Araya 空闲触发分钟", help: "主 Agent 连续空闲达到该值后允许自动运行。" },
-  MODEL_TYPE: { label: "模型类型", help: "选择 Live2D（2D）或 VRM（3D）模型。" },
+  MODEL_TYPE: { label: "模型类型", help: "选择 Live2D（2D）、VRM（3D）或 Images（图片）模型。" },
   LIVE2D_MODEL_PATH: { label: "Live2D 模型路径", help: "前端加载的 Live2D 模型文件路径。" },
   LIVE2D_MODEL_SCALE: { label: "模型缩放", help: "模型在前端画布中的整体缩放比例。" },
   LIVE2D_MODEL_X: { label: "Live2D 横向位置", help: "模型 X 坐标；留空时由前端自动决定。" },
   LIVE2D_MODEL_Y: { label: "Live2D 纵向位置", help: "模型 Y 坐标；留空时由前端自动决定。" },
   VRM_MODEL_PATH: { label: "VRM 模型路径", help: "前端加载的 VRM 模型文件路径" },
+  IMAGE_MODEL_CONFIG: { label: "Images 模型配置", help: "图片模型的默认图、情绪图、点击图和嘴型图配置。" },
   TEXT_CHAT_BAR_Y_FACTOR: { label: "文字对话框 Y 轴绑定", help: "控制文字对话框绑定在模型高度上的位置，范围 0 到 1。" },
   FRONTEND_QUICK_CONTROLLER_X_OFFSET: { label: "快捷控制栏 X 偏移", help: "控制快捷控制栏横向偏移，单位像素。" },
   FRONTEND_CLICK_THROUGH: { label: "前端点击穿透", help: "开启后桌宠窗口忽略鼠标点击。" },
@@ -52,7 +53,7 @@ var META = {
 };
 
 var FIELD_OPTIONS = {
-  MODEL_TYPE: ["live2d", "vrm"],
+  MODEL_TYPE: ["live2d", "vrm", "images"],
   TTS_MODE: ["local", "openai", "faustbot-cloud", "edge-tts"],
   ASR_MODE: ["local", "openai", "faustbot-cloud"],
   FRONTEND_DEFAULT_TTS_LANG: ["zh", "en", "ja", "ko", "yue"],
@@ -92,7 +93,7 @@ var ADVANCED_KEYS = new Set([
 ]);
 var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "THINKING_ENABLED", "THINKING_PRESET", "THINKING_INTENSITY"];
 var AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "EMBED_API_KEY"];
-var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
+var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
 
 
