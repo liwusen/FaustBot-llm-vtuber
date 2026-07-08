@@ -87,7 +87,7 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
   openModal("KB 文档编辑", [headerBar, settingBar, metaBox, area, actionBar]);
 }
 
-function openAgentFilesModal(agentName, files) {
+async function openAgentFilesModal(agentName, files) {
   const targetAgent = String(agentName || "").trim();
   if (!targetAgent) return;
 
@@ -101,7 +101,8 @@ function openAgentFilesModal(agentName, files) {
   const saveBtn = makeButton("保存全部文件", async () => {
     const payload = { files: {} };
     for (const filename of AGENT_FILES) {
-      payload.files[filename] = areas.get(filename)?.value || "";
+      const editor = areas.get(filename);
+      payload.files[filename] = editor ? editor.getValue() : "";
     }
     await cfgApi("PUT", `/faust/admin/agents/${encodeURIComponent(targetAgent)}/files`, payload);
     showBanner("success", `Agent 文件已保存: ${targetAgent}`);
@@ -111,22 +112,31 @@ function openAgentFilesModal(agentName, files) {
   toolbar.append(openBtn, saveBtn, makeButton("关闭", closeModal));
 
   const blocks = [toolbar];
+  const editorTargets = [];
   for (const filename of AGENT_FILES) {
     const card = el("article", "card full-span");
     card.append(el("h3", "card-title", filename));
-    const area = el("textarea", "textarea code-area code-area-lg");
+    const area = el("div");
+    area.style.height = "260px";
+    area.style.border = "1px solid var(--line)";
+    area.style.borderRadius = "10px";
+    area.style.overflow = "hidden";
     const fileObj = files && files[filename];
     const raw = (fileObj && typeof fileObj === "object") ? (fileObj.content || "") : String(fileObj || "");
-    area.value = raw;
-    areas.set(filename, area);
     card.append(area);
     const isReadonly = fileObj && fileObj.readonly;
     if (isReadonly) {
-      area.disabled = true;
-      area.style.opacity = "0.6";
       card.append(el("small", "hint", "（模板文件，不可编辑 — 修改请更新 agents_template/faust/ 源文件）"));
     }
+    editorTargets.push({ filename, area, raw, isReadonly: !!isReadonly });
     blocks.push(card);
   }
   openModal(`Agent 文件编辑 - ${targetAgent}`, blocks);
+  for (const item of editorTargets) {
+    const editor = await createMonacoEditorHost(item.area, item.raw, {
+      language: guessMonacoLanguage(item.filename),
+      readOnly: item.isReadonly,
+    });
+    areas.set(item.filename, editor);
+  }
 }

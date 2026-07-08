@@ -26,6 +26,12 @@ function openModal(title, bodyNodes) {
   const overlay = ensureModalRoot();
   const titleEl = document.getElementById("cfgModalTitle");
   const bodyEl = document.getElementById("cfgModalBody");
+  if (Array.isArray(window.__cfgModalDisposers)) {
+    while (window.__cfgModalDisposers.length) {
+      const disposer = window.__cfgModalDisposers.pop();
+      try { disposer(); } catch (e) {}
+    }
+  }
   titleEl.textContent = title;
   bodyEl.innerHTML = "";
   for (const n of bodyNodes) bodyEl.append(n);
@@ -33,6 +39,12 @@ function openModal(title, bodyNodes) {
 }
 
 function closeModal() {
+  if (Array.isArray(window.__cfgModalDisposers)) {
+    while (window.__cfgModalDisposers.length) {
+      const disposer = window.__cfgModalDisposers.pop();
+      try { disposer(); } catch (e) {}
+    }
+  }
   const overlay = document.getElementById("cfgModalOverlay");
   if (overlay) overlay.classList.add("hidden");
 }
