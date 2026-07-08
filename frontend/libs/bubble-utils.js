@@ -27,6 +27,27 @@ export function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
+function summarizeToolCall(toolName, args) {
+  const name = String(toolName || '').trim();
+  const payload = args && typeof args === 'object' ? args : {};
+  const pick = (...keys) => keys.map((key) => payload[key]).find((value) => value !== undefined && value !== null && value !== '');
+
+  if (name === 'read') return `读取文件: ${String(pick('uri', 'path', 'file_path') || '-')}`;
+  if (name === 'execute') return `执行命令: ${String(pick('code', 'command') || '-')}`;
+  if (name === 'write') return `写入目标: ${String(pick('path', 'uri') || '-')}`;
+  if (name === 'edit') return `编辑文件: ${String(pick('path', 'uri') || '-')}`;
+  if (name === 'search') return `搜索内容: ${String(pick('pattern', 'query') || '-')}`;
+  if (name === 'find') {
+    const patterns = Array.isArray(payload.patterns) ? payload.patterns.join(', ') : (pick('patterns') || '-');
+    return `查找文件: ${String(patterns)}`;
+  }
+
+  const keys = Object.keys(payload).slice(0, 2);
+  if (!keys.length) return `工具调用:${name}`;
+  const values = keys.map((key) => `${key}=${String(payload[key])}`);
+  return `工具调用:${name}:${values.join(', ')}`;
+}
+
 export function renderResultBubbleHtml(source, entries) {
   const blocks = [];
   const items = Array.isArray(entries) ? entries : [];
@@ -62,6 +83,7 @@ export function renderResultBubbleHtml(source, entries) {
     }
     if (item.type !== 'tool') continue;
     const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
+    const toolSummary = escapeHtml(summarizeToolCall(item.toolName, Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
     const argsText = escapeHtml(formatToolBubbleValue(Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
     const outputText = escapeHtml(formatToolBubbleValue(item.output ? item.output : ''));
     const expandedAttr = item.expanded ? ' open' : '';
@@ -72,7 +94,7 @@ export function renderResultBubbleHtml(source, entries) {
         `<div class="tool-call-divider" aria-hidden="true"></div>` +
         `<details class="tool-call-details" data-call-id="${callIdAttr}"${expandedAttr}>` +
           `<summary class="tool-call-summary">` +
-            `<span class="tool-call-title">调用工具:${toolName}</span>` +
+            `<span class="tool-call-title">${toolSummary}</span>` +
             `<span class="tool-call-status">${stateText}</span>` +
           `</summary>` +
           `<div class="tool-call-body">` +

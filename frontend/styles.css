@@ -319,8 +319,8 @@ body.click-through .hil-approval-shell {
 
 .tool-call-details {
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.05);
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(75, 85, 99, 0.08);
+  border: 1px solid rgba(107, 114, 128, 0.24);
   overflow: hidden;
 }
 
@@ -344,7 +344,7 @@ body.click-through .hil-approval-shell {
   display: inline-block;
   margin-right: 8px;
   font-size: 12px;
-  color: #4b5563;
+  color: #6b7280;
   transition: transform 0.16s ease;
 }
 
@@ -355,28 +355,31 @@ body.click-through .hil-approval-shell {
 .tool-call-title {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
   color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tool-call-status {
   font-size: 12px;
-  font-weight: 700;
-  color: #475569;
-  background: rgba(148, 163, 184, 0.16);
+  font-weight: 600;
+  color: #4b5563;
+  background: rgba(107, 114, 128, 0.12);
   border-radius: 999px;
   padding: 2px 8px;
 }
 
 .tool-call-card.is-running .tool-call-status {
-  color: #9a3412;
-  background: rgba(251, 191, 36, 0.22);
+  color: #92400e;
+  background: rgba(161, 161, 170, 0.18);
 }
 
 .tool-call-card.is-done .tool-call-status {
-  color: #166534;
-  background: rgba(74, 222, 128, 0.18);
+  color: #374151;
+  background: rgba(107, 114, 128, 0.14);
 }
 
 .tool-call-body {
@@ -401,10 +404,10 @@ body.click-through .hil-approval-shell {
   font-family: "Cascadia Code", "Consolas", monospace;
   font-size: 12px;
   line-height: 1.45;
-  color: #0f172a;
-  background: rgba(255,255,255,0.75);
+  color: #111827;
+  background: rgba(255,255,255,0.72);
   border-radius: 10px;
-  border: 1px solid rgba(203,213,225,0.7);
+  border: 1px solid rgba(209,213,219,0.8);
   max-width: 100%;
   overflow-x: auto;
 }
@@ -417,9 +420,9 @@ body.click-through .hil-approval-shell {
 
 .reasoning-details {
   border-radius: 12px;
-  background: rgba(99, 102, 241, 0.06);
-  border: 1px solid rgba(129, 140, 248, 0.28);
-  border-left: 3px solid rgba(99, 102, 241, 0.55);
+  background: rgba(75, 85, 99, 0.08);
+  border: 1px solid rgba(107, 114, 128, 0.24);
+  border-left: 2px solid rgba(107, 114, 128, 0.6);
   overflow: hidden;
 }
 
@@ -432,7 +435,7 @@ body.click-through .hil-approval-shell {
   padding: 8px 12px;
   user-select: none;
   font-size: 13px;
-  color: #6366f1;
+  color: #374151;
 }
 
 .reasoning-summary::-webkit-details-marker {
@@ -443,7 +446,7 @@ body.click-through .hil-approval-shell {
   content: '\25B6';
   display: inline-block;
   font-size: 10px;
-  color: #818cf8;
+  color: #6b7280;
   transition: transform 0.16s ease;
 }
 
@@ -463,8 +466,8 @@ body.click-through .hil-approval-shell {
 
 .reasoning-badge {
   font-size: 11px;
-  color: #6366f1;
-  background: rgba(99, 102, 241, 0.12);
+  color: #4b5563;
+  background: rgba(107, 114, 128, 0.12);
   border-radius: 999px;
   padding: 1px 8px;
   font-weight: 600;
@@ -480,10 +483,10 @@ body.click-through .hil-approval-shell {
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.55;
-  color: #4338ca;
-  background: rgba(255,255,255,0.55);
+  color: #1f2937;
+  background: rgba(255,255,255,0.62);
   border-radius: 10px;
-  border: 1px solid rgba(199, 210, 254, 0.7);
+  border: 1px solid rgba(209, 213, 219, 0.8);
   padding: 10px 12px;
   max-height: 300px;
   overflow-y: auto;
