@@ -696,6 +696,16 @@ class ArayaRuntime:
                 "error": "",
                 "response": "",
             }
+            instruction = (
+                f"{prompt}\n\n"
+                f"当前维护目标 Agent: {self._target_agent_name}\n"
+                f"本次触发原因: {reason}\n"
+                f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次触发以来的变更节点。\n"
+                f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
+                f"必要时请维护 /auto_index.md，并对 knowledge graph 中的实体和关系进行整合/修剪。\n"
+                f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
+                f"每个修改过的文件只需要完整处理一次，处理完成后绝对不要重复处理。\n"
+            )
             trace_payload: dict[str, Any] = {
                 "conversation_id": f"araya-{int(started_at * 1000)}",
                 "reason": str(reason or "manual"),
@@ -710,16 +720,6 @@ class ArayaRuntime:
             tool_call_seq = 0
             in_flight_calls: dict[str, dict[str, Any]] = {}
 
-            instruction = (
-                f"{prompt}\n\n"
-                f"当前维护目标 Agent: {self._target_agent_name}\n"
-                f"本次触发原因: {reason}\n"
-                f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次触发以来的变更节点。\n"
-                f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
-                f"必要时请维护 /auto_index.md，并对 knowledge graph 中的实体和关系进行整合/修剪。\n"
-                f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
-                f"每个修改过的文件只需要完整处理一次，处理完成后绝对不要重复处理。\n"
-            )
 
             yield {"event": "step", "data": json.dumps({"type": "start", "reason": reason, "target_agent": self._target_agent_name})}
 

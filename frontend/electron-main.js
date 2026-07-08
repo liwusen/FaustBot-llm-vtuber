@@ -210,6 +210,14 @@ function resolveFrontendAssetPath(relativePath) {
     }
   }
 
+  // Absolute paths that didn't match any static base → use file:// directly
+  if (/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith('/')) {
+    const absPath = path.resolve(normalized);
+    if (fs.existsSync(absPath)) {
+      return 'file:///' + absPath.replace(/\\/g, '/').replace(/^\//, '');
+    }
+  }
+
   const fallbackRelative = normalized.replace(/^[/\\]+/, '').replace(/^frontend\//i, '');
   return `${STATIC_PROTOCOL}://frontend/${fallbackRelative.split('/').map(encodeURIComponent).join('/')}`;
 }

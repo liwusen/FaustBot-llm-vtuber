@@ -58,15 +58,15 @@ export function renderResultBubbleHtml(source, entries) {
       const reasoningText = escapeHtml(item.text || '');
       const expandedAttr = item.expanded ? ' open' : '';
       blocks.push(
-        '<section class="reasoning-card">' +
-          '<details class="reasoning-details" data-r="' + reasoningIdx + '"' + expandedAttr + '>' +
-            '<summary class="reasoning-summary">' +
-              '<span class="reasoning-icon">&#x1F9E0;</span>' +
-              '<span class="reasoning-title">思考过程</span>' +
-              '<span class="reasoning-badge">' + reasoningText.length + ' 字</span>' +
+        '<section class="thinking-card">' +
+          '<details class="thinking-details" data-r="' + reasoningIdx + '"' + expandedAttr + '>' +
+            '<summary class="thinking-summary">' +
+              '<span class="thinking-arrow">&#9654;</span>' +
+              '<span class="thinking-divider"></span>' +
+              '<span class="thinking-word-count">思考:' + reasoningText.length + '字</span>' +
             '</summary>' +
-            '<div class="reasoning-body">' +
-              '<div class="reasoning-content">' + reasoningText + '</div>' +
+            '<div class="thinking-body">' +
+              '<div class="thinking-content">' + reasoningText + '</div>' +
             '</div>' +
           '</details>' +
         '</section>'
@@ -87,24 +87,25 @@ export function renderResultBubbleHtml(source, entries) {
     const argsText = escapeHtml(formatToolBubbleValue(Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
     const outputText = escapeHtml(formatToolBubbleValue(item.output ? item.output : ''));
     const expandedAttr = item.expanded ? ' open' : '';
-    const stateText = item.done ? '已完成' : '调用中';
+    const stateText = item.done ? '完成' : '运行中';
     const callIdAttr = escapeHtml(item.callId || `${toolName}-${blocks.length}`);
     blocks.push(
-      `<section class="tool-call-card${item.done ? ' is-done' : ' is-running'}">` +
-        `<div class="tool-call-divider" aria-hidden="true"></div>` +
-        `<details class="tool-call-details" data-call-id="${callIdAttr}"${expandedAttr}>` +
-          `<summary class="tool-call-summary">` +
-            `<span class="tool-call-title">${toolSummary}</span>` +
-            `<span class="tool-call-status">${stateText}</span>` +
-          `</summary>` +
-          `<div class="tool-call-body">` +
-            `<div class="tool-call-section-label">参数</div>` +
-            `<pre class="tool-call-pre">${argsText || '(空)'}</pre>` +
-            `<div class="tool-call-section-label">返回值</div>` +
-            `<pre class="tool-call-pre">${outputText || (item.done ? '(空)' : '等待返回...')}</pre>` +
-          `</div>` +
-        `</details>` +
-      `</section>`
+      '<section class="thinking-card">' +
+        '<details class="thinking-details" data-call-id="' + callIdAttr + '"' + expandedAttr + '>' +
+          '<summary class="thinking-summary">' +
+            '<span class="thinking-arrow">&#9654;</span>' +
+            '<span class="thinking-divider"></span>' +
+            '<span class="thinking-label">' + toolSummary + '</span>' +
+            '<span class="thinking-status">' + stateText + '</span>' +
+          '</summary>' +
+          '<div class="thinking-body">' +
+            '<div class="thinking-section-label">参数</div>' +
+            '<pre class="thinking-pre">' + (argsText || '(空)') + '</pre>' +
+            '<div class="thinking-section-label">返回值</div>' +
+            '<pre class="thinking-pre">' + (outputText || (item.done ? '(空)' : '等待...')) + '</pre>' +
+          '</div>' +
+        '</details>' +
+      '</section>'
     );
   }
   return blocks.join('');

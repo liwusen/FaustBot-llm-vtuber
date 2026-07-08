@@ -1354,7 +1354,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     const details = ev.target;
     if (!details || !details.classList) return;
     // Tool call details
-    if (details.classList.contains('tool-call-details')) {
+    if (details.dataset && details.dataset.callId) {
       const callId = String(details.dataset.callId || '');
       if (!callId || !Array.isArray(asrBubbleState.entries)) return;
       for (const entry of asrBubbleState.entries){
@@ -1366,7 +1366,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
       return;
     }
     // Reasoning card details
-    if (details.classList.contains('reasoning-details')) {
+    if (details.dataset && details.dataset.r !== undefined) {
       const rIdx = parseInt(details.dataset.r, 10);
       if (!isNaN(rIdx) && Array.isArray(asrBubbleState.entries)) {
         let count = -1;
@@ -1738,7 +1738,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   function showOverlay(msg){
     const o = document.getElementById('overlay');
     if (!o) return;
-    o.style.display = 'none';
+    o.style.display = 'block';
     o.textContent = msg;
   }
 
@@ -1934,16 +1934,16 @@ import { initAutocomplete } from './libs/autocomplete.js';
       || (resolvedConfig.mouthShapes[0] && resolvedConfig.mouthShapes[0].path)
       || '';
     if (!initialPath) {
-      showOverlay('Images 模型未配置任何图片');
-      return;
+      console.warn('Images 模型未配置图片，使用空白纹理');
     }
-    const texture = PIXI.Texture.from(initialPath);
+    const texture = initialPath ? PIXI.Texture.from(initialPath) : PIXI.Texture.WHITE;
     const sprite = new PIXI.Sprite(texture);
     if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
     currentModel = sprite;
     runtimeImageModelConfig = resolvedConfig;
     availableMotions = resolvedConfig.emotions.map((item) => item.name);
     currentLipSyncParamIds = [];
+    let pointerDownTime = 0;
     sprite.anchor.set(0.5, 1.0);
     sprite.x = app.renderer.width - 200;
     sprite.y = app.renderer.height - 20;
@@ -1995,6 +1995,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
       },
       refreshTexture() {
         const nextPath = this.getCurrentImagePath();
+        if (!nextPath) { sprite.texture = PIXI.Texture.WHITE; return; }
         if (!nextPath || nextPath === this.lastTexturePath) return;
         this.lastTexturePath = nextPath;
         sprite.texture = PIXI.Texture.from(nextPath);
@@ -2002,6 +2003,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     };
 
     sprite.on('pointerdown', (e) => {
+      pointerDownTime = Date.now();
       if (clickThroughController) clickThroughController.forceInteractive();
       setInteractionLock(true);
       dragging = true;
@@ -2012,12 +2014,18 @@ import { initAutocomplete } from './libs/autocomplete.js';
       sprite._faustImageModel.triggerTap();
     });
     sprite.on('pointerup', () => {
+      if (Date.now() - pointerDownTime < 300 && !dragging) {
+        sprite._faustImageModel.triggerTap();
+      }
       dragging = false;
       sprite.cursor = 'grab';
       setInteractionLock(false);
       persistModelPositionToBackend();
     });
     sprite.on('pointerupoutside', () => {
+      if (Date.now() - pointerDownTime < 300 && !dragging) {
+        sprite._faustImageModel.triggerTap();
+      }
       dragging = false;
       sprite.cursor = 'grab';
       setInteractionLock(false);

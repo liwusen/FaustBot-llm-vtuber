@@ -1,5 +1,11 @@
 // Araya module renderer
 
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
 function buildArayaTraceEntry(item) {
   const row = el("div", "card-content");
   row.style.cssText = "padding:10px 12px;border-left:2px solid var(--border);margin:8px 0;background:var(--bg2);border-radius:6px";

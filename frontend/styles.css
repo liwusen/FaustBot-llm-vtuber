@@ -306,190 +306,110 @@ body.click-through .hil-approval-shell {
   overflow-wrap: anywhere;
 }
 
-.tool-call-card {
-  max-width: 350px;
-  margin-top: 10px;
+/* ── Thinking / tool-call card (redesigned per thinking_ui.md) ── */
+
+.thinking-card {
+  margin-top: 6px;
 }
 
-.tool-call-divider {
-  height: 1px;
-  margin: 0 0 8px;
-  background: linear-gradient(90deg, transparent, rgba(107,114,128,0.48), transparent);
+.thinking-details {
+  /* minimalist — no bg, no border, just content */
 }
 
-.tool-call-details {
-  border-radius: 12px;
-  background: rgba(75, 85, 99, 0.08);
-  border: 1px solid rgba(107, 114, 128, 0.24);
-  overflow: hidden;
-}
-
-.tool-call-summary {
+.thinking-summary {
   list-style: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   cursor: pointer;
-  padding: 10px 12px;
   user-select: none;
+  padding: 2px 0;
+  color: #888;
+  font-size: 13px;
 }
 
-.tool-call-summary::-webkit-details-marker {
-  display: none;
-}
+.thinking-summary::-webkit-details-marker { display: none; }
 
-.tool-call-summary::before {
-  content: '▶';
+.thinking-arrow {
   display: inline-block;
-  margin-right: 8px;
-  font-size: 12px;
-  color: #6b7280;
-  transition: transform 0.16s ease;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #777;
+  transition: transform 0.15s;
+  line-height: 1;
 }
 
-.tool-call-details[open] .tool-call-summary::before {
+.thinking-details[open] .thinking-arrow {
   transform: rotate(90deg);
 }
 
-.tool-call-title {
+.thinking-divider {
+  display: inline-block;
+  width: 1px;
+  height: 14px;
+  background: #d4d4d4;
+  margin: 0 8px;
+  flex-shrink: 0;
+}
+
+.thinking-word-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #999;
+}
+
+.thinking-label {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #888;
+  font-size: 12px;
 }
 
-.tool-call-status {
-  font-size: 12px;
+.thinking-status {
+  font-size: 11px;
+  color: #999;
+  margin-left: 8px;
+}
+
+.thinking-body {
+  padding: 4px 0 4px 25px;
+}
+
+.thinking-section-label {
+  font-size: 11px;
   font-weight: 600;
-  color: #4b5563;
-  background: rgba(107, 114, 128, 0.12);
-  border-radius: 999px;
-  padding: 2px 8px;
+  color: #999;
+  margin: 6px 0 3px;
 }
 
-.tool-call-card.is-running .tool-call-status {
-  color: #92400e;
-  background: rgba(161, 161, 170, 0.18);
-}
-
-.tool-call-card.is-done .tool-call-status {
-  color: #374151;
-  background: rgba(107, 114, 128, 0.14);
-}
-
-.tool-call-body {
-  padding: 0 12px 12px;
-}
-
-.tool-call-section-label {
+.thinking-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: 12px;
-  font-weight: 700;
-  color: #64748b;
-  margin: 8px 0 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  line-height: 1.5;
+  color: #777;
 }
 
-.tool-call-pre {
-  margin: 0;
-  padding: 10px 12px;
+.thinking-pre {
+  margin: 4px 0;
+  padding: 8px 10px;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
   font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  color: #111827;
-  background: rgba(255,255,255,0.72);
-  border-radius: 10px;
-  border: 1px solid rgba(209,213,219,0.8);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #666;
+  background: #f5f5f5;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
   max-width: 100%;
   overflow-x: auto;
-}
-
-/* ── Reasoning / thinking card ── */
-
-.reasoning-card {
-  margin-top: 8px;
-}
-
-.reasoning-details {
-  border-radius: 12px;
-  background: rgba(75, 85, 99, 0.08);
-  border: 1px solid rgba(107, 114, 128, 0.24);
-  border-left: 2px solid rgba(107, 114, 128, 0.6);
-  overflow: hidden;
-}
-
-.reasoning-summary {
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 8px 12px;
-  user-select: none;
-  font-size: 13px;
-  color: #374151;
-}
-
-.reasoning-summary::-webkit-details-marker {
-  display: none;
-}
-
-.reasoning-summary::before {
-  content: '\25B6';
-  display: inline-block;
-  font-size: 10px;
-  color: #6b7280;
-  transition: transform 0.16s ease;
-}
-
-.reasoning-details[open] .reasoning-summary::before {
-  transform: rotate(90deg);
-}
-
-.reasoning-icon {
-  font-size: 15px;
-  line-height: 1;
-}
-
-.reasoning-title {
-  flex: 1;
-  font-weight: 600;
-}
-
-.reasoning-badge {
-  font-size: 11px;
-  color: #4b5563;
-  background: rgba(107, 114, 128, 0.12);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-weight: 600;
-}
-
-.reasoning-body {
-  padding: 0 12px 12px;
-}
-
-.reasoning-content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  line-height: 1.55;
-  color: #1f2937;
-  background: rgba(255,255,255,0.62);
-  border-radius: 10px;
-  border: 1px solid rgba(209, 213, 219, 0.8);
-  padding: 10px 12px;
-  max-height: 300px;
-  overflow-y: auto;
 }
 
 #asrText::-webkit-scrollbar {
