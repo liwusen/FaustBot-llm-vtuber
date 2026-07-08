@@ -77,6 +77,27 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
     - `read("memory://")` → list all documents in the memory tree.
     - Use this when: checking your knowledge base, reviewing past notes or diaries.
 
+    **Reading system resources (faustbot://):**
+    - `read("faustbot://")` → list all available faustbot resources (index.md, tool_use.md, mc.md, pc_info, source/).
+    - `read("faustbot://index.md")` → read the faustbot index.
+    - `read("faustbot://pc_info")` → read system information.
+    - `read("faustbot://source/{PATH}")` → read project source files.
+    - Use this when: you need system info, tool usage guides, or project source code.
+
+    **Reading skills (skill://):**
+    - `read("skill://")` → list all available skill names.
+    - `read("skill://{name}/")` → list files in a skill directory.
+    - `read("skill://{name}/SKILL.md")` → read a skill's main file.
+    - `read("skill://{name}/subdir/file.md")` → read a file in a skill subdirectory.
+    - Use this when: you need to check available skills or read skill instructions.
+
+    **Reading image sources (img_source://):**
+    - `read("img_source://")` → list available image sources (screenshot, camera).
+    - `read("img_source://screenshot")` → take a screenshot (base64 multimodal image).
+    - `read("img_source://camera_0")` → capture from camera #0.
+    - `read("img_source://screenshot?grid=true&scale=0.5")` → screenshot with grid overlay at 50% scale.
+    - Use this when: you need visual information from the screen or a camera.
+
     **Reading images (multimodal vs plain text):**
     - `read("screenshot.png")` → returns multimodal JSON with the image in base64,
       allowing vision-capable models to see it. If you are not a vision-capable model, you MUST NOT use this.
@@ -96,6 +117,9 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
         For directories: list of entries.
         For artifacts: full or ranged tool output.
         For memory: document content or file tree.
+        For faustbot://: system resources and project source code.
+        For skill://: skill files and directory listings.
+        For img_source://: screenshot or camera images (multimodal).
     """
     log.info("read INPUT uri=%s force_plain_text=%s", uri, force_plain_text)
     parsed = parse(uri)
@@ -219,7 +243,16 @@ def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
 
     raw_path = str(parsed.path or "").strip("/")
     if not raw_path:
-        return "[skill 路径不能为空: 需要 skill://<slug>/SKILL.md]"
+        # 列出所有 skill
+        skill_root = Path(state.AGENT_ROOT) / "skill.d"
+        if not skill_root.exists():
+            return "(没有可用的 skill)"
+        names = sorted(d.name for d in skill_root.iterdir() if d.is_dir())
+        if not names:
+            return "(没有可用的 skill)"
+        lines = ["skill:// 可用 skill:"]
+        lines += [f"  skill://{name}/" for name in names]
+        return "\n".join(lines)
 
     parts = [part for part in raw_path.split("/") if part]
     skill_name = parts[0] if parts else ""
@@ -227,6 +260,25 @@ def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
         return "[skill 名称不能为空]"
 
     relative_parts = parts[1:] or ["SKILL.md"]
+    # 如果路径以 / 结尾（显式目录请求），或只有 skill_name 后空格默认为目录
+    if raw_path.endswith("/") or (len(parts) == 1 and parsed.is_dir):
+        skill_root_dir = Path(state.AGENT_ROOT) / "skill.d" / skill_name
+        if not skill_root_dir.is_dir():
+            return f"[skill 不存在: {skill_name}]"
+        items = sorted(skill_root_dir.iterdir())
+        files = []
+        dirs = []
+        for item in items:
+            if item.name.startswith("."): continue
+            if item.is_dir():
+                dirs.append(item.name + "/")
+            else:
+                files.append(item.name)
+        lines = [f"skill://{skill_name}/ 内容:"]
+        lines += [f"  skill://{skill_name}/{d}" for d in dirs]
+        lines += [f"  skill://{skill_name}/{f}" for f in files]
+        return "\n".join(lines)
+
     if any(part in (".", "..") for part in relative_parts):
         return "[不允许越界访问 skill 目录]"
 
@@ -249,7 +301,20 @@ def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
 
 def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     del force_plain_text
-    path = str(parsed.path or "index.md").strip("/") or "index.md"
+    path = str(parsed.path or "").strip("/")
+
+    if not path or parsed.is_dir:
+        # 列出所有 faustbot 可用资源
+        items = [
+            "index.md",
+            "tool_use.md",
+            "mc.md",
+            "pc_info",
+            "source/",
+        ]
+        lines = ["faustbot:// 可用资源:"]
+        lines += [f"  faustbot://{item}" for item in items]
+        return "\n".join(lines)
 
     if path == "index.md":
         content = "\n".join([
@@ -315,6 +380,10 @@ def _read_faustbot_source(parsed) -> str:
 
 def _read_img_source(parsed, *, force_plain_text: bool = False) -> str:
     path = str(parsed.path or "").strip("/")
+
+    if not path or parsed.is_dir:
+        return "img_source:// 可用资源:\n  img_source://screenshot\n  img_source://camera_0\n使用 read(\"img_source://screenshot?grid=true&scale=0.5\") 截图，使用 read(\"img_source://camera_0\") 访问摄像头。"
+
     try:
         if path == "screenshot":
             image = _capture_screenshot_image()
