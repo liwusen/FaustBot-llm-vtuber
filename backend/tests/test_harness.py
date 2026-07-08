@@ -13,6 +13,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 # Ensure the backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,6 +25,7 @@ from faust_backend.runtime.uri import (
     SCHEME_MEMORY,
     SCHEME_SKILL,
     SCHEME_FAUSTBOT,
+    SCHEME_IMG_SOURCE,
 )
 from faust_backend.runtime.output_store import OutputStore, reset_output_store
 
@@ -110,6 +112,12 @@ class TestURIParse:
         assert p.scheme == SCHEME_FAUSTBOT
         assert p.path == "index.md"
         assert p.selector == ":1-3"
+
+    def test_img_source_with_query(self):
+        p = parse("img_source://screenshot?grid=true&scale=0.5")
+        assert p.scheme == SCHEME_IMG_SOURCE
+        assert p.path == "screenshot"
+        assert p.query == {"grid": ["true"], "scale": ["0.5"]}
 
     def test_empty(self):
         p = parse("")
@@ -367,6 +375,31 @@ class MyClass:
             assert "不允许" in result
         finally:
             state.AGENT_ROOT = orig_agent_root
+
+    def test_read_img_source_screenshot_force_plain_text(self, monkeypatch):
+        from faust_backend.tools.read import read
+        from faust_backend.tools import read as read_module
+
+        monkeypatch.setattr(read_module, "_capture_screenshot_image", lambda: Image.new("RGBA", (32, 24), (255, 0, 0, 255)))
+        result = read.invoke({"uri": "img_source://screenshot?grid=true&scale=0.5", "force_plain_text": True})
+        assert "屏幕截图" in result
+        assert "grid: True" in result
+        assert "scale: 0.5" in result
+
+    def test_read_img_source_invalid_scale(self):
+        from faust_backend.tools.read import read
+
+        result = read.invoke({"uri": "img_source://screenshot?scale=1.2", "force_plain_text": True})
+        assert "scale 必须满足" in result
+
+    def test_read_img_source_camera_mocked(self, monkeypatch):
+        from faust_backend.tools.read import read
+        from faust_backend.tools import read as read_module
+
+        monkeypatch.setattr(read_module, "_capture_camera_image", lambda camera_id: Image.new("RGBA", (16, 16), (0, 0, 255, 255)))
+        result = read.invoke({"uri": "img_source://camera_2", "force_plain_text": True})
+        assert "摄像头 2" in result
+        assert "camera_id: 2" in result
 
 
 # ============================================================

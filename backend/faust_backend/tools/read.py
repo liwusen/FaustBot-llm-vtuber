@@ -12,9 +12,12 @@ import json
 import os
 import platform
 import sys
+from io import BytesIO
 from pathlib import Path
 
 from langchain.tools import tool
+from PIL import Image, ImageDraw
+import pyautogui
 
 from faust_backend.tools._registry import register
 from faust_backend.runtime.uri import (
@@ -24,6 +27,7 @@ from faust_backend.runtime.uri import (
     SCHEME_MEMORY,
     SCHEME_SKILL,
     SCHEME_FAUSTBOT,
+    SCHEME_IMG_SOURCE,
 )
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
@@ -112,6 +116,10 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
         return result
     elif parsed.scheme == SCHEME_FAUSTBOT:
         result = _read_faustbot(parsed, force_plain_text=force_plain_text)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
+    elif parsed.scheme == SCHEME_IMG_SOURCE:
+        result = _read_img_source(parsed, force_plain_text=force_plain_text)
         log.info("read OUTPUT len=%d", len(result))
         return result
     else:
@@ -305,6 +313,42 @@ def _read_faustbot_source(parsed) -> str:
     return _read_file(parse(file_uri))
 
 
+def _read_img_source(parsed, *, force_plain_text: bool = False) -> str:
+    path = str(parsed.path or "").strip("/")
+    try:
+        if path == "screenshot":
+            image = _capture_screenshot_image()
+            image = _apply_img_source_transforms(image, parsed.query)
+            return _image_to_tool_result(
+                image,
+                description=f"屏幕截图: {image.width}x{image.height}",
+                force_plain_text=force_plain_text,
+                metadata={
+                    "grid": _query_flag(parsed.query, "grid", False),
+                    "scale": _query_scale(parsed.query),
+                },
+            )
+
+        if path.startswith("camera_"):
+            camera_id = _parse_camera_id(path)
+            image = _capture_camera_image(camera_id)
+            image = _apply_img_source_transforms(image, parsed.query)
+            return _image_to_tool_result(
+                image,
+                description=f"摄像头 {camera_id}: {image.width}x{image.height}",
+                force_plain_text=force_plain_text,
+                metadata={
+                    "camera_id": camera_id,
+                    "grid": _query_flag(parsed.query, "grid", False),
+                    "scale": _query_scale(parsed.query),
+                },
+            )
+    except Exception as e:
+        return f"读取图像源出错: {e}"
+
+    return f"[未知 img_source 资源: {path}]"
+
+
 def _get_faustbot_source_root() -> Path:
     from faust_backend.config_loader import PROJECT_ROOT
 
@@ -316,6 +360,107 @@ def _get_faustbot_source_root() -> Path:
             return mirror_root
         raise FileNotFoundError("源码镜像未生成: backend/data/source")
     return repo_root
+
+
+def _capture_screenshot_image() -> Image.Image:
+    image = pyautogui.screenshot()
+    if not isinstance(image, Image.Image):
+        raise RuntimeError("截图返回了无效图像对象")
+    return image.convert("RGBA")
+
+
+def _capture_camera_image(camera_id: int) -> Image.Image:
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("OpenCV 未安装，无法读取摄像头") from exc
+
+    cap = cv2.VideoCapture(camera_id)
+    try:
+        ok, frame = cap.read()
+    finally:
+        cap.release()
+    if not ok or frame is None:
+        raise RuntimeError(f"无法打开摄像头 {camera_id}")
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(rgb).convert("RGBA")
+
+
+def _apply_img_source_transforms(image: Image.Image, query: dict[str, list[str]]) -> Image.Image:
+    scale = _query_scale(query)
+    if scale < 1.0:
+        width = max(1, int(image.width * scale))
+        height = max(1, int(image.height * scale))
+        image = image.resize((width, height), Image.Resampling.LANCZOS)
+    if _query_flag(query, "grid", False):
+        image = _overlay_grid(image)
+    return image
+
+
+def _query_flag(query: dict[str, list[str]], key: str, default: bool) -> bool:
+    values = query.get(key) or []
+    if not values:
+        return default
+    value = str(values[-1]).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"无效的布尔参数 {key}: {values[-1]}")
+
+
+def _query_scale(query: dict[str, list[str]]) -> float:
+    values = query.get("scale") or []
+    if not values:
+        return 1.0
+    scale = float(values[-1])
+    if not (0 < scale < 1):
+        raise ValueError("scale 必须满足 0 < scale < 1")
+    return scale
+
+
+def _overlay_grid(image: Image.Image, step: int = 64) -> Image.Image:
+    draw = ImageDraw.Draw(image)
+    color = (180, 180, 180, 180)
+    for x in range(0, image.width, step):
+        draw.line((x, 0, x, image.height), fill=color, width=1)
+    for y in range(0, image.height, step):
+        draw.line((0, y, image.width, y), fill=color, width=1)
+    return image
+
+
+def _parse_camera_id(path: str) -> int:
+    try:
+        return int(path.split("_", 1)[1])
+    except Exception as exc:
+        raise ValueError(f"无效的摄像头路径: {path}") from exc
+
+
+def _image_to_tool_result(
+    image: Image.Image,
+    *,
+    description: str,
+    force_plain_text: bool,
+    metadata: dict | None = None,
+) -> str:
+    metadata = metadata or {}
+    with BytesIO() as buf:
+        image.save(buf, format="PNG")
+        raw = buf.getvalue()
+    if force_plain_text:
+        meta_text = "\n".join(f"{key}: {value}" for key, value in metadata.items())
+        suffix = f"\n{meta_text}" if meta_text else ""
+        return f"[{description}]\n大小: {len(raw)} bytes\n类型: image/png{suffix}"
+    import base64
+
+    payload = {
+        "kind": "multimodal_tool_result",
+        "text": description,
+        "images": [{"url": f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"}],
+    }
+    if metadata:
+        payload["meta"] = metadata
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _read_task_section(section_title: str) -> str:

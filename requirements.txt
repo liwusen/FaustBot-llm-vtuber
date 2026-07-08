@@ -19,6 +19,7 @@ websocket-client
 openai
 pillow
 pyautogui
+opencv-python
 easyocr
 
 #RAG依赖
