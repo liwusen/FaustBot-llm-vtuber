@@ -29,6 +29,7 @@ class ArayaPaths:
     state_file: Path
     last_log_file: Path
     history_log_file: Path
+    trace_file: Path
 
 
 class ArayaRuntime:
@@ -50,6 +51,7 @@ class ArayaRuntime:
             state_file=root / "state.json",
             last_log_file=root / "last_run.json",
             history_log_file=root / "runs.jsonl",
+            trace_file=Path(conf.DATA_ROOT) / "araya_last_trace.json",
         )
 
     def _resolve_target_agent_name(self) -> str:
@@ -132,6 +134,21 @@ class ArayaRuntime:
         with self.paths.history_log_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
+    def _write_last_trace(self, payload: dict[str, Any]) -> None:
+        self.paths.trace_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.paths.trace_file.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def get_last_trace(self) -> dict[str, Any] | None:
+        if not self.paths.trace_file.exists():
+            return None
+        try:
+            with self.paths.trace_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
     def _normalize_response(self, response: Any) -> Any:
         if isinstance(response, (str, int, float, bool)) or response is None:
             return response
@@ -162,6 +179,7 @@ class ArayaRuntime:
                 state["last_log"] = None
         else:
             state["last_log"] = None
+        state["last_trace_file"] = str(self.paths.trace_file)
         # add human-readable timestamps for frontend
         try:
             lm_ts = float(state.get("last_main_activity_ts") or 0.0)
@@ -678,6 +696,19 @@ class ArayaRuntime:
                 "error": "",
                 "response": "",
             }
+            trace_payload: dict[str, Any] = {
+                "conversation_id": f"araya-{int(started_at * 1000)}",
+                "reason": str(reason or "manual"),
+                "target_agent": self._target_agent_name,
+                "started_at": started_at,
+                "started_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
+                "status": "running",
+                "error": "",
+                "messages": [{"role": "user", "content": instruction}],
+                "tool_calls": [],
+            }
+            tool_call_seq = 0
+            in_flight_calls: dict[str, dict[str, Any]] = {}
 
             instruction = (
                 f"{prompt}\n\n"
@@ -716,19 +747,65 @@ class ArayaRuntime:
                         delta = self._message_content_to_text(chunk.content)
                         if delta:
                             full_response += delta
+                            if trace_payload.get("messages") and trace_payload["messages"][-1].get("role") == "assistant":
+                                trace_payload["messages"][-1]["content"] += delta
+                            else:
+                                trace_payload["messages"].append({"role": "assistant", "content": delta})
                             yield {"event": "step", "data": json.dumps({"type": "llm_chunk", "content": delta})}
 
                     elif event_name == "on_tool_start":
                         tool_name = str(raw_event.get("name") or data.get("name") or "tool").strip()
                         tool_args = data.get("input")
-                        yield {"event": "step", "data": json.dumps({"type": "tool_start", "tool": tool_name, "args": tool_args})}
+                        tool_call_seq += 1
+                        call_id = f"call_{tool_call_seq}"
+                        in_flight_calls[call_id] = {
+                            "id": call_id,
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "started_at": time.time(),
+                        }
+                        trace_payload["tool_calls"].append({
+                            "id": call_id,
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "result": None,
+                            "duration_seconds": None,
+                        })
+                        trace_payload["messages"].append({"role": "tool", "tool_name": tool_name, "call_id": call_id, "args": tool_args})
+                        yield {"event": "step", "data": json.dumps({"type": "tool_start", "tool": tool_name, "args": tool_args, "call_id": call_id})}
 
                     elif event_name == "on_tool_end":
                         tool_name = str(raw_event.get("name") or data.get("name") or "tool").strip()
-                        yield {"event": "step", "data": json.dumps({"type": "tool_end", "tool": tool_name})}
+                        call_id = next((cid for cid, item in reversed(list(in_flight_calls.items())) if item.get("tool") == tool_name), "")
+                        result_value = data.get("output")
+                        duration_seconds = None
+                        if call_id and call_id in in_flight_calls:
+                            started = float(in_flight_calls[call_id].get("started_at") or time.time())
+                            duration_seconds = round(time.time() - started, 3)
+                            del in_flight_calls[call_id]
+                        for item in trace_payload["tool_calls"]:
+                            if item.get("id") == call_id:
+                                item["result"] = self._normalize_response(result_value)
+                                item["duration_seconds"] = duration_seconds
+                                break
+                        trace_payload["messages"].append({
+                            "role": "tool_result",
+                            "tool_name": tool_name,
+                            "call_id": call_id,
+                            "result": self._normalize_response(result_value),
+                            "duration_seconds": duration_seconds,
+                        })
+                        yield {"event": "step", "data": json.dumps({
+                            "type": "tool_end",
+                            "tool": tool_name,
+                            "call_id": call_id,
+                            "result": self._normalize_response(result_value),
+                            "duration": duration_seconds,
+                        })}
 
                 result_payload["response"] = full_response or "(no text response)"
                 result_payload["status"] = "ok"
+                trace_payload["status"] = "ok"
                 state["last_error"] = ""
 
             except Exception as exc:
@@ -737,18 +814,24 @@ class ArayaRuntime:
                 run_error = str(exc)
                 result_payload["status"] = "error"
                 result_payload["error"] = run_error
+                trace_payload["status"] = "error"
+                trace_payload["error"] = run_error
                 state["last_error"] = run_error
 
             finished_at = time.time()
             result_payload["finished_at"] = finished_at
             result_payload["finished_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(finished_at))
             result_payload["duration_seconds"] = round(finished_at - started_at, 3)
+            trace_payload["finished_at"] = finished_at
+            trace_payload["finished_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(finished_at))
+            trace_payload["duration_seconds"] = round(finished_at - started_at, 3)
 
             state["last_trigger_ts"] = finished_at
             state["last_run_status"] = result_payload["status"]
             state["target_agent"] = self._target_agent_name
             self._save_state(state)
             self._write_run_log(result_payload)
+            self._write_last_trace(trace_payload)
 
             if run_error:
                 yield {"event": "error", "data": json.dumps({"error": run_error, "duration": result_payload["duration_seconds"], "target_agent": self._target_agent_name})}
