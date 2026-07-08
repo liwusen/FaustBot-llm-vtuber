@@ -313,6 +313,13 @@ function renderMinecraftCard(container) {
 let _installTaskId = null;
 let _installEventSource = null;
 
+function _setCancelButtonVisible(visible) {
+  const btn = document.getElementById("componentCancelBtn");
+  if (!btn) return;
+  btn.style.display = visible ? "inline-block" : "none";
+  btn.disabled = false;
+}
+
 function renderProgressArea(container) {
   const area = document.createElement("div");
   area.id = "componentProgressArea";
@@ -330,11 +337,17 @@ function renderProgressArea(container) {
   label.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
   label.textContent = "";
 
+  const cancelBtn = document.createElement("button");
+  cancelBtn.id = "componentCancelBtn";
+  cancelBtn.textContent = "终止";
+  cancelBtn.style.cssText = "display:none;margin-top:8px;padding:6px 12px;border:1px solid #f44336;border-radius:6px;background:transparent;color:#f44336;cursor:pointer;font-size:12px";
+  cancelBtn.onclick = () => cancelComponentInstall();
+
   const logArea = document.createElement("div");
   logArea.id = "componentLogArea";
   logArea.style.cssText = "margin-top:8px;max-height:200px;overflow-y:auto;background:var(--bg2);border-radius:4px;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap;display:none";
 
-  area.append(progressBar, label, logArea);
+  area.append(progressBar, label, cancelBtn, logArea);
   container.append(area);
 }
 
@@ -361,6 +374,7 @@ function showProgress(stage, percent, message) {
 
 function connectSse(taskId) {
   _installTaskId = taskId;
+  _setCancelButtonVisible(true);
   const base = window.api?.backendBaseUrl || "http://127.0.0.1:13900";
   if (_installEventSource) _installEventSource.close();
   _installEventSource = new EventSource(`${base}/faust/components/tasks/${taskId}/events`);
@@ -375,14 +389,27 @@ function connectSse(taskId) {
   _installEventSource.addEventListener("complete", (ev) => {
     _installEventSource?.close();
     _installEventSource = null;
+    _installTaskId = null;
+    _setCancelButtonVisible(false);
     showProgress("complete", 100, "安装完成");
     // 刷新组件状态
+    refreshComponentStatus();
+  });
+
+  _installEventSource.addEventListener("cancelled", (ev) => {
+    _installEventSource?.close();
+    _installEventSource = null;
+    _installTaskId = null;
+    _setCancelButtonVisible(false);
+    showProgress("cancelled", null, "任务已终止");
     refreshComponentStatus();
   });
 
   _installEventSource.addEventListener("error", (ev) => {
     _installEventSource?.close();
     _installEventSource = null;
+    _installTaskId = null;
+    _setCancelButtonVisible(false);
     try {
       const d = JSON.parse(ev.data);
       showProgress("error", null, "错误: " + (d.error || "未知"));
@@ -415,6 +442,19 @@ async function startComponentInstall(component) {
     }
   } catch (e) {
     showProgress("error", null, "启动安装失败: " + e.message);
+  }
+}
+
+async function cancelComponentInstall() {
+  if (!_installTaskId) return;
+  const btn = document.getElementById("componentCancelBtn");
+  if (btn) btn.disabled = true;
+  try {
+    await cfgApi("POST", `/faust/components/tasks/${_installTaskId}/cancel`, {});
+    showProgress("cancel_requested", null, "正在终止任务...");
+  } catch (e) {
+    showProgress("error", null, "终止失败: " + e.message);
+    if (btn) btn.disabled = false;
   }
 }
 

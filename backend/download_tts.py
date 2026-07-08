@@ -53,6 +53,7 @@ def download_with_progress(
     url: str,
     archive_path: Path,
     progress_callback: Callable[[str, float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> None:
     """下载文件，支持进度回调。
 
@@ -61,6 +62,8 @@ def download_with_progress(
     - percent: 0.0-100.0
     """
     archive_path.parent.mkdir(parents=True, exist_ok=True)
+    if cancel_check:
+        cancel_check()
     with requests.get(url, stream=True, timeout=600) as response:
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0) or 0)
@@ -77,6 +80,8 @@ def download_with_progress(
             desc=f"Downloading {archive_path.name}",
         ) as progress:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if cancel_check:
+                    cancel_check()
                 if not chunk:
                     continue
                 file_obj.write(chunk)
@@ -91,6 +96,7 @@ def extract_with_progress(
     archive_path: Path,
     destination_dir: Path,
     progress_callback: Callable[[str, float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> None:
     """解压文件，支持进度回调。
 
@@ -98,12 +104,16 @@ def extract_with_progress(
     采用 extractall() 一次性解压全部文件。
     """
     destination_dir.mkdir(parents=True, exist_ok=True)
+    if cancel_check:
+        cancel_check()
 
     if progress_callback:
         progress_callback("extract", 0.0, f"开始解压 {archive_path.name}")
 
     with py7zr.SevenZipFile(archive_path, mode="r") as archive:
         # 固态压缩下 extractall 比逐个 extract 快 10-100 倍
+        if cancel_check:
+            cancel_check()
         archive.extractall(path=destination_dir)
 
     if progress_callback:
@@ -112,6 +122,7 @@ def extract_with_progress(
 
 def normalize_tts_layout(
     progress_callback: Callable[[str, float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> None:
     """修正嵌套目录结构。"""
     nested_50 = TTS_HUB_DIR / "GPT-SoVITS-v2pro-20250604-nvidia50" / "GPT-SoVITS-v2pro-20250604-nvidia50"
@@ -121,6 +132,8 @@ def normalize_tts_layout(
         progress_callback("normalize", 90.0, "修正目录结构...")
 
     for nested in (nested_50, nested_std):
+        if cancel_check:
+            cancel_check()
         if not nested.exists():
             continue
         for item in nested.iterdir():
@@ -136,23 +149,25 @@ def normalize_tts_layout(
 def download_and_extract_tts(
     variant: str,
     progress_callback: Callable[[str, float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> None:
     """完整流程：选择 → 下载 → 解压 → 修正布局。"""
     url, filename = choose_download_by_variant(variant)
     archive_path = DOWNLOAD_DIR / filename
 
-    download_with_progress(url, archive_path, progress_callback)
-    extract_with_progress(archive_path, TTS_HUB_DIR, progress_callback)
-    normalize_tts_layout(progress_callback)
+    download_with_progress(url, archive_path, progress_callback, cancel_check)
+    extract_with_progress(archive_path, TTS_HUB_DIR, progress_callback, cancel_check)
+    normalize_tts_layout(progress_callback, cancel_check)
 
 
 async def download_tts_async(
     variant: str,
     progress_callback: Callable[[str, float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> None:
     """异步包装，供 API 调用。"""
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, download_and_extract_tts, variant, progress_callback)
+    await loop.run_in_executor(None, download_and_extract_tts, variant, progress_callback, cancel_check)
 
 
 def main() -> int:

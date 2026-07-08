@@ -30,18 +30,23 @@ router = APIRouter(tags=["components"])
 router.description = "组件管理：查询 GPU、FunASR、TTS、Minecraft 桥状态与下载安装"
 
 
+class ComponentTaskCancelled(Exception):
+    pass
+
+
 # ── 任务状态模型 ──
 
 @dataclass
 class ComponentTask:
     task_id: str
     component: str
-    status: str = "pending"          # pending | running | complete | error
+    status: str = "pending"          # pending | running | complete | error | cancelled
     progress_percent: float = 0.0    # 0-100，仅 TTS 下载有精确值
     stage: str = ""                  # 当前阶段名
     log_lines: list[str] = field(default_factory=list)  # 最近 200 行
     error: str | None = None
     started_at: float = 0.0
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -126,16 +131,33 @@ async def start_install(req: InstallRequest) -> InstallResponse:
     return InstallResponse(task_id=task_id, status="started")
 
 
+@router.post("/faust/components/tasks/{task_id}/cancel")
+async def cancel_install(task_id: str) -> dict[str, Any]:
+    task = _get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status in {"complete", "error", "cancelled"}:
+        return {"status": task.status, "task_id": task_id}
+    task.cancel_event.set()
+    task.log_lines.append("[取消] 已请求终止任务")
+    task.stage = "cancel_requested"
+    return {"status": "cancelling", "task_id": task_id}
+
+
 async def _run_install(task: ComponentTask, req: InstallRequest) -> None:
     """后台执行安装任务，更新 task 状态并回调 on_component_installed。"""
     try:
         task.status = "running"
         task.stage = "preparing"
 
+        def _check_cancel() -> None:
+            if task.cancel_event.is_set():
+                raise ComponentTaskCancelled("安装已取消")
+
         if req.component == "funasr":
-            await _install_funasr(task, req)
+            await _install_funasr(task, req, _check_cancel)
         elif req.component == "tts":
-            await _install_tts(task, req)
+            await _install_tts(task, req, _check_cancel)
         else:
             task.error = f"未知组件: {req.component}"
             task.status = "error"
@@ -148,6 +170,11 @@ async def _run_install(task: ComponentTask, req: InstallRequest) -> None:
 
         # 触发自动启动
         await on_component_installed(req.component)
+    except ComponentTaskCancelled as e:
+        task.status = "cancelled"
+        task.stage = "cancelled"
+        task.error = None
+        task.log_lines.append(f"[取消] {e}")
     except Exception as e:
         task.status = "error"
         task.error = str(e)
@@ -155,11 +182,12 @@ async def _run_install(task: ComponentTask, req: InstallRequest) -> None:
         log.exception("组件 %s 安装失败", req.component)
 
 
-async def _install_funasr(task: ComponentTask, req: InstallRequest) -> None:
+async def _install_funasr(task: ComponentTask, req: InstallRequest, cancel_check) -> None:
     """安装 PyTorch + funasr。"""
     import download_torch
     log.info(f"Installing funasr+torch with args:{req.torch_variant},{req.use_aliyun_mirror}")
     def _progress(stage: str, percent: float | None, message: str) -> None:
+        cancel_check()
         task.stage = stage
         if percent is not None:
             task.progress_percent = percent
@@ -171,24 +199,26 @@ async def _install_funasr(task: ComponentTask, req: InstallRequest) -> None:
         req.torch_variant or "cpu",
         req.use_aliyun_mirror,
         _progress,
+        cancel_check,
     )
 
     if not result.get("success"):
         raise RuntimeError(result.get("error", "安装失败"))
 
 
-async def _install_tts(task: ComponentTask, req: InstallRequest) -> None:
+async def _install_tts(task: ComponentTask, req: InstallRequest, cancel_check) -> None:
     """下载并解压 TTS 包。"""
     import download_tts
 
     def _progress(stage: str, percent: float | None, message: str) -> None:
+        cancel_check()
         task.stage = stage
         if percent is not None:
             task.progress_percent = percent
         if message:
             task.log_lines.append(message)
 
-    await download_tts.download_tts_async(req.tts_variant or "standard", _progress)
+    await download_tts.download_tts_async(req.tts_variant or "standard", _progress, cancel_check)
 
 
 # ── C3: SSE 进度流 ──
@@ -205,6 +235,9 @@ async def component_task_events(task_id: str):
             while True:
                 if task.error:
                     yield f"event: error\ndata: {json.dumps({'error': task.error})}\n\n"
+                    return
+                if task.status == "cancelled":
+                    yield f"event: cancelled\ndata: {json.dumps(task.to_dict())}\n\n"
                     return
                 if task.status == "complete":
                     yield f"event: complete\ndata: {json.dumps(task.to_dict())}\n\n"

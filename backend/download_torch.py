@@ -31,7 +31,7 @@ ALIYUN_MIRROR_TEMPLATE = "https://mirrors.aliyun.com/pytorch-wheels/{variant}/"
 
 # ── pip 流式输出工具 ──
 
-def _run_pip_streaming(args: list[str], progress_callback: Callable | None, stage_name: str) -> int:
+def _run_pip_streaming(args: list[str], progress_callback: Callable | None, stage_name: str, cancel_check: Callable[[], None] | None = None) -> int:
     """运行 pip 命令，实时推送 stdout/stderr 行，解析下载进度。"""
     log.info("Running pip command: %s", " ".join([sys.executable, "-m", "pip"] + args))
     process = subprocess.Popen(
@@ -44,6 +44,13 @@ def _run_pip_streaming(args: list[str], progress_callback: Callable | None, stag
     download_re = re.compile(r"Downloading\s+\S+\s+\(([\d.]+)\s*(kB|MB)\)")
     if process.stdout:
         for line in process.stdout:
+            if cancel_check:
+                try:
+                    cancel_check()
+                except Exception:
+                    process.kill()
+                    process.wait()
+                    raise
             line = line.rstrip()
             if progress_callback:
                 m = download_re.search(line)
@@ -122,6 +129,7 @@ def uninstall_torch_if_needed(target_variant: str) -> bool:
 
 def download_asr_models(
     progress_callback: Callable[[str, float | None, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict:
     """下载 ASR 模型文件（FunAudioLLM/Fun-ASR-Nano-2512, fsmn-vad）。
 
@@ -152,6 +160,13 @@ def download_asr_models(
 
     if process.stdout:
         for line in process.stdout:
+            if cancel_check:
+                try:
+                    cancel_check()
+                except Exception:
+                    process.kill()
+                    process.wait()
+                    raise
             line = line.rstrip()
             if not line:
                 continue
@@ -181,6 +196,7 @@ def install_torch_and_funasr(
     torch_variant: str = "cpu",
     use_aliyun_mirror: bool = False,
     progress_callback: Callable[[str, float | None, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict:
     """安装 PyTorch + funasr。
 
@@ -234,6 +250,7 @@ def install_torch_and_funasr(
         pip_args + pip_packages,
         progress_callback,
         "torch",
+        cancel_check,
     )
 
     if rc != 0:
@@ -249,6 +266,7 @@ def install_torch_and_funasr(
         ["install", "funasr>=0.9.6"],
         progress_callback,
         "funasr",
+        cancel_check,
     )
 
     if rc != 0:
@@ -259,7 +277,9 @@ def install_torch_and_funasr(
     # ── 5. 下载 ASR 模型 ──
     _cb("asr_model_start", 85, "开始下载 ASR 模型...")
     try:
-        result = download_asr_models(progress_callback)
+        if cancel_check:
+            cancel_check()
+        result = download_asr_models(progress_callback, cancel_check)
         if not result.get("success"):
             _cb("error", None, f"ASR 模型下载失败: {result.get('error', '')}")
             return result
