@@ -150,6 +150,7 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
                 agent_task = asyncio.create_task(_run_agent_stream(text))
+                agent_task.add_done_callback(lambda _: events.ignore_trigger_event.clear())
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
@@ -179,7 +180,7 @@ async def command_websocket(websocket: WebSocket):
                     ttype = task.get("type")
                     callback_id = task.get("callback_id")
                     if ttype == "event" and task.get("event_name") == "nimble_result" and callback_id:
-                        result = nimble.get_nimble_result(callback_id, cleanup=False)
+                        result = (task.get("payload") or {}).get("result")
                         trigger_text = f"<Trigger>灵动交互窗口收到用户提交。callback_id={callback_id}，用户结果={result}。请继续处理。"
                     elif ttype == "event" and task.get("event_name") == "blive_danmaku":
                         payload = task.get("payload") or {}

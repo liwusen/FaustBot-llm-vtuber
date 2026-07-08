@@ -55,6 +55,16 @@ async def nimble_callback_post(payload: dict):
     session = nimble.set_nimble_result(callback_id, data, closed=should_close)
     if not session:
         return {"error": f"unknown callback_id: {callback_id}"}
+
+    trigger_manager.append_trigger({
+        "id": f"nimble_result::{callback_id}",
+        "type": "event",
+        "event_name": "nimble_result",
+        "callback_id": callback_id,
+        "payload": {"result": data, "closed": should_close},
+        "lifespan": 7200,
+    })
+
     if should_close:
         trigger_manager.delete_trigger(session["reminder_trigger_id"])
         trigger_manager.delete_trigger(session["expire_trigger_id"])
@@ -75,6 +85,16 @@ async def nimble_close_post(payload: dict):
     session = nimble.close_nimble_session(callback_id, reason=reason)
     if not session:
         return {"error": f"unknown callback_id: {callback_id}"}
+
+    trigger_manager.append_trigger({
+        "id": f"nimble_result::{callback_id}",
+        "type": "event",
+        "event_name": "nimble_result",
+        "callback_id": callback_id,
+        "payload": {"closed": True, "reason": reason},
+        "lifespan": 7200,
+    })
+
     trigger_manager.delete_trigger(session["result_trigger_id"])
     trigger_manager.delete_trigger(session["reminder_trigger_id"])
     trigger_manager.delete_trigger(session["expire_trigger_id"])

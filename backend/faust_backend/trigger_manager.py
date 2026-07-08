@@ -235,20 +235,10 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                         except Exception as e:
                             log.error("评估 trigger %s 时出错: %s", trig.id, e)
                     elif trig.type == "event":
-                        if trig.event_name == "nimble_result" and trig.callback_id:
-                            session = nimble.get_nimble_session(trig.callback_id)
-                            if session and session.get("result") is not None:
-                                _emit_trigger(trig.model_dump())
-                                try:
-                                    ensure_store.watchdog.remove(trig)
-                                    ensure_store.save()
-                                except Exception:
-                                    pass
-                        else:
-                            log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
-                            _emit_trigger(trig.model_dump())
-                            ensure_store.watchdog.remove(trig)
-                            ensure_store.save()
+                        log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
+                        _emit_trigger(trig.model_dump())
+                        ensure_store.watchdog.remove(trig)
+                        ensure_store.save()
                     elif trig.type == "nimble-reminder":
                         if not nimble.is_nimble_session_alive(trig.callback_id):
                             try:
