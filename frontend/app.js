@@ -75,6 +75,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
   let asrTextPinnedToBottom = true;
   let currentLipSyncParamIds = ['ParamMouthOpenY'];
   let activeModelLoadRequestId = 0;
+  const motionTriggerCooldownMs = 2000;
+  const recentMotionTriggers = new Map();
   let textChatBarYFactor = 0.53;
   let quickControllerXOffset = -12;
   let vrmScene = null;
@@ -409,6 +411,66 @@ import { initAutocomplete } from './libs/autocomplete.js';
     const pool = availableMotions.length ? availableMotions : ['Idle'];
     const picked = pool[Math.floor(Math.random() * pool.length)];
     return playMotionByName(picked);
+  }
+
+  function triggerModelMotion(name){
+    const motionName = String(name || '').trim();
+    if (!motionName) return false;
+    const now = Date.now();
+    const cooldownKey = `${modelType}:${motionName}`;
+    const lastTs = recentMotionTriggers.get(cooldownKey) || 0;
+    if (now - lastTs < motionTriggerCooldownMs) return false;
+
+    let triggered = false;
+    if (modelType === 'vrm' && vrmScene) {
+      const expressions = Array.isArray(vrmScene.getAvailableExpressions?.()) ? vrmScene.getAvailableExpressions() : [];
+      if (expressions.includes(motionName)) {
+        triggered = !!vrmScene.setExpression(motionName);
+      }
+    } else {
+      if (availableMotions.includes(motionName)) {
+        triggered = playMotionByName(motionName);
+      }
+    }
+    if (triggered) {
+      recentMotionTriggers.set(cooldownKey, now);
+    }
+    return triggered;
+  }
+
+  function consumeMotionTokens(request, chunk){
+    const combined = String(request.motionTokenBuffer || '') + String(chunk || '');
+    let visible = '';
+    let cursor = 0;
+
+    while (cursor < combined.length) {
+      const start = combined.indexOf('<{', cursor);
+      if (start === -1) {
+        visible += combined.slice(cursor);
+        request.motionTokenBuffer = '';
+        return visible;
+      }
+
+      visible += combined.slice(cursor, start);
+      const end = combined.indexOf('}>', start + 2);
+      if (end === -1) {
+        request.motionTokenBuffer = combined.slice(start);
+        return visible;
+      }
+
+      const motionName = combined.slice(start + 2, end).trim();
+      if (motionName && !/\s/.test(motionName)) {
+        triggerModelMotion(motionName);
+      }
+      cursor = end + 2;
+    }
+
+    request.motionTokenBuffer = '';
+    return visible;
+  }
+
+  function stripMotionTokens(text){
+    return String(text || '').replace(/<\{[^}]*\}>/g, '');
   }
 
   function interruptPlayback(){
@@ -957,6 +1019,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
       resetStreamTtsState();
       currentChatRequest.replyText = '';
       currentChatRequest.pendingBuffer = '';
+      currentChatRequest.motionTokenBuffer = '';
       currentChatRequest.entries = [];
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
       agentIsProcessing = true;
@@ -1039,14 +1102,18 @@ import { initAutocomplete } from './libs/autocomplete.js';
 
     if (msg.type === 'delta'){
       const chunk = normalizeTtsText(msg.content || '');
-      currentChatRequest.replyText += chunk;
-      currentChatRequest.pendingBuffer += chunk;
+      const visibleChunk = consumeMotionTokens(currentChatRequest, chunk);
+      if (!visibleChunk) {
+        return;
+      }
+      currentChatRequest.replyText += visibleChunk;
+      currentChatRequest.pendingBuffer += visibleChunk;
       if (!currentChatRequest.entries) currentChatRequest.entries = [];
       const lastEntry = currentChatRequest.entries[currentChatRequest.entries.length - 1];
       if (lastEntry && lastEntry.type === 'text') {
-        lastEntry.text = String(lastEntry.text || '') + chunk;
+        lastEntry.text = String(lastEntry.text || '') + visibleChunk;
       } else {
-        currentChatRequest.entries.push({ type: 'text', text: chunk });
+        currentChatRequest.entries.push({ type: 'text', text: visibleChunk });
       }
       showResultBubble('ai', currentChatRequest.entries);
       const split = extractCompletedSentences(currentChatRequest.pendingBuffer);
@@ -1061,9 +1128,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
 
     if (msg.type === 'done'){
-      const reply = msg.reply || currentChatRequest.replyText || '';
+      const reply = stripMotionTokens(msg.reply || currentChatRequest.replyText || '');
       const request = currentChatRequest;
       currentChatRequest.replyText = reply;
+      currentChatRequest.motionTokenBuffer = '';
       if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim() && !reply.includes('<NO_TTS_OUTPUT>')){
         await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
       }

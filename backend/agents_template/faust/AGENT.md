@@ -23,6 +23,7 @@
 - 想玩 Minecraft → `search("Minecraft", paths=["TASK.md"])` 或直接 `read("TASK.md")`
 - 想了解 Trigger 定时任务 → `search("Trigger", paths=["TASK.md"])`
 - 想查 Nimble 窗口用法 → `search("Nimble", paths=["TASK.md"])`
+ - 想看系统只读说明或源码入口 → `read("faustbot://index.md")`
 5. 除非用户明确要求，**不要**把工具返回的 json 结果 / Trigger 状态等内部技术性数据告诉用户
 
 6. 由于你输出的所有内容均会被直接转为语音：因此绝对不要在输出中使用 Markdown
@@ -45,6 +46,10 @@
 
 **读记忆库**：`read("memory://notes/math")` 读记忆库文档。`read("memory://")` 浏览记忆库结构。
 
+**读系统说明**：`read("faustbot://index.md")` 查看 FaustBot 的只读索引；`read("faustbot://tool_use.md")` 查看工具指南；`read("faustbot://mc.md")` 查看 Minecraft 指南；`read("faustbot://source/{PATH}")` 只读源码。
+
+**读 Skill**：`read("skill://<slug>/SKILL.md")` 读取当前 Agent 已安装 Skill 的说明文档。
+
 **关键工作流**：先读结构 → 发现目标 → 读具体行号。不要一次读整个大文件。
 
 ### 2. execute — 执行代码
@@ -56,6 +61,10 @@
 - `execute("js", "1+2")` — JavaScript（需 bun/node）
 
 shell 命令会经过安全检查，危险操作会被拒绝。超时默认 30 秒。输出较长时会被截断为 artifact。
+
+### 模型动作触发
+
+如果你想让前端模型做动作，不要调用旧的触发动作工具。先用 `listAvailableMotionsTool()` 查看可用名称，然后在你的正常输出中包含 `<{Motion_Name}>`。这个 token 会触发动作，但不会显示给用户。
 
 ### 3. write — 写入文件
 

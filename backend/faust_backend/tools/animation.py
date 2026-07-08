@@ -61,7 +61,7 @@ def listAvailableMotionsTool() -> str:
                 "model_type": "vrm",
                 "motion_count": len(VRM_EXPRESSIONS),
                 "expressions": VRM_EXPRESSIONS,
-                "note": "VRM standard expression presets. Use triggerMotionTool with one of these names.",
+                "note": "VRM standard expression presets. Trigger one by including <{ExpressionName}> in the assistant output.",
             }
             log.info("VRM expressions: %s", VRM_EXPRESSIONS)
             return json.dumps(payload, ensure_ascii=False)
@@ -80,12 +80,12 @@ def listAvailableMotionsTool() -> str:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-@register
 @tool
 def triggerMotionTool(motion_name: str) -> str:
     """
     Description:
-        触发指定 Live2D Motion 或 VRM Expression。
+        [已弃用] 直接触发指定 Live2D Motion 或 VRM Expression。
+        现已改为在输出文本中包含 <{Motion_Name}> 由前端触发。
         VRM 模式可用值：neutral, happy, angry, sad, relaxed, surprised。
     Args:
         motion_name (str): 要触发的 motion/expression 名称。
@@ -100,7 +100,7 @@ def triggerMotionTool(motion_name: str) -> str:
         obj_type = "expression" if model_type == "vrm" else "motion"
         log.info("Trigger %s: %s", obj_type, name)
         backend2frontend.frontendSetMotion(name)
-        return json.dumps({"status": "ok", "command": "SET_MOTION", obj_type: name}, ensure_ascii=False)
+        return json.dumps({"status": "ok", "deprecated": True, "command": "SET_MOTION", obj_type: name}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "motion": name}, ensure_ascii=False)
 

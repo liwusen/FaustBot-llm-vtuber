@@ -667,6 +667,15 @@ class TestExecuteTool:
         assert "不支持" in result
 
 
+class TestAnimationTools:
+    def test_trigger_motion_tool_not_exposed_to_agent(self):
+        from faust_backend.tools._registry import get_tools_for_agent
+
+        tool_names = {getattr(tool, "name", getattr(tool, "__name__", "")) for tool in get_tools_for_agent("faust")}
+        assert "triggerMotionTool" not in tool_names
+        assert "listAvailableMotionsTool" in tool_names
+
+
 # ============================================================
 # Multimodal / Image Support
 # ============================================================
