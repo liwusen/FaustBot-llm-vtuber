@@ -32,8 +32,22 @@ async def chat_post(payload: dict):
     try:
         await asyncio.to_thread(araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity)
         events.ignore_trigger_event.set()
+        pm = getattr(state, 'plugin_manager', None)
+        if pm:
+            results = pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
+            if results:
+                for r in results:
+                    if r is not None and isinstance(r, str):
+                        text = r
+                        break
         resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": text}]})
         reply = state.message_content_to_text(resp["messages"][-1].content)
+        if pm:
+            post_results = pm._call_pluggy_hook('message_sent', msg=text, response=reply, ctx=None)
+            if post_results:
+                for r in post_results:
+                    if r is not None:
+                        reply = r
         schedule_memory_record_sync(text, reply)
         log.info('Chat POST 回复完成')
         events.ignore_trigger_event.clear()
@@ -51,6 +65,14 @@ async def chat_websocket(websocket: WebSocket):
     async def _run_agent_stream(text: str):
         reply = ""
         abort_evt = state.reset_abort_event()
+        pm = getattr(state, 'plugin_manager', None)
+        if pm:
+            results = pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
+            if results:
+                for r in results:
+                    if r is not None and isinstance(r, str):
+                        text = r
+                        break
         try:
             async for event in stream_chat_agent_events(
                 state.agent,
@@ -58,6 +80,12 @@ async def chat_websocket(websocket: WebSocket):
                 abort_event=abort_evt,
             ):
                 if not isinstance(event, dict):
+                    continue
+                if event.get("type") == "reasoning_delta":
+                    await websocket.send_text(json.dumps({
+                        "type": "reasoning_delta",
+                        "content": event.get("content", ""),
+                    }, ensure_ascii=False))
                     continue
                 if event.get("type") == "delta":
                     delta_text = state.message_content_to_text(event.get("content"))
@@ -70,6 +98,12 @@ async def chat_websocket(websocket: WebSocket):
                 if event.get("type") in {"tool_start", "tool_result"}:
                     await websocket.send_text(json.dumps(event, ensure_ascii=False))
             schedule_memory_record_sync(text, reply)
+            if pm:
+                post_results = pm._call_pluggy_hook('message_sent', msg=text, response=reply, ctx=None)
+                if post_results:
+                    for r in post_results:
+                        if r is not None:
+                            reply = r
             await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
             log.debug("聊天流结束")
         except asyncio.CancelledError:
@@ -116,6 +150,7 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
                 agent_task = asyncio.create_task(_run_agent_stream(text))
+                agent_task.add_done_callback(lambda _: events.ignore_trigger_event.clear())
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
@@ -145,7 +180,7 @@ async def command_websocket(websocket: WebSocket):
                     ttype = task.get("type")
                     callback_id = task.get("callback_id")
                     if ttype == "event" and task.get("event_name") == "nimble_result" and callback_id:
-                        result = nimble.get_nimble_result(callback_id, cleanup=False)
+                        result = (task.get("payload") or {}).get("result")
                         trigger_text = f"<Trigger>灵动交互窗口收到用户提交。callback_id={callback_id}，用户结果={result}。请继续处理。"
                     elif ttype == "event" and task.get("event_name") == "blive_danmaku":
                         payload = task.get("payload") or {}

@@ -19,6 +19,7 @@ websocket-client
 openai
 pillow
 pyautogui
+opencv-python
 easyocr
 
 #RAG依赖
@@ -56,3 +57,8 @@ pure-protobuf~=3.1.2
 yarl~=1.9.3
 #
 edge_tts
+rank_bm25
+#
+funasr>=0.9.6
+#
+pluggy

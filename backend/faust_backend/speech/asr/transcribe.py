@@ -62,9 +62,9 @@ def transcribe_audio(filename: str, audio_bytes: bytes, content_type: str | None
             return {"status": "success", "text": str(data.get("text"))}
         raise SpeechRuntimeError(str(data.get("message") or data.get("error") or data))
 
-    api_key = str(conf.OPENAI_ASR_API_KEY or "").strip()
+    api_key = str(conf.CHAT_API_KEY or "").strip()
     if not api_key:
-        raise SpeechRuntimeError("未配置 OPENAI_ASR_API_KEY")
+        raise SpeechRuntimeError("未配置 CHAT_API_KEY")
 
     payload: dict[str, Any] = {
         "model": conf.OPENAI_ASR_MODEL,

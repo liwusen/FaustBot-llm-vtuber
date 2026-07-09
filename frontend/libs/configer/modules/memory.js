@@ -8,16 +8,16 @@ function renderMemoryModule() {
   const tabBar = el("div", "toolbar");
   const treeTab = makeButton("\u{1F4C1} 树状浏览", async () => {
     state.memoryView = "tree";
-    renderModule();
+    refreshModule();
   }, view === "tree" ? "btn btn-primary" : "btn btn-ghost");
   const graphTab = makeButton("\u{1F517} 知识图谱", async () => {
     state.memoryView = "graph";
     await ensureModuleData("memory");
-    renderModule();
+    refreshModule();
   }, view === "graph" ? "btn btn-primary" : "btn btn-ghost");
   const searchTab = makeButton("\u{1F50D} 统一搜索", async () => {
     state.memoryView = "search";
-    renderModule();
+    refreshModule();
   }, view === "search" ? "btn btn-primary" : "btn btn-ghost");
   tabBar.append(treeTab, graphTab, searchTab);
   addSection("记忆", [tabBar]);
@@ -34,7 +34,7 @@ function renderMemoryModule() {
 function renderMemoryTree(currentDir) {
   const doRefresh = async () => {
     await ensureModuleData("memory");
-    renderModule();
+    refreshModule();
   };
 
   const doNewFile = async () => {
@@ -64,7 +64,7 @@ function renderMemoryTree(currentDir) {
       state.kbCurrentDir = normalizeKbPath(p);
       await ensureModuleData("memory");
       closeModal();
-      renderModule();
+      refreshModule();
     };
     const tb = el("div", "toolbar");
     tb.append(makeButton("创建", save, "btn btn-primary"), makeButton("取消", closeModal));
@@ -80,7 +80,7 @@ function renderMemoryTree(currentDir) {
     state.kbSelectedContent = "";
     state.kbCurrentDir = kbParentPath(p);
     await ensureModuleData("memory");
-    renderModule();
+    refreshModule();
   };
 
   // ── Build node count summary ──
@@ -166,11 +166,11 @@ function renderMemoryTree(currentDir) {
     tbody.append(tr);
   };
   addRow("\u{1F4C1}", "/ (根目录)", "目录", "", currentDir === "/" ? "selected" : "",
-    () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; renderModule(); });
+    () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; refreshModule(); });
   const parentPath2 = kbParentPath(currentDir);
   if (parentPath2 !== currentDir) {
     addRow("\u{1F4C2}", ".. (上一级)", "目录", "", "",
-      () => { state.kbCurrentDir = parentPath2; state.kbSelectedPath = ""; renderModule(); });
+      () => { state.kbCurrentDir = parentPath2; state.kbSelectedPath = ""; refreshModule(); });
   }
   const nodes = getKbChildren(state.kbTree, currentDir);
   if (!nodes.length) {
@@ -199,7 +199,7 @@ function renderMemoryTree(currentDir) {
           state.kbSelectedPath = "";
           state.kbSelectedMeta = null;
         }
-        renderModule();
+        refreshModule();
       },
       (evt) => {
         state.kbSelectedPath = node.path;
@@ -397,7 +397,7 @@ function renderMemoryTree(currentDir) {
           row.addEventListener("click", () => {
             state.kbGraphSelectedEntityId = ent.id;
             state.memoryView = "graph";
-            renderModule();
+            refreshModule();
           });
           row.append(label);
           entBox.append(row);
@@ -480,7 +480,7 @@ function renderMemoryTree(currentDir) {
       state.kbSelectedPath = "";
       state.kbCurrentDir = kbParentPath(node.path);
       await ensureModuleData("memory");
-      renderModule();
+      refreshModule();
     }});
 
     for (const it of items) {
@@ -505,7 +505,7 @@ function renderMemoryTree(currentDir) {
         item.addEventListener("click", async () => {
           menu.remove();
           await it.action();
-          renderModule();
+          refreshModule();
         });
       }
       menu.append(item);
@@ -534,14 +534,14 @@ function renderMemoryTree(currentDir) {
       if (!newName || newName === selNode.name) return;
       cfgApi("POST", "/faust/memory/rename", { path: selNode.path, new_name: newName })
         .then(() => { state.kbCurrentDir = kbParentPath(kbParentPath(selNode.path)); return ensureModuleData("memory"); })
-        .then(() => { renderModule(); showBanner("success", "已重命名为 " + newName); })
+        .then(() => { refreshModule(); showBanner("success", "已重命名为 " + newName); })
         .catch(err => showBanner("error", "重命名失败: " + String(err)));
     } else if (evt.key === "Delete" && selNode) {
       evt.preventDefault();
       if (!window.confirm("确定删除 " + selNode.path + " ?")) return;
       cfgApi("DELETE", "/faust/memory/delete", null, { path: selNode.path })
         .then(() => { state.kbSelectedPath = ""; state.kbCurrentDir = kbParentPath(selNode.path); return ensureModuleData("memory"); })
-        .then(() => renderModule());
+        .then(() => refreshModule());
     } else if (evt.ctrlKey && evt.key === "c" && isFile) {
       state._kbClipboard = { mode: "copy", path: selNode.path, name: selNode.name };
       showBanner("info", "已复制: " + selNode.name);
@@ -556,12 +556,12 @@ function renderMemoryTree(currentDir) {
         const destPath = normalizeKbPath(targetDir + "/" + clip.name);
         cfgApi("POST", "/faust/memory/copy", { path: clip.path, dest: destPath })
           .then(() => { showBanner("success", "已粘贴: " + clip.name); return ensureModuleData("memory"); })
-          .then(() => renderModule())
+          .then(() => refreshModule())
           .catch(err => showBanner("error", "粘贴失败: " + String(err)));
       } else if (clip.mode === "cut") {
         cfgApi("POST", "/faust/memory/move", { path: clip.path, dest_dir: targetDir })
           .then(() => { state._kbClipboard = null; showBanner("success", "已移动: " + clip.name); return ensureModuleData("memory"); })
-          .then(() => renderModule())
+          .then(() => refreshModule())
           .catch(err => showBanner("error", "移动失败: " + String(err)));
       }
     } else if (evt.ctrlKey && evt.shiftKey && evt.key === "N") {
@@ -605,7 +605,7 @@ function renderMemoryTree(currentDir) {
     await cfgApi("POST", "/faust/memory/declare-update", { file_path: filePath, kb_path: kbPath.trim() || null });
     await ensureModuleData("memory");
     showBanner("success", "文件已导入。");
-    renderModule();
+    refreshModule();
   }));
   addSection("导入", [importBar]);
 }
@@ -621,7 +621,55 @@ function renderMemoryGraph() {
   searchInput.style.maxWidth = "200px";
   let statusText = el("span", "card-help", "加载中...");
   let searchResultBox = null;
+  let graphDetailBox = null;
   const log = function(msg) { console.log("[Graph] " + msg); };
+
+  async function openLinkedEntityFile(entityId) {
+    const resp = await cfgApi("GET", "/faust/memory/graph/entity-detail", null, { entity_id: entityId });
+    const detail = (resp && resp.detail) ? resp.detail : null;
+    const files = detail && Array.isArray(detail.linked_files) ? detail.linked_files : [];
+    if (!files.length) {
+      showBanner("info", "该实体没有关联文件。");
+      return;
+    }
+    state.kbSelectedPath = normalizeKbPath(files[0]);
+    state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
+    state.memoryView = "tree";
+    refreshModule();
+  }
+
+  async function renderGraphDetail(entityId) {
+    if (!graphDetailBox) return;
+    graphDetailBox.innerHTML = `<div class="card-help">正在加载节点详情...</div>`;
+    graphDetailBox.style.display = "block";
+    try {
+      const resp = await cfgApi("GET", "/faust/memory/graph/entity-detail", null, { entity_id: entityId });
+      const detail = (resp && resp.detail) ? resp.detail : null;
+      if (!detail) {
+        graphDetailBox.innerHTML = `<div class="card-help">无法加载节点详情</div>`;
+        return;
+      }
+      const files = Array.isArray(detail.linked_files) ? detail.linked_files : [];
+      graphDetailBox.innerHTML = "";
+      const title = el("div", "mono", detail.name || entityId);
+      title.style.fontWeight = "700";
+      const meta = el("div", "card-help", `${detail.entity_type || 'entity'} | 关系 ${detail.relations_count || 0}`);
+      const desc = el("div", "card-help", detail.description || "无描述");
+      const actions = el("div", "toolbar compact");
+      actions.append(
+        makeButton("查看详情", () => openEntityDetailModal(entityId), "btn btn-ghost"),
+        makeButton("打开文件", () => openLinkedEntityFile(entityId), "btn btn-ghost")
+      );
+      graphDetailBox.append(title, meta, desc, actions);
+      if (files.length) {
+        const fileHint = el("div", "card-help", `关联文件: ${files[0]}`);
+        fileHint.style.marginTop = "4px";
+        graphDetailBox.append(fileHint);
+      }
+    } catch (err) {
+      graphDetailBox.innerHTML = `<div class="card-help">节点详情加载失败: ${String(err.message || err)}</div>`;
+    }
+  }
 
   const tb = el("div", "graph-toolbar");
   tb.append(searchInput, makeButton("搜索", doSearch, "btn btn-primary"), statusText,
@@ -636,7 +684,8 @@ function renderMemoryGraph() {
   depthSlider.min = "1";
   depthSlider.max = "10";
   depthSlider.value = "3";
-  depthSlider.style.width = "80px";
+  depthSlider.style.width = "180px";
+  depthSlider.style.accentColor = "#4a90d9";
   depthSlider.style.verticalAlign = "middle";
   const depthLabel = el("span", "card-help", "深度: 3");
   depthSlider.addEventListener("input", () => {
@@ -682,11 +731,18 @@ function renderMemoryGraph() {
   {
     const srWrap = el("div", "");
     srWrap.style.marginTop = "8px";
+    graphDetailBox = el("div", "card-help");
+    graphDetailBox.style.display = "none";
+    graphDetailBox.style.padding = "10px 12px";
+    graphDetailBox.style.marginBottom = "8px";
+    graphDetailBox.style.background = "var(--bg2)";
+    graphDetailBox.style.border = "1px solid var(--border)";
+    graphDetailBox.style.borderRadius = "8px";
     searchResultBox = el("div", "list-box");
     searchResultBox.id = "graphSearchResultBox";
     searchResultBox.style.display = "none";
     searchResultBox.style.maxHeight = "280px";
-    srWrap.append(searchResultBox);
+    srWrap.append(graphDetailBox, searchResultBox);
     addSection("搜索结果", [srWrap]);
   }
 
@@ -741,7 +797,7 @@ function renderMemoryGraph() {
         log("[initGraph] entity-children count=" + entChildren.length);
         if (entChildren.length === 0) {
           // 无实体子节点：回退到显示文件节点本身的 BFS 邻域
-          const fileNid = "path:" + selPath.replace(/^\//, "");
+          const fileNid = "path:/" + selPath.replace(/^\//, "");
           const depth = parseInt(depthSlider.value) || 3;
           log("[initGraph] fallback: expanding file node " + fileNid + " depth=" + depth);
           try {
@@ -849,6 +905,7 @@ function renderMemoryGraph() {
         log("[onNodeClick] id=" + node.id + " name=" + node.name + " depth=" + depthSlider.value);
         state.kbGraphSelectedEntityId = node.id;
         statusText.textContent = "BFS展开 " + node.name + "...";
+        renderGraphDetail(node.id);
         doBfsExpand(node.id, node.name, node.entity_type || "entity");
       });
 
@@ -925,13 +982,21 @@ function renderMemoryGraph() {
             evt.stopPropagation();
             openEntityDetailModal(it.id);
           }, "btn btn-ghost");
+          const openFileBtn = makeButton("文件", async (evt) => {
+            evt.stopPropagation();
+            await openLinkedEntityFile(it.id);
+          }, "btn btn-ghost");
           detailBtn.style.fontSize = "11px";
           detailBtn.style.padding = "2px 8px";
+          openFileBtn.style.fontSize = "11px";
+          openFileBtn.style.padding = "2px 8px";
           detailBtn.style.flexShrink = "0";
-          row.append(left, detailBtn);
+          openFileBtn.style.flexShrink = "0";
+          row.append(left, openFileBtn, detailBtn);
           row.addEventListener("click", () => {
             state.kbGraphSelectedEntityId = it.id;
             statusText.textContent = "BFS展开 " + it.name + "...";
+            renderGraphDetail(it.id);
             doBfsExpand(it.id, it.name, it.entity_type || "entity");
           });
           searchResultBox.append(row);
@@ -970,7 +1035,7 @@ function renderMemorySearch() {
     const d = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
     state.kbSelectedContent = String(d.content || "");
     state.kbSelectedMeta = d.meta || {};
-    renderModule();
+    refreshModule();
   };
 
   const filterWrap = el("div");
@@ -1121,15 +1186,19 @@ function renderMemorySearch() {
             const entities = entResp.items || [];
             state.kbGraphSelectedEntityId = entities.length > 0 ? entities[0].id : "";
           } catch (_) { state.kbGraphSelectedEntityId = ""; }
-          renderModule();
+          refreshModule();
         }, "btn btn-ghost");
         graphBtn.style.marginLeft = "auto";
         graphBtn.style.fontSize = "11px";
         graphBtn.style.padding = "2px 8px";
         graphBtn.style.flexShrink = "0";
+        const openBtn = makeButton("📄 文件", () => openResult(it.path), "btn btn-ghost");
+        openBtn.style.fontSize = "11px";
+        openBtn.style.padding = "2px 8px";
+        openBtn.style.flexShrink = "0";
         row.style.display = "flex";
         row.style.alignItems = "center";
-        row.append(graphBtn);
+        row.append(openBtn, graphBtn);
         row.addEventListener("click", () => openResult(it.path));
         resultBox.append(row);
       }
@@ -1217,7 +1286,7 @@ async function openEntityDetailModal(entityId) {
           state.kbSelectedPath = normalizeKbPath(f);
           state.kbCurrentDir = kbParentPath(state.kbSelectedPath);
           state.memoryView = "tree";
-          renderModule();
+          refreshModule();
         });
         fileList.append(frow);
       }
@@ -1231,7 +1300,7 @@ async function openEntityDetailModal(entityId) {
         closeModal();
         state.kbGraphSelectedEntityId = entityId;
         state.memoryView = "graph";
-        renderModule();
+        refreshModule();
       }, "btn btn-primary"),
       makeButton("关闭", closeModal),
     );

@@ -94,8 +94,8 @@ async function openEdgeTTSVoiceModal() {
 
         voiceItem.innerHTML = `
           <div style="font-weight: bold;">${voice.name}</div>
-          <div style="color: #666; font-size: 0.9em;">ID: ${voice.voice_id}</div>
-          <div style="color: #666; font-size: 0.9em;">语言: ${voice.language} | 性别: ${voice.gender}</div>
+          <div style="color: #666; font-size: 0.9em;">标识：${voice.voice_id}</div>
+          <div style="color: #666; font-size: 0.9em;">语言：${voice.language} | 性别：${voice.gender}</div>
           <div style="color: #888; font-size: 0.8em;">特征: ${voice.voice_personalities}</div>
         `;
 
@@ -121,8 +121,8 @@ async function openEdgeTTSVoiceModal() {
 
     selectedInfo.innerHTML = `
       <div style="font-weight: bold;">已选择: ${voice.name}</div>
-      <div>语音ID: ${voice.voice_id}</div>
-      <div>语言: ${voice.language} | 性别: ${voice.gender}</div>
+      <div>语音标识：${voice.voice_id}</div>
+      <div>语言：${voice.language} | 性别：${voice.gender}</div>
       <div>特征: ${voice.voice_personalities}</div>
       <button onclick="confirmEdgeTTSVoice('${voice.voice_id}', '${voice.name.replace(/'/g, "\\'")}')"
               style="margin-top: 10px; padding: 5px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">

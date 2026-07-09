@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-DEFAULT_MAX_SUMMARY = 500  # characters in the summary truncation
-DEFAULT_MAX_LINES = 5  # max lines to show in summary before truncation
+DEFAULT_MAX_SUMMARY = 60000  # characters in the summary truncation
+DEFAULT_MAX_LINES = 300  # max lines to show in summary before truncation
 
 
 @dataclass

@@ -22,9 +22,9 @@ async def listdir(path):
         return os.listdir(path)
     except Exception as e:
         return f"Error: {str(e)}"
-checker_agent=ChatOpenAI(model=conf.SECURITY_VERIFIER_LLM_MODEL,
-                         base_url=conf.SECURITY_VERIFIER_LLM_API_ENDPOINT,
-                         api_key=conf.SECURITY_VERIFIER_LLM_KEY,
+checker_agent=ChatOpenAI(model=conf.CHAT_MODEL,
+                         base_url=conf.CHAT_API_BASE,
+                         api_key=conf.CHAT_API_KEY,
                          )
 def setSecurityLevel(level):
     """设置安全级别

@@ -100,6 +100,13 @@ class PluginManifest:
 class PluginProtocol(Protocol):
     manifest: PluginManifest
 
+    # ── Lifecycle ──
+    def plugin_loaded(self, ctx: PluginContext) -> None:
+        ...
+
+    def plugin_unloaded(self, ctx: PluginContext) -> None:
+        ...
+
     def startup(self, ctx: PluginContext) -> None:
         ...
 
@@ -109,11 +116,71 @@ class PluginProtocol(Protocol):
     def on_unload(self, ctx: PluginContext) -> None:
         ...
 
+    def heartbeat(self, ctx: PluginContext) -> None:
+        ...
+
+    def health_check(self) -> dict[str, Any] | None:
+        ...
+
+    # ── Routes & Frontend ──
+    def register_routes(self) -> list:
+        ...
+
+    def register_frontend(self) -> list[dict]:
+        ...
+
+    def register_schedules(self) -> list[dict]:
+        ...
+
+    def register_pip_deps(self) -> list[str]:
+        ...
+
+    # ── Tools & Middleware ──
     def register_tools(self, ctx: PluginContext) -> list[ToolSpec] | list[Any]:
         ...
 
     def register_middlewares(self, ctx: PluginContext) -> list[MiddlewareSpec] | list[Any]:
         ...
 
-    def health_check(self) -> dict[str, Any]:
+    def tool_call_pre(self, name: str, args: dict, ctx: PluginContext) -> dict | None:
+        ...
+
+    def tool_call_post(self, name: str, args: dict, result: Any, ctx: PluginContext) -> Any:
+        ...
+
+    # ── Messages ──
+    def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
+        ...
+
+    def message_sent(self, msg: str, response: Any, ctx: PluginContext) -> Any:
+        ...
+
+    # ── Memory ──
+    def memory_read_pre(self, query: str, filters: dict | None, ctx: PluginContext) -> str | None:
+        ...
+
+    def memory_read_post(self, query: str, results: list, ctx: PluginContext) -> list | None:
+        ...
+
+    def memory_write_pre(self, content: str, metadata: dict | None, ctx: PluginContext) -> str | None:
+        ...
+
+    def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
+        ...
+
+    # ── Triggers ──
+    def filter_trigger_append(self, payload: dict) -> dict | None:
+        ...
+
+    def filter_trigger_fire(self, payload: dict) -> dict | None:
+        ...
+
+    def trigger_append(self, payload: dict, ctx: PluginContext) -> dict | None:
+        ...
+
+    def trigger_fire(self, payload: dict, ctx: PluginContext) -> dict | None:
+        ...
+
+    # ── Config ──
+    def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
         ...

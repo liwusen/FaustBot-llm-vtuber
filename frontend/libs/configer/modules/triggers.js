@@ -3,12 +3,12 @@
 function renderTriggersModule() {
   const bar = el("div", "toolbar");
   bar.append(
-    makeButton("刷新", async () => { await ensureModuleData("triggers"); renderModule(); }),
+    makeButton("刷新", async () => { await ensureModuleData("triggers"); refreshModule(); }),
     makeButton("新建", async () => {
       openTriggerEditorModal(null, async (payload) => {
         await cfgApi("POST", "/faust/admin/triggers", payload);
         await ensureModuleData("triggers");
-        renderModule();
+        refreshModule();
       });
     }, "btn btn-primary"),
     makeButton("编辑", async () => {
@@ -19,7 +19,7 @@ function renderTriggersModule() {
       openTriggerEditorModal(base, async (payload) => {
         await cfgApi("PUT", `/faust/admin/triggers/${encodeURIComponent(state.selectedTriggerId)}`, payload);
         await ensureModuleData("triggers");
-        renderModule();
+        refreshModule();
       });
     }),
     makeButton("删除", async () => {
@@ -28,7 +28,7 @@ function renderTriggersModule() {
       await cfgApi("DELETE", `/faust/admin/triggers/${encodeURIComponent(state.selectedTriggerId)}`);
       state.selectedTriggerId = "";
       await ensureModuleData("triggers");
-      renderModule();
+      refreshModule();
     })
   );
   addSection("Trigger 操作", [bar]);
@@ -49,7 +49,7 @@ function renderTriggersModule() {
         openTriggerEditorModal(base, async (payload) => {
           await cfgApi("PUT", `/faust/admin/triggers/${encodeURIComponent(tid)}`, payload);
           await ensureModuleData("triggers");
-          renderModule();
+          refreshModule();
         });
       }),
       makeButton("删除", async () => {
@@ -57,13 +57,13 @@ function renderTriggersModule() {
         await cfgApi("DELETE", `/faust/admin/triggers/${encodeURIComponent(tid)}`);
         if (state.selectedTriggerId === tid) state.selectedTriggerId = "";
         await ensureModuleData("triggers");
-        renderModule();
+        refreshModule();
       })
     );
     row.append(ops);
     row.addEventListener("click", () => {
       state.selectedTriggerId = tid;
-      renderModule();
+      refreshModule();
     });
     list.append(row);
   }

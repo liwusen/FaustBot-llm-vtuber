@@ -14,6 +14,7 @@ from typing import Any, Callable
 from langchain_core.tools import BaseTool
 
 from faust_backend.runtime.output_store import get_output_store
+from faust_backend.runtime import state
 
 def wrap_tool_output(tool: BaseTool) -> BaseTool:
     """Wrap a LangChain tool so its output goes through OutputStore.
@@ -36,30 +37,63 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
     if original_coro and _inspect.iscoroutinefunction(original_coro):
 
         async def _wrapped_arun(*args, **kwargs):
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                try:
+                    modified = pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
+                    if modified and isinstance(modified, list) and modified[0] is not None:
+                        kwargs = modified[0] if isinstance(modified[0], dict) else kwargs
+                except Exception:
+                    pass
             try:
                 result = await original_coro(*args, **kwargs)
+                if pm:
+                    try:
+                        post_results = pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
+                        if post_results and isinstance(post_results, list):
+                            for r in post_results:
+                                if r is not None:
+                                    result = r
+                    except Exception:
+                        pass
             except Exception as e:
                 output_id = store.put(
                     str(e), tool_name=tool_name,
                     metadata={"status": "error"}
                 )
                 return f"工具执行出错\n[完整输出: artifact://{output_id}]"
-            return _store_and_summarize(store, tool_name, result)
-
+            return _store_and_summarize(store, tool_name, result, args, kwargs)
         tool._arun = _wrapped_arun
 
     if original_func and not _inspect.iscoroutinefunction(original_func):
 
         def _wrapped_run(*args, **kwargs):
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                try:
+                    modified = pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
+                    if modified and isinstance(modified, list) and modified[0] is not None:
+                        kwargs = modified[0] if isinstance(modified[0], dict) else kwargs
+                except Exception:
+                    pass
             try:
                 result = original_func(*args, **kwargs)
+                if pm:
+                    try:
+                        post_results = pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
+                        if post_results and isinstance(post_results, list):
+                            for r in post_results:
+                                if r is not None:
+                                    result = r
+                    except Exception:
+                        pass
             except Exception as e:
                 output_id = store.put(
                     str(e), tool_name=tool_name,
                     metadata={"status": "error"}
                 )
                 return f"工具执行出错\n[完整输出: artifact://{output_id}]"
-            return _store_and_summarize(store, tool_name, result)
+            return _store_and_summarize(store, tool_name, result, args, kwargs)
 
         tool._run = _wrapped_run
 
@@ -71,27 +105,33 @@ def wrap_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return [wrap_tool_output(t) for t in tools]
 
 
-def _store_and_summarize(store, tool_name: str, result: Any) -> str:
+def _store_and_summarize(store, tool_name: str, result: Any,
+                         args: tuple | None = None,
+                         kwargs: dict | None = None) -> str:
     """Store tool output and return truncated summary.
-    Multimodal JSON results are stored but passed through so mm_bridge can process them."""
-    # Detect multimodal JSON: store full content, augment text, pass through
+    Multimodal JSON: store a copy in OutputStore, return full content to
+    the LLM with the artifact ID in the text. Skipped when `read` is
+    reading from an existing artifact:// URI (avoids circular storage)."""
+    # Detect multimodal JSON
+    data = None
     if isinstance(result, str):
         try:
             data = json.loads(result)
         except (json.JSONDecodeError, TypeError):
             data = None
-        if isinstance(data, dict) and data.get("kind") == "multimodal_tool_result":
-            output_id = store.put_multimodal(data, tool_name=tool_name)
-            text = str(data.get("text") or "")
-            image_count = len(data.get("images") or [])
-            data["text"] = f"{text}\n[图片({image_count}张): artifact://{output_id}]"
-            return json.dumps(data, ensure_ascii=False)
-    elif isinstance(result, dict) and result.get("kind") == "multimodal_tool_result":
-        output_id = store.put_multimodal(result, tool_name=tool_name)
-        text = str(result.get("text") or "")
-        image_count = len(result.get("images") or [])
-        result["text"] = f"{text}\n[图片({image_count}张): artifact://{output_id}]"
-        return json.dumps(result, ensure_ascii=False)
+    elif isinstance(result, dict):
+        data = result
+    if isinstance(data, dict) and data.get("kind") == "multimodal_tool_result":
+        # Read from artifact → don't store a second copy
+        if tool_name == "read" and _is_read_from_artifact(args, kwargs):
+            if isinstance(result, str):
+                return result
+            return json.dumps(result, ensure_ascii=False)
+        # Store a copy in OutputStore, inject artifact ID into text
+        output_id = store.put_multimodal(data, tool_name=tool_name)
+        text = str(data.get("text") or "")
+        data["text"] = f"{text}\n[图片副本已保存: artifact://{output_id}]"
+        return json.dumps(data, ensure_ascii=False)
 
     output = str(result) if not isinstance(result, str) else result
 
@@ -102,3 +142,16 @@ def _store_and_summarize(store, tool_name: str, result: Any) -> str:
     output_id = store.put(output, tool_name=tool_name, metadata={})
     summary = store.summary(output_id)
     return summary
+
+
+def _is_read_from_artifact(args: tuple | None, kwargs: dict | None) -> bool:
+    """Check if the tool call is read() with an artifact:// URI."""
+    if kwargs:
+        uri_val = str(kwargs.get("uri", ""))
+        if uri_val.startswith("artifact://"):
+            return True
+    if args:
+        uri_val = str(args[0])
+        if uri_val.startswith("artifact://"):
+            return True
+    return False

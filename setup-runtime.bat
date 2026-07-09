@@ -11,14 +11,11 @@ set "NPM_REGISTRY=https://registry.npmmirror.com/"
 set "INSTALL_PYTHON=0"
 set "INSTALL_TORCH=0"
 set "INSTALL_PY_REQ=0"
-set "INSTALL_LOCAL_INFER_REQ=0"
 set "INSTALL_NODE=0"
 set "INSTALL_TTS=0"
 set "TORCH_VARIANT=cpu"
 set "TTS_VARIANT=standard"
-set "INFER_MODE=cloud"
 set "SHOW_HELP=0"
-set "MODE_PROVIDED=0"
 set "SKIP_ADMIN_CHECK=0"
 
 cd /d "%~dp0"
@@ -48,19 +45,42 @@ if /i "%~1"=="--help" (
   shift
   goto parse_args_loop
 )
-if /i "%~1"=="--mode" (
+if /i "%~1"=="--torch" (
   if "%~2"=="" (
-    echo 参数错误：--mode 缺少取值
+    echo 参数错误：--torch 缺少取值
     exit /b 1
   )
-  if /i "%~2"=="local" (
-    set "INFER_MODE=local"
-    set "MODE_PROVIDED=1"
-  ) else if /i "%~2"=="cloud" (
-    set "INFER_MODE=cloud"
-    set "MODE_PROVIDED=1"
+  if /i "%~2"=="cu128" (
+    set "TORCH_VARIANT=cu128"
+    set "INSTALL_TORCH=1"
+  ) else if /i "%~2"=="cu121" (
+    set "TORCH_VARIANT=cu121"
+    set "INSTALL_TORCH=1"
+  ) else if /i "%~2"=="cu130" (
+    set "TORCH_VARIANT=cu130"
+    set "INSTALL_TORCH=1"
+  ) else if /i "%~2"=="cpu" (
+    set "TORCH_VARIANT=cpu"
+    set "INSTALL_TORCH=1"
   ) else (
-    echo 参数错误：--mode 仅支持 local 或 cloud
+    echo 参数错误：--torch 仅支持 cu128/cu121/cu130/cpu
+    exit /b 1
+  )
+  shift
+  shift
+  goto parse_args_loop
+)
+if /i "%~1"=="--tts" (
+  if "%~2"=="" (
+    echo 参数错误：--tts 缺少取值
+    exit /b 1
+  )
+  if /i "%~2"=="yes" (
+    set "INSTALL_TTS=1"
+  ) else if /i "%~2"=="no" (
+    set "INSTALL_TTS=0"
+  ) else (
+    echo 参数错误：--tts 仅支持 yes 或 no
     exit /b 1
   )
   shift
@@ -144,25 +164,12 @@ exit /b 1
 
 :after_parse
 if "%SHOW_HELP%"=="1" goto show_help
-if "%MODE_PROVIDED%"=="0" (
-  echo 参数错误：必须提供 --mode local 或 --mode cloud
+if "%INSTALL_TORCH%"=="0" (
+  echo 参数错误：必须提供 --torch cu128^|cu121^|cu130^|cpu
   echo.
   goto show_help_with_error
 )
-
-if /i "%INFER_MODE%"=="local" (
-  set "TORCH_VARIANT=gpu"
-  set "INSTALL_TORCH=1"
-  set "INSTALL_PY_REQ=1"
-  set "INSTALL_LOCAL_INFER_REQ=1"
-  set "INSTALL_TTS=1"
-) else (
-  set "TORCH_VARIANT=cpu"
-  set "INSTALL_TORCH=1"
-  set "INSTALL_PY_REQ=1"
-  set "INSTALL_LOCAL_INFER_REQ=0"
-  set "INSTALL_TTS=0"
-)
+if "%INSTALL_TORCH%"=="1" set "INSTALL_PY_REQ=1"
 
 if "%SKIP_ADMIN_CHECK%"=="0" (
   net session >nul 2>&1
@@ -178,8 +185,13 @@ if "%SKIP_ADMIN_CHECK%"=="0" (
     ) else (
       set "INSTALL_NODE_TEXT=no"
     )
-    set "FAUST_SETUP_ARGS=--mode %INFER_MODE% --source %SOURCE_MODE% --install-python !INSTALL_PYTHON_TEXT! --install-node !INSTALL_NODE_TEXT!"
-    if /i "%INFER_MODE%"=="local" set "FAUST_SETUP_ARGS=!FAUST_SETUP_ARGS! --tts-variant %TTS_VARIANT%"
+    if "%INSTALL_TTS%"=="1" (
+      set "INSTALL_TTS_TEXT=yes"
+    ) else (
+      set "INSTALL_TTS_TEXT=no"
+    )
+    set "FAUST_SETUP_ARGS=--torch %TORCH_VARIANT% --source %SOURCE_MODE% --install-python !INSTALL_PYTHON_TEXT! --install-node !INSTALL_NODE_TEXT! --tts !INSTALL_TTS_TEXT!"
+    if /i "%INSTALL_TTS%"=="1" set "FAUST_SETUP_ARGS=!FAUST_SETUP_ARGS! --tts-variant %TTS_VARIANT%"
     powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%BATCH_PATH%' -Verb RunAs -ArgumentList $env:FAUST_SETUP_ARGS"
     exit /b 0
   )
@@ -202,11 +214,6 @@ if "%INSTALL_PY_REQ%"=="1" (
 ) else (
   set "INSTALL_PY_REQ_TEXT=no"
 )
-if "%INSTALL_LOCAL_INFER_REQ%"=="1" (
-  set "INSTALL_LOCAL_INFER_REQ_TEXT=yes"
-) else (
-  set "INSTALL_LOCAL_INFER_REQ_TEXT=no"
-)
 if "%INSTALL_NODE%"=="1" (
   set "INSTALL_NODE_TEXT=yes"
 ) else (
@@ -218,12 +225,11 @@ if "%INSTALL_TTS%"=="1" (
   set "INSTALL_TTS_TEXT=no"
 )
 
-echo 模式：%INFER_MODE%
+echo Torch 版本：%TORCH_VARIANT%
 echo 源：%SOURCE_MODE%
 echo 安装 Python 基础环境：%INSTALL_PYTHON_TEXT%
 echo 安装 PyTorch：%INSTALL_TORCH_TEXT% (%TORCH_VARIANT%)
 echo 安装 Python requirements：%INSTALL_PY_REQ_TEXT%
-echo 安装本地推理专用依赖：%INSTALL_LOCAL_INFER_REQ_TEXT%
 echo 安装 Node.js 依赖：%INSTALL_NODE_TEXT%
 echo 下载 TTS：%INSTALL_TTS_TEXT% (%TTS_VARIANT%)
 echo.
@@ -267,13 +273,13 @@ if "%INSTALL_TORCH%"=="1" (
     echo .runtime 中没有可用的 pip，请先安装 Python 基础环境。
     goto fail
   )
-  if /i "%TORCH_VARIANT%"=="gpu" (
-    echo 安装 PyTorch GPU 版...
-    %PIP_CMD% install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --extra-index-url %PIP_INDEX_URL%
+  if "%SOURCE_MODE%"=="cn" (
+    set "TORCH_INDEX_FLAG=-f https://mirrors.aliyun.com/pytorch-wheels/%TORCH_VARIANT%/ -i %PIP_INDEX_URL%"
   ) else (
-    echo 安装 PyTorch CPU 版...
-    %PIP_CMD% install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --extra-index-url %PIP_INDEX_URL%
+    set "TORCH_INDEX_FLAG=--index-url https://download.pytorch.org/whl/%TORCH_VARIANT%"
   )
+  echo 安装 PyTorch %TORCH_VARIANT% 版（%SOURCE_MODE% 源）...
+  %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG!
   if errorlevel 1 goto fail
 )
 
@@ -284,15 +290,6 @@ if "%INSTALL_PY_REQ%"=="1" (
   if errorlevel 1 (
     echo .runtime 中没有可用的 pip，请先安装 Python 基础环境。
     goto fail
-  )
-  if "%INSTALL_LOCAL_INFER_REQ%"=="1" (
-    if not exist "%CD%\requirements_local_infer.txt" (
-      echo 未找到 requirements_local_infer.txt
-      goto fail
-    )
-    echo 安装本地推理专用依赖...
-    %PIP_CMD% install -r "%CD%\requirements_local_infer.txt" -i %PIP_INDEX_URL%
-    if errorlevel 1 goto fail
   )
   %PIP_CMD% install -r "%CD%\requirements.txt" -i %PIP_INDEX_URL%
   if errorlevel 1 goto fail
@@ -324,31 +321,27 @@ if "%INSTALL_NODE%"=="1" (
   )
   popd
 )
-
-if "%INSTALL_TTS%"=="1" (
-  echo.
-  echo [5/5] 下载 TTS 模型 (本地文字转语音需要)
-  if not exist "%BACKEND_DIR%\download_tts.py" (
-    echo 未找到 backend\download_tts.py
-    goto fail
-  )
-  "%PYTHON_EXE%" "%CD%\embedded_python_bootstrap.py" "%BACKEND_DIR%\download_tts.py" --gpu-variant %TTS_VARIANT%
-  if errorlevel 1 goto fail
+if not %INSTALL_TTS% EQU 1 goto :skip_dl_tts
+echo.
+echo [5/5] 下载 TTS 模型 (本地文字转语音需要)
+if not exist "%BACKEND_DIR%\download_tts.py" (
+  echo 未找到 backend\download_tts.py
+  goto fail
 )
-
+"%PYTHON_EXE%" "%CD%\embedded_python_bootstrap.py" "%BACKEND_DIR%\download_tts.py" --gpu-variant %TTS_VARIANT%
+if errorlevel 1 goto fail
+:skip_dl_tts
 echo.
 echo 安装完成。
-echo 可验证："%PYTHON_EXE%" -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
-exit /b 0
 
 :show_help_with_error
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$lines = @('用法：setup-runtime.bat --mode local|cloud [--source cn|official] [--install-python yes|no] [--install-node yes|no] [--tts-variant standard|nvidia50]','', '参数说明：','参数 --mode: 推理模式。local=本地推理，cloud=云端推理。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','', '模式默认行为：','local: 安装 GPU 版 PyTorch、requirements_local_infer.txt、requirements.txt、TTS。','cloud: 安装 CPU 版 PyTorch、requirements.txt。','', '示例：','setup-runtime.bat --mode local --source cn --install-python yes --install-node yes --tts-variant nvidia50','setup-runtime.bat --mode cloud --source official --install-python yes --install-node yes'); [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $lines | ForEach-Object { Write-Host $_ }"
+  "$lines = @('用法：setup-runtime.bat --torch cu128^|cu121^|cu130^|cpu [--tts yes^|no] [--source cn^|official] [--install-python yes^|no] [--install-node yes^|no] [--tts-variant standard^|nvidia50]','', '参数说明：','参数 --torch: PyTorch 版本。cu128=GPU CUDA 12.8，cu121=GPU CUDA 12.1，cu130=GPU CUDA 13.0，cpu=CPU 版。','参数 --tts: 是否下载 TTS 模型。yes=下载，no=不下载。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','', '示例：','setup-runtime.bat --torch cu128 --tts yes --source cn --install-python yes --install-node yes --tts-variant nvidia50','setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes','', '提示：TTS 下载后可通过前端组件页面管理启停。'); $lines -join [Environment]::NewLine"
 exit /b 1
 
 :show_help
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$lines = @('用法：setup-runtime.bat --mode local|cloud [--source cn|official] [--install-python yes|no] [--install-node yes|no] [--tts-variant standard|nvidia50]','', '参数说明：','参数 --mode: 推理模式。local=本地推理，cloud=云端推理。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','', '模式默认行为：','local: 安装 GPU 版 PyTorch、requirements_local_infer.txt、requirements.txt、TTS。','cloud: 安装 CPU 版 PyTorch、requirements.txt。','', '示例：','setup-runtime.bat --mode local --source cn --install-python yes --install-node yes --tts-variant nvidia50','setup-runtime.bat --mode cloud --source official --install-python yes --install-node yes'); [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $lines | ForEach-Object { Write-Host $_ }"
+  "$lines = @('用法：setup-runtime.bat --torch cu128^|cu121^|cu130^|cpu [--tts yes^|no] [--source cn^|official] [--install-python yes^|no] [--install-node yes^|no] [--tts-variant standard^|nvidia50]','', '参数说明：','参数 --torch: PyTorch 版本。cu128=GPU CUDA 12.8，cu121=GPU CUDA 12.1，cu130=GPU CUDA 13.0，cpu=CPU 版。','参数 --tts: 是否下载 TTS 模型。yes=下载，no=不下载。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','', '示例：','setup-runtime.bat --torch cu128 --tts yes --source cn --install-python yes --install-node yes --tts-variant nvidia50','setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes','', '提示：TTS 下载后可通过前端组件页面管理启停。'); $lines -join [Environment]::NewLine"
 exit /b 0
 
 :fail

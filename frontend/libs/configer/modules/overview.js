@@ -44,7 +44,7 @@ function renderOverviewModule() {
     summaryGrid.append(item);
   }
   summaryCard.append(summaryGrid);
-  els.cardsRoot.append(summaryCard);
+  addSection("运行概览", [summaryCard]);
 
   // ── 统计卡片 ──
   const statData = [
@@ -53,13 +53,15 @@ function renderOverviewModule() {
     { label: modelType === "vrm" ? "VRM" : "Live2D", icon: modelType === "vrm" ? "\u{1F9CA}" : "\u{1F5BC}", value: modelPath === "-" ? "未配置" : modelPath.split("/").pop(), desc: "当前模型" },
     { label: "Agent", icon: "\u{1F916}", value: agent, desc: "当前角色" },
   ];
+  const statGrid = el("div", "info-grid");
   for (const s of statData) {
     const card = el("article", "card");
     card.style.textAlign = "center";
     card.style.justifyContent = "center";
     card.innerHTML = `<div style="font-size:28px;line-height:1.2">${s.icon}</div><div style="font-size:22px;font-weight:700;margin:4px 0">${s.value}</div><div style="font-size:12px;color:var(--muted)">${s.desc}</div>`;
-    els.cardsRoot.append(card);
+    statGrid.append(card);
   }
+  addSection("系统状态", [statGrid]);
 
   // ── 直播控制台 ──
   const liveCard = el("article", "card full-span");
@@ -73,7 +75,7 @@ function renderOverviewModule() {
     }
   }, "btn btn-primary");
   liveCard.append(liveHelp, liveBtn);
-  els.cardsRoot.append(liveCard);
+  addSection("直播模式", [liveCard]);
 
   // ── 更新 ──
   const updateCard = el("article", "card full-span");
@@ -218,7 +220,7 @@ function renderOverviewModule() {
   updateCard.append(proxyRow);
 
   updateCard.append(updateInfo, checkBtn, updateResult);
-  els.cardsRoot.append(updateCard);
+  addSection("版本更新", [updateCard]);
 
   // ── 数据目录 ──
   const dataCard = el("article", "card full-span");
@@ -229,7 +231,7 @@ function renderOverviewModule() {
     await window.api.configOpenPath(root);
   }, "btn btn-primary");
   dataCard.append(dataHelp, dataBtn);
-  els.cardsRoot.append(dataCard);
+  addSection("数据目录", [dataCard]);
 
   // ── 最近 ERROR 日志 ──
   const errors = state.recentErrors || [];
@@ -255,5 +257,5 @@ function renderOverviewModule() {
     help.textContent = `仅显示最近 ${errors.length} 条 ERROR 日志。`;
     errCard.append(help);
   }
-  els.cardsRoot.append(errCard);
+  addSection("最近错误日志", [errCard]);
 }

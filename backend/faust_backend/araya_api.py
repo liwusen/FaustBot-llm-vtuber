@@ -19,6 +19,11 @@ def register_araya_routes(app):
         log.debug("Received request for Araya status")
         return {"status": "ok", "araya": get_araya_runtime(refresh=True).get_status()}
 
+    @app.get("/faust/araya/trace")
+    async def araya_trace():
+        runtime = get_araya_runtime(refresh=True)
+        return {"status": "ok", "trace": runtime.get_last_trace()}
+
     @app.post("/faust/araya/trigger")
     async def araya_trigger(payload: dict | None = None):
         log.debug("Received request to trigger Araya with payload: %s", payload)

@@ -325,3 +325,105 @@ def set_skill_enabled(slug: str, enabled: bool, *, agent_name: str | None = None
         "slug": skill_slug,
         "enabled": bool(enabled),
     }
+
+
+def _builtin_skill_dir() -> Path:
+    """Return the project-level built-in skills directory.
+
+    Skills are stored at repo root ``agents/skill.d/`` (sibling of ``backend/``).
+    """
+    return Path(conf.PROJECT_ROOT).parent / "agents" / "skill.d"
+
+
+def list_skills_yaml(agent_name: str | None = None) -> str:
+    """Return a YAML string describing enabled MCP skills for the given agent.
+
+    Each entry includes ``slug``, ``summary`` (from _meta.json description or
+    first 2 lines of SKILL.md), and ``usage`` (from _meta.json).  Only skills
+    whose state entry has ``enabled: true`` (or is absent from state) are
+    included.  Returns an empty string when there are no enabled skills.
+    """
+    agent = _resolve_agent(agent_name)
+    state = _load_state(agent)
+    skill_state = state.get("skills") or {}
+
+    entries: list[dict[str, str]] = []
+    for p in _skill_paths(agent):
+        slug = p.name
+        st = skill_state.get(slug) or {}
+        if not st.get("enabled", True):
+            continue
+
+        meta = _read_skill_meta(p)
+        summary = (meta.get("description") or "").strip()
+        if not summary:
+            skill_md = p / "SKILL.md"
+            if skill_md.exists():
+                try:
+                    raw = skill_md.read_text(encoding="utf-8").splitlines()
+                    non_empty = [l for l in raw if l.strip()]
+                    summary = "\n".join(non_empty[:2]).strip()
+                except Exception:
+                    summary = ""
+
+        usage = (meta.get("usage") or "").strip()
+
+        entries.append({"slug": slug, "summary": summary, "usage": usage})
+
+    if not entries:
+        return ""
+
+    try:
+        import yaml as _yaml
+
+        return _yaml.dump(
+            {"mcp_skills": entries},
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
+    except ImportError:
+        lines = ["mcp_skills:"]
+        for e in entries:
+            slug = e["slug"]
+            summary = e["summary"].replace("\\", "\\\\").replace('"', '\\"')
+            usage = e["usage"].replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f"  - slug: {slug}")
+            lines.append(f'    summary: "{summary}"')
+            lines.append(f'    usage: "{usage}"')
+        return "\n".join(lines) + "\n"
+
+
+def _ensure_builtin_skills(agent_name: str | None = None) -> None:
+    """Copy project-level built-in skills to the user agent's skill directory.
+
+    For each sub-directory under ``_builtin_skill_dir()`` that does not yet
+    exist in the user skill directory, the directory is copied and
+    ``builtin: true`` / ``enabled: true`` is persisted in the skill state.
+
+    Safe to call multiple times (idempotent).  Does nothing if the
+    project-level built-in skills directory does not exist.
+    """
+    builtin_dir = _builtin_skill_dir()
+    if not builtin_dir.exists() or not builtin_dir.is_dir():
+        return
+
+    agent = _resolve_agent(agent_name)
+    user_skill_dir = _skill_dir(agent)
+    state = _load_state(agent)
+
+    for p in sorted(builtin_dir.iterdir()):
+        if not p.is_dir() or p.name.startswith("_"):
+            continue
+        slug = p.name
+        target = user_skill_dir / slug
+        if not target.exists():
+            shutil.copytree(p, target)
+
+        st = state.setdefault("skills", {}).setdefault(slug, {})
+        st["builtin"] = True
+        st["enabled"] = True
+        st.setdefault("version", str(_read_skill_meta(p).get("version") or "0.0.0"))
+        st.setdefault("path", str(target.resolve()))
+
+    _save_state(agent, state)

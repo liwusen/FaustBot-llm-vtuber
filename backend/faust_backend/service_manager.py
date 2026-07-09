@@ -11,6 +11,8 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 STARTUP_WAIT_SECONDS = 15
 TAIL_LOG_LINES = 120
 CREATE_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE
+_service_states: dict[str, str] = {}
+_service_start_times: dict[str, float] = {}
 
 def find_process_by_port(port):
     for conn in psutil.net_connections():
@@ -107,28 +109,26 @@ def read_log_tail(log_path: Path | None, lines: int = TAIL_LOG_LINES) -> str:
         return f'Error reading log file: {str(e)}'
 
 
-def start_service(service_key: str, wait: bool = True):
+def start_service(service_key: str, wait: bool = False):
     service = get_service_definition(service_key)
     existing = find_process_by_port(service['port'])
     if existing:
+        _service_states.pop(service_key, None)
         return service_status(service_key, include_log=False)
 
     cmd = resolve_service_path(service['script'])
     if not cmd.exists():
         raise FileNotFoundError(f"启动脚本不存在: {cmd}")
 
+    _service_states[service_key] = "starting"
+    _service_start_times[service_key] = time.time()
+
     subprocess.Popen(
         ['cmd', '/c', str(cmd)],
         cwd=str(cmd.parent),
-        # stdout=subprocess.DEVNULL,
-        # stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW,
         shell=False,
     )
-    if wait:
-        started_info = wait_for_service(service)
-        if not started_info:
-            raise TimeoutError(f"{service['name']} did not become ready on port {service['port']} within {STARTUP_WAIT_SECONDS}s.")
     return service_status(service_key)
 
 
@@ -150,16 +150,15 @@ def stop_service(service_key: str):
     process_info = find_process_by_port(service['port'])
     if process_info:
         try:
+            _service_states[service_key] = "stopping"
             p = psutil.Process(process_info['pid'])
             p.terminate()
-            p.wait(timeout=5)
             return service_status(service_key)
         except Exception as e:
             raise RuntimeError(f"Error terminating {service['name']} (PID: {process_info['pid']}): {str(e)}")
     else:
+        _service_states.pop(service_key, None)
         return service_status(service_key)
-
-
 def restart_service(service_key: str):
     stop_service(service_key)
     return start_service(service_key)
@@ -183,6 +182,28 @@ def service_status(service_key: str, include_log: bool = True):
         'script': str(resolve_service_path(service['script'])),
         'log_file': str(resolve_service_path(service['log_file']))
     }
+
+    # Handle intermediate states
+    state = _service_states.get(service_key)
+    if state:
+        # Auto-clear when process state matches expectation
+        if state == "starting" and process_info:
+            _service_states.pop(service_key, None)
+            _service_start_times.pop(service_key, None)
+        elif state == "stopping" and not process_info:
+            _service_states.pop(service_key, None)
+            _service_start_times.pop(service_key, None)
+        else:
+            result["status"] = state
+
+    # Auto-clear "starting" state after 40s timeout
+    if state == "starting" and not process_info:
+        start_time = _service_start_times.get(service_key)
+        if start_time and time.time() - start_time > 40:
+            _service_states.pop(service_key, None)
+            _service_start_times.pop(service_key, None)
+            # Consider it started even if port not found
+
     if include_log:
         result['log_tail'] = read_log_tail(resolve_service_path(service['log_file']))
     return result

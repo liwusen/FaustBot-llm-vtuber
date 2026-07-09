@@ -29,6 +29,7 @@ class ArayaPaths:
     state_file: Path
     last_log_file: Path
     history_log_file: Path
+    trace_file: Path
 
 
 class ArayaRuntime:
@@ -50,6 +51,7 @@ class ArayaRuntime:
             state_file=root / "state.json",
             last_log_file=root / "last_run.json",
             history_log_file=root / "runs.jsonl",
+            trace_file=Path(conf.DATA_ROOT) / "araya_last_trace.json",
         )
 
     def _resolve_target_agent_name(self) -> str:
@@ -132,6 +134,21 @@ class ArayaRuntime:
         with self.paths.history_log_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
+    def _write_last_trace(self, payload: dict[str, Any]) -> None:
+        self.paths.trace_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.paths.trace_file.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def get_last_trace(self) -> dict[str, Any] | None:
+        if not self.paths.trace_file.exists():
+            return None
+        try:
+            with self.paths.trace_file.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
     def _normalize_response(self, response: Any) -> Any:
         if isinstance(response, (str, int, float, bool)) or response is None:
             return response
@@ -162,6 +179,7 @@ class ArayaRuntime:
                 state["last_log"] = None
         else:
             state["last_log"] = None
+        state["last_trace_file"] = str(self.paths.trace_file)
         # add human-readable timestamps for frontend
         try:
             lm_ts = float(state.get("last_main_activity_ts") or 0.0)
@@ -246,12 +264,20 @@ class ArayaRuntime:
 
         def _m():
             from faust_backend.memory import get_memory
-            return get_memory(refresh=True)
+            return get_memory()
 
         @tool
         def arayaGetTimeTool() -> dict:
-            """获取当前时间戳和 ISO 格式的 UTC 时间字符串。"""
-            return {"time": time.time(), "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            """获取当前时间戳和 ISO 格式的 UTC 时间字符串,以及上次触发的时间戳和 ISO 格式的 UTC 时间字符串。"""
+            state = self._load_state()
+            last_trigger_ts = float(state.get("last_trigger_ts") or 0.0)
+            log.info("arayaGetTimeTool called, last_trigger_ts=%s", last_trigger_ts)
+            return {
+                "time": time.time(),
+                "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "last_trigger_ts": last_trigger_ts,
+                "last_trigger_time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_trigger_ts))
+            }
 
         # ── tree / file tools ──
 
@@ -432,30 +458,95 @@ class ArayaRuntime:
                 return []
 
         @tool
-        async def arayaAttachmentWriteTool(file_path: str, path: str = "", *,
-                                            description: str = "",
-                                            content_type: str = "") -> dict:
-            """从本地文件路径读取图片并写入记忆库。自动检测 MIME 类型。"""
+        async def arayaFileEditTool(path: str, patch: str) -> dict:
+            """
+            Apply precise line-based edits to a file without rewriting the whole thing.
+
+            Use this when you need to change a few lines in a file — it is much more
+            efficient and safer than reading the entire file and writing it back.
+
+            THE PATCH LANGUAGE (each operation begins with a header line):
+
+            **SWAP N.=M:** — Replace lines N through M (inclusive) with new content.
+                SWAP 10.=12:
+                +replacement line 1
+                +replacement line 2
+
+            **DEL N.=M** — Delete lines N through M.  No body lines needed.
+                DEL 5.=7
+
+            **INS.PRE N:** — Insert new lines BEFORE line N.
+                INS.PRE 3:
+                +new line inserted before line 3
+
+            **INS.POST N:** — Insert new lines AFTER line N.
+                INS.POST 3:
+                +new line inserted after line 3
+
+            CRITICAL RULES:
+            - Line numbers refer to the ORIGINAL file before any edits.
+            - Apply edits from BOTTOM to TOP (highest line numbers first) so earlier
+            edits don't shift the line numbers of later edits.
+            - Each body line MUST start with '+' (the '+' is stripped before writing).
+            - Separate operations with a blank line.
+            - The body after a header is the FINAL content — never include old/context lines.\
+            
+            Args:
+                path: The path of the file to edit in the memory store.
+                patch: The patch string containing the line-based edits to apply.
+            """
             try:
-                log.info("arayaAttachmentWriteTool file_path=%s", file_path)
-                from pathlib import Path
-                fp = Path(file_path)
-                if not fp.exists():
-                    return {"status": "error", "error": f"文件不存在: {file_path}"}
-                raw = fp.read_bytes()
-                import base64
-                image_base64 = base64.b64encode(raw).decode("ascii")
-                kb_path = str(path or "").strip() or f"/images/{fp.name}"
-                ct = str(content_type or "").strip() or {
-                    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
-                }.get(fp.suffix.lower(), "image/png")
-                return await _m().attachment_write(kb_path, image_base64,
-                                                    description=description,
-                                                    content_type=ct)
-            except Exception as e:
-                log.error("Error in arayaAttachmentWriteTool: %s", e)
-                return {"status": "error", "error": str(e)}
+                ret = await _m().file_read(path)
+                original = ret["content"]
+                desc = ret.get("description", "")
+                meta = ret.get("meta", {}) or {}
+                tags = meta.get("tags", []) or []
+            except FileNotFoundError:
+                return f"文件不存在: {path}"
+            import faust_backend.tools._patch_utils as putils
+            try:
+                ops = putils._parse_patch(patch)
+            except ValueError as e:
+                _msg = f"Patch 格式错误: {e}\n"
+                _msg += "支持的指令: SWAP N.=M:, DEL N.=M, INS.PRE N:, INS.POST N:\n"
+                _msg += "每行正文必须以 '+' 开头，多个操作以空行分隔。"
+                return _msg
+            # Apply
+            lines = original.split("\n")
+            changes = 0
+            # Sort bottom-up; INS_POST offset accounts for its own body so range ops
+            # whose endpoints extend past the insertion point stay correct
+            ops.sort(key=lambda o: o["offset"] + (len(o["body"]) if o["kind"] == "INS_POST" else 0), reverse=True)
+
+            for op in ops:
+                kind = op["kind"]
+                start = op["start"] - 1  # 0-indexed start
+                end = op["end"]          # inclusive
+                body = op["body"]
+
+                if kind == "SWAP":
+                    end_ex = min(end, len(lines))  # exclusive
+                    lines[start:end_ex] = body
+                    changes += abs(len(body) - (end_ex - start))
+                elif kind == "DEL":
+                    end_ex = min(end, len(lines))
+                    del lines[start:end_ex]
+                    changes += (end_ex - start)
+                elif kind == "INS_PRE":
+                    for i, b in enumerate(body):
+                        lines.insert(start + i, b)
+                    changes += len(body)
+                elif kind == "INS_POST":
+                    end_ex = min(end, len(lines))  # exclusive for insert-after-end
+                    for i, b in enumerate(body):
+                        lines.insert(end_ex + i, b)
+                    changes += len(body)
+
+            result = "\n".join(lines)
+            await _m().file_write(path, result, declared_by="araya", description=desc, tags=tags)
+            _msg = f"已编辑 memory://{path}\n变更: {changes} 行 (原文件 {len(original.split(chr(10)))} 行 → 新文件 {len(lines)} 行)"
+            log.info("arayaFileEditTool OUTPUT %s", _msg[:120])
+            return _msg
 
         @tool
         async def arayaAttachmentReadTool(path: str) -> dict:
@@ -485,15 +576,16 @@ class ArayaRuntime:
             arayaSetScorePatchTool,
             arayaChangedNodesTool,
             arayaSearchEntityTool,
-            arayaListEntitiesTool,
+        #    arayaListEntitiesTool,
             arayaGetNeighborsTool,
             arayaAddEntityTool,
-            arayaDeleteEntityTool,
+        #    arayaDeleteEntityTool,
             arayaAddRelationTool,
-            arayaRemoveRelationTool,
-            arayaListRelationsTool,
-            arayaAttachmentWriteTool,
+        #    arayaRemoveRelationTool,
+        #    arayaListRelationsTool,
+        #    arayaAttachmentWriteTool,
             arayaAttachmentReadTool,
+            arayaFileEditTool,
         ]
 
     def _init_agent(self) -> None:
@@ -604,7 +696,6 @@ class ArayaRuntime:
                 "error": "",
                 "response": "",
             }
-
             instruction = (
                 f"{prompt}\n\n"
                 f"当前维护目标 Agent: {self._target_agent_name}\n"
@@ -613,7 +704,22 @@ class ArayaRuntime:
                 f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
                 f"必要时请维护 /auto_index.md，并对 knowledge graph 中的实体和关系进行整合/修剪。\n"
                 f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
+                f"每个修改过的文件只需要完整处理一次，处理完成后绝对不要重复处理。\n"
             )
+            trace_payload: dict[str, Any] = {
+                "conversation_id": f"araya-{int(started_at * 1000)}",
+                "reason": str(reason or "manual"),
+                "target_agent": self._target_agent_name,
+                "started_at": started_at,
+                "started_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
+                "status": "running",
+                "error": "",
+                "messages": [{"role": "user", "content": instruction}],
+                "tool_calls": [],
+            }
+            tool_call_seq = 0
+            in_flight_calls: dict[str, dict[str, Any]] = {}
+
 
             yield {"event": "step", "data": json.dumps({"type": "start", "reason": reason, "target_agent": self._target_agent_name})}
 
@@ -641,19 +747,65 @@ class ArayaRuntime:
                         delta = self._message_content_to_text(chunk.content)
                         if delta:
                             full_response += delta
+                            if trace_payload.get("messages") and trace_payload["messages"][-1].get("role") == "assistant":
+                                trace_payload["messages"][-1]["content"] += delta
+                            else:
+                                trace_payload["messages"].append({"role": "assistant", "content": delta})
                             yield {"event": "step", "data": json.dumps({"type": "llm_chunk", "content": delta})}
 
                     elif event_name == "on_tool_start":
                         tool_name = str(raw_event.get("name") or data.get("name") or "tool").strip()
                         tool_args = data.get("input")
-                        yield {"event": "step", "data": json.dumps({"type": "tool_start", "tool": tool_name, "args": tool_args})}
+                        tool_call_seq += 1
+                        call_id = f"call_{tool_call_seq}"
+                        in_flight_calls[call_id] = {
+                            "id": call_id,
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "started_at": time.time(),
+                        }
+                        trace_payload["tool_calls"].append({
+                            "id": call_id,
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "result": None,
+                            "duration_seconds": None,
+                        })
+                        trace_payload["messages"].append({"role": "tool", "tool_name": tool_name, "call_id": call_id, "args": tool_args})
+                        yield {"event": "step", "data": json.dumps({"type": "tool_start", "tool": tool_name, "args": tool_args, "call_id": call_id})}
 
                     elif event_name == "on_tool_end":
                         tool_name = str(raw_event.get("name") or data.get("name") or "tool").strip()
-                        yield {"event": "step", "data": json.dumps({"type": "tool_end", "tool": tool_name})}
+                        call_id = next((cid for cid, item in reversed(list(in_flight_calls.items())) if item.get("tool") == tool_name), "")
+                        result_value = data.get("output")
+                        duration_seconds = None
+                        if call_id and call_id in in_flight_calls:
+                            started = float(in_flight_calls[call_id].get("started_at") or time.time())
+                            duration_seconds = round(time.time() - started, 3)
+                            del in_flight_calls[call_id]
+                        for item in trace_payload["tool_calls"]:
+                            if item.get("id") == call_id:
+                                item["result"] = self._normalize_response(result_value)
+                                item["duration_seconds"] = duration_seconds
+                                break
+                        trace_payload["messages"].append({
+                            "role": "tool_result",
+                            "tool_name": tool_name,
+                            "call_id": call_id,
+                            "result": self._normalize_response(result_value),
+                            "duration_seconds": duration_seconds,
+                        })
+                        yield {"event": "step", "data": json.dumps({
+                            "type": "tool_end",
+                            "tool": tool_name,
+                            "call_id": call_id,
+                            "result": self._normalize_response(result_value),
+                            "duration": duration_seconds,
+                        })}
 
                 result_payload["response"] = full_response or "(no text response)"
                 result_payload["status"] = "ok"
+                trace_payload["status"] = "ok"
                 state["last_error"] = ""
 
             except Exception as exc:
@@ -662,18 +814,24 @@ class ArayaRuntime:
                 run_error = str(exc)
                 result_payload["status"] = "error"
                 result_payload["error"] = run_error
+                trace_payload["status"] = "error"
+                trace_payload["error"] = run_error
                 state["last_error"] = run_error
 
             finished_at = time.time()
             result_payload["finished_at"] = finished_at
             result_payload["finished_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(finished_at))
             result_payload["duration_seconds"] = round(finished_at - started_at, 3)
+            trace_payload["finished_at"] = finished_at
+            trace_payload["finished_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(finished_at))
+            trace_payload["duration_seconds"] = round(finished_at - started_at, 3)
 
             state["last_trigger_ts"] = finished_at
             state["last_run_status"] = result_payload["status"]
             state["target_agent"] = self._target_agent_name
             self._save_state(state)
             self._write_run_log(result_payload)
+            self._write_last_trace(trace_payload)
 
             if run_error:
                 yield {"event": "error", "data": json.dumps({"error": run_error, "duration": result_payload["duration_seconds"], "target_agent": self._target_agent_name})}

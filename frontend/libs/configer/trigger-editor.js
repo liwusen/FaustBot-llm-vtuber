@@ -12,7 +12,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
   };
 
   const idInput = el("input", "input");
-  idInput.placeholder = "Trigger ID";
+  idInput.placeholder = "触发器 ID";
   idInput.value = String(source.id || "");
 
   const typeSelect = el("select", "select");
@@ -30,7 +30,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
 
   const lifespanInput = el("input", "number");
   lifespanInput.type = "number";
-  lifespanInput.placeholder = "lifespan 秒（可选）";
+  lifespanInput.placeholder = "存活秒数（可选）";
   lifespanInput.value = source.lifespan === null || source.lifespan === undefined ? "" : String(source.lifespan);
 
   const dynamicWrap = el("div", "field-wrap");
@@ -51,7 +51,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
     dynamicWrap.innerHTML = "";
     const t = typeSelect.value;
     if (t === "interval") {
-      dynamicWrap.append(el("div", "card-help", "interval_seconds"), intervalInput);
+      dynamicWrap.append(el("div", "card-help", "间隔秒数"), intervalInput);
     } else if (t === "datetime") {
       dynamicWrap.append(el("div", "card-help", "target"), targetInput);
     } else {
@@ -72,7 +72,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
     if (lifespanRaw) payload.lifespan = Number(lifespanRaw);
 
     if (!payload.id) {
-      showBanner("error", "Trigger ID 不能为空。");
+      showBanner("error", "触发器 ID 不能为空。");
       return;
     }
     if (payload.type === "interval") {

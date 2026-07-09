@@ -4,7 +4,7 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 
 const net = require('net');
 
@@ -12,6 +12,8 @@ let mainWindow = null;
 let configWindow = null;
 let tray = null;
 let pendingDeepLinks = [];
+let _backendReady = false;
+
 const FAUST_PROTOCOL = 'faustbot';
 const STATIC_PROTOCOL = 'static';
 const FAUST_BACKEND_BASE = 'http://127.0.0.1:13900';
@@ -205,6 +207,14 @@ function resolveFrontendAssetPath(relativePath) {
           if (staticUrl) return staticUrl;
         }
       }
+    }
+  }
+
+  // Absolute paths that didn't match any static base → use file:// directly
+  if (/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith('/')) {
+    const absPath = path.resolve(normalized);
+    if (fs.existsSync(absPath)) {
+      return 'file:///' + absPath.replace(/\\/g, '/').replace(/^\//, '');
     }
   }
 
@@ -660,6 +670,16 @@ function createWindow(){
 }
 
 function createConfigWindow() {
+  if (!_backendReady) {
+    dialog.showMessageBox({
+      type: 'info',
+      title: '后端启动中',
+      message: '后端服务正在启动，请稍后再试。',
+      buttons: ['确定'],
+    });
+    return null;
+  }
+
   if (configWindow && !configWindow.isDestroyed()) {
     configWindow.show();
     if (configWindow.isMinimized()) configWindow.restore();
@@ -838,6 +858,9 @@ ipcMain.handle('resolve-frontend-asset-path', (_event, relativePath) => {
 });
 
 function showMainWindow(){
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
   if (!mainWindow) return false;
   try{
     mainWindow.show();
@@ -920,20 +943,55 @@ function checkPort(port){
 }
 
 function startBackendInPowerShell(){
-  const cmd = "chcp 65001 | Out-Null; cd '" + BACKEND_DIR.replace(/'/g, "''") + "'; ./MAIN.bat";
-  const child = spawn('powershell.exe', ['-NoExit', '-Command', cmd], {
-    windowsHide: false,
-    cwd: BACKEND_DIR,
-  });
-  child.stdout.on('data', (d) => console.log('[backend-ps]', d.toString().trimEnd()));
-  child.stderr.on('data', (d) => console.error('[backend-ps]', d.toString().trimEnd()));
+  const psCmd = "chcp 65001 | Out-Null; cd '" + BACKEND_DIR.replace(/'/g, "''") + "'; ./MAIN.bat";
+  // Use cmd.exe /c start to force a new console window (spawn from GUI Electron doesn't create one)
+  // Must pass the whole command as a single string so cmd.exe parses "start" args correctly
+  const child = spawn(
+    process.env.comspec || 'cmd.exe',
+    ['/c', 'start', '"FaustBot"', 'powershell.exe', '-NoExit', '-Command', psCmd],
+    { cwd: BACKEND_DIR }
+  );
   child.on('error', (e) => console.error('启动后端 PowerShell 失败', e));
-  console.log('后端已在独立 PowerShell 窗口中启动，等待就绪…');
+  console.log('后端已在启动，等待就绪…');
 }
 
-app.whenReady().then(()=>{
+function waitForBackend(maxAttempts = 40, interval = 1500) {
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const poll = () => {
+      checkPort(BACKEND_PORT_TO_CHECK).then((open) => {
+        if (open) { resolve(true); return; }
+        attempts++;
+        if (attempts >= maxAttempts) { resolve(false); return; }
+        setTimeout(poll, interval);
+      });
+    };
+    poll();
+  });
+}
+
+app.whenReady().then(async () => {
   registerStaticProtocol();
   registerFaustProtocolClient();
+
+  let open = await checkPort(BACKEND_PORT_TO_CHECK);
+  if (!open) {
+    startBackendInPowerShell();
+    dialog.showMessageBox({
+      type: 'info',
+      title: '后端启动中',
+      message: '后端服务正在启动，请稍候…\n\n后端将在新的 PowerShell 窗口中启动。待后端就绪后，主窗口将自动打开。',
+      buttons: ['确定'],
+    });
+    open = await waitForBackend();
+    if (!open) {
+      dialog.showErrorBox('启动超时', '后端服务启动超时 (60s)，请检查 MAIN.bat 是否能正常执行。');
+      app.quit();
+      return;
+    }
+  }
+
+  _backendReady = true;
   createWindow();
   createTray();
   registerGlobalShortcuts();
@@ -943,18 +1001,8 @@ app.whenReady().then(()=>{
     }
   }
   flushPendingDeepLinks();
-  // Check if backend is already running; if not, start it in a PowerShell window
-  checkPort(BACKEND_PORT_TO_CHECK).then((open) => {
-    if (!open) {
-      console.warn(`端口 ${BACKEND_PORT_TO_CHECK} 未开放，启动后端…`);
-      startBackendInPowerShell();
-    } else {
-      console.log(`端口 ${BACKEND_PORT_TO_CHECK} 已开放，后端已在运行`);
-    }
-  });
-  // Start WebSocket command client (main process)
   startCommandWS();
-  app.on('activate', ()=>{ if (BrowserWindow.getAllWindows().length === 0) createWindow(); })
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 ipcMain.handle('set-ignore-mouse-events', (evt, ignore) => {

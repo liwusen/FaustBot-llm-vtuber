@@ -11,8 +11,8 @@ import base64
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import faust_backend.config_loader as conf
 # API 配置
-API_KEY = conf.GUI_OPERATOR_LLM_KEY
-API_URL = conf.GUI_OPERATOR_LLM_BASE
+API_KEY = conf.CHAT_API_KEY
+API_URL = conf.CHAT_API_BASE
 
 # 图像处理参数（API请求和坐标映射必须保持一致）
 MAX_PIXELS = 1280 * 28 * 28  # 1003520
@@ -193,7 +193,7 @@ def get_response(image_url: str, instruction: str) -> str:
         str: 模型返回的内容。
     """
     data = {
-        "model": conf.GUI_OPERATOR_LLM_MODEL,
+        "model": conf.CHAT_MODEL,
         "messages": [
             {
                 "role": "system",

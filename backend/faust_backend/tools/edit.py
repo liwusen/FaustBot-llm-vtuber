@@ -16,7 +16,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
-
+from ._patch_utils import _parse_patch,_parse_range
 log = get_logger("faust.tools.edit")
 
 
@@ -173,73 +173,3 @@ def edit(path: str, patch: str) -> str:
         _msg = f"已编辑 {file_path}\n变更: {changes} 行 (原文件 {len(lines)} 行 → 新文件 {len(result.split(chr(10)))} 行)"
         log.info("edit OUTPUT %s", _msg[:120])
         return _msg
-
-def _parse_patch(patch_text: str) -> list[dict]:
-    """Parse patch instructions into a list of operations."""
-    ops = []
-    current = None
-    current_body: list[str] = []
-
-    lineno = 0
-    for raw_line in patch_text.split("\n"):
-        lineno += 1
-        line = raw_line.strip()
-        if not line:
-            if current is not None:
-                # Flush on blank line — DEL ops have no body, still valid
-                current["body"] = current_body
-                ops.append(current)
-                current = None
-                current_body = []
-            continue
-
-        if current is not None:
-            # Body line
-            if line.startswith("+"):
-                current_body.append(line[1:])
-            elif not line.startswith("+"):
-                # Next operation header → flush current, treat as new header
-                current["body"] = current_body
-                ops.append(current)
-                current = None
-                current_body = []
-
-        if current is None:
-            # New operation header
-            if " " in line:
-                header, rest = line.split(" ", 1)
-            else:
-                header = line
-                rest = ""
-            header = header.upper().rstrip(":")
-            rest = rest.rstrip(":")
-
-            if header == "SWAP":
-                start, end = _parse_range(rest)
-                current = {"kind": "SWAP", "start": start, "end": end, "offset": start}
-            elif header == "DEL":
-                start, end = _parse_range(rest)
-                current = {"kind": "DEL", "start": start, "end": end, "offset": start}
-            elif header in ("INS.PRE", "INS.POST"):
-                pos = int(rest) if rest else 1
-                kind = "INS_PRE" if header == "INS.PRE" else "INS_POST"
-                current = {"kind": kind, "start": pos, "end": pos, "offset": pos}
-            else:
-                raise ValueError(f"第{lineno}行: 未知指令 \"{header}\"，支持: SWAP, DEL, INS.PRE, INS.POST")
-
-    if not ops:
-        raise ValueError("Patch 不包含任何操作")
-    return ops
-
-
-def _parse_range(text: str) -> tuple[int, int]:
-    """Parse 'N.=M' into (start_inclusive, end_inclusive)."""
-    text = text.strip().rstrip(":")
-    if ".=" in text:
-        start, end = text.split(".=", 1)
-        s = int(start)
-        e = int(end)
-        return (s, e)
-    else:
-        n = int(text)
-        return (n, n)

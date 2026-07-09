@@ -69,10 +69,15 @@ def _apply_fire_filters(trigger_payload: dict):
 
 
 def _emit_trigger(trigger_payload: dict):
+    log.debug("触发 trigger: %s", trigger_payload)
     payload = _apply_fire_filters(trigger_payload)
     if payload is None:
         return False
     trigger_queue.put(payload)
+    from faust_backend.runtime import state
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm._call_pluggy_hook('trigger_fire', payload=payload, ctx=None)
     return True
 
 class BaseTrigger(BaseModel):
@@ -230,20 +235,10 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                         except Exception as e:
                             log.error("评估 trigger %s 时出错: %s", trig.id, e)
                     elif trig.type == "event":
-                        if trig.event_name == "nimble_result" and trig.callback_id:
-                            session = nimble.get_nimble_session(trig.callback_id)
-                            if session and session.get("result") is not None:
-                                _emit_trigger(trig.model_dump())
-                                try:
-                                    ensure_store.watchdog.remove(trig)
-                                    ensure_store.save()
-                                except Exception:
-                                    pass
-                        else:
-                            log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
-                            _emit_trigger(trig.model_dump())
-                            ensure_store.watchdog.remove(trig)
-                            ensure_store.save()
+                        log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
+                        _emit_trigger(trig.model_dump())
+                        ensure_store.watchdog.remove(trig)
+                        ensure_store.save()
                     elif trig.type == "nimble-reminder":
                         if not nimble.is_nimble_session_alive(trig.callback_id):
                             try:
@@ -265,7 +260,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                             except Exception:
                                 pass
                     else:
-                        continue
+                        _emit_trigger(trig.model_dump())
                 except Exception as e:
                     log.error("Watchdog 循环错误 %s: %s", getattr(trig, 'id', None), e)
         time.sleep(poll_interval)
@@ -325,6 +320,10 @@ def append_trigger(trigger: dict | str):
             log.error("无效的 trigger JSON 字符串: %s", e)
             raise
     trigger = _apply_append_filters(trigger)
+    from faust_backend.runtime import state
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm._call_pluggy_hook('trigger_append', payload=trigger, ctx=None)
     if trigger is None:
         raise ValueError("Trigger blocked by append filters")
     global _store
