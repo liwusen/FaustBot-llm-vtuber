@@ -1,0 +1,7 @@
+{
+  "slug": "csv",
+  "name": "CSV File Handler",
+  "version": "1.0.0",
+  "description": "读写 CSV 文件（读取、写入、合并）",
+  "builtin": true
+}

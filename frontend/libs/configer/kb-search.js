@@ -2,7 +2,7 @@
 
 function openKbSearchModal() {
   const searchInput = el("input", "input");
-  searchInput.placeholder = "输入关键词，在当前 scope 中搜索";
+  searchInput.placeholder = "输入关键词，在当前范围内搜索";
   const resultBox = el("div", "list-box");
   resultBox.style.maxHeight = "420px";
 

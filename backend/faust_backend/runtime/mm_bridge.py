@@ -1,3 +1,13 @@
+"""Multimodal Bridge Middleware — built-in, always enabled.
+
+Converts tool image outputs (kind: "multimodal_tool_result") into image_url
+multimodal blocks so vision-capable LLMs can see tool-returned images directly.
+
+Config keys (in faust.config.json, AI Provider section):
+    MM_BRIDGE_MAX_SCAN  (int, default 6)   — max ToolMessages scanned per turn
+    MM_BRIDGE_REMOVE_SOURCE (bool, default False) — delete source ToolMessage after bridging
+    MM_BRIDGE_KEEP_TURNS (int, default 2)   — image message TTL in user turns; 0 = delete immediately
+"""
 from __future__ import annotations
 
 import json
@@ -9,37 +19,32 @@ from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
 from langgraph.runtime import Runtime
 from typing_extensions import override
 
-from faust_backend.plugin_system import MiddlewareSpec, PluginContext, PluginManifest
+import faust_backend.config_loader as conf
 
 
 class MultimodalBridgeMiddleware(AgentMiddleware):
-    def __init__(self, ctx: PluginContext) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.ctx = ctx
         self._processed_tool_keys: set[str] = set()
         self._ttl_by_message_id: dict[str, int] = {}
         self._last_user_signature: str | None = None
 
     @override
     def before_model(self, state: AgentState[Any], runtime: Runtime) -> dict[str, Any] | None:
-        if not bool(self.ctx.get_config("ENABLE_MM_BRIDGE", True)):
-            return None
-
         messages = state.get("messages") or []
         if not messages:
             return None
 
-        max_scan = self._safe_int(self.ctx.get_config("MAX_SCAN_TOOL_MESSAGES", 6), 6)
-        max_scan = max(1, max_scan)
-        remove_source = bool(self.ctx.get_config("REMOVE_SOURCE_TOOL_MESSAGE", False))
-        keep_turns = max(0, self._safe_int(self.ctx.get_config("IMAGE_MESSAGE_KEEP_TURNS", 2), 2))
+        max_scan = max(1, int(getattr(conf, 'MM_BRIDGE_MAX_SCAN', 6) or 6))
+        remove_source = bool(getattr(conf, 'MM_BRIDGE_REMOVE_SOURCE', False))
+        keep_turns = max(0, int(getattr(conf, 'MM_BRIDGE_KEEP_TURNS', 2) or 2))
 
         scanned = 0
         additions: list[HumanMessage] = []
         removals: list[RemoveMessage] = []
         remove_ids: set[str] = set()
 
-        # 每出现一次新用户输入，所有已追踪图片消息TTL减1，归零即删除。
+        # TTL decay: each new user turn reduces tracked image message lifespan by 1
         user_turns = self._consume_new_user_turns(messages)
         if user_turns > 0:
             expired_ids: list[str] = []
@@ -91,7 +96,6 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
         if not additions and not removals:
             return None
 
-        # 逆序扫描得到的是最新在前，这里反转回时间顺序
         additions.reverse()
         removals.reverse()
         return {"messages": [*removals, *additions]}
@@ -103,22 +107,25 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
     @staticmethod
     def _safe_int(value: Any, default: int) -> int:
         try:
-            return int(value)
-        except Exception:
+            return max(0, int(value))
+        except (TypeError, ValueError):
             return default
 
     @staticmethod
     def _parse_tool_payload(msg: ToolMessage) -> dict[str, Any] | None:
         content = getattr(msg, "content", "")
-        if not isinstance(content, str):
-            return None
-        try:
-            data = json.loads(content)
-        except Exception:
+        if isinstance(content, dict):
+            data = content
+        elif isinstance(content, str):
+            try:
+                data = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        else:
             return None
         if not isinstance(data, dict):
             return None
-        if str(data.get("kind") or "").strip().lower() != "multimodal_tool_result":
+        if data.get("kind") != "multimodal_tool_result":
             return None
         return data
 
@@ -126,7 +133,7 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
     def _tool_message_key(msg: ToolMessage) -> str:
         mid = getattr(msg, "id", None)
         if mid is not None:
-            return f"id:{mid}"
+            return str(mid)
         tcid = getattr(msg, "tool_call_id", None)
         content = getattr(msg, "content", "")
         return f"fallback:{tcid}:{hash(str(content))}"
@@ -142,6 +149,9 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
         signature = self._latest_user_signature(messages)
         if signature is None:
             return 0
+        if self._last_user_signature is None:
+            self._last_user_signature = signature
+            return 0
         if signature == self._last_user_signature:
             return 0
         self._last_user_signature = signature
@@ -156,88 +166,25 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
                 continue
             mid = getattr(msg, "id", None)
             if mid is not None:
-                return f"id:{mid}"
-            return f"content:{str(getattr(msg, 'content', ''))}"
+                return str(mid)
         return None
 
     @staticmethod
     def _payload_to_mm_message(payload: dict[str, Any]) -> HumanMessage | None:
         blocks: list[dict[str, Any]] = []
-
-        text = str(payload.get("text") or "工具返回了一张图片，请根据图片内容完成分析。")
-        blocks.append({"type": "text", "text": text})
-
-        images = payload.get("images")
-        if not isinstance(images, list):
+        if payload.get("text"):
+            blocks.append({"type": "text", "text": str(payload["text"])})
+        images = payload.get("images") or []
+        for img in images:
+            if isinstance(img, str):
+                blocks.append({"type": "image_url", "image_url": {"url": img}})
+            elif isinstance(img, dict):
+                url = img.get("url") or ""
+                if url:
+                    blocks.append({"type": "image_url", "image_url": {"url": url}})
+        if not blocks:
             return None
-
-        for item in images:
-            if not isinstance(item, dict):
-                continue
-            url = str(item.get("url") or "").strip()
-            if not url:
-                continue
-            blocks.append({"type": "image_url", "image_url": {"url": url}})
-
-        if len(blocks) <= 1:
-            return None
-
         return HumanMessage(
-            id=str(uuid.uuid4()),
             content=blocks,
             additional_kwargs={"_mm_bridge_generated": True},
         )
-
-
-class Plugin:
-    manifest = PluginManifest(
-        plugin_id="mm_bridge",
-        name="Multimodal Bridge Plugin",
-        version="1.0.0",
-        description="Convert tool image outputs into image_url multimodal blocks",
-        author="faust",
-        homepage="",
-        enabled=True,
-        permissions=["middleware:mm-bridge"],
-        priority=120,
-    )
-
-    def startup(self, ctx: PluginContext) -> None:
-        ctx.register_config(
-            """
-            ENABLE_MM_BRIDGE:bool:启用多模态桥接=true
-            REMOVE_SOURCE_TOOL_MESSAGE:bool:桥接后删除源ToolMessage=false
-            MAX_SCAN_TOOL_MESSAGES:int:每轮扫描最近ToolMessage条数=6
-            IMAGE_MESSAGE_KEEP_TURNS:int:图片消息保留轮数=2
-            """
-        )
-
-    def on_load(self, ctx: PluginContext) -> None:
-        pass
-
-    def on_unload(self, ctx: PluginContext) -> None:
-        pass
-
-    def register_tools(self, ctx: PluginContext):
-        return []
-
-    def register_middlewares(self, ctx: PluginContext):
-        return [
-            MiddlewareSpec(
-                name="multimodal_bridge",
-                middleware=MultimodalBridgeMiddleware(ctx),
-                priority=120,
-                enabled_by_default=True,
-                description="将工具返回的图片JSON转换为模型可读的image_url多模态内容块",
-            )
-        ]
-
-    def health_check(self) -> dict[str, Any]:
-        return {"status": "ok", "plugin": "mm_bridge"}
-
-    def Heartbeat(self, ctx: PluginContext) -> None:
-        pass
-
-
-def get_plugin() -> Plugin:
-    return Plugin()

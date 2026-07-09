@@ -1,3 +1,14 @@
+import { resampleFloat32, concatFloat32Arrays, floatTo16BitPCM, writeString, encodeWAV, interleaveAndEncodeWav } from './libs/audio-utils.js';
+import { normalizeTtsText, decodeWsPayload, extractCompletedSentences } from './libs/text-utils.js';
+import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries } from './libs/bubble-utils.js';
+import { initLogPanel } from './libs/log-panel.js';
+import { initLiveMode } from './libs/live-mode.js';
+import { initNimbleWindows } from './libs/nimble-window.js';
+import { initHilApproval } from './libs/hil-approval.js';
+import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
+import { initAudioPlayback } from './libs/audio-playback.js';
+import { initAutocomplete } from './libs/autocomplete.js';
+
 
 
 (() => {
@@ -48,10 +59,6 @@
   const quickScaleUpBtn = document.getElementById('quickScaleUp');
   const quickScaleDownBtn = document.getElementById('quickScaleDown');
   let Live2DModel=null;
-  let nimbleWindows = new Map();
-  let activeNimbleContext = null;
-  let hilApprovalQueue = [];
-  let activeHilApproval = null;
   let textChatSending = false;
   let availableMotions = [];
   let hoverModel = false;
@@ -68,11 +75,14 @@
   let asrTextPinnedToBottom = true;
   let currentLipSyncParamIds = ['ParamMouthOpenY'];
   let activeModelLoadRequestId = 0;
+  const motionTriggerCooldownMs = 2000;
+  const recentMotionTriggers = new Map();
   let textChatBarYFactor = 0.53;
   let quickControllerXOffset = -12;
   let vrmScene = null;
   let modelType = 'live2d';
   let _vrmModulePromise = null;
+  let appPluginAssetsLoaded = false;
   async function getVRMModule() {
     if (!_vrmModulePromise) {
       _vrmModulePromise = import('./libs/vrm-renderer.bundle.js');
@@ -94,438 +104,125 @@
     return normalized;
   }
 
-  function isInteractiveElement(el){
-    const tag = el.tagName;
-    if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'A'].includes(tag)) return true;
-    if (el.hasAttribute('onclick') || el.hasAttribute('onmousedown') || el.hasAttribute('onmouseup')) return true;
-    if (el.isContentEditable) return true;
-    if (el.getAttribute('role') === 'button') return true;
+  function emitAppPluginEvent(eventName, payload){
+    if (!window.faustAppUI || !(window.faustAppUI._listeners instanceof Map)) return;
+    const listeners = window.faustAppUI._listeners.get(eventName);
+    if (!Array.isArray(listeners)) return;
+    for (const listener of listeners) {
+      try {
+        listener(payload);
+      } catch (e) {
+        console.warn('[faustAppUI] listener failed', eventName, e);
+      }
+    }
+  }
+
+  async function runAppPluginCommandHandlers(cmd, arg){
+    if (!window.faustAppUI || !Array.isArray(window.faustAppUI._commandHandlers)) return false;
+    for (const handler of window.faustAppUI._commandHandlers) {
+      try {
+        const handled = await handler(cmd, arg);
+        if (handled) return true;
+      } catch (e) {
+        console.warn('[faustAppUI] command handler failed', cmd, e);
+      }
+    }
     return false;
   }
 
-  function isPointOverNimble(clientX, clientY){
-    const host = document.getElementById('nimble-host');
-    if (!host) return false;
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return false;
-    const win = el.closest('.nimble-window');
-    if (!win) return false;
-    // elements with nimble-pass-through class let clicks pass through to desktop
-    if (el.closest('.nimble-pass-through')) return false;
-    // In fullscreen mode, only genuinely interactive elements block click-through
-    if (win.classList.contains('nimble-fullscreen')) {
-      return isInteractiveElement(el);
-    }
-    return true;
-  }
-
-  function ensureNimbleHost(){
-    let host = document.getElementById('nimble-host');
-    if (host) return host;
-    host = document.createElement('div');
-    host.id = 'nimble-host';
-    host.style.position = 'fixed';
-    host.style.right = '24px';
-    host.style.top = '120px';
-    host.style.zIndex = '1600';
-    host.style.display = 'flex';
-    host.style.flexDirection = 'column';
-    host.style.gap = '12px';
-    host.style.pointerEvents = 'auto';
-    document.body.appendChild(host);
-    return host;
-  }
-
-  let nimbleDragState = null;
-
-  document.addEventListener('mousemove', (e)=>{
-    if (!nimbleDragState) return;
-    const { shell, offsetX, offsetY } = nimbleDragState;
-    shell.style.left = (e.clientX - offsetX) + 'px';
-    shell.style.top = (e.clientY - offsetY) + 'px';
-    shell.style.right = 'auto';
-  });
-
-  document.addEventListener('mouseup', ()=>{
-    if (!nimbleDragState) return;
-    const { shell } = nimbleDragState;
-    shell.style.cursor = '';
-    shell.style.userSelect = '';
-    nimbleDragState = null;
-  });
-
-  function installNimbleAPI(callbackId, shell, header){
-    activeNimbleContext = { callbackId };
-    const getState = () => ({
-      width: shell.style.width,
-      height: shell.style.height,
-      left: shell.style.left,
-      top: shell.style.top,
-      position: shell.style.position,
-      draggable: header ? header.classList.contains('nimble-draggable') : false,
-      fullscreen: shell.classList.contains('nimble-fullscreen'),
-    });
-    window.nimble = {
-      submit: async (data, closeWindow = true)=>{
-        const r = await fetch(NIMBLE_CALLBACK_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: callbackId, data, close: closeWindow })
-        });
-        const j = await r.json().catch(()=>({}));
-        if (!r.ok || j.error) throw new Error(j.error || `nimble submit failed: ${r.status}`);
-        if (closeWindow) closeNimbleWindow(callbackId, false);
-        return j;
-      },
-      close: async (reason='closed_by_user')=>{
-        const r = await fetch(NIMBLE_CLOSE_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: callbackId, reason })
-        });
-        const j = await r.json().catch(()=>({}));
-        if (!r.ok || j.error) throw new Error(j.error || `nimble close failed: ${r.status}`);
-        closeNimbleWindow(callbackId, false);
-        return j;
-      },
-      resize(width, height){
-        shell.style.width = width;
-        shell.style.height = height;
-      },
-      move(x, y){
-        shell.style.left = x;
-        shell.style.top = y;
-        shell.style.right = 'auto';
-      },
-      setDraggable(enabled){
-        if (!header) return;
-        header.classList.toggle('nimble-draggable', enabled);
-        header.style.cursor = enabled ? 'grab' : '';
-      },
-      setFullscreen(enabled){
-        if (enabled){
-          shell._nimblePrev = {
-            width: shell.style.width,
-            height: shell.style.height,
-            left: shell.style.left,
-            top: shell.style.top,
-            right: shell.style.right,
-            position: shell.style.position,
-          };
-          shell.style.position = 'fixed';
-          shell.style.top = '0';
-          shell.style.left = '0';
-          shell.style.right = '0';
-          shell.style.width = '100vw';
-          shell.style.height = '100vh';
-          shell.style.maxWidth = 'none';
-          shell.style.maxHeight = 'none';
-          shell.style.borderRadius = '0';
-          shell.style.zIndex = '9999';
-          shell.style.background = 'transparent';
-          shell.style.backdropFilter = 'none';
-          shell.classList.add('nimble-fullscreen');
-        } else {
-          const prev = shell._nimblePrev || {};
-          shell.style.position = prev.position || 'relative';
-          shell.style.top = prev.top || '';
-          shell.style.left = prev.left || '';
-          shell.style.right = prev.right || '';
-          shell.style.width = prev.width || '360px';
-          shell.style.height = prev.height || '';
-          shell.style.maxWidth = '40vw';
-          shell.style.maxHeight = '70vh';
-          shell.style.borderRadius = '14px';
-          shell.style.zIndex = '';
-          shell.style.background = 'rgba(20,24,30,0.92)';
-          shell.style.backdropFilter = 'blur(8px)';
-          shell.classList.remove('nimble-fullscreen');
+  async function loadAppPluginAssets(){
+    if (appPluginAssetsLoaded) return;
+    try{
+      if (!window.api || typeof window.api.configRequest !== 'function') {
+        console.warn('[loadAppPluginAssets] window.api.configRequest not available');
+        return;
+      }
+      const data = await window.api.configRequest('GET', '/faust/admin/plugins/assets');
+      if (!data) return;
+      const assets = data.assets || [];
+      const baseUrl = window.api.backendBaseUrl || 'http://127.0.0.1:13900';
+      if (window.faustAppUI) window.faustAppUI.backendBaseUrl = baseUrl;
+      const pending = [];
+      for (const asset of assets) {
+        if (asset.type === 'js' && asset.path) {
+          const script = document.createElement('script');
+          script.src = baseUrl + asset.path;
+          script.setAttribute('data-plugin', asset.plugin_id || '');
+          pending.push(new Promise((resolve) => {
+            script.onload = () => resolve();
+            script.onerror = () => { console.warn('[faustAppUI] failed to load JS', asset.path); resolve(); };
+          }));
+          document.head.appendChild(script);
+        } else if (asset.type === 'css' && asset.path) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = baseUrl + asset.path;
+          link.setAttribute('data-plugin', asset.plugin_id || '');
+          document.head.appendChild(link);
         }
-      },
-      getConfig(){
-        const rect = shell.getBoundingClientRect();
-        return {
-          callbackId,
-          width: rect.width,
-          height: rect.height,
-          x: rect.left,
-          y: rect.top,
-          zIndex: shell.style.zIndex,
-          ...getState(),
+      }
+      if (pending.length) {
+        await Promise.all(pending);
+      }
+      appPluginAssetsLoaded = true;
+    }catch(e){
+      console.warn('[loadAppPluginAssets] Error:', e);
+    }
+  }
+
+  if (!window.faustAppUI) {
+    window.faustAppUI = {
+      backendBaseUrl: (window.api && window.api.backendBaseUrl) || 'http://127.0.0.1:13900',
+      _listeners: new Map(),
+      _commandHandlers: [],
+
+      on(eventName, listener){
+        if (!eventName || typeof listener !== 'function') return () => {};
+        const listeners = this._listeners.get(eventName) || [];
+        listeners.push(listener);
+        this._listeners.set(eventName, listeners);
+        return () => {
+          const current = this._listeners.get(eventName) || [];
+          this._listeners.set(eventName, current.filter((item) => item !== listener));
         };
       },
+
+      registerCommandHandler(handler){
+        if (typeof handler !== 'function') return () => {};
+        this._commandHandlers.push(handler);
+        return () => {
+          this._commandHandlers = this._commandHandlers.filter((item) => item !== handler);
+        };
+      },
+
+      getState(){
+        return {
+          modelType,
+          hasLive2DModel: !!currentModel,
+          hasVRMModel: !!vrmScene,
+          availableMotions: Array.isArray(availableMotions) ? [...availableMotions] : [],
+          agentIsProcessing,
+        };
+      },
+
+      showBubble(text, source = 'ai'){
+        showResultBubble(source, text);
+      },
+
+      triggerMotion(name){
+        return triggerModelMotion(name);
+      },
     };
   }
 
-  function closeNimbleWindow(callbackId, notifyBackend = true, reason = 'closed_locally'){
-    const win = nimbleWindows.get(callbackId);
-    if (win && win.parentNode) win.parentNode.removeChild(win);
-    nimbleWindows.delete(callbackId);
-    if (activeNimbleContext && activeNimbleContext.callbackId === callbackId){
-      activeNimbleContext = null;
-    }
-    if (!notifyBackend) return;
-    fetch(NIMBLE_CLOSE_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_id: callbackId, reason })
-    }).catch((e)=>console.warn('nimble close notify failed', e));
-  }
 
-  function showNimbleWindow(payload){
-    if (!payload || !payload.callback_id) return;
-    const host = ensureNimbleHost();
-    closeNimbleWindow(payload.callback_id, false);
 
-    const shell = document.createElement('div');
-    shell.className = 'nimble-window';
-    shell.dataset.callbackId = payload.callback_id;
-    shell.style.width = '360px';
-    shell.style.maxWidth = '40vw';
-    shell.style.maxHeight = '70vh';
-    shell.style.overflow = 'hidden';
-    shell.style.background = 'rgba(20,24,30,0.92)';
-    shell.style.border = '1px solid rgba(255,255,255,0.12)';
-    shell.style.borderRadius = '14px';
-    shell.style.boxShadow = '0 10px 30px rgba(0,0,0,0.4)';
-    shell.style.color = '#fff';
-    shell.style.backdropFilter = 'blur(8px)';
 
-    const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.justifyContent = 'space-between';
-    header.style.alignItems = 'center';
-    header.style.padding = '10px 12px';
-    header.style.background = 'rgba(255,255,255,0.06)';
-    header.style.fontWeight = '700';
-    header.textContent = payload.title || '灵动交互';
 
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = '×';
-    closeBtn.style.marginLeft = '12px';
-    closeBtn.style.background = 'transparent';
-    closeBtn.style.color = '#fff';
-    closeBtn.style.border = 'none';
-    closeBtn.style.fontSize = '20px';
-    closeBtn.style.cursor = 'pointer';
-    closeBtn.onclick = ()=> closeNimbleWindow(payload.callback_id, true, 'closed_by_user');
-    header.appendChild(closeBtn);
 
-    const body = document.createElement('div');
-    body.style.padding = '12px';
-    body.style.overflow = 'auto';
-    body.style.maxHeight = 'calc(70vh - 48px)';
 
-    // assemble shell first, then set HTML + run scripts (so shell is in DOM)
-    shell.appendChild(header);
-    shell.appendChild(body);
-    host.appendChild(shell);
-    nimbleWindows.set(payload.callback_id, shell);
 
-    installNimbleAPI(payload.callback_id, shell, header);
-    try{
-      body.innerHTML = payload.html || '<div>空窗口</div>';
-    }catch(e){
-      body.textContent = '灵动窗口 HTML 渲染失败: ' + String(e);
-    }
-    // re-execute script tags (innerHTML does not execute them)
-    try{
-      body.querySelectorAll('script').forEach((oldScript) => {
-        const newScript = document.createElement('script');
-        if (oldScript.src) {
-          newScript.src = oldScript.src;
-        } else {
-          newScript.textContent = oldScript.textContent;
-        }
-        oldScript.parentNode.replaceChild(newScript, oldScript);
-      });
-    }catch(e){
-      console.warn('nimble script exec error', e);
-    }
 
-    // drag support: mousedown on header starts drag
-    header.addEventListener('mousedown', (e)=>{
-      if (!header.classList.contains('nimble-draggable')) return;
-      if (e.button !== 0) return;
-      const rect = shell.getBoundingClientRect();
-      const offsetX = e.clientX - rect.left;
-      const offsetY = e.clientY - rect.top;
-      nimbleDragState = { shell, offsetX, offsetY };
-      shell.style.cursor = 'grabbing';
-      shell.style.userSelect = 'none';
-      e.preventDefault();
-    });
-  }
-
-  function ensureHilApprovalHost(){
-    let host = document.getElementById('hil-approval-host');
-    if (host) return host;
-    host = document.createElement('div');
-    host.id = 'hil-approval-host';
-    host.style.position = 'fixed';
-    host.style.left = '0';
-    host.style.top = '0';
-    host.style.zIndex = '2600';
-    host.style.pointerEvents = 'none';
-    document.body.appendChild(host);
-    return host;
-  }
-
-  function updateHilApprovalPosition(){
-    const host = document.getElementById('hil-approval-host');
-    if (!host) return;
-    const shell = host.querySelector('.hil-approval-shell');
-    if (!shell) return;
-    const bubbleVisible = !!(asrBubbleEl && asrBubbleEl.style.display !== 'none');
-    const anchorRect = bubbleVisible && asrBubbleEl ? asrBubbleEl.getBoundingClientRect() : null;
-    const shellRect = shell.getBoundingClientRect();
-    const preferredWidth = Math.min(Math.max(anchorRect ? anchorRect.width : 320, 320), 560);
-    shell.style.width = Math.round(preferredWidth) + 'px';
-    const measuredRect = shell.getBoundingClientRect();
-    const width = measuredRect.width || preferredWidth;
-    const height = measuredRect.height || 320;
-    const gap = 14;
-    let left = anchorRect ? (anchorRect.left + anchorRect.width / 2 - width / 2) : ((window.innerWidth - width) / 2);
-    let top = anchorRect ? (anchorRect.top - height - gap) : 80;
-    left = Math.max(12, Math.min(window.innerWidth - width - 12, left));
-    top = Math.max(12, Math.min(window.innerHeight - height - 12, top));
-    host.style.left = Math.round(left) + 'px';
-    host.style.top = Math.round(top) + 'px';
-  }
-
-  function isPointOverHilApproval(clientX, clientY){
-    const host = document.getElementById('hil-approval-host');
-    if (!host) return false;
-    const panel = host.querySelector('.hil-approval-shell');
-    if (!panel) return false;
-    const rect = panel.getBoundingClientRect();
-    return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
-  }
-
-  async function submitHilApprovalDecision(requestId, approved, reason){
-    const r = await fetch(HIL_FEEDBACK_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        request_id: requestId,
-        feedback: !!approved,
-        reason: String(reason || '').trim() || (approved ? 'approved' : 'rejected'),
-      })
-    });
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok || j.error) throw new Error((j && (j.detail || j.error)) || `HTTP ${r.status}`);
-    return j;
-  }
-
-  function closeHilApproval(requestId){
-    const host = document.getElementById('hil-approval-host');
-    if (host) host.innerHTML = '';
-    if (activeHilApproval && activeHilApproval.request_id === requestId) {
-      activeHilApproval = null;
-    } else {
-      hilApprovalQueue = hilApprovalQueue.filter((item)=>item && item.request_id !== requestId);
-    }
-    window.setTimeout(()=>renderNextHilApproval(), 0);
-  }
-
-  function renderNextHilApproval(){
-    if (activeHilApproval || !hilApprovalQueue.length) return;
-    const payload = hilApprovalQueue.shift();
-    if (!payload || !payload.request_id) return;
-    activeHilApproval = payload;
-    const host = ensureHilApprovalHost();
-    host.innerHTML = '';
-
-    const overlay = document.createElement('div');
-    overlay.className = 'hil-approval-overlay';
-
-    const shell = document.createElement('section');
-    shell.className = 'hil-approval-shell';
-    shell.dataset.requestId = payload.request_id;
-    shell.dataset.severity = String(payload.severity || 'warning');
-
-    const title = document.createElement('h3');
-    title.className = 'hil-approval-title';
-    title.textContent = String(payload.title || '需要人工确认');
-
-    const badge = document.createElement('span');
-    badge.className = 'hil-approval-badge';
-    badge.textContent = String(payload.severity || 'warning').toUpperCase();
-
-    const summary = document.createElement('pre');
-    summary.className = 'hil-approval-summary';
-    summary.textContent = String(payload.summary || '');
-
-    const requestMeta = document.createElement('div');
-    requestMeta.className = 'hil-approval-meta';
-    requestMeta.textContent = `请求ID: ${payload.request_id}`;
-
-    const reasonInput = document.createElement('textarea');
-    reasonInput.className = 'hil-approval-reason';
-    reasonInput.placeholder = '可选：填写审批备注或拒绝原因';
-
-    const actionRow = document.createElement('div');
-    actionRow.className = 'hil-approval-actions';
-
-    const rejectBtn = document.createElement('button');
-    rejectBtn.type = 'button';
-    rejectBtn.className = 'hil-approval-btn secondary';
-    rejectBtn.textContent = '拒绝';
-
-    const approveBtn = document.createElement('button');
-    approveBtn.type = 'button';
-    approveBtn.className = 'hil-approval-btn primary';
-    approveBtn.textContent = '批准';
-
-    const setBusy = (busy)=>{
-      approveBtn.disabled = busy;
-      rejectBtn.disabled = busy;
-      reasonInput.disabled = busy;
-    };
-
-    rejectBtn.onclick = async ()=>{
-      setBusy(true);
-      try{
-        await submitHilApprovalDecision(payload.request_id, false, reasonInput.value || 'rejected_by_user');
-        closeHilApproval(payload.request_id);
-      }catch(e){
-        console.error('submit HIL reject failed', e);
-        setBusy(false);
-      }
-    };
-
-    approveBtn.onclick = async ()=>{
-      setBusy(true);
-      try{
-        await submitHilApprovalDecision(payload.request_id, true, reasonInput.value || 'approved_by_user');
-        closeHilApproval(payload.request_id);
-      }catch(e){
-        console.error('submit HIL approve failed', e);
-        setBusy(false);
-      }
-    };
-
-    actionRow.appendChild(rejectBtn);
-    actionRow.appendChild(approveBtn);
-
-    shell.appendChild(badge);
-    shell.appendChild(title);
-    shell.appendChild(summary);
-    shell.appendChild(requestMeta);
-    shell.appendChild(reasonInput);
-    shell.appendChild(actionRow);
-    overlay.appendChild(shell);
-    host.appendChild(overlay);
-    updateHilApprovalPosition();
-  }
-
-  function enqueueHilApproval(payload){
-    if (!payload || !payload.request_id) return;
-    if (activeHilApproval && activeHilApproval.request_id === payload.request_id) return;
-    if (hilApprovalQueue.some((item)=>item && item.request_id === payload.request_id)) return;
-    hilApprovalQueue.push(payload);
-    renderNextHilApproval();
-  }
 
   // 创建 PIXI 应用
   const app = new PIXI.Application({
@@ -536,6 +233,7 @@
   });
 
   document.getElementById('app').appendChild(app.view);
+  loadAppPluginAssets();
 
   try{ window.PIXI = PIXI; }catch(e){/* ignore in non-browser env */}
 
@@ -546,6 +244,7 @@
   let baseScale = 1;
   let scaleFactor = parseFloat(modelScaleSlider ? modelScaleSlider.value : 1.0) || 1.0;
   let runtimeLive2DConfig = null;
+  let runtimeImageModelConfig = null;
   let lastPersistedModelPosition = null;
 
   async function loadRuntimeLive2DConfig(){
@@ -646,25 +345,47 @@
     return ['ParamMouthOpenY'];
   }
 
-  function setModelLipSyncValue(value){
-    if (!currentModel) return;
-    const mouth = Math.max(0, Math.min(1, Number(value) || 0));
-    const ids = Array.isArray(currentLipSyncParamIds) && currentLipSyncParamIds.length ? currentLipSyncParamIds : ['ParamMouthOpenY'];
-    try{
-      if (currentModel.internalModel && currentModel.internalModel.coreModel && typeof currentModel.internalModel.coreModel.setParameterValueById === 'function'){
-        for (const paramId of ids) currentModel.internalModel.coreModel.setParameterValueById(paramId, mouth);
-        return;
-      }
-      if (typeof currentModel.setMouthOpenY === 'function'){
-        currentModel.setMouthOpenY(mouth);
-      }
-    }catch(e){ /* ignore if model API differs */ }
+  function getLive2DViewportMetrics(){
+    if (!app || !app.renderer || !app.renderer.view) return null;
+    const canvasRect = app.renderer.view.getBoundingClientRect();
+    const screen = app.screen || app.renderer.screen || null;
+    const screenWidth = Number(screen && screen.width) || Number(app.renderer.width) || 0;
+    const screenHeight = Number(screen && screen.height) || Number(app.renderer.height) || 0;
+    if (!canvasRect || !screenWidth || !screenHeight) return null;
+    return {
+      canvasRect,
+      screenWidth,
+      screenHeight,
+      scaleX: canvasRect.width / screenWidth,
+      scaleY: canvasRect.height / screenHeight,
+    };
   }
+
+  function live2DToClient(x, y){
+    const metrics = getLive2DViewportMetrics();
+    if (!metrics) return null;
+    return {
+      x: metrics.canvasRect.left + x * metrics.scaleX,
+      y: metrics.canvasRect.top + y * metrics.scaleY,
+      scaleX: metrics.scaleX,
+      scaleY: metrics.scaleY,
+    };
+  }
+
+  function clientToLive2D(clientX, clientY){
+    const metrics = getLive2DViewportMetrics();
+    if (!metrics) return null;
+    return {
+      x: (clientX - metrics.canvasRect.left) * (metrics.screenWidth / metrics.canvasRect.width),
+      y: (clientY - metrics.canvasRect.top) * (metrics.screenHeight / metrics.canvasRect.height),
+    };
+  }
+
 
   function updateQuickAsrButton(){
     if (!quickToggleAsrBtn) return;
     const labelEl = quickToggleAsrBtn.querySelector('.qc-label');
-    if (labelEl) labelEl.textContent = asrRunning ? '停听' : 'ASR';
+    if (labelEl) labelEl.textContent = asrRunning ? '停听' : '语音识别';
     quickToggleAsrBtn.classList.toggle('active', !!asrRunning);
     quickToggleAsrBtn.title = asrRunning ? '停止语音识别' : '启动语音识别';
   }
@@ -695,14 +416,13 @@
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      const scaleX = canvasRect.width / app.renderer.width;
-      const scaleY = canvasRect.height / app.renderer.height;
-      const left = canvasRect.left + b.x * scaleX + scaleX * b.width * 0.4;
-      const top = canvasRect.top + b.y * scaleY;
-      const height = b.height * scaleY;
-      const controllerScale = Math.max(0.72, Math.min(1.2, scaleX));
+      const topLeft = live2DToClient(b.x, b.y);
+      if (!topLeft) return;
+      const left = topLeft.x + topLeft.scaleX * b.width * 0.4;
+      const top = topLeft.y;
+      const height = b.height * topLeft.scaleY;
+      const controllerScale = Math.max(0.72, Math.min(1.2, topLeft.scaleX));
       const rect = quickController.getBoundingClientRect();
       const estimatedWidth = rect.width > 0 ? rect.width : 104;
       const estimatedHeight = rect.height > 0 ? rect.height : 340;
@@ -735,11 +455,6 @@
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
-  function isPointOverNimbleWindow(clientX, clientY){
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return false;
-    return !!el.closest('.nimble-window');
-  }
   function isPointOverAsrBubble(clientX, clientY){
     if (!asrBubbleEl || asrBubbleEl.style.display === 'none') return false;
     const rect = asrBubbleEl.getBoundingClientRect();
@@ -765,9 +480,10 @@
     }
     if (!currentModel || !app || !app.renderer) return false;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
-      const rx = (clientX - canvasRect.left) * (app.renderer.width / canvasRect.width);
-      const ry = (clientY - canvasRect.top) * (app.renderer.height / canvasRect.height);
+      const point = clientToLive2D(clientX, clientY);
+      if (!point) return false;
+      const rx = point.x;
+      const ry = point.y;
       const b = currentModel.getBounds();
       const inBounds = rx >= b.x && rx <= b.x + b.width && ry >= b.y && ry <= b.y + b.height;
       if (!inBounds) return false;
@@ -811,9 +527,70 @@
     return playMotionByName(picked);
   }
 
+  function triggerModelMotion(name){
+    const motionName = String(name || '').trim();
+    if (!motionName) return false;
+    const now = Date.now();
+    const cooldownKey = `${modelType}:${motionName}`;
+    const lastTs = recentMotionTriggers.get(cooldownKey) || 0;
+    if (now - lastTs < motionTriggerCooldownMs) return false;
+
+    let triggered = false;
+    if (modelType === 'vrm' && vrmScene) {
+      const expressions = Array.isArray(vrmScene.getAvailableExpressions?.()) ? vrmScene.getAvailableExpressions() : [];
+      if (expressions.includes(motionName)) {
+        triggered = !!vrmScene.setExpression(motionName);
+      }
+    } else if (modelType === 'images' && currentModel && currentModel._faustImageModel) {
+      triggered = !!currentModel._faustImageModel.setEmotion(motionName);
+    } else {
+      if (availableMotions.includes(motionName)) {
+        triggered = playMotionByName(motionName);
+      }
+    }
+    if (triggered) {
+      recentMotionTriggers.set(cooldownKey, now);
+    }
+    return triggered;
+  }
+
+  function consumeMotionTokens(request, chunk){
+    const combined = String(request.motionTokenBuffer || '') + String(chunk || '');
+    let visible = '';
+    let cursor = 0;
+
+    while (cursor < combined.length) {
+      const start = combined.indexOf('<{', cursor);
+      if (start === -1) {
+        visible += combined.slice(cursor);
+        request.motionTokenBuffer = '';
+        return visible;
+      }
+
+      visible += combined.slice(cursor, start);
+      const end = combined.indexOf('}>', start + 2);
+      if (end === -1) {
+        request.motionTokenBuffer = combined.slice(start);
+        return visible;
+      }
+
+      const motionName = combined.slice(start + 2, end).trim();
+      if (motionName && !/\s/.test(motionName)) {
+        triggerModelMotion(motionName);
+      }
+      cursor = end + 2;
+    }
+
+    request.motionTokenBuffer = '';
+    return visible;
+  }
+
+  function stripMotionTokens(text){
+    return String(text || '').replace(/<\{[^}]*\}>/g, '');
+  }
+
   function interruptPlayback(){
-    try{ stopAudio(); }catch(e){}
-    try{ stopBackgroundAudio(); }catch(e){}
+    try{ audio.stopAudio(); }catch(e){}
     try{ resetStreamTtsState(); }catch(e){}
     try{ if (ttsStatus) ttsStatus.textContent = '已打断'; }catch(e){}
   }
@@ -873,6 +650,17 @@
   const ASR_ENDPOINT = `http://${BACKEND_HOST}:${BACKEND_PORT}/faust/audio/asr`;
   const TTS_ENDPOINT = `http://${BACKEND_HOST}:${BACKEND_PORT}/faust/audio/tts`;
   const SPEECH_CONFIG_ENDPOINT = `http://${BACKEND_HOST}:${BACKEND_PORT}/faust/audio/config`;
+  const audio = initAudioPlayback({
+    ttsEndpoint: TTS_ENDPOINT,
+    getTtsLang: () => getCurrentTtsLang(),
+    getModelType: () => modelType,
+    getVrmScene: () => vrmScene,
+    getCurrentModel: () => currentModel,
+    getLipSyncParamIds: () => currentLipSyncParamIds,
+    showOverlay,
+    stopBackgroundAudio: () => stopBackgroundAudio(),
+  });
+  
   // VAD websocket state
   const DEFAULT_VAD_WS_PATH = '/faust/audio/ws/vad';
   let vadWs = null;
@@ -988,72 +776,6 @@
       vadEndTimer = setTimeout(()=> finalizeSpeechSegment(probability), VAD_END_DEBOUNCE_MS);
     }
   }
-  // convert Float32Array -> Int16 WAV blob at TARGET_SAMPLE_RATE
-  function interleaveAndEncodeWav(float32Array, inputSampleRate){
-    // resample to TARGET_SAMPLE_RATE
-    const resampled = resampleFloat32(float32Array, inputSampleRate, TARGET_SAMPLE_RATE);
-    const wavBuffer = encodeWAV(resampled, TARGET_SAMPLE_RATE);
-    return new Blob([wavBuffer], { type: 'audio/wav' });
-  }
-
-  function resampleFloat32(buffer, srcRate, dstRate){
-    if (srcRate === dstRate) return buffer;
-    const ratio = srcRate / dstRate;
-    const newLen = Math.round(buffer.length / ratio);
-    const out = new Float32Array(newLen);
-    for (let i = 0; i < newLen; i++){
-      const idx = i * ratio;
-      const i0 = Math.floor(idx);
-      const i1 = Math.min(Math.ceil(idx), buffer.length - 1);
-      const t = idx - i0;
-      out[i] = (1 - t) * buffer[i0] + t * buffer[i1];
-    }
-    return out;
-  }
-
-  function concatFloat32Arrays(arrays){
-    let total = 0;
-    for (const a of arrays) total += a.length;
-    const out = new Float32Array(total);
-    let offset = 0;
-    for (const a of arrays){ out.set(a, offset); offset += a.length; }
-    return out;
-  }
-
-  function floatTo16BitPCM(output, offset, input){
-    for (let i = 0; i < input.length; i++, offset += 2) {
-      let s = Math.max(-1, Math.min(1, input[i]));
-      s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      output.setInt16(offset, s, true);
-    }
-  }
-
-  function writeString(view, offset, string){
-    for (let i = 0; i < string.length; i++){
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  }
-
-  function encodeWAV(samples, sampleRate){
-    const buffer = new ArrayBuffer(44 + samples.length * 2);
-    const view = new DataView(buffer);
-    /* RIFF identifier */ writeString(view, 0, 'RIFF');
-    /* file length */ view.setUint32(4, 36 + samples.length * 2, true);
-    /* RIFF type */ writeString(view, 8, 'WAVE');
-    /* format chunk identifier */ writeString(view, 12, 'fmt ');
-    /* format chunk length */ view.setUint32(16, 16, true);
-    /* sample format (raw) */ view.setUint16(20, 1, true);
-    /* channel count */ view.setUint16(22, 1, true);
-    /* sample rate */ view.setUint32(24, sampleRate, true);
-    /* byte rate (sampleRate * blockAlign) */ view.setUint32(28, sampleRate * 2, true);
-    /* block align (channelCount * bytesPerSample) */ view.setUint16(32, 2, true);
-    /* bits per sample */ view.setUint16(34, 16, true);
-    /* data chunk identifier */ writeString(view, 36, 'data');
-    /* data chunk length */ view.setUint32(40, samples.length * 2, true);
-    floatTo16BitPCM(view, 44, samples);
-    return view;
-  }
-
   async function uploadBufferAndShowResult(float32Arr, sampleRate){
     try{
       const blob = interleaveAndEncodeWav(float32Arr, sampleRate);
@@ -1107,6 +829,8 @@
   const NIMBLE_CALLBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/callback`;
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
+  const nimbleWin = initNimbleWindows({ callbackEndpoint: NIMBLE_CALLBACK_ENDPOINT, closeEndpoint: NIMBLE_CLOSE_ENDPOINT });
+  const hil = initHilApproval({ feedbackEndpoint: HIL_FEEDBACK_ENDPOINT });
   let chatWs = null;
   let chatWsReady = null;
   let currentChatRequest = null;
@@ -1117,27 +841,6 @@
   let streamTtsPlaybackPromise = null;
   let streamTtsSessionId = 0;
   const streamTtsSentenceEndRe = /[。！？!?；;]+$/;
-
-  function normalizeTtsText(text){
-    return String(text ?? '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .replace(/\\n/g, '\n');
-  }
-
-  function decodeWsPayload(data){
-    if (typeof data === 'string') return data;
-    try{
-      if (data instanceof ArrayBuffer) return new TextDecoder('utf-8').decode(data);
-      if (ArrayBuffer.isView(data)) return new TextDecoder('utf-8').decode(data);
-      if (data && typeof Blob !== 'undefined' && data instanceof Blob) {
-        return data.text();
-      }
-    }catch(e){
-      console.warn('decodeWsPayload failed, fallback to String(data)', e);
-    }
-    return String(data ?? '');
-  }
 
   // --- handle incoming faust commands forwarded from main process ---
   // Commands are simple text payloads like:
@@ -1153,6 +856,8 @@
     const cmd = parts[0].toUpperCase();
     const arg = parts.slice(1).join(' ').trim();
     console.log('Faust command received:', cmd, arg);
+    emitAppPluginEvent('frontend_command', { cmd, arg });
+    if (await runAppPluginCommandHandlers(cmd, arg)) return;
     try{
       if (cmd === 'PLAYMUSIC'){
         if (!arg) return;
@@ -1160,7 +865,7 @@
         try{
           const r = await fetch(arg);
           const blob = await r.blob();
-          startMouthSyncFromFile(blob);
+          audio.startMouthSyncFromFile(blob);
         }catch(e){
           console.error('PLAYMUSIC fetch/play failed', e);
         }
@@ -1181,31 +886,29 @@
         const lang = getCurrentTtsLang();
         useVAD = false;
         showResultBubble('ai', arg);
-        await synthesizeAndPlay(arg, lang);
-        useVAD = true;
+        await audio.synthesizeAndPlay(arg, lang);
       } else if (cmd === 'STOP'){
         // stop audio and optionally stop asr
-        try{ stopAudio(); }catch(e){}
-        try{ stopMicAsr(); }catch(e){}
+        try{ audio.stopAudio(); }catch(e){}
         try{ stopBackgroundAudio(); }catch(e){}
       } else if (cmd === 'NIMBLE_SHOW'){
         if (!arg) return;
         let payload = null;
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_SHOW payload', e, arg); return; }
-        showNimbleWindow(payload);
+        nimbleWin.show(payload);
       } else if (cmd === 'NIMBLE_CLOSE'){
         if (!arg) return;
         let payload = null;
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_CLOSE payload', e, arg); return; }
         if (payload && payload.callback_id) {
-          closeNimbleWindow(payload.callback_id, false);
-          closeHilApproval(payload.callback_id);
+          nimbleWin.close(payload.callback_id, false);
+          hil.close(payload.callback_id);
         }
       } else if (cmd === 'HIL_APPROVAL'){
         if (!arg) return;
         let payload = null;
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid HIL_APPROVAL payload', e, arg); return; }
-        enqueueHilApproval({
+        hil.enqueue({
           request_id: String(payload?.request_id || payload?.ID || '').trim(),
           title: String(payload?.title || payload?.request || '需要人工确认').trim(),
           summary: String(payload?.summary || '').trim(),
@@ -1344,22 +1047,6 @@
     }
   }
 
-  function extractCompletedSentences(buffer){
-    buffer = normalizeTtsText(buffer);
-    const results = [];
-    let start = 0;
-    for (let i = 0; i < buffer.length; i++){
-      const ch = buffer[i];
-      if ('。！？!?；;\n'.includes(ch)){
-        const sentence = buffer.slice(start, i + 1).trim();
-        if (sentence) results.push(sentence);
-        start = i + 1;
-      }
-    }
-    console.log('extractCompletedSentences', { buffer, completed: results, rest: buffer.slice(start) });
-    return { completed: results, rest: buffer.slice(start) };
-  }
-
   function openChatWs(){
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)){
       return chatWsReady || Promise.resolve();
@@ -1389,23 +1076,6 @@
     return new Blob([ab], { type: contentType });
   }
 
-  function playSingleBlobOrdered(blob){
-    return new Promise((resolve)=>{
-      try{ stopAudio(); }catch(e){}
-      startMouthSyncFromFile(blob);
-      if (ttsStatus) ttsStatus.textContent = '播放中';
-      try{
-        if (audioEl && typeof audioEl.addEventListener === 'function'){
-          const onEnd = ()=>{ try{ audioEl.removeEventListener('ended', onEnd); }catch(e){} resolve(); };
-          audioEl.addEventListener('ended', onEnd);
-        } else {
-          const waiter = setInterval(()=>{
-            if (!audioEl || audioEl.ended){ clearInterval(waiter); resolve(); }
-          }, 200);
-        }
-      }catch(e){ resolve(); }
-    });
-  }
 
   async function flushStreamTtsQueue(){
     if (streamTtsPlaybackPromise) return streamTtsPlaybackPromise;
@@ -1416,7 +1086,7 @@
         if (item.status === 'pending') break;
         streamTtsPending.delete(streamTtsNextPlayId);
         if (item.status === 'ready' && item.blob){
-          await playSingleBlobOrdered(item.blob);
+          await audio.playOrdered(item.blob);
         }
         streamTtsNextPlayId += 1;
       }
@@ -1462,11 +1132,13 @@
     let msg = null;
     try{ msg = JSON.parse(raw); }catch(e){ msg = { type: 'error', error: String(e) }; }
     if (!msg) return;
+    emitAppPluginEvent('chat_message', msg);
 
     if (msg.type === 'start'){
       resetStreamTtsState();
       currentChatRequest.replyText = '';
       currentChatRequest.pendingBuffer = '';
+      currentChatRequest.motionTokenBuffer = '';
       currentChatRequest.entries = [];
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
       agentIsProcessing = true;
@@ -1528,16 +1200,39 @@
       return;
     }
 
+    if (msg.type === 'reasoning_delta'){
+      if (!currentChatRequest.entries) currentChatRequest.entries = [];
+      const lastEntry = currentChatRequest.entries[currentChatRequest.entries.length - 1];
+      if (lastEntry && lastEntry.type === 'reasoning') {
+        lastEntry.text = String(lastEntry.text || '') + (msg.content || '');
+        // Preserve expanded state from asrBubbleState
+        if (Array.isArray(asrBubbleState.entries)) {
+          const idx = currentChatRequest.entries.indexOf(lastEntry);
+          if (idx >= 0 && asrBubbleState.entries[idx]) {
+            lastEntry.expanded = !!asrBubbleState.entries[idx].expanded;
+          }
+        }
+      } else {
+        currentChatRequest.entries.push({ type: 'reasoning', text: msg.content || '', expanded: false });
+      }
+      showResultBubble('ai', currentChatRequest.entries);
+      return;
+    }
+
     if (msg.type === 'delta'){
       const chunk = normalizeTtsText(msg.content || '');
-      currentChatRequest.replyText += chunk;
-      currentChatRequest.pendingBuffer += chunk;
+      const visibleChunk = consumeMotionTokens(currentChatRequest, chunk);
+      if (!visibleChunk) {
+        return;
+      }
+      currentChatRequest.replyText += visibleChunk;
+      currentChatRequest.pendingBuffer += visibleChunk;
       if (!currentChatRequest.entries) currentChatRequest.entries = [];
       const lastEntry = currentChatRequest.entries[currentChatRequest.entries.length - 1];
       if (lastEntry && lastEntry.type === 'text') {
-        lastEntry.text = String(lastEntry.text || '') + chunk;
+        lastEntry.text = String(lastEntry.text || '') + visibleChunk;
       } else {
-        currentChatRequest.entries.push({ type: 'text', text: chunk });
+        currentChatRequest.entries.push({ type: 'text', text: visibleChunk });
       }
       showResultBubble('ai', currentChatRequest.entries);
       const split = extractCompletedSentences(currentChatRequest.pendingBuffer);
@@ -1552,9 +1247,10 @@
     }
 
     if (msg.type === 'done'){
-      const reply = msg.reply || currentChatRequest.replyText || '';
+      const reply = stripMotionTokens(msg.reply || currentChatRequest.replyText || '');
       const request = currentChatRequest;
       currentChatRequest.replyText = reply;
+      currentChatRequest.motionTokenBuffer = '';
       if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim() && !reply.includes('<NO_TTS_OUTPUT>')){
         await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
       }
@@ -1654,108 +1350,37 @@
     }
   }
 
-  function formatResultBubbleText(source, text){
-    const raw = String(text || '').trim();
-    if (!raw) return '';
-    if (source === 'user') return `用户:${raw}`;
-    if (source === 'error') return `!错误!:${raw}`;
-    return `AI:${raw}`;
-  }
-
-  function formatToolBubbleValue(value){
-    if (value === null || value === undefined) return '';
-    if (typeof value === 'string') return value;
-    try{
-      return JSON.stringify(value, null, 2);
-    }catch(e){
-      return String(value);
-    }
-  }
-
-  function escapeHtml(text){
-    return String(text || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function renderResultBubbleHtml(source, entries){
-    const blocks = [];
-    const items = Array.isArray(entries) ? entries : [];
-    for (const item of items){
-      if (!item || typeof item !== 'object') continue;
-      if (item.type === 'text') {
-        const formatted = formatResultBubbleText(source, item.text || '');
-        if (formatted) {
-          blocks.push(`<div class="result-bubble-main">${escapeHtml(formatted)}</div>`);
-        }
-        continue;
-      }
-      if (item.type !== 'tool') continue;
-      const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
-      const argsText = escapeHtml(formatToolBubbleValue(Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
-      const outputText = escapeHtml(formatToolBubbleValue(item.output ? item.output : ''));
-      const expandedAttr = item.expanded ? ' open' : '';
-      const stateText = item.done ? '已完成' : '调用中';
-      const callIdAttr = escapeHtml(item.callId || `${toolName}-${blocks.length}`);
-      blocks.push(
-        `<section class="tool-call-card${item.done ? ' is-done' : ' is-running'}">` +
-          `<div class="tool-call-divider" aria-hidden="true"></div>` +
-          `<details class="tool-call-details" data-call-id="${callIdAttr}"${expandedAttr}>` +
-            `<summary class="tool-call-summary">` +
-              `<span class="tool-call-title">调用工具:${toolName}</span>` +
-              `<span class="tool-call-status">${stateText}</span>` +
-            `</summary>` +
-            `<div class="tool-call-body">` +
-              `<div class="tool-call-section-label">参数</div>` +
-              `<pre class="tool-call-pre">${argsText || '(空)'}</pre>` +
-              `<div class="tool-call-section-label">返回值</div>` +
-              `<pre class="tool-call-pre">${outputText || (item.done ? '(空)' : '等待返回...')}</pre>` +
-            `</div>` +
-          `</details>` +
-        `</section>`
-      );
-    }
-    return blocks.join('');
-  }
-
-  function cloneBubbleEntries(entries){
-    if (!Array.isArray(entries)) return [];
-    return entries.map((item)=>{
-      if (!item || typeof item !== 'object') return null;
-      if (item.type === 'text') {
-        return {
-          type: 'text',
-          text: String(item.text || ''),
-        };
-      }
-      if (item.type === 'tool') {
-        return {
-          type: 'tool',
-          callId: String(item.callId || ''),
-          toolName: String(item.toolName || '未知工具'),
-          args: Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {},
-          output: String(item.output || ''),
-          done: !!item.done,
-          expanded: !!item.expanded,
-        };
-      }
-      return null;
-    }).filter(Boolean);
-  }
-
   function handleResultBubbleToggle(ev){
     const details = ev.target;
-    if (!details || !details.classList || !details.classList.contains('tool-call-details')) return;
-    const callId = String(details.dataset.callId || '');
-    if (!callId || !Array.isArray(asrBubbleState.entries)) return;
-    for (const entry of asrBubbleState.entries){
-      if (entry && entry.type === 'tool' && String(entry.callId || '') === callId) {
-        entry.expanded = details.open;
-        break;
+    if (!details || !details.classList) return;
+    // Tool call details
+    if (details.dataset && details.dataset.callId) {
+      const callId = String(details.dataset.callId || '');
+      if (!callId || !Array.isArray(asrBubbleState.entries)) return;
+      for (const entry of asrBubbleState.entries){
+        if (entry && entry.type === 'tool' && String(entry.callId || '') === callId) {
+          entry.expanded = details.open;
+          break;
+        }
       }
+      return;
+    }
+    // Reasoning card details
+    if (details.dataset && details.dataset.r !== undefined) {
+      const rIdx = parseInt(details.dataset.r, 10);
+      if (!isNaN(rIdx) && Array.isArray(asrBubbleState.entries)) {
+        let count = -1;
+        for (const entry of asrBubbleState.entries) {
+          if (entry && entry.type === 'reasoning') {
+            count++;
+            if (count === rIdx) {
+              entry.expanded = details.open;
+              break;
+            }
+          }
+        }
+      }
+      return;
     }
   }
 
@@ -1835,17 +1460,17 @@
         asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
         asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
         asrTextEl.style.fontSize = '20px';
-        updateHilApprovalPosition();
+        hil.updatePosition();
       }catch(e){/*ignore*/}
       return;
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      // b.x/b.y are renderer coordinates; map to client
-      const clientX = canvasRect.left + (b.x + b.width/2) * (canvasRect.width / app.renderer.width);
-      const clientY = canvasRect.top + (b.y) * (canvasRect.height / app.renderer.height);
+      const anchor = live2DToClient(b.x + b.width / 2, b.y);
+      if (!anchor) return;
+      const clientX = anchor.x;
+      const clientY = anchor.y;
       // position slightly above head
       const offsetY = -108;
       const bubbleWidth = Math.max(asrBubbleEl.offsetWidth, 220);
@@ -1863,7 +1488,7 @@
       asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
       asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
       asrTextEl.style.fontSize = '20px';
-      updateHilApprovalPosition();
+      hil.updatePosition();
     }catch(e){/*ignore*/}
   }
 
@@ -1889,12 +1514,11 @@
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
-      const canvasRect = app.renderer.view.getBoundingClientRect();
       const b = currentModel.getBounds();
-      const scaleX = canvasRect.width / app.renderer.width;
-      const scaleY = canvasRect.height / app.renderer.height;
-      const clientX = canvasRect.left + (b.x + b.width * 0.5) * scaleX;
-      const waistY = canvasRect.top + (b.y + b.height * textChatBarYFactor) * scaleY;
+      const anchor = live2DToClient(b.x + b.width * 0.5, b.y + b.height * textChatBarYFactor);
+      if (!anchor) return;
+      const clientX = anchor.x;
+      const waistY = anchor.y;
       const rect = textChatBar.getBoundingClientRect();
       const estimatedWidth = rect.width > 0 ? rect.width : 420;
       const estimatedHeight = rect.height > 0 ? rect.height : 64;
@@ -2092,19 +1716,15 @@
   // wire up buttons (use the ASRController-like API)
   if (startAsrBtn) startAsrBtn.addEventListener('click', ()=> startRecording());
   if (stopAsrBtn) stopAsrBtn.addEventListener('click', ()=> stopRecording());
-  if (textChatSendBtn) textChatSendBtn.addEventListener('click', ()=>{ sendTextChatMessage(); });
-  if (textChatInput) textChatInput.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter' && !e.shiftKey){
-      e.preventDefault();
-      sendTextChatMessage();
-    }
-  });
   document.addEventListener('keydown', (e)=>{
     if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')){
       e.preventDefault();
       focusTextChatInput();
     }
   });
+
+  // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
+  initAutocomplete(textChatInput, sendTextChatMessage);
 
   // update asrText position each frame if visible
   function rafUpdate(){
@@ -2118,7 +1738,7 @@
   function showOverlay(msg){
     const o = document.getElementById('overlay');
     if (!o) return;
-    o.style.display = 'none';
+    o.style.display = 'block';
     o.textContent = msg;
   }
 
@@ -2140,6 +1760,10 @@
       if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
       const { VRMScene } = await getVRMModule();
       if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
+      if (currentModel && currentModel.parent) {
+        currentModel.parent.removeChild(currentModel);
+        currentModel = null;
+      }
       if (!vrmScene) {
         if (app && app.view) app.view.style.display = 'none';
         vrmScene = new VRMScene();
@@ -2245,8 +1869,206 @@
     modelType = 'live2d';
   }
 
+  function normalizeImageModelConfig(rawConfig){
+    const cfg = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
+    return {
+      baseImages: Array.isArray(cfg.baseImages) ? cfg.baseImages.filter(Boolean).map(String) : [],
+      emotions: Array.isArray(cfg.emotions) ? cfg.emotions.map((item) => ({
+        name: String(item && item.name || '').trim(),
+        images: Array.isArray(item && item.images) ? item.images.filter(Boolean).map(String) : [],
+      })).filter((item) => item.name) : [],
+      tapImages: Array.isArray(cfg.tapImages) ? cfg.tapImages.filter(Boolean).map(String) : [],
+      mouthShapes: Array.isArray(cfg.mouthShapes) ? cfg.mouthShapes.map((item) => ({
+        path: String(item && item.path || '').trim(),
+        openness: Math.max(0, Math.min(1, Number(item && item.openness) || 0)),
+      })).filter((item) => item.path) : [],
+      motionDurationMs: Math.max(200, Number(cfg.motionDurationMs) || 3000),
+      tapDurationMs: Math.max(100, Number(cfg.tapDurationMs) || 700),
+    };
+  }
+
+  async function resolveImageModelConfig(rawConfig){
+    const cfg = normalizeImageModelConfig(rawConfig);
+    const resolveList = async (items) => {
+      const resolved = [];
+      for (const item of items) {
+        const path = await resolveFrontendAssetPath(item);
+        if (path) resolved.push(path);
+      }
+      return resolved;
+    };
+    const emotions = [];
+    for (const emotion of cfg.emotions) {
+      emotions.push({ name: emotion.name, images: await resolveList(emotion.images) });
+    }
+    const mouthShapes = [];
+    for (const shape of cfg.mouthShapes) {
+      const path = await resolveFrontendAssetPath(shape.path);
+      if (path) mouthShapes.push({ path, openness: shape.openness });
+    }
+    return {
+      baseImages: await resolveList(cfg.baseImages),
+      emotions,
+      tapImages: await resolveList(cfg.tapImages),
+      mouthShapes,
+      motionDurationMs: cfg.motionDurationMs,
+      tapDurationMs: cfg.tapDurationMs,
+    };
+  }
+
+  function pickRandomItem(items){
+    if (!Array.isArray(items) || !items.length) return '';
+    return items[Math.floor(Math.random() * items.length)] || '';
+  }
+
+  async function loadImageModel(rawConfig){
+    if (modelType !== 'images') {
+      switchToLive2DRenderer();
+      modelType = 'images';
+    }
+    const loadRequestId = ++activeModelLoadRequestId;
+    const resolvedConfig = await resolveImageModelConfig(rawConfig);
+    if (loadRequestId !== activeModelLoadRequestId) return;
+    const initialPath = pickRandomItem(resolvedConfig.baseImages)
+      || pickRandomItem(resolvedConfig.tapImages)
+      || (resolvedConfig.mouthShapes[0] && resolvedConfig.mouthShapes[0].path)
+      || '';
+    if (!initialPath) {
+      console.warn('Images 模型未配置图片，使用空白纹理');
+    }
+    const texture = initialPath ? PIXI.Texture.from(initialPath) : PIXI.Texture.WHITE;
+    const sprite = new PIXI.Sprite(texture);
+    if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
+    currentModel = sprite;
+    runtimeImageModelConfig = resolvedConfig;
+    availableMotions = resolvedConfig.emotions.map((item) => item.name);
+    currentLipSyncParamIds = [];
+    let pointerDownTime = 0;
+    sprite.anchor.set(0.5, 1.0);
+    sprite.x = app.renderer.width - 200;
+    sprite.y = app.renderer.height - 20;
+    sprite.interactive = true;
+    sprite.buttonMode = true;
+    sprite.cursor = 'grab';
+    sprite._faustImageModel = {
+      config: resolvedConfig,
+      emotionUntil: 0,
+      tapUntil: 0,
+      currentEmotion: '',
+      currentEmotionImage: '',
+      currentTapImage: '',
+      mouthOpen: 0,
+      lastTexturePath: initialPath,
+      setEmotion(name) {
+        const group = this.config.emotions.find((item) => item.name === name && item.images.length);
+        if (!group) return false;
+        this.currentEmotion = name;
+        this.currentEmotionImage = pickRandomItem(group.images);
+        this.emotionUntil = Date.now() + this.config.motionDurationMs;
+        this.refreshTexture();
+        return true;
+      },
+      triggerTap() {
+        if (!this.config.tapImages.length) return;
+        this.currentTapImage = pickRandomItem(this.config.tapImages);
+        this.tapUntil = Date.now() + this.config.tapDurationMs;
+        this.refreshTexture();
+      },
+      setMouthOpen(value) {
+        this.mouthOpen = Math.max(0, Math.min(1, Number(value) || 0));
+        this.refreshTexture();
+      },
+      getCurrentImagePath() {
+        const now = Date.now();
+        if (this.tapUntil > now && this.currentTapImage) return this.currentTapImage;
+        if (this.config.mouthShapes.length && this.mouthOpen > 0.01) {
+          let best = this.config.mouthShapes[0];
+          let bestDist = Math.abs(best.openness - this.mouthOpen);
+          for (const item of this.config.mouthShapes) {
+            const dist = Math.abs(item.openness - this.mouthOpen);
+            if (dist < bestDist) { best = item; bestDist = dist; }
+          }
+          if (best && best.path) return best.path;
+        }
+        if (this.emotionUntil > now && this.currentEmotionImage) return this.currentEmotionImage;
+        return pickRandomItem(this.config.baseImages) || this.lastTexturePath || initialPath;
+      },
+      refreshTexture() {
+        const nextPath = this.getCurrentImagePath();
+        if (!nextPath) { sprite.texture = PIXI.Texture.WHITE; return; }
+        if (!nextPath || nextPath === this.lastTexturePath) return;
+        this.lastTexturePath = nextPath;
+        sprite.texture = PIXI.Texture.from(nextPath);
+      },
+    };
+
+    sprite.on('pointerdown', (e) => {
+      pointerDownTime = Date.now();
+      if (clickThroughController) clickThroughController.forceInteractive();
+      setInteractionLock(true);
+      dragging = true;
+      sprite.cursor = 'grabbing';
+      const pos = e.data.global;
+      dragOffset.x = pos.x - sprite.x;
+      dragOffset.y = pos.y - sprite.y;
+      sprite._faustImageModel.triggerTap();
+    });
+    sprite.on('pointerup', () => {
+      if (Date.now() - pointerDownTime < 300 && !dragging) {
+        sprite._faustImageModel.triggerTap();
+      }
+      dragging = false;
+      sprite.cursor = 'grab';
+      setInteractionLock(false);
+      persistModelPositionToBackend();
+    });
+    sprite.on('pointerupoutside', () => {
+      if (Date.now() - pointerDownTime < 300 && !dragging) {
+        sprite._faustImageModel.triggerTap();
+      }
+      dragging = false;
+      sprite.cursor = 'grab';
+      setInteractionLock(false);
+      persistModelPositionToBackend();
+    });
+    sprite.on('pointermove', (e) => {
+      if (!dragging) return;
+      const pos = e.data.global;
+      let rawX = pos.x - dragOffset.x;
+      let rawY = pos.y - dragOffset.y;
+      const marginTop = 160;
+      const marginBottom = 20;
+      const marginX = 160;
+      rawX = Math.max(marginX, Math.min(app.renderer.width - marginX, rawX));
+      rawY = Math.max(marginTop, Math.min(app.renderer.height - marginBottom, rawY));
+      sprite.x = rawX;
+      sprite.y = rawY;
+      updateQuickControllerPosition();
+    });
+
+    app.stage.addChild(sprite);
+    clearOverlay();
+    baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
+    const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
+      ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
+      : null;
+    const configuredY = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_Y !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_Y !== null && runtimeLive2DConfig.LIVE2D_MODEL_Y !== ''
+      ? Number(runtimeLive2DConfig.LIVE2D_MODEL_Y)
+      : null;
+    if (Number.isFinite(configuredX)) sprite.x = configuredX;
+    if (Number.isFinite(configuredY)) sprite.y = configuredY;
+    applyModelScale();
+    updateTextChatBarPosition();
+    refreshQuickControllerVisibility();
+    if (modelPathInput) modelPathInput.value = '__faust_images__';
+  }
+
   function loadModel(path){
     const ext = String(path || '').toLowerCase().trim();
+    if (ext === '__faust_images__') {
+      loadImageModel(runtimeImageModelConfig || (runtimeLive2DConfig && runtimeLive2DConfig.IMAGE_MODEL_CONFIG) || {});
+      return;
+    }
     if (ext.endsWith('.vrm')) {
       loadVRMModel(path);
       return;
@@ -2282,7 +2104,7 @@
       model.scale.set(1.0);
       model.anchor.set(0.5, 1.0);
       model.x = app.renderer.width - 200;
-      model.y = app.renderer.height - 10;
+      model.y = app.renderer.height - 20;
       model.interactive = true;
       model.buttonMode = true;
       model.cursor = 'grab';
@@ -2312,8 +2134,19 @@
       model.on('pointermove', (e) => {
         if (!dragging) return;
         const pos = e.data.global;
-        model.x = pos.x - dragOffset.x;
-        model.y = pos.y - dragOffset.y;
+        let rawX = pos.x - dragOffset.x;
+        let rawY = pos.y - dragOffset.y;
+        // Constrain drag so controls stay on-screen
+        // X/sides: 160px — room for controller + chat bar
+        // Top: 160px — controls anchored above model need headroom
+        // Bottom: 20px — model anchor is at bottom (0.5,1.0), allow near screen edge
+        const marginTop = 160;
+        const marginBottom = 20;
+        const marginX = 160;
+        rawX = Math.max(marginX, Math.min(app.renderer.width - marginX, rawX));
+        rawY = Math.max(marginTop, Math.min(app.renderer.height - marginBottom, rawY));
+        model.x = rawX;
+        model.y = rawY;
         updateQuickControllerPosition();
       });
 
@@ -2364,7 +2197,7 @@
   if (resetBtn) resetBtn.addEventListener('click', () => {
     if (!currentModel) return;
     currentModel.x = app.renderer.width - 200;
-    currentModel.y = app.renderer.height - 10;
+    currentModel.y = app.renderer.height - 20;
     updateQuickControllerPosition();
     persistModelPositionToBackend();
   });
@@ -2384,6 +2217,7 @@
     const configuredQuickControllerXOffset = runtimeCfg && runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET !== undefined && runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET !== null && runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET !== ''
       ? Number(runtimeCfg.FRONTEND_QUICK_CONTROLLER_X_OFFSET)
       : null;
+    runtimeImageModelConfig = runtimeCfg && runtimeCfg.IMAGE_MODEL_CONFIG ? runtimeCfg.IMAGE_MODEL_CONFIG : null;
     if (Number.isFinite(configuredScale) && configuredScale > 0) {
       scaleFactor = configuredScale;
       if (modelScaleSlider) modelScaleSlider.value = String(scaleFactor);
@@ -2399,8 +2233,10 @@
     const vrmModelPath = configuredModelType === 'vrm'
       ? (runtimeCfg && runtimeCfg.VRM_MODEL_PATH ? String(runtimeCfg.VRM_MODEL_PATH).trim() : '')
       : '';
-    const toLoad = configuredModelType === 'vrm' ? (vrmModelPath || configuredModel || defaultModel) : (configuredModel || defaultModel);
-    modelPathInput.value = toLoad;
+    const toLoad = configuredModelType === 'vrm'
+      ? (vrmModelPath || configuredModel || defaultModel)
+      : (configuredModelType === 'images' ? '__faust_images__' : (configuredModel || defaultModel));
+    modelPathInput.value = configuredModelType === 'images' ? '__faust_images__' : toLoad;
     // small delay so UI visible
     setTimeout(()=>{ loadModel(toLoad); }, 120);
   })();
@@ -2409,12 +2245,12 @@
   window.addEventListener('resize', ()=>{
     if (!currentModel) return;
     currentModel.x = Math.min(currentModel.x, app.renderer.width - 50);
-    currentModel.y = Math.min(currentModel.y, app.renderer.height - 10);
+    currentModel.y = Math.min(currentModel.y, app.renderer.height - 20);
     // auto-scale with resize
     try{
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
       applyModelScale();
-      updateHilApprovalPosition();
+      hil.updatePosition();
     }catch(e){}
   });
 
@@ -2451,12 +2287,12 @@
         hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);
         hoverModel = isPointerOnModel(e.clientX, e.clientY);
         const overAsrBubble = isPointOverAsrBubble(e.clientX, e.clientY);
-        const overHilApproval = isPointOverHilApproval(e.clientX, e.clientY);
+        const overHilApproval = hil.isPointOver(e.clientX, e.clientY);
         const overVRMConfig = isPointOverVRMConfig(e.clientX, e.clientY);
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
-        const overNimble = isPointOverNimble(e.clientX, e.clientY);
-        const onNimbleWindow = isPointOverNimbleWindow(e.clientX, e.clientY);
-        console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
+        const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
+        const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
+        //console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
         const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
         if (overInteractive){
           if (!interactiveActive){
@@ -2540,218 +2376,8 @@
     }
   });
 
-  // Audio mouth-sync: setup audio element and WebAudio analyser
-  let audioEl = null;
-  let audioCtx = null;
-  let analyser = null;
-  let dataArray = null;
-  let sourceNode = null;
-  let rafId = null;
-
-  function stopAudio(){
-    if (audioEl){
-      try{ audioEl.pause(); audioEl.currentTime = 0; }catch(e){}
-    }
-    if (modelType === 'vrm' && vrmScene) {
-      vrmScene.stopLipSync();
-    } else if (currentModel){
-      try{
-        setModelLipSyncValue(0);
-      }catch(e){}
-    }
-    if (rafId) cancelAnimationFrame(rafId);
-    if (sourceNode){ try{ sourceNode.disconnect(); }catch(e){} sourceNode=null }
-    if (analyser){ analyser.disconnect(); analyser=null }
-    if (audioCtx){ try{ audioCtx.close(); }catch(e){} audioCtx=null }
-  }
-
-  // TTS: call backend API (port 5000) to synthesize text and play the returned audio
-  async function synthesizeAndPlay(text, lang){
-    // Splits text into chunks and sends parallel TTS requests, playing chunks
-    // progressively as they arrive to reduce latency. Returns a promise that
-    // resolves after all playback has finished.
-    if (!text || text.trim().length === 0) return;
-    const TTS_SPLIT_LIMIT = 100; // characters per chunk (tunable)
-    const endpoint = TTS_ENDPOINT;
-
-    // helper: split text into chunks trying to respect sentence boundaries
-    function splitText(input, maxLen){
-      input = normalizeTtsText(input).trim();
-      const out = [];
-      if (input.length <= maxLen) return [input];
-      // prefer splitting on Chinese/Japanese/English sentence punctuation or commas/space
-      const splitRe = /([。！？!?；;，,，、\n]+)/g;
-      let parts = input.split(splitRe).filter(s=>s && s.trim().length>0);
-      // recombine parts into chunks under maxLen
-      let cur = '';
-      for (let p of parts){
-        if ((cur + p).length <= maxLen){ cur += p; }
-        else {
-          if (cur) out.push(cur);
-          if (p.length > maxLen){
-            // fallback: hard-split long fragment
-            for (let i=0;i<p.length;i+=maxLen){ out.push(p.slice(i,i+maxLen)); }
-            cur = '';
-          } else {
-            cur = p;
-          }
-        }
-      }
-      if (cur) out.push(cur);
-      // if nothing produced, fallback to naive split
-      if (out.length === 0){
-        for (let i=0;i<input.length;i+=maxLen) out.push(input.slice(i,i+maxLen));
-      }
-      return out;
-    }
-
-    // We'll fetch chunks in parallel but play them in original order.
-    // Prepare per-index blobs and waiters so we can start playback as soon
-    // as chunk 0 is ready while later chunks continue downloading.
-    const blobs = new Array();
-    const waiters = new Array();
-    for (let i=0;i<0;i++){} // keep block structure
-
-    function makeWaiter(){
-      let resolveFn = null;
-      const p = new Promise((res)=>{ resolveFn = res; });
-      return { promise: p, resolve: resolveFn };
-    }
-
-    // helper to play a single blob and wait until it finishes
-    function playSingleBlob(blob){
-      return new Promise((resolve)=>{
-        try{ stopAudio(); }catch(e){}
-        startMouthSyncFromFile(blob);
-        if (ttsStatus) ttsStatus.textContent = '播放中';
-        try{
-          if (audioEl && typeof audioEl.addEventListener === 'function'){
-            const onEnd = ()=>{ try{ audioEl.removeEventListener('ended', onEnd); }catch(e){} resolve(); };
-            audioEl.addEventListener('ended', onEnd);
-          } else {
-            const waiter = setInterval(()=>{
-              if (!audioEl || audioEl.ended){ clearInterval(waiter); resolve(); }
-            }, 200);
-          }
-        }catch(e){ console.warn('attach onended failed', e); resolve(); }
-      });
-    }
-
-    // start: split text and issue parallel fetches
-    const chunks = splitText(text, TTS_SPLIT_LIMIT);
-    if (chunks.length === 0) return;
-
-    if (ttsBtn) ttsBtn.disabled = true;
-    if (ttsStatus) ttsStatus.textContent = '合成中...';
-
-    // track fetch completion and playback completion
-    let fetchesPending = chunks.length;
-    let fetchHadError = false;
-
-    // create waiters for each chunk so we can play chunks in order
-    for (let i=0;i<chunks.length;i++){ waiters[i] = makeWaiter(); blobs[i] = null; }
-
-    const fetchPromises = chunks.map((chunk, i) => (async ()=>{
-      const payload = { text: chunk, text_language: lang || getCurrentTtsLang(), lang: lang || getCurrentTtsLang() };
-      try{
-        const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!r.ok){
-          const txt = await r.text();
-          console.warn('TTS chunk failed', r.status, txt);
-          fetchHadError = true;
-        } else {
-          const contentType = r.headers.get('content-type') || 'audio/wav';
-          const ab = await r.arrayBuffer();
-          const blob = new Blob([ab], { type: contentType });
-          blobs[i] = blob;
-        }
-      }catch(err){ console.warn('TTS chunk fetch err', err); fetchHadError = true; }
-      finally{ fetchesPending -= 1; try{ waiters[i].resolve(); }catch(e){} }
-    })());
-
-    try{
-      // play chunks strictly in original order; wait for each chunk's fetch to finish
-      for (let i=0;i<chunks.length;i++){
-        try{ await waiters[i].promise; }catch(e){}
-        if (blobs[i]){
-          await playSingleBlob(blobs[i]);
-        } else {
-          console.warn('Skipping missing TTS chunk', i);
-        }
-      }
-
-      try{ await Promise.all(fetchPromises); }catch(e){}
-      if (fetchHadError) showOverlay('部分 TTS 分段合成失败，已跳过错误片段');
-    }catch(e){ console.warn('TTS allDone err', e); }
-    finally{
-      if (ttsBtn) ttsBtn.disabled = false;
-      if (ttsStatus) ttsStatus.textContent = '已完成';
-    }
-
-    return; // resolved when playback finished
-  }
-
-  function startMouthSyncFromFile(file){
-    stopAudio();
-    if (!file) return;
-    audioEl = new Audio(URL.createObjectURL(file));
-    audioEl.crossOrigin = 'anonymous';
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    try{ audioCtx.resume && audioCtx.resume(); }catch(e){}
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 2048;
-    dataArray = new Uint8Array(analyser.fftSize);
-    sourceNode = audioCtx.createMediaElementSource(audioEl);
-    sourceNode.connect(analyser);
-    analyser.connect(audioCtx.destination);
-    audioEl.onended = ()=>{
-      if (modelType === 'vrm' && vrmScene) {
-        vrmScene.stopLipSync();
-      } else {
-        try{
-          setModelLipSyncValue(0);
-        }catch(e){}
-      }
-    };
-    audioEl.play().catch(()=>{ /* autoplay may be blocked */ });
-
-    if (modelType === 'vrm' && vrmScene) {
-      vrmScene.startLipSync(analyser);
-      return;
-    }
-
-    function tick(){
-      analyser.getByteTimeDomainData(dataArray);
-      // compute RMS
-      let sum=0;
-      for(let i=0;i<dataArray.length;i++){ const v = (dataArray[i]-128)/128; sum+=v*v }
-      const rms = Math.sqrt(sum / dataArray.length);
-      // map rms to mouth open parameter (0..1)
-      const mouth = Math.min(1, Math.max(0, (rms*5)));
-      if (currentModel){
-        try{
-          setModelLipSyncValue(mouth);
-        }catch(e){ /* ignore if model API differs */ }
-      }
-      rafId = requestAnimationFrame(tick);
-    }
-    rafId = requestAnimationFrame(tick);
-  }
-
-  if (playAudioBtn) playAudioBtn.addEventListener('click', ()=>{
-    const f = audioFile.files && audioFile.files[0];
-    if (!f){ alert('请选择音频文件'); return }
-    startMouthSyncFromFile(f);
-  });
-  if (stopAudioBtn) stopAudioBtn.addEventListener('click', ()=>{ stopAudio(); });
-  // TTS button
-  if (ttsBtn){
-    ttsBtn.addEventListener('click', ()=>{
-      const text = ttsText ? ttsText.value : '';
-      const lang = ttsLang ? ttsLang.value : 'zh';
-      synthesizeAndPlay(text, lang);
-    });
-  }
+  audio.initEvents();
+  
   if (quickToggleAsrBtn) quickToggleAsrBtn.addEventListener('click', ()=>{
     toggleAsr();
   });
@@ -2802,308 +2428,19 @@
     }catch(e){ console.warn('openLiveWindow failed', e); }
   });
 
-  // ── VRM 配置面板 ──
-  let vrmConfigBuilt = false;
-  let vrmConfigOriginalHandlers = null;
-
-  function buildVRMConfigPanel() {
-    if (!vrmScene || !vrmConfigPanelBody) return;
-    const cfg = vrmScene.getConfig();
-    vrmConfigPanelBody.innerHTML = '';
-    const sections = [
-      { key: 'armsRight', title: '右臂', rows: [
-        { label: '上臂前倾', path: 'arms.rightUpperArm.x', min: -0.5, max: 0.5, step: 0.01, val: cfg.arms.rightUpperArm.x },
-        { label: '上臂下垂', path: 'arms.rightUpperArm.z', min: -1.8, max: 0, step: 0.01, val: cfg.arms.rightUpperArm.z },
-        { label: '小臂弯曲', path: 'arms.rightLowerArm.x', min: 0, max: 1.8, step: 0.01, val: cfg.arms.rightLowerArm.x },
-      ]},
-      { key: 'armsLeft', title: '左臂', rows: [
-        { label: '上臂前倾', path: 'arms.leftUpperArm.x', min: -0.5, max: 0.5, step: 0.01, val: cfg.arms.leftUpperArm.x },
-        { label: '上臂下垂', path: 'arms.leftUpperArm.z', min: 0, max: 1.8, step: 0.01, val: cfg.arms.leftUpperArm.z },
-        { label: '小臂弯曲', path: 'arms.leftLowerArm.x', min: 0, max: 1.8, step: 0.01, val: cfg.arms.leftLowerArm.x },
-      ]},
-      { key: 'swing', title: '手臂摆动', rows: [
-        { label: '摆动幅度', path: 'arms.swingAmplitude', min: 0, max: 0.2, step: 0.005, val: cfg.arms.swingAmplitude },
-        { label: '摆动速度', path: 'arms.swingSpeed', min: 0.1, max: 2, step: 0.1, val: cfg.arms.swingSpeed },
-      ]},
-      { key: 'rightHand', title: '右手手指 (curl)', rows: [
-        { label: '拇指 curl', path: 'hands.right.thumbCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.thumbCurl : 0) },
-        { label: '食指 curl', path: 'hands.right.indexCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.indexCurl : 0) },
-        { label: '中指 curl', path: 'hands.right.middleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.middleCurl : 0) },
-        { label: '无名指 curl', path: 'hands.right.ringCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.ringCurl : 0) },
-        { label: '小指 curl', path: 'hands.right.littleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.right ? cfg.hands.right.littleCurl : 0) },
-      ]},
-      { key: 'leftHand', title: '左手手指 (curl)', rows: [
-        { label: '拇指 curl', path: 'hands.left.thumbCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.thumbCurl : 0) },
-        { label: '食指 curl', path: 'hands.left.indexCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.indexCurl : 0) },
-        { label: '中指 curl', path: 'hands.left.middleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.middleCurl : 0) },
-        { label: '无名指 curl', path: 'hands.left.ringCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.ringCurl : 0) },
-        { label: '小指 curl', path: 'hands.left.littleCurl', min: 0, max: 1, step: 0.02, val: (cfg.hands && cfg.hands.left ? cfg.hands.left.littleCurl : 0) },
-      ]},
-      { key: 'body', title: '身体', rows: [
-        { label: '前后摇摆', path: 'body.spineSwayX', min: 0, max: 0.02, step: 0.001, val: cfg.body.spineSwayX },
-        { label: '左右摇摆', path: 'body.spineSwayZ', min: 0, max: 0.02, step: 0.001, val: cfg.body.spineSwayZ },
-        { label: '摇摆速度', path: 'body.swaySpeed', min: 0.1, max: 2, step: 0.1, val: cfg.body.swaySpeed },
-      ]},
-      { key: 'head', title: '头部', rows: [
-        { label: '左右微转', path: 'head.neckZ', min: 0, max: 0.03, step: 0.001, val: cfg.head.neckZ },
-        { label: '上下微转', path: 'head.neckY', min: 0, max: 0.03, step: 0.001, val: cfg.head.neckY },
-        { label: '运动速度', path: 'head.speed', min: 0.1, max: 1.5, step: 0.1, val: cfg.head.speed },
-      ]},
-      { key: 'blink', title: '眨眼', rows: [
-        { label: '最小时隔', path: 'blink.minInterval', min: 0.5, max: 10, step: 0.5, val: cfg.blink.minInterval },
-        { label: '最大时隔', path: 'blink.maxInterval', min: 1, max: 15, step: 0.5, val: cfg.blink.maxInterval },
-        { label: '闭眼时长', path: 'blink.closeDuration', min: 0.02, max: 0.3, step: 0.01, val: cfg.blink.closeDuration },
-        { label: '睁眼时长', path: 'blink.openDuration', min: 0.02, max: 0.3, step: 0.01, val: cfg.blink.openDuration },
-      ]},
-      { key: 'eye', title: '视线', rows: [
-        { label: '水平范围', path: 'eye.saccadeRangeX', min: 0, max: 1, step: 0.05, val: cfg.eye.saccadeRangeX },
-        { label: '垂直范围', path: 'eye.saccadeRangeY', min: 0, max: 0.5, step: 0.05, val: cfg.eye.saccadeRangeY },
-        { label: '扫视时长', path: 'eye.duration', min: 0.2, max: 3, step: 0.1, val: cfg.eye.duration },
-        { label: '鼠标灵敏度', path: 'eye.mouseFovScale', min: 0, max: 1, step: 0.05, val: cfg.eye.mouseFovScale },
-        { label: '鼠标超时', path: 'eye.mouseIdleTimeout', min: 1, max: 30, step: 1, val: cfg.eye.mouseIdleTimeout },
-      ]},
-      { key: 'microExp', title: '微表情', rows: [
-        { label: '最小时隔', path: 'microExp.minInterval', min: 2, max: 30, step: 1, val: cfg.microExp.minInterval },
-        { label: '最大时隔', path: 'microExp.maxInterval', min: 5, max: 60, step: 1, val: cfg.microExp.maxInterval },
-        { label: '表情权重', path: 'microExp.weight', min: 0, max: 0.5, step: 0.01, val: cfg.microExp.weight },
-        { label: '淡入时长', path: 'microExp.fadeIn', min: 0.1, max: 2, step: 0.1, val: cfg.microExp.fadeIn },
-        { label: '保持时长', path: 'microExp.hold', min: 0.3, max: 5, step: 0.1, val: cfg.microExp.hold },
-        { label: '淡出时长', path: 'microExp.fadeOut', min: 0.1, max: 2, step: 0.1, val: cfg.microExp.fadeOut },
-      ]},
-    ];
-
-    for (const sec of sections) {
-      const secDiv = document.createElement('div');
-      secDiv.className = 'vrm-config-section';
-      const header = document.createElement('div');
-      header.className = 'vrm-config-section-header';
-      header.textContent = sec.title;
-      header.dataset.expanded = 'true';
-      header.addEventListener('click', () => {
-        const body = secDiv.querySelector('.vrm-config-section-body');
-        if (body) {
-          body.style.display = body.style.display === 'none' ? '' : 'none';
-          header.dataset.expanded = header.dataset.expanded === 'true' ? 'false' : 'true';
-        }
-      });
-      secDiv.appendChild(header);
-
-      const bodyDiv = document.createElement('div');
-      bodyDiv.className = 'vrm-config-section-body';
-
-      for (const row of sec.rows) {
-        const rowDiv = document.createElement('div');
-        rowDiv.className = 'vrm-config-row';
-        const label = document.createElement('label');
-        label.textContent = row.label;
-        const input = document.createElement('input');
-        input.type = 'range';
-        input.min = row.min;
-        input.max = row.max;
-        input.step = row.step;
-        input.value = row.val;
-        const valSpan = document.createElement('span');
-        valSpan.className = 'vrm-config-val';
-        valSpan.textContent = Number(row.val).toFixed(row.step < 0.01 ? 3 : row.step < 0.05 ? 2 : 1);
-
-        input.addEventListener('input', () => {
-          const v = parseFloat(input.value);
-          valSpan.textContent = v.toFixed(row.step < 0.01 ? 3 : row.step < 0.05 ? 2 : 1);
-          if (vrmScene) {
-            vrmScene.applyConfigValue(row.path, v);
-          }
-        });
-
-        rowDiv.appendChild(label);
-        rowDiv.appendChild(input);
-        rowDiv.appendChild(valSpan);
-        bodyDiv.appendChild(rowDiv);
-      }
-
-      secDiv.appendChild(bodyDiv);
-      vrmConfigPanelBody.appendChild(secDiv);
-    }
-    vrmConfigBuilt = true;
-  }
-
-  if (openVRMConfigBtn) {
-    openVRMConfigBtn.addEventListener('click', () => {
-      if (!vrmScene || !vrmConfigPanel) return;
-      const isOpen = vrmConfigPanel.style.display !== 'none';
-      if (isOpen) {
-        vrmConfigPanel.style.display = 'none';
-        if (vrmScene.exitConfigMode) vrmScene.exitConfigMode();
-        if (vrmScene.setModelTransform) {
-          try {
-            const t = vrmScene.getModelTransform();
-            fetch('http://127.0.0.1:13900/faust/admin/vrm-config/model-state', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(t),
-            }).catch(() => {});
-          } catch (e) {}
-        }
-      } else {
-        openVRMConfigPanel();
-      }
-    });
-  }
-
-  function openVRMConfigPanel() {
-    if (!vrmScene || !vrmConfigPanel) return;
-    vrmConfigPanel.style.display = 'flex';
-    buildVRMConfigPanel();
-    if (vrmScene.enterConfigMode) vrmScene.enterConfigMode();
-  }
-
-  if (vrmConfigCloseBtn) {
-    vrmConfigCloseBtn.addEventListener('click', () => {
-      vrmConfigPanel.style.display = 'none';
-      if (vrmScene && vrmScene.exitConfigMode) vrmScene.exitConfigMode();
-    });
-  }
-
-  if (vrmConfigSaveBtn) {
-    vrmConfigSaveBtn.addEventListener('click', async () => {
-      if (!vrmScene) return;
-      const cfg = vrmScene.getConfig();
-      const t = vrmScene.getModelTransform();
-      cfg.modelState = t;
-      try {
-        const resp = await fetch('http://127.0.0.1:13900/faust/admin/vrm-config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ config: cfg }),
-        });
-        if (resp.ok) {
-          vrmConfigPanel.style.display = 'none';
-          if (vrmScene.exitConfigMode) vrmScene.exitConfigMode();
-        }
-      } catch (e) {
-        console.warn('Failed to save VRM config:', e);
-      }
-    });
-  }
-
-  if (vrmConfigResetBtn) {
-    vrmConfigResetBtn.addEventListener('click', async () => {
-      try {
-        const resp = await fetch('http://127.0.0.1:13900/faust/admin/vrm-config/reset');
-        const data = await resp.json();
-        if (data && data.config && vrmScene) {
-          vrmScene.setConfig(data.config);
-          vrmConfigBuilt = false;
-          buildVRMConfigPanel();
-        }
-      } catch (e) {
-        console.warn('Failed to reset VRM config:', e);
-      }
-    });
-  }
-
+  // ── VRM 配置面板（已抽取到 libs/vrm-config-panel.js） ──
+  const vrmCfg = initVRMConfigPanel({ getVrmScene: () => vrmScene });
+  vrmCfg.init();
   // Config mode pointer handling for gizmo interaction
   let vrmConfigGizmoCleanup = null;
   updateQuickAsrButton();
 
-  // ── 日志面板 ──
-  const LOG_WS_URL = (window.BACKEND_BASE || 'ws://127.0.0.1:13900') + '/faust/logger/ws';
-  const logPanel = document.getElementById('logPanel');
-  const logContent = document.getElementById('logContent');
-  const logLevelFilter = document.getElementById('logLevelFilter');
-  const logClearBtn = document.getElementById('logClearBtn');
-  const logCloseBtn = document.getElementById('logCloseBtn');
-  const openLogBtn = document.getElementById('openLogPanelBtn');
-  let logWs = null;
-  let logReconnectTimer = null;
+  // ── 日志面板（已抽取到 libs/log-panel.js） ──
+  const logPanelCtrl = initLogPanel();
+  logPanelCtrl.init();
 
-  function connectLogWs() {
-    if (logWs && (logWs.readyState === WebSocket.OPEN || logWs.readyState === WebSocket.CONNECTING)) return;
-    try {
-      logWs = new WebSocket(LOG_WS_URL);
-      logWs.onmessage = (ev) => {
-        try { addLogEntry(JSON.parse(ev.data)); } catch (e) {}
-      };
-      logWs.onclose = () => {
-        logWs = null;
-        clearTimeout(logReconnectTimer);
-        logReconnectTimer = setTimeout(connectLogWs, 3000);
-      };
-      logWs.onerror = () => { if (logWs) logWs.close(); };
-    } catch (e) {
-      clearTimeout(logReconnectTimer);
-      logReconnectTimer = setTimeout(connectLogWs, 5000);
-    }
-  }
-
-  function addLogEntry(entry) {
-    const levelno = entry.levelno || 20;
-    const filterLevel = parseInt((logLevelFilter && logLevelFilter.value) || '0', 10);
-    if (filterLevel > 0 && levelno < filterLevel) return;
-
-    const placeholder = logContent && logContent.querySelector('.log-placeholder');
-    if (placeholder) placeholder.remove();
-
-    const line = document.createElement('div');
-    line.className = 'log-line LEVEL_' + (entry.level || 'INFO');
-    line.textContent = '[' + (entry.timestamp || '') + '] [' + (entry.level || '') + '] ' + (entry.name || '') + ': ' + (entry.message || '');
-    if (logContent) {
-      logContent.appendChild(line);
-      logContent.scrollTop = logContent.scrollHeight;
-      while (logContent.children.length > 500) logContent.removeChild(logContent.firstChild);
-    }
-  }
-
-  if (openLogBtn) {
-    openLogBtn.addEventListener('click', () => {
-      const isHidden = logPanel && logPanel.style.display === 'none';
-      if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
-      if (logWs) { logWs.close(); logWs = null; }
-      if (isHidden) connectLogWs();
-    });
-  }
-  if (logCloseBtn) {
-    logCloseBtn.addEventListener('click', () => {
-      if (logPanel) logPanel.style.display = 'none';
-      if (logWs) { logWs.close(); logWs = null; }
-    });
-  }
-  if (logClearBtn) {
-    logClearBtn.addEventListener('click', () => {
-      if (logContent) logContent.innerHTML = '<div class="log-placeholder">日志已清除</div>';
-    });
-  }
-  if (logPanel && logPanel.style.display !== 'none') connectLogWs();
-
-  // Listen for toggle-log-panel event from config window
-  if (window.faust && typeof window.faust.onToggleLogPanel === 'function') {
-    window.faust.onToggleLogPanel(() => {
-      const isHidden = logPanel && logPanel.style.display === 'none';
-      if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
-      if (logWs) { logWs.close(); logWs = null; }
-      if (isHidden) connectLogWs();
-    });
-  }
-
-  // ── 直播模式：隐藏/显示文字输入框 ──
-  let liveModePollTimer = null;
-  let lastLiveModeState = false;
-  const textChatBar = document.getElementById('textChatBar');
-
-  async function pollLiveMode() {
-    try {
-      const resp = await fetch('http://127.0.0.1:13900/faust/live/status');
-      const data = await resp.json();
-      const isLive = Boolean(data.live_mode);
-      if (isLive !== lastLiveModeState) {
-        lastLiveModeState = isLive;
-        if (textChatBar) {
-          textChatBar.style.display = isLive ? 'none' : '';
-        }
-      }
-    } catch (e) {
-    }
-  }
-
-  liveModePollTimer = setInterval(pollLiveMode, 3000);
-  pollLiveMode();
+  // ── 直播模式（已抽取到 libs/live-mode.js） ──
+  const liveModeCtrl = initLiveMode();
+  liveModeCtrl.start();
 
 })();

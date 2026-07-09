@@ -5,6 +5,8 @@ Supports:
   - file paths:           src/main.py, src/main.py:50-100, src/
   - artifact references:  artifact://abc123, artifact://abc123:50-100
   - memory references:    memory://notes/math, memory://notes/math:50-100
+    - skill references:     skill://slug/SKILL.md
+    - faustbot references:  faustbot://index.md, faustbot://source/backend/main.py
 """
 
 from __future__ import annotations
@@ -17,12 +19,15 @@ from urllib.parse import parse_qs, urlparse
 SELECTOR_RE = re.compile(r"^:\d+([+-]\d+)?(-\d+)?(:raw)?$")
 SCHEME_ARTIFACT = "artifact"
 SCHEME_MEMORY = "memory"
+SCHEME_SKILL = "skill"
+SCHEME_FAUSTBOT = "faustbot"
+SCHEME_IMG_SOURCE = "img_source"
 SCHEME_FILE = "file"
 
 
 @dataclass
 class ParsedURI:
-    scheme: str  # "file" | "artifact" | "memory"
+    scheme: str  # "file" | "artifact" | "memory" | "skill" | "faustbot" | "img_source"
     path: str  # normalized path (no selector, no query)
     selector: str | None  # ":50-100", ":50+20", ":raw" — or None
     query: dict[str, list[str]]  # parsed query params (only memory://)
@@ -101,7 +106,7 @@ def parse(uri: str) -> ParsedURI:
         return ParsedURI(scheme=SCHEME_FILE, path="", selector=None, query={})
 
     # Detect scheme prefix
-    for scheme in (SCHEME_ARTIFACT, SCHEME_MEMORY):
+    for scheme in (SCHEME_ARTIFACT, SCHEME_MEMORY, SCHEME_SKILL, SCHEME_FAUSTBOT, SCHEME_IMG_SOURCE):
         prefix = f"{scheme}://"
         if raw.startswith(prefix):
             rest = raw[len(prefix):]

@@ -523,10 +523,10 @@ class UpdateManager:
         if not dry_run:
             lines += [
                 "# ── Step 3: Run setup ──",
-                'Write-Host "Step 3: Running setup-runtime.bat --mode cloud..."',
+                'Write-Host "Step 3: Running setup-runtime.bat --torch cpu --tts no..."',
                 '$setup = Join-Path $installRoot "setup-runtime.bat"',
                 'if (Test-Path $setup) {',
-                '    & $setup --mode cloud --install-python no --install-node yes --source cn',
+                '    & $setup --torch cpu --tts no --install-python no --install-node yes --source cn',
                 '}',
                 'Write-Host "Setup complete."',
                 'Write-Host "Update to $tag complete."',

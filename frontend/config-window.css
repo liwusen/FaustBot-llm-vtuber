@@ -1,6 +1,10 @@
 :root {
 	--bg: #eef3f8;
 	--panel: #f9fbfe;
+	--bg1: #ffffff;
+	--bg2: #f9fbfe;
+	--border: #d5deea;
+	--fg: #1a2433;
 	--panel-strong: #ffffff;
 	--line: #d5deea;
 	--line-strong: #bec9d9;
@@ -218,6 +222,14 @@ body {
 	gap: 12px;
 	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 	align-items: start;
+}
+
+.module-container {
+	display: grid;
+	gap: 12px;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	align-items: start;
+	grid-column: 1 / -1;
 }
 
 .full-span {
@@ -458,6 +470,48 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
+}
+
+.editor-tab-bar {
+	display: flex;
+	gap: 0;
+	border-bottom: 2px solid var(--line);
+	margin-bottom: 8px;
+}
+.editor-tab-btn {
+	padding: 6px 16px;
+	border: 1px solid var(--line);
+	border-bottom: none;
+	background: var(--bg2, #eef1f5);
+	cursor: pointer;
+	font-size: 13px;
+	border-radius: 6px 6px 0 0;
+	margin-right: 2px;
+	transition: background 0.15s, color 0.15s;
+}
+.editor-tab-btn:hover {
+	background: var(--bg, #fff);
+}
+.editor-tab-btn.active {
+	background: var(--bg, #fff);
+	font-weight: 600;
+	border-bottom: 2px solid var(--bg, #fff);
+	margin-bottom: -2px;
+}
+.editor-tab-btn.readonly {
+	opacity: 0.55;
+	font-style: italic;
+}
+.editor-tab-btn.readonly::after {
+	content: " 🔒";
+	font-style: normal;
+}
+.editor-area {
+	position: relative;
+	min-height: 40vh;
+}
+.editor-pane {
+	width: 100%;
 }
 
 .info-grid {
@@ -755,6 +809,10 @@ body {
 		grid-template-columns: 1fr;
 	}
 }
+
+	.module-container {
+		grid-template-columns: 1fr;
+	}
 
 /* Edge TTS 语音管理Modal样式 */
 .edge-tts-voice-modal {

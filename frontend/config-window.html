@@ -10,7 +10,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <h1>Config</h1>
+        <h1>配置</h1>
         <p>FaustBot 配置中心</p>
       </div>
       <nav id="moduleNav" class="module-nav" aria-label="配置模块"></nav>
@@ -19,13 +19,13 @@
     <main class="main-panel">
       <header class="topbar">
         <div class="topbar-left">
-          <span id="validBadge" class="badge badge-valid">valid</span>
-          <span id="dirtyBadge" class="badge badge-dirty hidden">0 unsaved change</span>
+          <span id="validBadge" class="badge badge-valid">有效</span>
+          <span id="dirtyBadge" class="badge badge-dirty hidden">0 项配置已修改</span>
         </div>
         <div class="topbar-actions">
-          <button id="reloadBtn" class="btn btn-ghost" type="button">Reload</button>
-          <button id="saveBtn" class="btn btn-primary" type="button">Save</button>
-          <button id="applyBtn" class="btn btn-secondary" type="button">Apply</button>
+          <button id="reloadBtn" class="btn btn-ghost" type="button">重新加载</button>
+          <button id="saveBtn" class="btn btn-primary" type="button">保存</button>
+          <button id="applyBtn" class="btn btn-secondary" type="button">应用</button>
         </div>
       </header>
 
@@ -47,6 +47,8 @@
   <script src="./libs/configer/constants.js"></script>
   <script src="./libs/configer/dom-utils.js"></script>
   <script src="./libs/configer/modal.js"></script>
+  <script src="./libs/codemirror/codemirror-bundle.js"></script>
+  <script src="./libs/configer/codemirror-editor.js"></script>
   <script src="./libs/configer/state-core.js"></script>
   <script src="./libs/configer/ui-cards.js"></script>
   <script src="./libs/configer/list-utils.js"></script>
@@ -68,6 +70,7 @@
   <script src="./libs/configer/modules/triggers.js"></script>
   <script src="./libs/configer/modules/skills.js"></script>
   <script src="./libs/configer/modules/plugins.js"></script>
+  <script src="./libs/configer/modules/components.js"></script>
   <script src="./libs/configer/modules/overview.js"></script>
   <script src="./config-window.js"></script>
 </body>

@@ -1,0 +1,10 @@
+{
+  "id": "frontend-example",
+  "name": "Frontend Example Plugin",
+  "version": "1.0.0",
+  "description": "示例插件：演示前端注入功能",
+  "author": "FaustBot",
+  "enabled": false,
+  "entry": "main.py",
+  "priority": 500
+}

@@ -106,14 +106,6 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
         )
 
         trigger_manager.append_trigger({
-            "id": session["result_trigger_id"],
-            "type": "event",
-            "event_name": "nimble_result",
-            "callback_id": callback_id,
-            "recall_description": f"灵动窗口 {callback_id} 收到了用户提交结果。",
-            "lifespan": lifespan,
-        })
-        trigger_manager.append_trigger({
             "id": session["reminder_trigger_id"],
             "type": "nimble-reminder",
             "callback_id": callback_id,
@@ -155,6 +147,16 @@ def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent") -> 
         session = nimble.close_nimble_session(callback_id, reason=reason)
         if not session:
             return f"未找到 callback_id={callback_id} 对应的灵动窗口。"
+
+        trigger_manager.append_trigger({
+            "id": f"nimble_result::{callback_id}",
+            "type": "event",
+            "event_name": "nimble_result",
+            "callback_id": callback_id,
+            "payload": {"closed": True, "reason": reason},
+            "lifespan": 7200,
+        })
+
         trigger_manager.delete_trigger(session["result_trigger_id"])
         trigger_manager.delete_trigger(session["reminder_trigger_id"])
         trigger_manager.delete_trigger(session["expire_trigger_id"])

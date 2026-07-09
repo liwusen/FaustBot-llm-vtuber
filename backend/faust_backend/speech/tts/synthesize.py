@@ -110,9 +110,9 @@ async def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str
             raise SpeechRuntimeError(f"FaustBot Cloud TTS 服务错误: {resp.status_code} {resp.text}")
         return resp.content, (resp.headers.get("content-type") or "audio/wav")
 
-    api_key = str(conf.OPENAI_TTS_API_KEY or "").strip()
+    api_key = str(conf.CHAT_API_KEY or "").strip()
     if not api_key:
-        raise SpeechRuntimeError("未配置 OPENAI_TTS_API_KEY")
+        raise SpeechRuntimeError("未配置 CHAT_API_KEY")
 
     payload: dict[str, Any] = {
         "model": conf.OPENAI_TTS_MODEL,

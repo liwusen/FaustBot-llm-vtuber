@@ -113,17 +113,53 @@ if (typeof renderOverviewModule === "undefined") {
 // App dispatcher — orchestration layer (kept in main file)
 // ═══════════════════════════════════════════════════════════════════
 
-async function renderModule() {
+async function renderModule(force = false) {
   const current = MODULES.find((m) => m.id === state.activeModule) || MODULES[0];
   els.moduleTitle.textContent = current.title;
   els.moduleDesc.textContent = current.desc;
-  clearRoot();
+
+  const container = getModuleContainer(current.id);
+  switchModule(current.id);
+  const boot = document.getElementById("bootPlaceholder");
+  if (boot) boot.style.display = "none";
+
+
+  // 持久模块（白名单）已渲染且非强制 → 只切换显示
+  // 非持久模块始终重新渲染（容器已在 switchModule 离开时清空）
+  if (!force && PERSISTENT_MODULES.includes(current.id) && state.moduleContainers[current.id] && state.moduleContainers[current.id].rendered) return;
+
+  // 首次渲染或强制刷新：清空容器，设置激活容器，调用渲染函数
+  container.innerHTML = "";
+  setActiveContainer(container);
+
   try {
     await ensureModuleData(current.id);
     if (current.id === "overview") {
       renderOverviewModule();
-    } else if (["ai", "live2d", "speech", "advanced"].includes(current.id)) {
+    } else if (["ai", "live2d", "speech"].includes(current.id)) {
       renderConfigModule(current.id);
+    } else if (current.id === "advanced") {
+      renderConfigModule(current.id);
+      // 高级页面底部添加 Runtime 管理入口
+      const container = getModuleContainer("advanced");
+      const section = document.createElement("div");
+      section.style.cssText = "margin-top:16px;padding:16px;background:var(--bg1);border:1px solid var(--border);border-radius:8px";
+      const title = document.createElement("div");
+      title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:8px";
+      title.textContent = "Runtime 管理";
+      const desc = document.createElement("div");
+      desc.style.cssText = "font-size:12px;color:var(--muted);margin-bottom:8px";
+      desc.textContent = "管理服务启动、停止、重启和日志查看";
+      const btn = document.createElement("button");
+      btn.textContent = "打开 Runtime 管理";
+      btn.style.cssText = "padding:8px 16px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-size:13px";
+      btn.onclick = () => {
+        state.activeModule = "runtime";
+        renderNav();
+        renderModule();
+      };
+      section.append(title, desc, btn);
+      container.append(section);
     } else if (current.id === "agent") {
       renderAgentModule();
     } else if (current.id === "memory") {
@@ -138,9 +174,33 @@ async function renderModule() {
       renderSkillsModule();
     } else if (current.id === "plugins") {
       renderPluginsModule();
+    } else if (current.id === "components") {
+      renderComponentsModule();
     } else {
-      renderSimpleJsonModule("数据", state);
+      // Plugin module: use page render function from addPage(), or cards from addCard()
+      const pluginPage = window.pluginUI._pages.find(p => p.id === current.id);
+      if (pluginPage && typeof pluginPage.render === 'function') {
+        const container = getModuleContainer(current.id);
+        setActiveContainer(container);
+        pluginPage.render(container);
+      } else {
+        const pluginCards = window.pluginUI._cards.filter(c => c.moduleId === current.id);
+        if (pluginCards.length > 0) {
+          for (const card of pluginCards) {
+            if (typeof card.render === 'function') {
+              const cardContainer = el("div");
+              card.render(cardContainer);
+              addSection(card.title || "插件卡片", [cardContainer]);
+            } else {
+              addSection(card.title || "插件卡片", [el("div", "card-content", card.content || card.html || "")]);
+            }
+          }
+        } else {
+          renderSimpleJsonModule("数据", state);
+        }
+      }
     }
+    state.moduleContainers[current.id].rendered = true;
   } catch (err) {
     addSection("错误", [el("div", "empty-state", `模块加载失败: ${String(err && err.message ? err.message : err)}`)]);
   }
@@ -179,13 +239,92 @@ async function loadRuntimeSummary() {
   state.runtime = data.runtime || {};
 }
 
+// ── Plugin 前端资源加载 ──
+
+async function loadPluginAssets() {
+  try {
+    if (!window.api || typeof window.api.configRequest !== "function") {
+      console.warn("[loadPluginAssets] window.api.configRequest not available");
+      return;
+    }
+    const data = await window.api.configRequest("GET", "/faust/admin/plugins/assets");
+    if (!data) return;
+    const assets = data.assets || [];
+    const baseUrl = window.api.backendBaseUrl || "http://127.0.0.1:13900";
+    // Expose backend base URL to plugins so they can make API calls
+    if (window.pluginUI) window.pluginUI.backendBaseUrl = baseUrl;
+    const loadPromises = [];
+    for (const a of assets) {
+      if (a.type === "js" && a.path) {
+        const s = document.createElement("script");
+        s.src = baseUrl + a.path;
+        s.setAttribute("data-plugin", a.plugin_id || "");
+        const p = new Promise((resolve, reject) => {
+          s.onload = () => { console.log("[plugin] loaded JS:", a.path); resolve(); };
+          s.onerror = () => { console.warn("[plugin] failed to load JS:", a.path); resolve(); };
+        });
+        loadPromises.push(p);
+        document.head.appendChild(s);
+      } else if (a.type === "css" && a.path) {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = baseUrl + a.path;
+        l.setAttribute("data-plugin", a.plugin_id || "");
+        document.head.appendChild(l);
+      }
+    }
+    // Wait for all plugin scripts to load before allowing renderModule to run
+    if (loadPromises.length > 0) {
+      await Promise.all(loadPromises);
+      console.log("[plugin] all JS assets loaded");
+    }
+  } catch (e) {
+    console.warn("[loadPluginAssets] Error:", e);
+  }
+}
+
+// ── pluginUI API（插件注入前台页面/卡片用） ──
+
+if (!window.pluginUI) {
+  window.pluginUI = {
+    _pages: [],
+    _cards: [],
+
+    addPage(spec) {
+      if (!spec || !spec.id || !spec.label) return;
+      // 去重：同名插件同 id 不重复注册
+      const key = `${spec.plugin || ""}:${spec.id}`;
+      if (this._pages.find((p) => p._key === key)) return;
+      this._pages.push({ ...spec, _key: key });
+      // 动态注入 MODULES 列表
+      if (typeof MODULES !== "undefined" && !MODULES.find((m) => m.id === spec.id)) {
+        MODULES.push({ id: spec.id, title: spec.label, desc: spec.desc || "" });
+        renderNav();
+      }
+    },
+
+    addCard(moduleId, spec) {
+      if (!moduleId || !spec || !spec.title) return;
+      const key = `${spec.plugin || ""}:${moduleId}:${spec.title}`;
+      if (this._cards.find((c) => c._key === key)) return;
+      this._cards.push({ ...spec, moduleId, _key: key });
+    },
+
+    modifyPage(moduleId, fn) {
+      if (typeof fn !== "function") return;
+      fn(MODULES.find((m) => m.id === moduleId));
+    },
+  };
+}
+
 async function reloadAll() {
   setBusy(true);
   try {
     await loadConfig();
     await loadRuntimeSummary();
     hideBanner();
-    await renderModule();
+    invalidateAllContainers();
+    await renderModule(true);
   } catch (err) {
     showBanner("error", `刷新失败: ${String(err && err.message ? err.message : err)}`);
   } finally {
@@ -214,7 +353,8 @@ async function saveConfig() {
     }
     await loadConfig();
     await loadRuntimeSummary();
-    await renderModule();
+    invalidateAllContainers();
+    await renderModule(true);
     showBanner("success", "配置已保存。" );
   } catch (err) {
     showBanner("error", `保存失败: ${String(err && err.message ? err.message : err)}`);
@@ -239,7 +379,7 @@ async function applyRuntime() {
 async function reloadFromDisk() {
   const dirtyCount = state.dirty.public.size + state.dirty.private.size;
   if (dirtyCount > 0) {
-    const ok = window.confirm("当前有未保存修改，继续 Reload 会丢失这些修改。是否继续？");
+    const ok = window.confirm("当前有未保存修改，继续重新加载会丢失这些修改。是否继续？");
     if (!ok) return;
   }
   await reloadAll();
@@ -276,6 +416,7 @@ function bindActions() {
 async function init() {
   renderNav();
   bindActions();
+  await loadPluginAssets();
   await reloadAll();
 }
 

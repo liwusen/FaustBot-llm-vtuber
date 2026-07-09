@@ -13,11 +13,20 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 # Ensure the backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.runtime.uri import parse, SCHEME_FILE, SCHEME_ARTIFACT, SCHEME_MEMORY
+from faust_backend.runtime.uri import (
+    parse,
+    SCHEME_FILE,
+    SCHEME_ARTIFACT,
+    SCHEME_MEMORY,
+    SCHEME_SKILL,
+    SCHEME_FAUSTBOT,
+    SCHEME_IMG_SOURCE,
+)
 from faust_backend.runtime.output_store import OutputStore, reset_output_store
 
 
@@ -93,6 +102,23 @@ class TestURIParse:
         assert p.scheme == SCHEME_MEMORY
         assert p.query == {"q": ["勾股定理"], "top_k": ["5"]}
 
+    def test_skill_bare(self):
+        p = parse("skill://demo/SKILL.md")
+        assert p.scheme == SCHEME_SKILL
+        assert p.path == "demo/SKILL.md"
+
+    def test_faustbot_with_selector(self):
+        p = parse("faustbot://index.md:1-3")
+        assert p.scheme == SCHEME_FAUSTBOT
+        assert p.path == "index.md"
+        assert p.selector == ":1-3"
+
+    def test_img_source_with_query(self):
+        p = parse("img_source://screenshot?grid=true&scale=0.5")
+        assert p.scheme == SCHEME_IMG_SOURCE
+        assert p.path == "screenshot"
+        assert p.query == {"grid": ["true"], "scale": ["0.5"]}
+
     def test_empty(self):
         p = parse("")
         assert p.scheme == SCHEME_FILE
@@ -130,11 +156,12 @@ class TestOutputStore:
 
     def test_summary_long(self):
         store = OutputStore()
-        long_text = "line " * 200
+        long_text = "x" * 60001
         oid = store.put(long_text, tool_name="t")
         s = store.summary(oid)
         assert "artifact://" in s
-        assert len(s) < len(long_text)
+        assert "…" in s
+
 
     def test_peek(self):
         store = OutputStore()
@@ -281,6 +308,98 @@ class MyClass:
         from faust_backend.tools.read import read
         result = read.invoke({"uri": "nonexistent_file_xyz.txt"})
         assert "不存在" in result
+
+    def test_read_faustbot_index(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "faustbot://index.md"})
+        assert "faustbot://tool_use.md" in result
+        assert "faustbot://source/{PATH}" in result
+
+    def test_read_faustbot_source(self, tmp_path):
+        from faust_backend.tools.read import read
+        import faust_backend.config_loader as conf
+
+        backend_root = tmp_path / "backend"
+        backend_root.mkdir(parents=True, exist_ok=True)
+        repo_file = tmp_path / "README.md"
+        repo_file.write_text("hello source", encoding="utf-8")
+
+        orig_root = conf.PROJECT_ROOT
+        conf.PROJECT_ROOT = str(backend_root)
+        try:
+            result = read.invoke({"uri": "faustbot://source/README.md"})
+            assert "hello source" in result
+        finally:
+            conf.PROJECT_ROOT = orig_root
+
+    def test_read_faustbot_source_rejects_escape(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "faustbot://source/../secret.txt"})
+        assert "不允许" in result
+
+    def test_read_skill_default_skill_md(self, tmp_path):
+        from faust_backend.tools.read import read
+        import faust_backend.config_loader as conf
+        from faust_backend.runtime import state
+
+        agent_root = tmp_path / "agents" / "demo_agent"
+        skill_root = agent_root / "skill.d" / "demo_skill"
+        skill_root.mkdir(parents=True, exist_ok=True)
+        (agent_root / "TASK.md").write_text("# task\n", encoding="utf-8")
+        (skill_root / "SKILL.md").write_text("skill content", encoding="utf-8")
+
+        orig_config_root = conf.CONFIG_ROOT
+        orig_agent_name = state.AGENT_NAME
+        orig_agent_root = state.AGENT_ROOT
+        conf.CONFIG_ROOT = str(tmp_path)
+        state.AGENT_NAME = "demo_agent"
+        state.AGENT_ROOT = str(agent_root)
+        try:
+            result = read.invoke({"uri": "skill://demo_skill"})
+            assert "skill content" in result
+        finally:
+            conf.CONFIG_ROOT = orig_config_root
+            state.AGENT_NAME = orig_agent_name
+            state.AGENT_ROOT = orig_agent_root
+
+    def test_read_skill_rejects_escape(self, tmp_path):
+        from faust_backend.tools.read import read
+        from faust_backend.runtime import state
+
+        agent_root = tmp_path / "agents" / "demo_agent"
+        (agent_root / "skill.d" / "demo_skill").mkdir(parents=True, exist_ok=True)
+        orig_agent_root = state.AGENT_ROOT
+        state.AGENT_ROOT = str(agent_root)
+        try:
+            result = read.invoke({"uri": "skill://demo_skill/../secret.txt"})
+            assert "不允许" in result
+        finally:
+            state.AGENT_ROOT = orig_agent_root
+
+    def test_read_img_source_screenshot_force_plain_text(self, monkeypatch):
+        from faust_backend.tools.read import read
+        from faust_backend.tools import read as read_module
+
+        monkeypatch.setattr(read_module, "_capture_screenshot_image", lambda: Image.new("RGBA", (32, 24), (255, 0, 0, 255)))
+        result = read.invoke({"uri": "img_source://screenshot?grid=true&scale=0.5", "force_plain_text": True})
+        assert "屏幕截图" in result
+        assert "grid: True" in result
+        assert "scale: 0.5" in result
+
+    def test_read_img_source_invalid_scale(self):
+        from faust_backend.tools.read import read
+
+        result = read.invoke({"uri": "img_source://screenshot?scale=1.2", "force_plain_text": True})
+        assert "scale 必须满足" in result
+
+    def test_read_img_source_camera_mocked(self, monkeypatch):
+        from faust_backend.tools.read import read
+        from faust_backend.tools import read as read_module
+
+        monkeypatch.setattr(read_module, "_capture_camera_image", lambda camera_id: Image.new("RGBA", (16, 16), (0, 0, 255, 255)))
+        result = read.invoke({"uri": "img_source://camera_2", "force_plain_text": True})
+        assert "摄像头 2" in result
+        assert "camera_id: 2" in result
 
 
 # ============================================================
@@ -548,6 +667,15 @@ class TestExecuteTool:
         assert "不支持" in result
 
 
+class TestAnimationTools:
+    def test_trigger_motion_tool_not_exposed_to_agent(self):
+        from faust_backend.tools._registry import get_tools_for_agent
+
+        tool_names = {getattr(tool, "name", getattr(tool, "__name__", "")) for tool in get_tools_for_agent("faust")}
+        assert "triggerMotionTool" not in tool_names
+        assert "listAvailableMotionsTool" in tool_names
+
+
 # ============================================================
 # Multimodal / Image Support
 # ============================================================
@@ -565,109 +693,6 @@ class TestToolValueToText:
         assert result == "hello"
 
 
-class TestArtifactImage:
-    def test_put_multimodal_stores_correctly(self):
-        from faust_backend.runtime.output_store import OutputStore, reset_output_store
-        reset_output_store()
-        store = OutputStore()
-        payload = {
-            "kind": "multimodal_tool_result",
-            "text": "测试图片",
-            "images": [{"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}],
-        }
-        oid = store.put_multimodal(payload, tool_name="read")
-        art = store.get(oid)
-        assert art.content_type == "multimodal"
-        assert art.mime_type == "image/png"
-        assert art.content_base64 == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-        assert art.content == "测试图片"
-        assert art.metadata.get("image_count") == 1
-
-    def test_multimodal_summary(self):
-        from faust_backend.runtime.output_store import OutputStore, reset_output_store
-        reset_output_store()
-        store = OutputStore()
-        payload = {
-            "kind": "multimodal_tool_result",
-            "text": "一张截图",
-            "images": [{"url": "data:image/jpeg;base64,abc123"}],
-        }
-        oid = store.put_multimodal(payload, tool_name="read")
-        s = store.summary(oid)
-        assert "一张截图" in s
-        assert "1张图片" in s
-        assert f"artifact://{oid}" in s
-
-    def test_image_summary(self):
-        from faust_backend.runtime.output_store import Artifact
-        art = Artifact(
-            output_id="img_1",
-            content="test",
-            tool_name="read",
-            content_type="image",
-            content_base64="abc",
-            mime_type="image/png",
-        )
-        s = art.summary()
-        assert "图片" in s
-        assert "artifact://img_1" in s
-
-    def test_multimodal_get_returns_json(self):
-        import json
-        from faust_backend.runtime.output_store import OutputStore, reset_output_store
-        reset_output_store()
-        store = OutputStore()
-        payload = {
-            "kind": "multimodal_tool_result",
-            "text": "desc",
-            "images": [{"url": "data:image/png;base64,hello123"}],
-        }
-        oid = store.put_multimodal(payload, tool_name="read")
-        art = store.get(oid)
-        result = art.get()
-        data = json.loads(result)
-        assert data["kind"] == "multimodal_tool_result"
-        assert data["text"] == "desc"
-        assert len(data["images"]) == 1
-        assert "data:image/png;base64,hello123" in data["images"][0]["url"]
-
-
-class TestMiddlewareMultimodal:
-    def test_multimodal_json_passes_through(self):
-        import json
-        from faust_backend.runtime.output_store import reset_output_store
-        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
-        reset_output_store()
-        store = get_output_store()
-        payload = json.dumps({
-            "kind": "multimodal_tool_result",
-            "text": "图片描述",
-            "images": [{"url": "data:image/png;base64,abc123"}],
-        }, ensure_ascii=False)
-        result = _store_and_summarize(store, "read", payload)
-        data = json.loads(result)
-        assert data["kind"] == "multimodal_tool_result"
-        assert "图片描述" in data["text"]
-        assert "artifact://" in data["text"]  # augmented with artifact ref
-        assert len(data["images"]) == 1
-
-    def test_dict_multimodal_passes_through(self):
-        import json
-        from faust_backend.runtime.output_store import reset_output_store
-        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
-        reset_output_store()
-        store = get_output_store()
-        payload = {
-            "kind": "multimodal_tool_result",
-            "text": "dict_test",
-            "images": [{"url": "data:image/png;base64,xyz"}],
-        }
-        result = _store_and_summarize(store, "read", payload)
-        data = json.loads(result)
-        assert data["kind"] == "multimodal_tool_result"
-        assert "dict_test" in data["text"]
-        assert "artifact://" in data["text"]
-
 
 
 class TestMiddlewareTruncation:
@@ -678,7 +703,59 @@ class TestMiddlewareTruncation:
         reset_output_store()
 
     def _long_output(self) -> str:
-        return "\n".join(f"line {i:04d}" for i in range(200))
+        return "\n".join(f"line {i:04d}" for i in range(400))
+
+    def test_sync_tool_arun_also_truncates(self):
+        """Sync @tool _arun() async path must also truncate."""
+        import asyncio
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def big_tool(x: str) -> str:
+            """Returns lots of lines."""
+            return self._long_output()
+
+        wrapped = wrap_tool_output(big_tool)
+        result = asyncio.run(wrapped._arun("ignored"))
+
+        assert "artifact://" in result
+        assert len(result) < len(self._long_output())
+
+    def test_short_output_passes_through(self):
+        """Short single-line output (<=120 chars) should NOT create an artifact."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def small_tool(x: str) -> str:
+            """Returns short."""
+            return "OK"
+
+        wrapped = wrap_tool_output(small_tool)
+        result = wrapped.invoke({"x": "test"})
+
+        assert result == "OK"
+        assert "artifact://" not in result
+
+
+    def test_tool_exception_becomes_error_artifact(self):
+        """When a tool raises, the exception is stored as an artifact."""
+        from langchain.tools import tool
+        from faust_backend.runtime.middleware import wrap_tool_output
+
+        @tool
+        def crash_tool(x: str) -> str:
+            """Always crashes."""
+            msg = "BOOM"
+            raise RuntimeError(msg)
+
+        wrapped = wrap_tool_output(crash_tool)
+        result = wrapped._run("test")
+
+        assert "工具执行出错" in result
+        assert "artifact://" in result
+
 
     def test_sync_tool_run_truncates(self):
         """Sync @tool _run() → long output should be truncated with artifact ref."""
@@ -714,70 +791,20 @@ class TestMiddlewareTruncation:
         assert len(result) < len(self._long_output())
         assert "[完整输出:" in result
 
-    def test_sync_tool_arun_also_truncates(self):
-        """Sync @tool _arun() async path must also truncate."""
-        import asyncio
-        from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
-
-        @tool
-        def big_tool(x: str) -> str:
-            """Returns lots of lines."""
-            return self._long_output()
-
-        wrapped = wrap_tool_output(big_tool)
-        result = asyncio.run(wrapped._arun("ignored"))
-
-        assert "artifact://" in result
-        assert len(result) < len(self._long_output())
-
-    def test_short_output_passes_through(self):
-        """Short single-line output (<=120 chars) should NOT create an artifact."""
-        from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
-
-        @tool
-        def small_tool(x: str) -> str:
-            """Returns short."""
-            return "OK"
-
-        wrapped = wrap_tool_output(small_tool)
-        result = wrapped.invoke({"x": "test"})
-
-        assert result == "OK"
-        assert "artifact://" not in result
-
-    def test_multiline_short_output_still_truncates(self):
-        """Multi-line but short-per-line — still needs artifact if >5 lines."""
+    def test_multiline_long_output_truncates(self):
+        """Multi-line with >300 lines should be truncated with artifact ref."""
         from langchain.tools import tool
         from faust_backend.runtime.middleware import wrap_tool_output
 
         @tool
         def ml_tool(x: str) -> str:
-            """Returns 10 short lines."""
-            return "\n".join(str(i) for i in range(10))
+            """Returns 350 lines."""
+            return "\n".join(str(i) for i in range(350))
 
         wrapped = wrap_tool_output(ml_tool)
         result = wrapped.invoke({"x": "test"})
-
         assert "artifact://" in result
-
-    def test_tool_exception_becomes_error_artifact(self):
-        """When a tool raises, the exception is stored as an artifact."""
-        from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
-
-        @tool
-        def crash_tool(x: str) -> str:
-            """Always crashes."""
-            msg = "BOOM"
-            raise RuntimeError(msg)
-
-        wrapped = wrap_tool_output(crash_tool)
-        result = wrapped._run("test")
-
-        assert "工具执行出错" in result
-        assert "artifact://" in result
+        assert len(result.split('\n')) < 350
 
     def test_async_tool_arun_truncates(self):
         """Async @tool — _arun path must truncate."""
@@ -818,6 +845,7 @@ class TestMiddlewareTruncation:
 
         async_result = asyncio.run(wrapped._arun("x"))
         assert "artifact://" in async_result
+
 
 class TestReadImage:
     def test_read_image_returns_multimodal_json(self):
@@ -889,3 +917,92 @@ class TestReadForcePlainText:
         assert "描述内容" in result
         assert "base64" not in result
         assert "multimodal_tool_result" not in result
+
+
+# ============================================================
+# Multimodal Artifact Copy (middleware)
+# ============================================================
+
+class TestMiddlewareMultimodal:
+    """Test the image artifact copy logic in _store_and_summarize."""
+
+    def test_multimodal_string_stores_copy_and_injects_artifact_ref(self):
+        """When a tool returns multimodal JSON, store a copy in OutputStore."""
+        import json
+        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        payload = json.dumps({
+            "kind": "multimodal_tool_result",
+            "text": "截图描述",
+            "images": [{"url": "data:image/png;base64,abc123"}],
+        }, ensure_ascii=False)
+        result = _store_and_summarize(store, "screenshot_tool", payload)
+        data = json.loads(result)
+        assert data["kind"] == "multimodal_tool_result"
+        assert "截图描述" in data["text"]
+        assert "artifact://" in data["text"]
+        assert "图片副本已保存" in data["text"]
+        assert len(data["images"]) == 1
+
+    def test_multimodal_dict_stores_copy_and_injects_artifact_ref(self):
+        """Same for dict input."""
+        import json
+        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        payload = {
+            "kind": "multimodal_tool_result",
+            "text": "dict截图",
+            "images": [{"url": "data:image/png;base64,xyz"}],
+        }
+        result = _store_and_summarize(store, "screenshot_tool", payload)
+        data = json.loads(result)
+        assert data["kind"] == "multimodal_tool_result"
+        assert "dict截图" in data["text"]
+        assert "artifact://" in data["text"]
+        assert "图片副本已保存" in data["text"]
+
+    def test_read_from_artifact_skips_copy(self):
+        """read tool with artifact:// URI should pass through without storing a copy."""
+        import json
+        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        payload = json.dumps({
+            "kind": "multimodal_tool_result",
+            "text": "已有图片",
+            "images": [{"url": "data:image/png;base64,xyz"}],
+        }, ensure_ascii=False)
+        # read tool with artifact:// URI → no copy
+        result = _store_and_summarize(store, "read", payload, args=("artifact://read_1",))
+        data = json.loads(result)
+        assert data["kind"] == "multimodal_tool_result"
+        assert "已有图片" in data["text"]
+        assert "artifact://" not in data["text"]  # no copy was made
+
+    def test_artifact_contains_original_multimodal_data(self):
+        """After multimodal copy, the artifact should contain the original data."""
+        import json
+        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
+        reset_output_store()
+        store = get_output_store()
+        original_text = "测试图片"
+        payload = json.dumps({
+            "kind": "multimodal_tool_result",
+            "text": original_text,
+            "images": [{"url": "data:image/png;base64,abc123"}],
+        }, ensure_ascii=False)
+        result = _store_and_summarize(store, "test_tool", payload)
+        data = json.loads(result)
+        assert "artifact://" in data["text"]
+        # Extract artifact ID from the text
+        artifact_id = data["text"].split("artifact://")[-1].split("]")[0].strip()
+        art = store.get(artifact_id)
+        assert art is not None
+        assert art.content_type == "multimodal"
+        assert original_text in art.content

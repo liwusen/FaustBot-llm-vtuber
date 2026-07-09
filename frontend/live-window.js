@@ -64,7 +64,7 @@ function renderStatus() {
   els.liveStatusBadge.className = `badge ${state.liveMode ? "badge-on" : "badge-off"}`;
   els.toggleLiveBtn.textContent = state.liveMode ? "关闭直播模式" : "开启直播模式";
   els.toggleLiveBtn.className = state.liveMode ? "btn btn-secondary" : "btn btn-primary";
-  els.bliveStatusText.textContent = state.blive.started ? `已连接 (room ${state.blive.room_id})` : "未连接";
+  els.bliveStatusText.textContent = state.blive.started ? `已连接（房间 ${state.blive.room_id}）` : "未连接";
   els.roomIdInput.value = state.blive.room_id || "";
   els.bliveEnabled.checked = Boolean(state.blive.enabled);
   if (!state.blive.has_sessdata) {

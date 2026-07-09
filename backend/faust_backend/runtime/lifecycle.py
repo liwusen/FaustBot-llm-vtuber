@@ -128,6 +128,15 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
                         chunk = data.get("chunk")
                         if not chunk or not state.is_ai_message_chunk(chunk):
                             continue
+                        # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
+                        additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+                        reasoning = (
+                            additional_kwargs.get("reasoning_content")
+                            or additional_kwargs.get("reasoning")
+                            or additional_kwargs.get("think")
+                        )
+                        if reasoning:
+                            yield {"type": "reasoning_delta", "content": reasoning}
                         delta_text = state.message_content_to_text(chunk.content)
                         if delta_text:
                             yield {"type": "delta", "content": delta_text}
@@ -159,21 +168,49 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
 
 
 def _compose_runtime_extensions():
+    from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
     base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
     pm = state.plugin_manager
     tools = pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME) if pm else base_tools
     middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
+    # Filter out any stale mm_bridge instances from old plugin state
+    middlewares = [m for m in middlewares if not isinstance(m, MultimodalBridgeMiddleware)]
+    middlewares.append(MultimodalBridgeMiddleware())
     return tools, middlewares
 
 
 def _build_chat_model(*, model_name: str):
-    return ChatOpenAI(
+    """Build a ChatOpenAI instance for the main agent.
+
+    When THINKING_ENABLED is True, uses ReasoningChatOpenAI subclass
+    (which preserves reasoning_content in additional_kwargs) and merges
+    provider-specific thinking parameters from thinking_presets.
+    """
+
+    kwargs: dict[str, Any] = dict(
         model=model_name,
         api_key=conf.CHAT_API_KEY,
         base_url=conf.CHAT_API_BASE,
         request_timeout=60,
         max_retries=1,
     )
+    if conf.THINKING_ENABLED and conf.THINKING_PRESET != "none":
+        from faust_backend.thinking_presets import (
+            ReasoningChatOpenAI,
+            get_thinking_params,
+        )
+
+        intensity = getattr(conf, "THINKING_INTENSITY", "medium")
+        thinking_params = get_thinking_params(conf.THINKING_PRESET, intensity)
+        if "reasoning_effort" in thinking_params:
+            kwargs["reasoning_effort"] = thinking_params.pop("reasoning_effort")
+        model_kw = thinking_params.pop("model_kwargs", {})
+        extra = {**thinking_params.pop("extra_body", {}), **kwargs.get("extra_body", {})}
+        if extra:
+            kwargs["extra_body"] = extra
+        kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}
+        return ReasoningChatOpenAI(**kwargs)
+    return ChatOpenAI(**kwargs)
 
 
 def _create_agent_with_extensions(*, model_name: str, checkpointer):
@@ -331,6 +368,9 @@ async def lifespan(app: FastAPI):
         await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(args.no_startup_chat))
         log.info("启动运行时摘要: %s", startup_info)
+        # Mount plugin routes on the FastAPI app with /faust/plugins/{plugin_id}/ prefix
+        if state.plugin_manager:
+            state.plugin_manager.mount_routes(app)
     except Exception as e:
         state.agent = None
         state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
@@ -346,10 +386,14 @@ async def lifespan(app: FastAPI):
         await nimble.restore_persistent_sessions()
     except Exception as e:
         log.warning("恢复持久化 Nimble 窗口失败: %s", e)
-    try:
-        await minecraft_client.ensure_started()
-    except Exception as e:
-        log.warning("Minecraft 桥启动时未连接: %s", e)
+    if conf.config.get("MC_BRIDGE_ENABLED", False):
+        try:
+            await minecraft_client.ensure_started()
+        except Exception as e:
+            log.warning("Minecraft 桥启动时未连接: %s", e)
+    else:
+        log.info("Minecraft 桥未启用 (MC_BRIDGE_ENABLED=false)")
+
     if state.plugin_heartbeat_task is None:
         state.plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
     live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))

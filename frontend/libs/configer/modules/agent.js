@@ -99,19 +99,54 @@ async function ensureModuleData(moduleId) {
       }
     }
   }
+  if (moduleId === "araya") {
+    try {
+      const data = await cfgApi("GET", "/faust/araya/status");
+      state.araya = data.araya || null;
+    } catch (e) {
+      console.warn("araya data fetch error", e);
+      state.araya = null;
+    }
+  }
+  if (moduleId === "components") {
+    try {
+      const data = await cfgApi("GET", "/faust/components/status");
+      state.componentStatus = data;
+    } catch (e) {
+      console.warn("components data fetch error", e);
+      state.componentStatus = null;
+    }
+  }
+  if (moduleId === "skills") {
+    try {
+      const agentName = state.skillsAgent || "";
+      const params = agentName ? { agent_name: agentName } : {};
+      const sk = await cfgApi("GET", "/faust/admin/skills", null, params);
+      state.skills = sk.items || [];
+      state.skillDetail = null;
+      // Load skill detail if one is selected
+      if (state.selectedSkillSlug) {
+        const sd = await cfgApi("GET", `/faust/admin/skills/${encodeURIComponent(state.selectedSkillSlug)}`, null, params);
+        state.skillDetail = sd.detail || null;
+      }
+    } catch (e) {
+      console.warn("skills data fetch error", e);
+      state.skills = [];
+    }
+  }
 }
 
 function renderAgentModule() {
   const actions = el("div", "toolbar");
   actions.append(
-    makeButton("刷新", async () => { await ensureModuleData("agent"); renderModule(); }),
+    makeButton("刷新", async () => { await ensureModuleData("agent"); refreshModule(); }),
     makeButton("新建", async () => {
       const name = window.prompt("请输入 Agent 名称");
       if (!name || !name.trim()) return;
       await cfgApi("POST", "/faust/admin/agents", { agent_name: name.trim() });
       await ensureModuleData("agent");
       showBanner("success", `已创建 Agent: ${name.trim()}`);
-      renderModule();
+      refreshModule();
     }),
     makeButton("切换为当前", async () => {
       if (!state.selectedAgent) return;
@@ -126,7 +161,7 @@ function renderAgentModule() {
       await cfgApi("DELETE", `/faust/admin/agents/${encodeURIComponent(state.selectedAgent)}`);
       state.selectedAgent = "";
       await ensureModuleData("agent");
-      renderModule();
+      refreshModule();
     }),
     makeButton("删除 Checkpoint", async () => {
       if (!state.selectedAgent) return;
@@ -153,7 +188,7 @@ function renderAgentModule() {
     row.addEventListener("click", async () => {
       state.selectedAgent = String(item.name || "");
       await ensureModuleData("agent");
-      renderModule();
+      refreshModule();
     });
     list.append(row);
   }
@@ -174,5 +209,5 @@ function renderAgentModule() {
       await window.api.configOpenPath(dir);
     })
   );
-  addSection("Agent 文件操作", [controls, el("div", "card-help", "文件编辑已迁移到弹窗。")]);
+  addSection("Agent 文件操作", [controls]);
 }

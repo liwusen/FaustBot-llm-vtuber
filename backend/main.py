@@ -26,7 +26,11 @@ from faust_backend.routes.chat import router as chat_router
 from faust_backend.routes.hil_nimble import router as hil_nimble_router
 from faust_backend.routes.audio import router as audio_router
 from faust_backend.routes.system import router as system_router
+from faust_backend.routes.autocomplete import router as autocomplete_router
 from faust_backend.routes.logger_ws import router as logger_ws_router
+
+# ── 组件管理路由 ──
+from faust_backend.component_api import router as component_router
 
 # ── 外部模块路由 ──
 import faust_backend.araya_api as araya_api
@@ -36,7 +40,7 @@ import faust_backend.memory.api as memory_api
 import faust_backend.edge_tts_api as edge_tts_api
 
 # ── FastAPI 应用 ──
-app = FastAPI(title="FaustBot Backend Main Service",lifespan=lifespan,version="1.4")
+app = FastAPI(title="FaustBot Backend Main Service",lifespan=lifespan,version="2.0",description="FaustBot 后端主服务，提供核心功能和 API 接口。")
 
 # ── CORS ──
 app.add_middleware(
@@ -52,7 +56,7 @@ routers = [
     admin_config_router, admin_runtime_router, admin_models_router,
     admin_services_router, admin_agents_router, admin_skills_router,
     admin_triggers_router, admin_plugins_router, admin_logs_router,
-    chat_router, hil_nimble_router, audio_router, system_router, logger_ws_router,
+    chat_router, hil_nimble_router, audio_router, system_router, autocomplete_router, component_router, logger_ws_router,
 ]
 for r in routers:
     app.include_router(r)
@@ -64,12 +68,32 @@ app.include_router(update_api.router)
 app.include_router(memory_api.router)
 edge_tts_api.register_edge_tts_routes(app)
 
+# ── 插件前端静态资源挂载 ──
+from fastapi.staticfiles import StaticFiles
+_plugin_frontend_dirs = [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "default_plugins"),
+    os.path.join(os.path.expanduser("~"), ".faustbot", "plugins"),
+]
+_mounted_frontend = set()
+for _pf_dir in _plugin_frontend_dirs:
+    if os.path.isdir(_pf_dir):
+        for _pid in sorted(os.listdir(_pf_dir)):
+            _pf_path = os.path.join(_pf_dir, _pid, "frontend")
+            if os.path.isdir(_pf_path) and _pid not in _mounted_frontend:
+                try:
+                    app.mount(f"/faust/plugins/{_pid}/frontend", StaticFiles(directory=_pf_path), name=f"plugin_frontend_{_pid}")
+                    _mounted_frontend.add(_pid)
+                except Exception as e:
+                    log.warning("挂载插件前端资源失败 %s: %s", _pid, e)
+
 # ── 环境与配置 ──
 PORT = 13900
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ── 启动后台服务 ──
 start_services()
+from faust_backend.component_manager import init_component_guard
+init_component_guard()
 
 log.info("所有库加载完成")
 

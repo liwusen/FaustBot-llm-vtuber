@@ -1,1 +1,2 @@
 funasr>=0.9.6
+opencv-python

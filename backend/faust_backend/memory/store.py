@@ -396,6 +396,20 @@ class GraphStore:
         return results
 
     async def file_read(self, path: str) -> dict:
+        # ── memory_read_pre hook ──
+        try:
+            from faust_backend.runtime import state
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                results = pm._call_pluggy_hook('memory_read_pre', query=path, filters=None, ctx=None)
+                if results:
+                    for r in results:
+                        if r is not None and isinstance(r, str):
+                            path = r
+                            break
+        except Exception:
+            pass
+
         norm = _normalize_path(path)
         nid = _path_id(norm)
         if not self._has_node(nid):
@@ -418,13 +432,44 @@ class GraphStore:
                     content = ""
         description = self._get_node_attr(nid, "description", "")
         meta = self._read_meta(norm)
+
+        result = {"path": norm, "content": content, "description": description, "meta": meta}
+
+        # ── memory_read_post hook ──
+        try:
+            from faust_backend.runtime import state as _state
+            pm = getattr(_state, 'plugin_manager', None)
+            if pm:
+                post_results = pm._call_pluggy_hook('memory_read_post', query=path, results=[result], ctx=None)
+                if post_results:
+                    for r in post_results:
+                        if r is not None:
+                            result = r
+                            break
+        except Exception:
+            pass
+
         log.info("file_read path=%s content_len=%d", norm, len(content))
-        return {"path": norm, "content": content, "description": description, "meta": meta}
+        return result
 
     async def file_write(self, path: str, content: str, *,
                          description: str = "",
                          declared_by: str = "agent", index: bool = True,
                          tags: list[str] | None = None) -> dict:
+        # ── memory_write_pre hook ──
+        try:
+            from faust_backend.runtime import state
+            pm = getattr(state, 'plugin_manager', None)
+            if pm:
+                results = pm._call_pluggy_hook('memory_write_pre', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, ctx=None)
+                if results:
+                    for r in results:
+                        if r is not None and isinstance(r, str):
+                            content = r
+                            break
+        except Exception:
+            pass
+
         norm = _normalize_path(path)
         nid = _path_id(norm)
         name = Path(norm).name
@@ -497,7 +542,18 @@ class GraphStore:
 
         self.flush()
         log.info("file_write done path=%s chunks=%d", norm, len(chunks) if index else 0)
-        return {"path": norm, "meta": meta}
+        result = {"path": norm, "meta": meta}
+
+        # ── memory_write_post hook ──
+        try:
+            from faust_backend.runtime import state as _state
+            pm = getattr(_state, 'plugin_manager', None)
+            if pm:
+                pm._call_pluggy_hook('memory_write_post', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, id=nid, ctx=None)
+        except Exception:
+            pass
+
+        return result
 
     async def attachment_write(self, path: str, image_base64: str, *,
                                 description: str = "",
@@ -1367,18 +1423,23 @@ class GraphStore:
 
     def _get_openai(self) -> AsyncOpenAI:
         if self._openai_client is None:
-            api_key = conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
-            base_url = conf.CHAT_API_BASE or "https://api.openai.com/v1"
+            api_key = conf.EMBED_API_KEY or conf.CHAT_API_KEY
+            base_url = conf.EMBED_API_BASE or "https://api.openai.com/v1"
             self._openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         return self._openai_client
 
-    async def _embed_texts(self, texts: list[str]) -> np.ndarray:
+    async def _embed_texts(self, texts: list[str], max_batch_size: int = 8) -> np.ndarray:
         if not texts:
             return np.zeros((0, EMBED_DIM), dtype=np.float32)
         client = self._get_openai()
-        response = await client.embeddings.create(model=EMBED_MODEL, input=texts, dimensions=EMBED_DIM)
+        for batch in self.chunk_list(texts, chunk_size=max_batch_size):
+            response = await client.embeddings.create(model=EMBED_MODEL, input=batch, dimensions=EMBED_DIM)
         return np.array([item.embedding for item in response.data], dtype=np.float32)
-
+    
+    def chunk_list(self, lst, chunk_size=10):
+        """返回一个列表，其中每个元素是大小为 chunk_size 的子列表"""
+        return [lst[i:i+chunk_size] for i in range(0, len(lst), chunk_size)]
+    
     async def _embed_and_index(self, chunk_items: list[dict]) -> None:
         if not chunk_items:
             return
@@ -1547,7 +1608,6 @@ class GraphStore:
                     if predecessor not in seen:
                         nxt.add(predecessor)
             current = nxt
-            seen.update(nxt)
             if not current:
                 break
         seen.discard(entity_id)
@@ -1578,6 +1638,7 @@ class GraphStore:
                 continue
             if "_name_vec" not in ndata:
                 missing.append((nid, str(ndata.get("name", ""))))
+                log.warning("entity missing name_vec eid=%s name=%s", nid[:16], ndata.get("name", ""))
         if not missing:
             return
         names = [name for _, name in missing]
@@ -1959,14 +2020,13 @@ class GraphStore:
             return items
         try:
             import httpx
-            api_key = conf.RERANK_API_KEY or conf.KB_OPENAI_API_KEY or conf.CHAT_API_KEY
+            api_key = conf.CHAT_API_KEY
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"{conf.RERANK_API_BASE}/rerank",
+                    f"{conf.CHAT_API_BASE}/rerank",
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={
-                        "model": conf.RERANK_MODEL,
-                        "query": query,
+                        "model": conf.CHAT_MODEL,
                         "documents": texts,
                         "top_n": min(top_k * 2, len(items)),
                     },

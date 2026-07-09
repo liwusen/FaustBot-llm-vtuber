@@ -10,6 +10,7 @@ router.description = "Skill 管理：列出/查看/安装（市场/ZIP）/更新
 @router.get("/faust/admin/skills")
 async def admin_list_skills(agent_name: str | None = None):
     try:
+        skill_manager._ensure_builtin_skills(agent_name=agent_name)
         items = skill_manager.list_skills(agent_name=agent_name)
         return {"status": "ok", "agent": agent_name or state.AGENT_NAME, "items": items}
     except Exception as e:

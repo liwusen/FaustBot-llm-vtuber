@@ -21,33 +21,36 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "OPENAI_ASR_SILENCE_MS",
     "OPENAI_ASR_MIN_SPEECH_MS",
     "OPENAI_ASR_PREROLL_MS",
+    "GUI_OPERATOR_LLM_MODEL",
+    "GUI_OPERATOR_LLM_BASE",
+    "SECURITY_VERIFIER_API_ENDPOINT",
+    "SECURITY_VERIFIER_LLM_MODEL",
+    "KB_EMBED_MODEL",
+    "RERANK_API_BASE",
+    "RERANK_MODEL",
+    "MEMORY_IMAGE_VLM_MODEL",
+    "KB_ASYNC_INDEX_ON_WRITE",
+    "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH",
 }
-
-AGENT_TEMPLATE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]  # read-only, bound to template
-AGENT_EDITABLE_FILES: list[str] = []  # no user-editable file
+AGENT_TEMPLATE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]
+AGENT_EDITABLE_FILES: list[str] = []
 AGENT_CORE_FILES = AGENT_TEMPLATE_FILES + AGENT_EDITABLE_FILES
-AGENT_SYNC_FILES = AGENT_CORE_FILES  # all files synced from template on rebuild
+AGENT_SYNC_FILES = AGENT_CORE_FILES
 PUBLIC_CONFIG_DEFAULTS = {
-    "GUI_OPERATOR_LLM_MODEL": "gui-plus",
-    "GUI_OPERATOR_LLM_BASE": "https://www.dmxapi.cn/v1/chat/completions",
     "CHAT_MODEL": "gpt-4o",
     "CHAT_API_BASE": "https://www.dmxapi.cn/v1",
+    "EMBED_API_BASE": "https://www.dmxapi.cn/v1",
+    "EMBED_MODEL": "text-embedding-3-small",
     "AGENT_NAME": "faust",
-    "SECURITY_VERIFIER_API_ENDPOINT": "https://www.dmxapi.cn/v1",
-    "SECURITY_VERIFIER_LLM_MODEL": "qwen3.5-flash",
     "SECURITY_SYS_ENABLED": False,
     "KB_ENABLED": True,
-    "KB_EMBED_MODEL": "text-embedding-3-small",
-    "KB_ASYNC_INDEX_ON_WRITE": True,
-    "MEMORY_GRAPH_ENABLED": True,
-    "MEMORY_IMAGE_ENABLED": True,
-    "MEMORY_IMAGE_VLM_MODEL": "gpt-4o",
     "RERANK_ENABLED": False,
-    "RERANK_API_BASE": "https://api.openai.com/v1",
-    "RERANK_MODEL": "Qwen3-Reranker-4B",
     "RERANK_TOP_K": 5,
     "BM25_ONLY": False,
     "ARAYA_ENABLED": True,
+    "MM_BRIDGE_MAX_SCAN": 6,
+    "MM_BRIDGE_REMOVE_SOURCE": False,
+    "MM_BRIDGE_KEEP_TURNS": 2,
     "ARAYA_IDLE_MINUTES": 30,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,
@@ -57,6 +60,14 @@ PUBLIC_CONFIG_DEFAULTS = {
     "LIVE2D_MODEL_X": None,
     "LIVE2D_MODEL_Y": None,
     "VRM_MODEL_PATH": "",
+    "IMAGE_MODEL_CONFIG": {
+        "baseImages": [],
+        "emotions": [],
+        "tapImages": [],
+        "mouthShapes": [],
+        "motionDurationMs": 3000,
+        "tapDurationMs": 700,
+    },
     "TEXT_CHAT_BAR_Y_FACTOR": 0.53,
     "FRONTEND_QUICK_CONTROLLER_X_OFFSET": -12,
     "FRONTEND_CLICK_THROUGH": True,
@@ -75,22 +86,19 @@ PUBLIC_CONFIG_DEFAULTS = {
     "OPENAI_ASR_PROMPT": "",
     "OPENAI_ASR_TIMESTAMP_GRANULARITIES": "",
     "FAUSTBOT_CLOUD_BASE_URL": "http://127.0.0.1:18980",
-    "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH": "",
     "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
     # TTS 参考音频配置
     "TTS_REFER_WAV_PATH": str(Path(conf.PROJECT_ROOT) / "voices" / "neuro.wav"),
     "TTS_PROMPT_TEXT": "Hold on please, I'm busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.",
     "TTS_PROMPT_LANGUAGE": "en",
+    "THINKING_ENABLED": False,
+    "THINKING_PRESET": "none",
+    "THINKING_INTENSITY": "medium",
 }
 PRIVATE_CONFIG_DEFAULTS = {
     "CHAT_API_KEY": "",
     "SEARCH_API_KEY": "",
-    "GUI_OPERATOR_LLM_KEY": "",
-    "SECURITY_VERIFIER_LLM_KEY": "",
-    "KB_OPENAI_API_KEY": "",
-    "RERANK_API_KEY": "",
-    "OPENAI_TTS_API_KEY": "",
-    "OPENAI_ASR_API_KEY": "",
+    "EMBED_API_KEY": "",
     "FAUSTBOT_CLOUD_SERVICE_KEY": "",
 }
 
@@ -143,9 +151,6 @@ def get_public_config() -> Dict[str, Any]:
 def get_private_config(mask_secrets: bool = True) -> Dict[str, Any]:
     ensure_private_config_exists()
     data = _read_json(PRIVATE_CONFIG_PATH, PRIVATE_CONFIG_DEFAULTS)
-    legacy_chat = data.get("DEEPSEEK_API_KEY")
-    if legacy_chat and not data.get("CHAT_API_KEY"):
-        data["CHAT_API_KEY"] = legacy_chat
     if not mask_secrets:
         return data
     masked = {}
@@ -178,11 +183,6 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     public_cfg = get_public_config()
     private_cfg = _read_json(PRIVATE_CONFIG_PATH, PRIVATE_CONFIG_DEFAULTS)
 
-    # 兼容老键：若历史配置只有 DEEPSEEK_API_KEY，则迁移到 CHAT_API_KEY。
-    if private_cfg.get("DEEPSEEK_API_KEY") and not private_cfg.get("CHAT_API_KEY"):
-        private_cfg["CHAT_API_KEY"] = private_cfg.get("DEEPSEEK_API_KEY")
-    private_cfg.pop("DEEPSEEK_API_KEY", None)
-
     for key, value in public_in.items():
         skey = str(key)
         public_cfg[skey] = value
@@ -190,16 +190,11 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in OBSOLETE_PUBLIC_CONFIG_KEYS:
         public_cfg.pop(key, None)
 
-
     for key, value in private_in.items():
         skey = str(key)
         if value == "********":
             continue
-        if skey == "DEEPSEEK_API_KEY":
-            skey = "CHAT_API_KEY"
         private_cfg[skey] = value
-
-    private_cfg.pop("DEEPSEEK_API_KEY", None)
 
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
     _write_json(PRIVATE_CONFIG_PATH, private_cfg)
@@ -211,6 +206,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 def list_available_models() -> List[Dict[str, str]]:
     frontend_root = PROJECT_ROOT.parent / "frontend"
     results: List[Dict[str, str]] = []
+    public_cfg = get_public_config()
 
     models_2d = frontend_root / "models" / "2D" if (frontend_root / "models" / "2D").exists() else frontend_root / "2D"
     if models_2d.exists():
@@ -223,6 +219,10 @@ def list_available_models() -> List[Dict[str, str]]:
         for vrm_file in models_vrm.rglob("*.vrm"):
             rel = vrm_file.relative_to(frontend_root).as_posix()
             results.append({"label": vrm_file.stem, "path": rel, "type": "vrm"})
+
+    image_cfg = public_cfg.get("IMAGE_MODEL_CONFIG") or {}
+    if isinstance(image_cfg, dict) and any(image_cfg.get(key) for key in ("baseImages", "emotions", "tapImages", "mouthShapes")):
+        results.append({"label": "Images 模型", "path": "IMAGE_MODEL_CONFIG", "type": "images"})
 
     return sorted(results, key=lambda x: x["path"])
 
@@ -241,13 +241,22 @@ def _ensure_agent_core_files(agent_dir: Path, template: Dict[str, str] | None = 
     (agent_dir / "kb_index").mkdir(parents=True, exist_ok=True)
     for filename in AGENT_CORE_FILES:
         path = agent_dir / filename
+        is_faust = agent_dir.name == "faust"
         if filename in AGENT_TEMPLATE_FILES:
-            # Locked template files: always overwrite from source
-            src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
-            if src.exists():
-                path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            if is_faust:
+                # Locked template files: always overwrite from source
+                src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
+                if src.exists():
+                    path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                elif not path.exists():
+                    path.write_text(f"# {filename}\n", encoding="utf-8")
             elif not path.exists():
-                path.write_text(f"# {filename}\n", encoding="utf-8")
+                # Non-faust agents: only create from template on first use
+                src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
+                if src.exists():
+                    path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                else:
+                    path.write_text(template.get(filename, f"# {filename}\n"), encoding="utf-8")
         elif not path.exists():
             # Editable files: pull from template only on first creation
             src = Path(conf.PROJECT_ROOT) / "agents_template" / "faust" / filename
@@ -373,7 +382,7 @@ def get_agent_files(agent_name: str) -> Dict[str, Dict[str, Any]]:
     for filename in AGENT_CORE_FILES:
         result[filename] = {
             "content": (agent_dir / filename).read_text(encoding="utf-8"),
-            "readonly": filename in AGENT_TEMPLATE_FILES,
+            "readonly": agent_name == "faust" and filename in AGENT_TEMPLATE_FILES,
         }
     return result
 def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, str]:
@@ -383,13 +392,12 @@ def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, str]:
         raise FileNotFoundError(f"agent 不存在: {agent_name}")
     _ensure_agent_core_files(agent_dir)
     for filename in list(files.keys()):
-        if filename in AGENT_TEMPLATE_FILES:
+        if agent_name == "faust" and filename in AGENT_TEMPLATE_FILES:
             # Template files are force-bound — silently skip
             continue
         if filename in AGENT_CORE_FILES:
             (agent_dir / filename).write_text(str(files[filename]), encoding="utf-8")
     return get_agent_files(agent_name)
-
 
 def get_agent_detail(agent_name: str) -> Dict[str, Any]:
     return {
@@ -417,13 +425,15 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
     payload = payload or {}
     public_cfg = get_public_config()
     model_type = str(payload.get("MODEL_TYPE") or public_cfg.get("MODEL_TYPE") or "live2d").strip().lower()
+    model_path_key = "VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH"
     model_path = str(
-        payload.get("VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH")
-        or public_cfg.get("VRM_MODEL_PATH" if model_type == "vrm" else "LIVE2D_MODEL_PATH")
+        payload.get(model_path_key)
+        or public_cfg.get(model_path_key)
         or ""
     ).strip()
     if not model_path and model_type == "live2d":
         model_path = str(public_cfg.get("LIVE2D_MODEL_PATH") or "").strip()
+    image_model_config = payload.get("IMAGE_MODEL_CONFIG", public_cfg.get("IMAGE_MODEL_CONFIG"))
 
     model_scale = payload.get("LIVE2D_MODEL_SCALE", public_cfg.get("LIVE2D_MODEL_SCALE"))
     model_x = payload.get("LIVE2D_MODEL_X", public_cfg.get("LIVE2D_MODEL_X"))
@@ -431,7 +441,9 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
     text_chat_y_factor = payload.get("TEXT_CHAT_BAR_Y_FACTOR", public_cfg.get("TEXT_CHAT_BAR_Y_FACTOR"))
     quick_controller_x_offset = payload.get("FRONTEND_QUICK_CONTROLLER_X_OFFSET", public_cfg.get("FRONTEND_QUICK_CONTROLLER_X_OFFSET"))
 
-    if model_path:
+    if model_type == "images":
+        backend2frontend.FrontEndLoadModel("__faust_images__")
+    elif model_path:
         backend2frontend.FrontEndLoadModel(model_path)
     if model_scale not in (None, ""):
         backend2frontend.FrontEndSetModelScale(model_scale)
@@ -448,6 +460,7 @@ def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str,
             "MODEL_TYPE": model_type,
             "LIVE2D_MODEL_PATH": model_path if model_type == "live2d" else None,
             "VRM_MODEL_PATH": model_path if model_type == "vrm" else None,
+            "IMAGE_MODEL_CONFIG": image_model_config if model_type == "images" else None,
             "LIVE2D_MODEL_SCALE": model_scale,
             "LIVE2D_MODEL_X": model_x,
             "LIVE2D_MODEL_Y": model_y,

@@ -101,62 +101,53 @@ def _ensure_private_config_exists():
 
 def load_configs():
     global private_config, config
-    global CHAT_API_KEY, DEEPSEEK_API_KEY, SEARCH_API_KEY, GUI_OPERATOR_LLM_KEY, SECURITY_VERIFIER_LLM_KEY, KB_OPENAI_API_KEY
-    global GUI_OPERATOR_LLM_MODEL, GUI_OPERATOR_LLM_BASE, CHAT_MODEL, CHAT_API_BASE, PT_EVAL_TRIGGER_ENABLED, AGENT_NAME
-    global SECURITY_VERIFIER_LLM_API_ENDPOINT, SECURITY_VERIFIER_LLM_MODEL, SECURITY_SYS_ENABLED, AGENT_ROOT
-    global KB_ENABLED, KB_EMBED_MODEL, KB_ASYNC_INDEX_ON_WRITE, ARAYA_ENABLED, ARAYA_IDLE_MINUTES
-    global MEMORY_GRAPH_ENABLED, MEMORY_IMAGE_ENABLED, MEMORY_IMAGE_VLM_MODEL
-    global RERANK_ENABLED, RERANK_API_BASE, RERANK_MODEL, RERANK_API_KEY, RERANK_TOP_K
-    global BM25_ONLY
+    global CHAT_API_KEY, SEARCH_API_KEY, FAUSTBOT_CLOUD_SERVICE_KEY
+    global CHAT_MODEL, CHAT_API_BASE, AGENT_NAME, AGENT_ROOT
+    global EMBED_API_KEY, EMBED_API_BASE, EMBED_MODEL
+    global KB_ENABLED, ARAYA_ENABLED, ARAYA_IDLE_MINUTES
+    global RERANK_ENABLED, RERANK_TOP_K, BM25_ONLY
+    global SECURITY_SYS_ENABLED
     global TEXT_CHAT_BAR_Y_FACTOR, FRONTEND_QUICK_CONTROLLER_X_OFFSET
     global TTS_MODE, ASR_MODE, OPENAI_TTS_BASE_URL, OPENAI_TTS_MODEL, OPENAI_TTS_VOICE, OPENAI_TTS_RESPONSE_FORMAT, OPENAI_TTS_SPEED, OPENAI_TTS_INSTRUCTIONS
     global OPENAI_ASR_BASE_URL, OPENAI_ASR_MODEL, OPENAI_ASR_LANGUAGE, OPENAI_ASR_PROMPT, OPENAI_ASR_RESPONSE_FORMAT, OPENAI_ASR_TEMPERATURE, OPENAI_ASR_TIMESTAMP_GRANULARITIES
     global OPENAI_ASR_ENERGY_THRESHOLD, OPENAI_ASR_SILENCE_MS, OPENAI_ASR_MIN_SPEECH_MS, OPENAI_ASR_PREROLL_MS
-    global OPENAI_TTS_API_KEY, OPENAI_ASR_API_KEY, FAUSTBOT_CLOUD_SERVICE_KEY
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
-    global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_DEFAULT_REFER_HASH, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
+    global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
+    global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS
+    global THINKING_ENABLED, THINKING_PRESET, THINKING_INTENSITY
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
     with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
         config = json.load(f)
 
-    CHAT_API_KEY = private_config.get('CHAT_API_KEY', private_config.get('DEEPSEEK_API_KEY', ''))
-    DEEPSEEK_API_KEY = CHAT_API_KEY  # 兼容旧代码引用
-    SEARCH_API_KEY = private_config.get('SEARCH_API_KEY', '')
-    GUI_OPERATOR_LLM_KEY = private_config.get('GUI_OPERATOR_LLM_KEY', '')
-    SECURITY_VERIFIER_LLM_KEY = private_config.get('SECURITY_VERIFIER_LLM_KEY', '')
-    KB_OPENAI_API_KEY = private_config.get('KB_OPENAI_API_KEY', '')
-    RERANK_API_KEY = private_config.get('RERANK_API_KEY', '')
-    OPENAI_TTS_API_KEY = private_config.get('OPENAI_TTS_API_KEY', CHAT_API_KEY)
-    OPENAI_ASR_API_KEY = private_config.get('OPENAI_ASR_API_KEY', CHAT_API_KEY)
-    FAUSTBOT_CLOUD_SERVICE_KEY = private_config.get('FAUSTBOT_CLOUD_SERVICE_KEY', '')
-
-    GUI_OPERATOR_LLM_MODEL = config.get('GUI_OPERATOR_LLM_MODEL', 'gui-plus')
-    GUI_OPERATOR_LLM_BASE = config.get('GUI_OPERATOR_LLM_BASE', 'https://www.dmxapi.cn/v1/chat/completions')
+    # —— Main LLM (all text/chat/speech/vision tasks) ——
+    CHAT_API_KEY = private_config.get('CHAT_API_KEY', '')
+    if not CHAT_API_KEY:
+        raise RuntimeError("未配置 CHAT_API_KEY，请检查 faust.config.private.json")
     CHAT_MODEL = config.get('CHAT_MODEL', 'gpt-4o')
     CHAT_API_BASE = config.get('CHAT_API_BASE', 'https://www.dmxapi.cn/v1')
-    PT_EVAL_TRIGGER_ENABLED=config.get('PY_EVAL_TRIGGER_ENABLED', False)
-    AGENT_NAME=config.get('AGENT_NAME', 'faust')
-    SECURITY_VERIFIER_LLM_API_ENDPOINT = config.get('SECURITY_VERIFIER_API_ENDPOINT', 'https://www.dmxapi.cn/v1')
-    SECURITY_VERIFIER_LLM_MODEL = config.get('SECURITY_VERIFIER_LLM_MODEL', 'qwen3.5-flash')
+
+    # —— Embedding LLM (KB vector encoding only) ——
+    EMBED_API_KEY = private_config.get('EMBED_API_KEY', '')
+    EMBED_API_BASE = str(config.get('EMBED_API_BASE', 'https://www.dmxapi.cn/v1') or 'https://www.dmxapi.cn/v1').strip()
+    EMBED_MODEL = str(config.get('EMBED_MODEL', 'text-embedding-3-small') or 'text-embedding-3-small').strip()
+
+    SEARCH_API_KEY = private_config.get('SEARCH_API_KEY', '')
+    FAUSTBOT_CLOUD_SERVICE_KEY = private_config.get('FAUSTBOT_CLOUD_SERVICE_KEY', '')
+
+    AGENT_NAME = config.get('AGENT_NAME', 'faust')
     SECURITY_SYS_ENABLED = config.get('SECURITY_SYS_ENABLED', False)
     KB_ENABLED = bool(config.get('KB_ENABLED', True))
-    KB_EMBED_MODEL = str(config.get('KB_EMBED_MODEL', 'text-embedding-3-small') or 'text-embedding-3-small').strip()
-    KB_ASYNC_INDEX_ON_WRITE = bool(config.get('KB_ASYNC_INDEX_ON_WRITE', True))
     RERANK_ENABLED = bool(config.get('RERANK_ENABLED', False))
-    RERANK_API_BASE = str(config.get('RERANK_API_BASE', 'https://api.openai.com/v1') or 'https://api.openai.com/v1').strip()
-    RERANK_MODEL = str(config.get('RERANK_MODEL', 'Qwen3-Reranker-4B') or 'Qwen3-Reranker-4B').strip()
     RERANK_TOP_K = int(config.get('RERANK_TOP_K', 5) or 5)
     BM25_ONLY = bool(config.get('BM25_ONLY', False))
-    MEMORY_GRAPH_ENABLED = bool(config.get('MEMORY_GRAPH_ENABLED', True))
-    MEMORY_IMAGE_ENABLED = bool(config.get('MEMORY_IMAGE_ENABLED', True))
-    MEMORY_IMAGE_VLM_MODEL = str(config.get('MEMORY_IMAGE_VLM_MODEL', 'gpt-4o') or 'gpt-4o').strip()
     ARAYA_ENABLED = bool(config.get('ARAYA_ENABLED', True))
+    MM_BRIDGE_MAX_SCAN = int(config.get('MM_BRIDGE_MAX_SCAN', 6) or 6)
+    MM_BRIDGE_REMOVE_SOURCE = bool(config.get('MM_BRIDGE_REMOVE_SOURCE', False))
+    MM_BRIDGE_KEEP_TURNS = int(config.get('MM_BRIDGE_KEEP_TURNS', 2) or 2)
     ARAYA_IDLE_MINUTES = float(config.get('ARAYA_IDLE_MINUTES', 30) or 30)
-    TEXT_CHAT_BAR_Y_FACTOR = float(config.get('TEXT_CHAT_BAR_Y_FACTOR', 0.53) or 0.53)
-    FRONTEND_QUICK_CONTROLLER_X_OFFSET = int(config.get('FRONTEND_QUICK_CONTROLLER_X_OFFSET', -12) or -12)
     TTS_MODE = str(config.get('TTS_MODE', 'local') or 'local').strip().lower()
     ASR_MODE = str(config.get('ASR_MODE', 'local') or 'local').strip().lower()
     OPENAI_TTS_BASE_URL = str(config.get('OPENAI_TTS_BASE_URL', 'https://api.openai.com/v1') or 'https://api.openai.com/v1').strip()
@@ -173,7 +164,6 @@ def load_configs():
     OPENAI_ASR_TEMPERATURE = float(config.get('OPENAI_ASR_TEMPERATURE', 0.0) or 0.0)
     OPENAI_ASR_TIMESTAMP_GRANULARITIES = str(config.get('OPENAI_ASR_TIMESTAMP_GRANULARITIES', '') or '').strip()
     FAUSTBOT_CLOUD_BASE_URL = str(config.get('FAUSTBOT_CLOUD_BASE_URL', 'http://127.0.0.1:18980') or 'http://127.0.0.1:18980').strip()
-    FAUSTBOT_CLOUD_DEFAULT_REFER_HASH = str(config.get('FAUSTBOT_CLOUD_DEFAULT_REFER_HASH', '') or '').strip()
     FAUSTBOT_CLOUD_TIMEOUT_SECONDS = int(config.get('FAUSTBOT_CLOUD_TIMEOUT_SECONDS', 120) or 120)
     OPENAI_ASR_ENERGY_THRESHOLD = float(config.get('OPENAI_ASR_ENERGY_THRESHOLD', 0.02) or 0.02)
     OPENAI_ASR_SILENCE_MS = int(config.get('OPENAI_ASR_SILENCE_MS', 700) or 700)
@@ -187,8 +177,10 @@ def load_configs():
     EDGE_TTS_RATE = str(config.get('EDGE_TTS_RATE', '0%') or '0%').strip()
     EDGE_TTS_PITCH = str(config.get('EDGE_TTS_PITCH', '0%') or '0%').strip()
     EDGE_TTS_TIMEOUT_SECONDS = int(config.get('EDGE_TTS_TIMEOUT_SECONDS', 120) or 120)
-    
-    AGENT_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
+    THINKING_ENABLED = bool(config.get('THINKING_ENABLED', False))
+    THINKING_PRESET = str(config.get('THINKING_PRESET', 'none') or 'none').strip()
+    THINKING_INTENSITY = str(config.get('THINKING_INTENSITY', 'medium') or 'medium').strip()
+    AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
 
 
@@ -205,7 +197,7 @@ def print_globals():
     for k, v in vars(mod).items():
         if not k.startswith("_") and k.isupper() and isinstance(v, (str, int, float, bool, dict, list)):
             print(f"{k}: {v}")
-argparser = argparse.ArgumentParser(description="FAUST Backend Main Service\n命令行参数可以覆盖配置文件中的设置，优先级高于配置文件。\nThis agent has super cow powers")
+argparser = argparse.ArgumentParser(description="FaustBot Backend Main Service\n命令行参数可以覆盖配置文件中的设置，优先级高于配置文件。\nThis software has super cow powers")
 argparser.add_argument("--agent",type=str,default="NONE",action="store",help="Agent name to use")
 argparser.add_argument("--no-run-other-backend-services",action="store_true",help="Whether to run other backend services as subprocess like ASR/TTS (default: False)")
 argparser.add_argument("--save-in-memory",action="store_true",help="Memory Checkpointer and Store for debugging (default: False)")
@@ -233,7 +225,7 @@ if args.MOO:
 ..."Have you mooed today?"...""")
     print(random.choice(LIST))
     print("[config_loader]Apt-get:MOO!")
-    sys.exit(325)
+    sys.exit(1)
 AGENT_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
 if __name__=="__main__":
     print_globals()

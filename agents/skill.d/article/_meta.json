@@ -1,0 +1,7 @@
+{
+  "slug": "article",
+  "name": "长文写作",
+  "version": "1.0.0",
+  "description": "长文写作（大纲→段落→润色）",
+  "builtin": true
+}
