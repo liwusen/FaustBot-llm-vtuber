@@ -423,7 +423,7 @@ def _get_faustbot_source_root() -> Path:
 
     backend_root = Path(PROJECT_ROOT)
     repo_root = backend_root.parent
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False):#FIXME:使用正确的方式查询是否打包
         mirror_root = backend_root / "data" / "source"
         if mirror_root.exists():
             return mirror_root

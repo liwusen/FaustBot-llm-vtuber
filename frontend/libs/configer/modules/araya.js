@@ -61,8 +61,6 @@ function renderArayaModule() {
   idle.value = String(status.idle_minutes || 30);
 
   const bar = el("div", "toolbar");
-  const progressArea = el("div", "araya-progress", "");
-  progressArea.style.cssText = "margin:8px 0;padding:8px;background:#f5f7fa;border-radius:6px;font-size:13px;color:#555;white-space:pre-wrap;min-height:20px;display:none";
   const traceContainer = el("div", "field-wrap");
 
   const liveTrace = {
@@ -93,8 +91,6 @@ function renderArayaModule() {
     const baseUrl = (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900";
     const url = baseUrl + "/faust/araya/trigger-sse?reason=manual_from_configer";
 
-    progressArea.style.display = "block";
-    progressArea.textContent = "正在连接...";
 
     return new Promise((resolve, reject) => {
       const es = new EventSource(url);
@@ -110,11 +106,9 @@ function renderArayaModule() {
               liveTrace.status = "running";
               liveTrace.messages = [];
               liveTrace.tool_calls = [];
-              progressArea.textContent = `目标 Agent: ${data.target_agent || "-"}\n原因: ${data.reason || "-"}\n正在启动...`;
               renderArayaTrace(traceContainer, liveTrace);
               break;
             case "llm_start":
-              progressArea.textContent += "\n→ 正在调用 LLM...";
               break;
             case "llm_chunk":
               if (liveTrace.messages.length && liveTrace.messages[liveTrace.messages.length - 1].role === "assistant") {
@@ -125,12 +119,10 @@ function renderArayaModule() {
               renderArayaTrace(traceContainer, liveTrace);
               break;
             case "tool_start":
-              progressArea.textContent += `\n→ 工具调用: ${data.tool || "?"} args=${JSON.stringify(data.args)}`;
               liveTrace.messages.push({ role: "tool", tool_name: data.tool || "tool", call_id: data.call_id || "", args: data.args || {} });
               renderArayaTrace(traceContainer, liveTrace);
               break;
             case "tool_end":
-              progressArea.textContent += `\n→ 工具完成: ${data.tool || "?"}`;
               liveTrace.messages.push({ role: "tool_result", tool_name: data.tool || "tool", call_id: data.call_id || "", result: data.result ?? "", duration_seconds: data.duration ?? null });
               renderArayaTrace(traceContainer, liveTrace);
               break;
@@ -148,10 +140,8 @@ function renderArayaModule() {
         liveTrace.status = "ok";
         try {
           const data = JSON.parse(evt.data);
-          progressArea.textContent += `\n\n\u2713 完成!（耗时 ${data.duration || "?"} 秒）`;
           liveTrace.duration_seconds = data.duration || null;
         } catch (e) {
-          progressArea.textContent += "\n\n\u2713 完成!";
         }
         renderArayaTrace(traceContainer, liveTrace);
         ensureModuleData("araya").then(() => {
@@ -174,7 +164,6 @@ function renderArayaModule() {
         } catch (e) {}
         liveTrace.error = msg;
         renderArayaTrace(traceContainer, liveTrace);
-        progressArea.textContent += `\n\n\u2717 错误: ${msg}`;
         ensureModuleData("araya").then(() => {
           refreshModule();
           showBanner("error", `Araya 错误: ${msg}`);
@@ -190,13 +179,17 @@ function renderArayaModule() {
     el("span", "switch-text", "空闲分钟"),
     idle,
     makeButton("保存设置", async () => {
-      await cfgApi("POST", "/faust/araya/settings", {
-        enabled: enabled.checked,
-        idle_minutes: Number(idle.value || 30),
-      });
-      await ensureModuleData("araya");
-      refreshModule();
-      showBanner("success", "Araya 设置已保存。");
+      try {
+        const data = await cfgApi("POST", "/faust/araya/settings", {
+          enabled: enabled.checked,
+          idle_minutes: Number(idle.value || 30),
+        });
+        state.araya = data && data.araya ? data.araya : state.araya;
+        refreshModule();
+        showBanner("success", "Araya 设置已保存。");
+      } catch (e) {
+        showBanner("error", "保存失败: " + (e.message || String(e)));
+      }
     }, "btn btn-primary"),
     makeButton("刷新状态", async () => {
       await ensureModuleData("araya");
@@ -204,7 +197,7 @@ function renderArayaModule() {
     }),
     triggerSlider
   );
-  addSection("Araya 控制", [bar, progressArea]);
+  addSection("Araya 控制", [bar]);
   addSection("Araya Trace", [traceContainer]);
 
   const idleMinutes = Number(status.idle_minutes || 0);
