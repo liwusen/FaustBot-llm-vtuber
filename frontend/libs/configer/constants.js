@@ -50,6 +50,7 @@ var META = {
   MM_BRIDGE_MAX_SCAN: { label: "多模态桥接扫描条数", help: "每轮对话从最近 ToolMessage 中扫描图片输出的最大条数。" },
   MM_BRIDGE_REMOVE_SOURCE: { label: "桥接后删除源消息", help: "开启后，转换完成的源 ToolMessage 会从上下文中移除。" },
   MM_BRIDGE_KEEP_TURNS: { label: "图片消息保留轮数", help: "生成的图片多模态消息在几轮对话后自动删除；0 表示用完即删。" },
+  mcp_servers: { label: "MCP Server 配置", help: "通过 bundled Node.js 或 SSE 连接的 MCP server 配置。" },
 };
 
 var FIELD_OPTIONS = {
@@ -115,6 +116,7 @@ var MODULES = [
   { id: "memory", title: "记忆", desc: "知识库树、图谱、搜索一体化管理。" },
   { id: "araya", title: "Araya", desc: "Araya 状态监控与触发。" },
   { id: "components", title: "组件", desc: "管理 FunASR、TTS 和 Minecraft 组件状态与启停。" },
+  { id: "mcp", title: "MCP Server", desc: "管理 MCP server 配置、启停与日志。" },
   // runtime 从侧边栏移除，入口在高级页面
   // { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
   { id: "triggers", title: "触发器", desc: "计划任务列表与编辑。" },

@@ -2,6 +2,7 @@ import os
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from langchain.agents import create_agent
@@ -170,6 +171,10 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
 def _compose_runtime_extensions():
     from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
     base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
+    from faust_backend.mcp_manager import get_mcp_manager
+    mcp_tools = get_mcp_manager().get_langchain_tools()
+    if mcp_tools:
+        base_tools.extend(mcp_tools)
     pm = state.plugin_manager
     tools = pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME) if pm else base_tools
     middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
@@ -258,6 +263,10 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 log.info("模板文件已同步: %s", ", ".join(updated))
             state.makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
+            from faust_backend.mcp_manager import get_mcp_manager
+            mcp_manager = get_mcp_manager()
+            mcp_manager.load_config(getattr(conf, "MCP_SERVERS", {}) or {})
+            await mcp_manager.sync_servers()
             araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
             pm = state.plugin_manager
             if pm:
@@ -358,6 +367,8 @@ async def _graceful_shutdown_task():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_plugin_manager()
+    from faust_backend.mcp_manager import get_mcp_manager
+    mcp_manager = get_mcp_manager()
 
     # ── startup ──
     backend2frontend.set_main_loop(asyncio.get_running_loop())
@@ -421,6 +432,7 @@ async def lifespan(app: FastAPI):
             pass
         state.plugin_heartbeat_task = None
     await araya_runtime.get_araya_runtime(refresh=True).shutdown()
+    await mcp_manager.stop_all()
     trigger_manager.exitflag = True
     await vad_runtime.vad_runtime.shutdown()
     for service in service_manager.get_service_keys():

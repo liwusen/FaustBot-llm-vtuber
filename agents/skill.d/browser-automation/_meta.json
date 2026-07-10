@@ -1,0 +1,7 @@
+{
+  "slug": "browser-automation",
+  "name": "Browser Automation",
+  "version": "1.0.0",
+  "description": "浏览器自动化操作（如点击、输入、导航）",
+  "builtin": true
+}

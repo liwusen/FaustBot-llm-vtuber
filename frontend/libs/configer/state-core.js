@@ -22,6 +22,8 @@ const state = {
   selectedService: "",
   serviceDetail: null,
   recentErrors: [],
+  mcpServers: [],
+  selectedMcpId: "",
   triggers: [],
   selectedTriggerId: "",
   memoryView: "tree",

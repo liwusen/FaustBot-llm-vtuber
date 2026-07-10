@@ -54,6 +54,15 @@ PUBLIC_CONFIG_DEFAULTS = {
     "ARAYA_IDLE_MINUTES": 30,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,
+    "mcp_servers": {
+        "playwright": {
+            "enabled": False,
+            "description": "Web browser automation via @playwright/mcp",
+            "custom": False,
+            "transport": "stdio",
+            "args": ["--browser-channel=msedge"],
+        }
+    },
     "MODEL_TYPE": "live2d",
     "LIVE2D_MODEL_PATH": "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json",
     "LIVE2D_MODEL_SCALE": 0.3,

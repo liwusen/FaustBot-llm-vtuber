@@ -22,6 +22,7 @@ from faust_backend.routes.admin_skills import router as admin_skills_router
 from faust_backend.routes.admin_triggers import router as admin_triggers_router
 from faust_backend.routes.admin_plugins import router as admin_plugins_router
 from faust_backend.routes.admin_logs import router as admin_logs_router
+from faust_backend.routes.admin_mcp import router as admin_mcp_router
 from faust_backend.routes.chat import router as chat_router
 from faust_backend.routes.hil_nimble import router as hil_nimble_router
 from faust_backend.routes.audio import router as audio_router
@@ -55,7 +56,7 @@ app.add_middleware(
 routers = [
     admin_config_router, admin_runtime_router, admin_models_router,
     admin_services_router, admin_agents_router, admin_skills_router,
-    admin_triggers_router, admin_plugins_router, admin_logs_router,
+    admin_triggers_router, admin_plugins_router, admin_logs_router, admin_mcp_router,
     chat_router, hil_nimble_router, audio_router, system_router, autocomplete_router, component_router, logger_ws_router,
 ]
 for r in routers:

@@ -31,6 +31,7 @@ DOWNLOAD_RETRY_BASE_DELAY = 2.0
 
 PRESERVE_PATTERNS = [
     ".runtime/",
+    ".nodejs/",
     "backend/tts-hub/",
     "backend/asr-hub/",
     "backend/voices/",

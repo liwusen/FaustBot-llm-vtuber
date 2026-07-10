@@ -14,6 +14,7 @@ __dev__/
 *.zip
 
 .runtime/
+.nodejs/
 dist/
 
 *.bundle.js

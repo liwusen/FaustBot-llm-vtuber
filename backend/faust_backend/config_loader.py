@@ -106,6 +106,7 @@ def load_configs():
     global EMBED_API_KEY, EMBED_API_BASE, EMBED_MODEL
     global KB_ENABLED, ARAYA_ENABLED, ARAYA_IDLE_MINUTES
     global RERANK_ENABLED, RERANK_TOP_K, BM25_ONLY
+    global MCP_SERVERS
     global SECURITY_SYS_ENABLED
     global TEXT_CHAT_BAR_Y_FACTOR, FRONTEND_QUICK_CONTROLLER_X_OFFSET
     global TTS_MODE, ASR_MODE, OPENAI_TTS_BASE_URL, OPENAI_TTS_MODEL, OPENAI_TTS_VOICE, OPENAI_TTS_RESPONSE_FORMAT, OPENAI_TTS_SPEED, OPENAI_TTS_INSTRUCTIONS
@@ -147,6 +148,7 @@ def load_configs():
     MM_BRIDGE_MAX_SCAN = int(config.get('MM_BRIDGE_MAX_SCAN', 6) or 6)
     MM_BRIDGE_REMOVE_SOURCE = bool(config.get('MM_BRIDGE_REMOVE_SOURCE', False))
     MM_BRIDGE_KEEP_TURNS = int(config.get('MM_BRIDGE_KEEP_TURNS', 2) or 2)
+    MCP_SERVERS = copy.deepcopy(config.get('mcp_servers', {}) or {})
     ARAYA_IDLE_MINUTES = float(config.get('ARAYA_IDLE_MINUTES', 30) or 30)
     TTS_MODE = str(config.get('TTS_MODE', 'local') or 'local').strip().lower()
     ASR_MODE = str(config.get('ASR_MODE', 'local') or 'local').strip().lower()

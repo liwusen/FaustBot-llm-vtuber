@@ -7,6 +7,7 @@ security_check_command; Python/JS run in isolated child processes.
 
 from __future__ import annotations
 
+import os
 import sys
 import subprocess
 
@@ -149,8 +150,21 @@ def _run_python(code: str, timeout: int, cwd: str) -> str:
 
 def _run_js(code: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
-    # Try bun first, fall back to node
-    for runtime in ("bun", "node"):
+    runtimes = ["bun"]
+    env_node = str(os.environ.get("FAUST_NODEJS") or "").strip()
+    if env_node and os.path.isfile(env_node):
+        runtimes.append(env_node)
+    else:
+        from faust_backend.config_loader import PROJECT_ROOT
+        bundled_node = os.path.join(os.path.dirname(PROJECT_ROOT), ".nodejs", "node.exe")
+        if os.path.isfile(bundled_node):
+            runtimes.append(bundled_node)
+    runtimes.append("node")
+    seen = set()
+    for runtime in runtimes:
+        if runtime in seen:
+            continue
+        seen.add(runtime)
         try:
             proc = subprocess.run(
                 [runtime, "-e", code],

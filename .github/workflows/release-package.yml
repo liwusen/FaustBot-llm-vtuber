@@ -23,7 +23,7 @@ jobs:
 
       - name: Install cloud runtime and dependencies
         shell: cmd
-        run: setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes
+        run: setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes --install-bundle-node yes
 
       - name: Create version.json
         shell: pwsh

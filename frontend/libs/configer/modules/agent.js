@@ -117,6 +117,21 @@ async function ensureModuleData(moduleId) {
       state.componentStatus = null;
     }
   }
+  if (moduleId === "mcp") {
+    try {
+      const data = await cfgApi("GET", "/faust/admin/mcp/servers", null, { include_log: "false" });
+      state.mcpServers = data.items || [];
+      if (!state.selectedMcpId && state.mcpServers.length) {
+        state.selectedMcpId = String(state.mcpServers[0].server_id || state.mcpServers[0].id || "");
+      }
+      if (state.selectedMcpId && !state.mcpServers.find((x) => String(x.server_id || x.id) === String(state.selectedMcpId))) {
+        state.selectedMcpId = state.mcpServers.length ? String(state.mcpServers[0].server_id || state.mcpServers[0].id || "") : "";
+      }
+    } catch (e) {
+      console.warn("mcp data fetch error", e);
+      state.mcpServers = [];
+    }
+  }
   if (moduleId === "skills") {
     try {
       const agentName = state.skillsAgent || "";

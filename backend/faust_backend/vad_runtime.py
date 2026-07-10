@@ -12,7 +12,6 @@ SAMPLE_RATE = 16000
 WINDOW_SIZE = 512
 VAD_THRESHOLD = 0.5
 
-
 class VadRuntime:
     def __init__(self) -> None:
         self._model: Any = None

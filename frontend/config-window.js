@@ -108,6 +108,9 @@ if (typeof renderPluginsModule === "undefined") {
 if (typeof renderOverviewModule === "undefined") {
   console.error("Module overview 未加载：请确认 frontend/libs/configer/modules/overview.js 已在 HTML 中先加载。");
 }
+if (typeof renderMcpModule === "undefined") {
+  console.error("Module mcp 未加载：请确认 frontend/libs/configer/modules/mcp.js 已在 HTML 中先加载。");
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // App dispatcher — orchestration layer (kept in main file)
@@ -176,6 +179,8 @@ async function renderModule(force = false) {
       renderPluginsModule();
     } else if (current.id === "components") {
       renderComponentsModule();
+    } else if (current.id === "mcp") {
+      renderMcpModule();
     } else {
       // Plugin module: use page render function from addPage(), or cards from addCard()
       const pluginPage = window.pluginUI._pages.find(p => p.id === current.id);
