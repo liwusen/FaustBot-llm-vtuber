@@ -146,8 +146,8 @@ def _search_filesystem(pattern: str, paths: list[str]) -> str:
     except re.error as e:
         return f"正则表达式错误: {e}"
 
-    from faust_backend.config_loader import PROJECT_ROOT
-    project_root = Path(PROJECT_ROOT)
+    from faust_backend.config_loader import WORKDIR_ROOT
+    project_root = Path(WORKDIR_ROOT)
 
     results: list[dict] = []
     max_results = 20

@@ -79,8 +79,8 @@ def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "") -> st
 def _resolve_cwd(cwd: str) -> str:
     if cwd:
         return cwd
-    from faust_backend.config_loader import PROJECT_ROOT
-    return PROJECT_ROOT
+    from faust_backend.config_loader import WORKDIR_ROOT
+    return WORKDIR_ROOT
 
 
 def _run_shell(command: str, timeout: int, cwd: str) -> str:

@@ -74,14 +74,14 @@ def write(path: str, content: str) -> str:
 
 
 def _write_file(raw: str, content: str) -> str:
-    from faust_backend.config_loader import PROJECT_ROOT, CONFIG_ROOT
+    from faust_backend.config_loader import PROJECT_ROOT, CONFIG_ROOT, WORKDIR_ROOT
 
     file_path = Path(raw)
     if not file_path.is_absolute():
-        # Resolve relative to project root first, then config root
-        for base in (PROJECT_ROOT, CONFIG_ROOT):
+        # Resolve relative to agent workdir first, then source root.
+        for base in (WORKDIR_ROOT, PROJECT_ROOT, CONFIG_ROOT):
             candidate = Path(base) / raw
-            if candidate.parent.exists() or base == PROJECT_ROOT:
+            if candidate.parent.exists() or str(base) == str(WORKDIR_ROOT):
                 file_path = candidate
                 break
 

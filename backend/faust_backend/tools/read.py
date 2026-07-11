@@ -584,9 +584,9 @@ def _read_file(parsed, *, force_plain_text: bool = False) -> str:
 
     # File
     if not file_path.exists():
-        # Try as a relative path from config root
-        from faust_backend.config_loader import CONFIG_ROOT, PROJECT_ROOT
-        for base in (CONFIG_ROOT, PROJECT_ROOT):
+        # Try as a relative path from agent workdir first, then source root.
+        from faust_backend.config_loader import WORKDIR_ROOT, PROJECT_ROOT
+        for base in (WORKDIR_ROOT, PROJECT_ROOT):
             alt = Path(base) / path_str
             if alt.exists():
                 file_path = alt

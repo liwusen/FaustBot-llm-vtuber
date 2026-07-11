@@ -68,7 +68,7 @@ def edit(path: str, patch: str) -> str:
         patch: Patch instructions in the described format.
     """
     import asyncio as _asyncio
-    from faust_backend.config_loader import PROJECT_ROOT
+    from faust_backend.config_loader import WORKDIR_ROOT
 
     log.info("edit INPUT path=%s patch_len=%d", path, len(patch))
 
@@ -93,7 +93,7 @@ def edit(path: str, patch: str) -> str:
     else:
         file_path = Path(path)
         if not file_path.is_absolute():
-            file_path = Path(PROJECT_ROOT) / path
+            file_path = Path(WORKDIR_ROOT) / path
         file_path = file_path.resolve()
         try:
             original = file_path.read_text(encoding="utf-8")

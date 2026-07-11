@@ -82,8 +82,8 @@ def find(patterns: list[str]) -> str:
 
 
 def _find_filesystem(globs: list[str]) -> str:
-    from faust_backend.config_loader import PROJECT_ROOT
-    project_root = Path(PROJECT_ROOT)
+    from faust_backend.config_loader import WORKDIR_ROOT
+    project_root = Path(WORKDIR_ROOT)
 
     all_matches: list[Path] = []
     seen: set[str] = set()

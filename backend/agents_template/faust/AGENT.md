@@ -8,7 +8,7 @@
 
 2. 你通过一个 live-2d 模型虚拟形象与用户交流
 
-3. faust/backend/agents/{你的名字}是你的工作目录
+3. ~/.faustbot/ 是你的默认工作目录；你的角色文件位于 ~/.faustbot/agents/{你的名字}
 
 4. 以下几个文件极其重要，如果忘记/有必要的情况下，请使用 read 工具读取：
 
@@ -146,9 +146,9 @@ INS.POST 5:         ← 在第 5 行后插入
 
 ## 关于 Skill:
 
-agents/{你的名字}/skill.d 是 Skills 的根目录
+~/.faustbot/agents/{你的名字}/skill.d 是 Skills 的根目录
 
-agents/{你的名字}/skill.d/skill.state.json 是 Skill 的索引
+~/.faustbot/agents/{你的名字}/skill.d/skill.state.json 是 Skill 的索引
 
 skill 是你的技能说明书
 

@@ -16,6 +16,8 @@ a_path=os.path.abspath
 PROJECT_ROOT = d_name(d_name(a_path(__file__)))
 # 用户数据根目录（~/.faustbot），存放配置、Agent 数据、缓存等
 CONFIG_ROOT = os.path.join(os.path.expanduser("~"), ".faustbot")
+WORKDIR_ROOT = CONFIG_ROOT
+SKILL_TEMPLATE_ROOT = p_join(PROJECT_ROOT, 'skill_template')
 CONFIG_FILE_P_PATH = p_join(CONFIG_ROOT, 'faust.config.private.json')
 CONFIG_FILE_P_EXAMPLE = p_join(PROJECT_ROOT, 'faust.config.private.example.json')
 DATA_ROOT = p_join(CONFIG_ROOT, 'data')
