@@ -2,10 +2,23 @@
 
 本技能指导 AI 如何为自己创建 FaustBot 插件，扩展功能、API 路由或定时任务。
 
+## 强制工作流
+
+在开始写任何插件代码前，必须先读取两类资料：
+
+1. 先读取插件文档：`read("faustbot://tool_use.md")` 与 `read("faustbot://source//document/plugin.md")`
+2. 再读取源码：至少阅读以下一个或多个入口，再决定如何实现
+    - `read("faustbot://source//backend/faust_backend/plugin_system/interfaces.py")`
+    - `read("faustbot://source//backend/faust_backend/plugin_system/manager.py")`
+    - `read("faustbot://source//backend/faust_backend/plugin_system/plugin_base.py")`
+    - `read("faustbot://source//backend/faust_backend/routes/admin_plugins.py")`
+
+不要在没有阅读 `faustbot://source//...` 源码的情况下直接生成插件代码。
+
 ## 目录结构
 
 ```
-plugins/my-plugin/
+~/.faustbot/plugins/my-plugin/
 ├── plugin.json    # 插件元数据
 └── main.py        # 插件代码（FaustPlugin 子类或旧风格 Plugin 类）
 ```
@@ -94,6 +107,14 @@ def get_plugin():
 | `tool_call_post(name, args, result, ctx)` | 工具调用后处理 |
 | `config_changed(key, old, new, ctx)` | 配置变更时响应 |
 
+## 实现要求
+
+- 优先使用新风格 `FaustPlugin` 基类，不要新建旧风格示例，除非明确要兼容旧插件。
+- 若插件需要工具、配置、路由、前端资源，请逐项对照源码接口后再实现，不要凭空猜字段名。
+- 如果要调用现有后端能力，优先通过 `faustbot://source//backend/faust_backend/...` 阅读真实实现，再决定是否复用。
+- 如果要暴露前端资源，必须同时检查插件管理路由与前端资源收集逻辑。
+- 如果要落地配置，必须先注册 schema，再读写配置值。
+
 ## 安装/重载流程
 
 ```bash
@@ -117,3 +138,5 @@ execute("curl -X POST http://localhost:13900/faust/admin/plugins/example/enable"
 - 工具名冲突时跳过插件工具（内置优先）
 - 定时任务 interval 单位为秒
 - 路由挂载路径自动加 `/faust/plugins/{plugin_id}/` 前缀
+- 插件真实存储目录位于 `~/.faustbot/plugins/`，不是仓库内 `backend/plugins/`
+- 写插件前必须先读取 `document/plugin.md` 和 `plugin_system` 源码，确认 API 后再编码

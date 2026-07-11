@@ -4,6 +4,17 @@ html,body{
   background: transparent;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
+:root {
+  --faust-panel: rgba(249, 251, 254, 0.9);
+  --faust-panel-strong: rgba(255, 255, 255, 0.94);
+  --faust-line: rgba(190, 201, 217, 0.78);
+  --faust-text: #1a2433;
+  --faust-muted: #647086;
+  --faust-accent: #e54447;
+  --faust-accent-strong: #d83f42;
+  --faust-blue: #3f6be8;
+  --faust-shadow: 0 16px 38px rgba(32, 55, 91, 0.16);
+}
 #app{
   position:relative;
   width:100%;
@@ -78,10 +89,12 @@ body.click-through .hil-approval-shell {
   gap: 8px;
   padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(17, 20, 27, 0.55);
-  color: rgba(255,255,255,0.78);
+  background: rgba(249, 251, 254, 0.72);
+  color: var(--faust-muted);
   font-size: 12px;
   backdrop-filter: blur(8px);
+  border: 1px solid rgba(213, 222, 234, 0.8);
+  box-shadow: 0 8px 22px rgba(32, 55, 91, 0.1);
   pointer-events: none;
 }
 
@@ -122,9 +135,9 @@ body.click-through .hil-approval-shell {
   transform-origin: center center;
   transition: opacity 0.18s ease, transform 0.18s ease;
   border-radius: 24px;
-  background: linear-gradient(180deg, rgba(27, 31, 41, 0.92), rgba(14, 17, 24, 0.88));
-  border: 1px solid rgba(255,255,255,0.16);
-  box-shadow: 0 14px 34px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.06);
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(244, 247, 252, 0.92));
+  border: 1px solid var(--faust-line);
+  box-shadow: var(--faust-shadow), inset 0 1px 0 rgba(255,255,255,0.8);
   backdrop-filter: blur(14px);
   pointer-events: auto;
 }
@@ -141,16 +154,16 @@ body.click-through .hil-approval-shell {
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(213, 222, 234, 0.95);
   border-radius: 16px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
-  color: #fff;
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(244, 247, 252, 0.96));
+  color: var(--faust-text);
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
   padding: 0 12px;
-  box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+  box-shadow: 0 8px 18px rgba(32, 55, 91, 0.1);
   transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
@@ -164,8 +177,9 @@ body.click-through .hil-approval-shell {
   font-size: 16px;
   line-height: 1;
   border-radius: 999px;
-  background: rgba(255,255,255,0.12);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  background: rgba(233, 239, 255, 0.9);
+  color: var(--faust-blue);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.72);
 }
 
 #modelQuickController .qc-label {
@@ -173,23 +187,26 @@ body.click-through .hil-approval-shell {
   text-align: left;
   font-size: 12px;
   white-space: nowrap;
+  color: var(--faust-text);
 }
 
 #modelQuickController button:hover {
-  background: linear-gradient(180deg, rgba(126, 139, 255, 0.92), rgba(88, 101, 242, 0.9));
-  border-color: rgba(166, 175, 255, 0.6);
-  box-shadow: 0 10px 18px rgba(58, 72, 190, 0.32);
+  background: linear-gradient(180deg, rgba(255, 246, 247, 0.98), rgba(253, 236, 239, 0.96));
+  border-color: rgba(241, 177, 178, 0.95);
+  box-shadow: 0 12px 24px rgba(225, 71, 72, 0.14);
   transform: translateY(-2px) scale(1.02);
 }
 
 #modelQuickController button.active {
-  background: linear-gradient(180deg, rgba(58, 205, 114, 0.95), rgba(24, 161, 86, 0.92));
-  border-color: rgba(110, 240, 164, 0.45);
-  box-shadow: 0 10px 18px rgba(17, 122, 67, 0.34);
+  background: linear-gradient(180deg, rgba(234, 80, 82, 0.96), rgba(216, 63, 66, 0.94));
+  border-color: rgba(233, 116, 117, 0.82);
+  box-shadow: 0 12px 24px rgba(225, 71, 72, 0.26);
+  color: #fff;
 }
 
 #modelQuickController button.active .qc-icon {
   background: rgba(255,255,255,0.2);
+  color: #fff;
 }
 
 #textChatBar {
@@ -204,9 +221,9 @@ body.click-through .hil-approval-shell {
   max-width: min(54vw, 620px);
   padding: 10px 12px;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(24, 29, 37, 0.88), rgba(15, 18, 24, 0.8));
-  border: 1px solid rgba(255,255,255,0.13);
-  box-shadow: 0 14px 34px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06);
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(244, 247, 252, 0.92));
+  border: 1px solid var(--faust-line);
+  box-shadow: var(--faust-shadow), inset 0 1px 0 rgba(255,255,255,0.82);
   backdrop-filter: blur(14px);
   transform: translate(-50%, -50%);
 }
@@ -214,42 +231,46 @@ body.click-through .hil-approval-shell {
 #textChatInput {
   flex: 1;
   min-width: 180px;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.12);
-  color: #fff;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid rgba(213, 222, 234, 0.95);
+  color: var(--faust-text);
   border-radius: 12px;
   padding: 11px 14px;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
+#textChatInput::placeholder {
+  color: var(--faust-muted);
+}
+
 #textChatInput:focus {
-  border-color: rgba(120, 144, 255, 0.7);
-  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.18);
-  background: rgba(255,255,255,0.12);
+  border-color: rgba(241, 177, 178, 0.92);
+  box-shadow: 0 0 0 3px rgba(229, 68, 71, 0.12);
+  background: rgba(255,255,255,1);
 }
 
 #textChatSendBtn {
-  background: linear-gradient(180deg, #7484ff, #5865f2);
+  background: linear-gradient(180deg, #ea5052, #d83f42);
   color: #fff;
-  border: 1px solid rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.24);
   border-radius: 12px;
   padding: 10px 16px;
   cursor: pointer;
   font-weight: 700;
-  box-shadow: 0 10px 18px rgba(63, 78, 212, 0.28);
+  box-shadow: 0 10px 18px rgba(225, 71, 72, 0.24);
   transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
 #textChatSendBtn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 14px 24px rgba(63, 78, 212, 0.36);
+  box-shadow: 0 14px 24px rgba(225, 71, 72, 0.32);
   filter: brightness(1.04);
 }
 
 #textChatStatus {
   font-size: 12px;
-  color: rgba(255,255,255,0.78);
+  color: var(--faust-muted);
   white-space: nowrap;
 }
 

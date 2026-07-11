@@ -15,9 +15,20 @@
 
 ## 2. 目录与约定
 
-- 插件目录：`backend/plugins/<plugin_id>/`
+- 插件目录：`~/.faustbot/plugins/<plugin_id>/`
 - 必需文件：`plugin.json`、`main.py`
-- 插件状态与配置持久化：`backend/plugins/plugins.state.json`
+- 插件状态与配置持久化：`~/.faustbot/plugins/plugins.state.json`
+
+### 2.1 写插件前的源码阅读建议
+
+如果你是通过 Agent / Skill 自动生成插件代码，建议先读取以下源码，而不是只看文档：
+
+- `faustbot://source//backend/faust_backend/plugin_system/interfaces.py`
+- `faustbot://source//backend/faust_backend/plugin_system/manager.py`
+- `faustbot://source//backend/faust_backend/plugin_system/plugin_base.py`
+- `faustbot://source//backend/faust_backend/routes/admin_plugins.py`
+
+原因：这些文件定义了当前真实生效的接口、配置行为、重载流程和前端资源收集逻辑。
 
 ## 3. Manifest（plugin.json）
 
