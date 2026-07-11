@@ -65,7 +65,7 @@ def register_araya_routes(app):
         log.debug("Received request to update Araya settings with payload: %s", payload)
         body = payload or {}
         runtime = get_araya_runtime(refresh=True)
-        status = runtime.update_settings(
+        status = await runtime.update_settings(
             enabled=body.get("enabled"),
             idle_minutes=body.get("idle_minutes"),
         )
