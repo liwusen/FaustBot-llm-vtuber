@@ -26,6 +26,28 @@ function _mcpTextToArgs(text) {
     .filter(Boolean);
 }
 
+function _mcpHeadersToText(headers) {
+  if (!headers || typeof headers !== "object") return "";
+  return Object.entries(headers)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("\n");
+}
+
+function _mcpTextToHeaders(text) {
+  const headers = {};
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const raw = line.trim();
+    if (!raw) continue;
+    const idx = raw.indexOf(":");
+    if (idx <= 0) continue;
+    const key = raw.slice(0, idx).trim();
+    const value = raw.slice(idx + 1).trim();
+    if (!key) continue;
+    headers[key] = value;
+  }
+  return headers;
+}
+
 function openMcpEditorModal(existing, onSubmit) {
   const body = existing ? {
     server_id: existing.server_id || existing.id || "",
@@ -36,6 +58,7 @@ function openMcpEditorModal(existing, onSubmit) {
     command: existing.command || "node",
     args: Array.isArray(existing.args) ? existing.args : [],
     url: existing.url || "",
+    headers: existing.headers && typeof existing.headers === "object" ? existing.headers : {},
   } : {
     server_id: "",
     enabled: true,
@@ -45,6 +68,7 @@ function openMcpEditorModal(existing, onSubmit) {
     command: "node",
     args: [],
     url: "",
+    headers: {},
   };
 
   const wrap = el("div", "plugin-form");
@@ -84,7 +108,16 @@ function openMcpEditorModal(existing, onSubmit) {
   sseRadio.name = "mcpTransport";
   sseRadio.value = "sse";
   sseRadio.checked = body.transport === "sse";
-  transportRow.append(el("label", "", "stdio"), stdioRadio, el("label", "", "sse"), sseRadio);
+  const streamableHttpRadio = document.createElement("input");
+  streamableHttpRadio.type = "radio";
+  streamableHttpRadio.name = "mcpTransport";
+  streamableHttpRadio.value = "streamable-http";
+  streamableHttpRadio.checked = body.transport === "streamable-http";
+  transportRow.append(
+    el("label", "", "stdio"), stdioRadio,
+    el("label", "", "sse"), sseRadio,
+    el("label", "", "streamable-http"), streamableHttpRadio
+  );
   transportWrap.append(transportRow);
   wrap.append(transportWrap);
 
@@ -117,17 +150,25 @@ function openMcpEditorModal(existing, onSubmit) {
   const urlField = el("div", "plugin-field");
   urlField.append(el("label", "card-key", "SSE URL"), urlInput);
   sseFields.append(urlField);
+  const headersInput = el("textarea", "textarea");
+  headersInput.value = _mcpHeadersToText(body.headers);
+  const headersField = el("div", "plugin-field");
+  headersField.append(el("label", "card-key", "HTTP Headers（每行 key: value）"), headersInput);
+  sseFields.append(headersField);
   wrap.append(sseFields);
 
   const syncUi = () => {
-    const transport = sseRadio.checked ? "sse" : "stdio";
-    stdioFields.style.display = transport === "sse" ? "none" : "";
-    sseFields.style.display = transport === "sse" ? "" : "none";
-    commandInput.disabled = transport === "sse" || !customInput.checked;
+    const transport = sseRadio.checked ? "sse" : (streamableHttpRadio.checked ? "streamable-http" : "stdio");
+    const isHttpLike = transport !== "stdio";
+    stdioFields.style.display = isHttpLike ? "none" : "";
+    sseFields.style.display = isHttpLike ? "" : "none";
+    urlField.querySelector("label").textContent = transport === "sse" ? "SSE URL" : "Streamable HTTP URL";
+    commandInput.disabled = isHttpLike || !customInput.checked;
     argsInput.disabled = transport === "sse" ? false : false;
   };
   stdioRadio.addEventListener("change", syncUi);
   sseRadio.addEventListener("change", syncUi);
+  streamableHttpRadio.addEventListener("change", syncUi);
   customInput.addEventListener("change", syncUi);
   syncUi();
 
@@ -138,11 +179,12 @@ function openMcpEditorModal(existing, onSubmit) {
         server_id: String(idInput.value || "").trim(),
         enabled: !!enabledInput.checked,
         description: String(descInput.value || "").trim(),
-        transport: sseRadio.checked ? "sse" : "stdio",
+        transport: sseRadio.checked ? "sse" : (streamableHttpRadio.checked ? "streamable-http" : "stdio"),
         custom: !!customInput.checked,
         command: String(commandInput.value || "").trim(),
         args: _mcpTextToArgs(argsInput.value),
         url: String(urlInput.value || "").trim(),
+        headers: _mcpTextToHeaders(headersInput.value),
       };
       if (!payload.server_id) {
         window.alert("Server ID 不能为空");
@@ -241,6 +283,7 @@ function renderMcpModule() {
       { label: "自定义", value: selected.custom },
       { label: "命令", value: selected.command || "builtin" },
       { label: "URL", value: selected.url || "-" },
+      { label: "Headers", value: Object.keys(selected.headers || {}).length ? JSON.stringify(selected.headers) : "-" },
       { label: "描述", value: selected.description || "-" },
       { label: "错误", value: selected.error || "-" },
     ])

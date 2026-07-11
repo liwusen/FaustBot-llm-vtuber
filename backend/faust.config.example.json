@@ -21,7 +21,8 @@
             "enabled": false,
             "description": "Web browser automation via @playwright/mcp",
             "custom": false,
-            "transport": "stdio"
+            "transport": "stdio",
+            "headers": {}
         }
     },
     "MODEL_TYPE": "live2d",

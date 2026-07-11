@@ -61,6 +61,7 @@ PUBLIC_CONFIG_DEFAULTS = {
             "custom": False,
             "transport": "stdio",
             "args": ["--browser-channel=msedge"],
+            "headers": {},
         }
     },
     "MODEL_TYPE": "live2d",

@@ -69,6 +69,34 @@ def test_manager_list_status_and_tool_cache():
     tools = mgr.get_langchain_tools()
     assert len(tools) == 1
     assert getattr(tools[0], "name", "") == "playwright_navigate"
+    assert "Args:" in getattr(tools[0], "description", "")
+    assert "url: target url" in getattr(tools[0], "description", "")
+
+
+def test_build_tool_description_with_args():
+    args_schema = type("FakeArgs", (), {
+        "model_fields": {
+            "url": type("FieldInfo", (), {"description": "target url"})(),
+            "waitUntil": type("FieldInfo", (), {"description": "load event mode"})(),
+        }
+    })
+    desc = McpManager.build_tool_description("Open a URL", args_schema)
+    assert desc == "Open a URL\nArgs:\nurl: target url\nwaitUntil: load event mode"
+
+
+def test_manager_status_keeps_headers():
+    mgr = McpManager()
+    mgr.load_config({
+        "remote": {
+            "enabled": True,
+            "transport": "streamable-http",
+            "url": "https://example.com/mcp",
+            "headers": {"Authorization": "Bearer token"},
+        }
+    })
+    status = mgr.get_server_status("remote")
+    assert status["transport"] == "streamable-http"
+    assert status["headers"] == {"Authorization": "Bearer token"}
 
 
 def test_strip_none_values_removes_only_none():

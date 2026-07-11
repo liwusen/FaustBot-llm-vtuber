@@ -17,11 +17,13 @@ try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
 except Exception:
     ClientSession = None  # type: ignore[assignment]
     StdioServerParameters = None  # type: ignore[assignment]
     sse_client = None  # type: ignore[assignment]
     stdio_client = None  # type: ignore[assignment]
+    streamablehttp_client = None  # type: ignore[assignment]
 
 log = get_logger("faust.mcp")
 
@@ -144,7 +146,7 @@ def _build_langchain_tool(server_id: str, tool_name: str, description: str, args
     return StructuredTool.from_function(
         coroutine=_call_tool,
         name=exposed_name,
-        description=description or f"MCP tool {tool_name} from {server_id}",
+        description=manager.build_tool_description(description, args_schema) or f"MCP tool {tool_name} from {server_id}",
         args_schema=args_schema,
         return_direct=False,
     )
@@ -185,8 +187,29 @@ class McpManager:
         self._config = {str(k): dict(v or {}) for k, v in cfg.items() if isinstance(v, dict)}
 
     def _require_sdk(self) -> None:
-        if ClientSession is None or StdioServerParameters is None or sse_client is None or stdio_client is None:
+        if (
+            ClientSession is None
+            or StdioServerParameters is None
+            or sse_client is None
+            or stdio_client is None
+            or streamablehttp_client is None
+        ):
             raise RuntimeError("未安装 MCP Python SDK，请先安装依赖 mcp>=1.28,<2")
+
+    @staticmethod
+    def build_tool_description(description: str, args_schema) -> str:
+        base = str(description or "").strip()
+        if args_schema is None:
+            return base
+        fields = getattr(args_schema, "model_fields", None) or {}
+        arg_lines: list[str] = []
+        for field_name, model_field in fields.items():
+            field_desc = str(getattr(model_field, "description", "") or "").strip()
+            arg_lines.append(f"{field_name}: {field_desc}" if field_desc else str(field_name))
+        if not arg_lines:
+            return base
+        suffix = "Args:\n" + "\n".join(arg_lines)
+        return f"{base}\n{suffix}" if base else suffix
 
     def _get_nodejs(self) -> str:
         if self._nodejs:
@@ -279,6 +302,19 @@ class McpManager:
                         raise RuntimeError("SSE 模式缺少 url")
                     handle.transport_ctx = sse_client(url)
                     read_stream, write_stream = await handle.transport_ctx.__aenter__()
+                elif transport in {"streamable-http", "streamable_http", "http"}:
+                    url = str(cfg.get("url") or "").strip()
+                    if not url:
+                        raise RuntimeError("Streamable HTTP 模式缺少 url")
+                    headers = cfg.get("headers") or {}
+                    if headers is not None and not isinstance(headers, dict):
+                        raise RuntimeError("Streamable HTTP headers 必须是对象")
+                    handle.transport_ctx = streamablehttp_client(
+                        url,
+                        headers={str(k): str(v) for k, v in dict(headers or {}).items()},
+                    )
+                    stream_result = await handle.transport_ctx.__aenter__()
+                    read_stream, write_stream = stream_result[0], stream_result[1]
                 else:
                     server_params = self._custom_stdio_params(cfg) if cfg.get("custom") else self._builtin_stdio_params(server_id, cfg)
                     handle.server_params = server_params
@@ -374,6 +410,7 @@ class McpManager:
             "command": cfg.get("command") or ("node" if bool(cfg.get("custom", False)) else "builtin"),
             "args": list(cfg.get("args") or []),
             "url": str(cfg.get("url") or ""),
+            "headers": dict(cfg.get("headers") or {}),
             "status": "stopped",
             "running": False,
             "tool_count": 0,
