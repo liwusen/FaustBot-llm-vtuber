@@ -90,6 +90,13 @@ function apiLocal(method, url, payload) {
 }
 
 function addSection(title, bodyNodes, full = true) {
+  // If caller passed a single node that's already a `.card`, append it directly
+  if (Array.isArray(bodyNodes) && bodyNodes.length === 1 && bodyNodes[0] instanceof HTMLElement && bodyNodes[0].classList.contains('card')) {
+    const target = (state && state._activeContainer) || (els && els.cardsRoot);
+    if (target) target.append(bodyNodes[0]);
+    return;
+  }
+
   const section = el("section", `card section ${full ? "full-span" : ""}`.trim());
   const t = el("h3", "section-title", title);
   section.append(t);

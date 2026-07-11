@@ -32,6 +32,9 @@ function renderMemoryModule() {
 }
 
 function renderMemoryTree(currentDir) {
+  const renderToken = Symbol("memory-tree-render");
+  state._memoryTreeRenderToken = renderToken;
+
   const doRefresh = async () => {
     await ensureModuleData("memory");
     refreshModule();
@@ -214,6 +217,7 @@ function renderMemoryTree(currentDir) {
   (async function renderDetailAndEntityChildren() {
     const selPath = state.kbSelectedPath || "";
     if (!selPath) return;
+    if (state._memoryTreeRenderToken !== renderToken) return;
 
     const metaTable = el("div", "info-grid");
     metaTable.style.marginTop = "6px";
@@ -365,6 +369,7 @@ function renderMemoryTree(currentDir) {
       }
       return null;
     }
+    if (state._memoryTreeRenderToken !== renderToken) return;
     addSection("详情", [detailBox]);
 
     // Entity children - only for file nodes
@@ -402,6 +407,7 @@ function renderMemoryTree(currentDir) {
           row.append(label);
           entBox.append(row);
         }
+        if (state._memoryTreeRenderToken !== renderToken) return;
         addSection("文档实体 (" + entChildren.length + ")", [entBox]);
       }
     }
@@ -625,6 +631,14 @@ function renderMemoryGraph() {
   const log = function(msg) { console.log("[Graph] " + msg); };
 
   async function openLinkedEntityFile(entityId) {
+    if (String(entityId || "").startsWith("path:")) {
+      const path = normalizeKbPath(entityId.slice("path:".length) || "/");
+      state.kbSelectedPath = path === "/" ? "" : path;
+      state.kbCurrentDir = path === "/" ? "/" : kbParentPath(path);
+      state.memoryView = "tree";
+      refreshModule();
+      return;
+    }
     const resp = await cfgApi("GET", "/faust/memory/graph/entity-detail", null, { entity_id: entityId });
     const detail = (resp && resp.detail) ? resp.detail : null;
     const files = detail && Array.isArray(detail.linked_files) ? detail.linked_files : [];
@@ -724,8 +738,8 @@ function renderMemoryGraph() {
   // ── Context hint ──
   const ctxHint = el("div", "card-help");
   ctxHint.textContent = state.kbSelectedPath
-    ? "基于选中文件 \"" + state.kbSelectedPath + "\" 的实体图谱（2跳展开）"
-    : "在树上选中一个文件查看其关联实体图谱";
+    ? "基于当前选中路径 \"" + state.kbSelectedPath + "\" 的图谱范围展示"
+    : "基于当前目录 \"" + (state.kbCurrentDir || "/") + "\" 的图谱范围展示";
   addSection("", [ctxHint]);
   // ── Search result list (below graph) ──
   {
@@ -878,6 +892,31 @@ function renderMemoryGraph() {
             }
           }
         } catch (_) {}
+        }
+      } else if (state.kbCurrentDir) {
+        const dirNodeId = "path:/" + String(state.kbCurrentDir || "/").replace(/^\//, "").replace(/\/$/, "");
+        const normalizedDirNodeId = dirNodeId === "path:/" ? "path:/" : dirNodeId;
+        const depth = parseInt(depthSlider.value) || 3;
+        log("[initGraph] currentDir branch: " + state.kbCurrentDir + " node=" + normalizedDirNodeId + " depth=" + depth);
+        const expResp = await cfgApi("GET", "/faust/memory/graph/expand", null, { entity_id: normalizedDirNodeId, depth: depth });
+        const items = expResp.items || [];
+        const expEdges = expResp.edges || [];
+        const dirName = state.kbCurrentDir === "/" ? "/" : state.kbCurrentDir.split("/").pop() || state.kbCurrentDir;
+        const seenIds = new Set([normalizedDirNodeId]);
+        nodes.push({ id: normalizedDirNodeId, name: dirName, entity_type: "dir", type: "entity" });
+        for (const n of items) {
+          if (!seenIds.has(n.id)) {
+            seenIds.add(n.id);
+            nodes.push({ id: n.id, name: n.name, entity_type: n.entity_type || n.type, type: "entity", description: n.description });
+          }
+        }
+        const seenEdgeKeys = new Set();
+        for (const e of expEdges) {
+          const ek = e.key || e.source + "->" + e.target;
+          if (!seenEdgeKeys.has(ek)) {
+            seenEdgeKeys.add(ek);
+            edges.push({ source: e.source, target: e.target, type: e.type, key: ek });
+          }
         }
       } else {
         const [fullData] = await Promise.all([
@@ -1178,7 +1217,8 @@ function renderMemorySearch() {
           tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : "",
         ].join("");
         row.append(left);
-        const graphBtn = makeButton("🔗 实体", async () => {
+        const graphBtn = makeButton("🔗 实体", async (evt) => {
+          evt.stopPropagation();
           state.kbSelectedPath = normalizeKbPath(it.path);
           state.memoryView = "graph";
           try {
@@ -1193,6 +1233,8 @@ function renderMemorySearch() {
         graphBtn.style.padding = "2px 8px";
         graphBtn.style.flexShrink = "0";
         const openBtn = makeButton("📄 文件", () => openResult(it.path), "btn btn-ghost");
+        openBtn.addEventListener("click", (evt) => evt.stopPropagation());
+        graphBtn.addEventListener("click", (evt) => evt.stopPropagation());
         openBtn.style.fontSize = "11px";
         openBtn.style.padding = "2px 8px";
         openBtn.style.flexShrink = "0";

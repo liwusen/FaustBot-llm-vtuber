@@ -258,7 +258,7 @@ class ArayaRuntime:
         if idle_minutes is not None:
             state["idle_minutes"] = max(1.0, float(idle_minutes))
         self._save_state(state)
-        return await self.get_status()
+        return self.get_status()
 
     def _build_tools(self):
 

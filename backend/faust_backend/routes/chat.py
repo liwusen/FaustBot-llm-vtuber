@@ -180,7 +180,7 @@ async def _replace_session_with_summary(summary: str) -> None:
 
 
 async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -> tuple[bool, str]:
-    if not _is_slash_command(text):
+    if not _is_slash_command(text) or text.startswith("/skill:"):
         return False, ""
     name, arg = _parse_slash_command(text)
     if not name:
@@ -320,7 +320,9 @@ async def chat_websocket(websocket: WebSocket):
             handled, command_reply = await _handle_slash_command(text, websocket)
             if handled:
                 await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
+#               await websocket.send_text(json.dumps({"type": "delta","content":command_reply}))
                 await websocket.send_text(json.dumps({"type": "done", "reply": command_reply}, ensure_ascii=False))
+                log.info(f"Slash Command Result:{command_reply}")
                 continue
             if not state.RUNTIME_READY or state.agent is None:
                 await websocket.send_text(json.dumps({"type": "error", "error": state.runtime_not_ready_message(), "runtime": state.runtime_status_payload()}, ensure_ascii=False))

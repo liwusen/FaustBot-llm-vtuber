@@ -1256,7 +1256,26 @@ class GraphStore:
         if not self._has_node(entity_id):
             return None
         ndata = self._graph.nodes[entity_id]
-        if ndata.get("type") != "entity":
+        node_type = str(ndata.get("type", ""))
+        if node_type != "entity":
+            if _is_path_id(entity_id):
+                path = _id_to_path(entity_id)
+                rel_count = 0
+                for _ in self._graph.edges(entity_id):
+                    rel_count += 1
+                for _ in self._graph.in_edges(entity_id):
+                    rel_count += 1
+                return {
+                    "id": entity_id,
+                    "name": str(ndata.get("name", path or "/")),
+                    "entity_type": node_type or "path",
+                    "description": str(ndata.get("description", "")),
+                    "properties": dict(ndata.get("properties", {})),
+                    "kb_refs": [path],
+                    "linked_files": [path],
+                    "relations_count": rel_count,
+                    "created_at": str(ndata.get("created_at", ndata.get("updated_at", ""))),
+                }
             return None
         # count relations
         rel_count = 0

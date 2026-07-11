@@ -50,7 +50,7 @@ var META = {
   MM_BRIDGE_MAX_SCAN: { label: "多模态桥接扫描条数", help: "每轮对话从最近 ToolMessage 中扫描图片输出的最大条数。" },
   MM_BRIDGE_REMOVE_SOURCE: { label: "桥接后删除源消息", help: "开启后，转换完成的源 ToolMessage 会从上下文中移除。" },
   MM_BRIDGE_KEEP_TURNS: { label: "图片消息保留轮数", help: "生成的图片多模态消息在几轮对话后自动删除；0 表示用完即删。" },
-  mcp_servers: { label: "MCP Server 配置", help: "通过 bundled Node.js 或 SSE 连接的 MCP server 配置。" },
+  mcp_servers: { label: "MCP 服务器 配置", help: "通过 bundled Node.js 或 SSE 连接的 MCP server 配置。" },
 };
 
 var FIELD_OPTIONS = {
@@ -108,21 +108,21 @@ META.THINKING_INTENSITY = { label: "思考强度", help: "低/中/高，对应�
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY"];
 var MODULES = [
-  { id: "overview", title: "概览", desc: "当前 Agent、模型、运行时状态摘要。" },
+  { id: "overview", title: "概览", desc: "当前角色、模型、状态概览。" },
   { id: "ai", title: "AI 服务商", desc: "模型、接口地址与密钥配置。" },
-  { id: "live2d", title: "模型", desc: "模型类型切换、位置、缩放与显示行为。" },
+  { id: "live2d", title: "模型", desc: "模型切换与显示控制。" },
   { id: "speech", title: "语音", desc: "ASR/TTS 模式与参数配置。" },
   { id: "agent", title: "角色", desc: "角色文件编辑、切换与创建。" },
-  { id: "memory", title: "记忆", desc: "知识库树、图谱、搜索一体化管理。" },
-  { id: "araya", title: "Araya", desc: "Araya 状态监控与触发。" },
-  { id: "components", title: "组件", desc: "管理 FunASR、TTS 和 Minecraft 组件状态与启停。" },
-  { id: "mcp", title: "MCP Server", desc: "管理 MCP server 配置、启停与日志。" },
+  { id: "memory", title: "记忆", desc: "知识库一体化管理。" },
+  { id: "araya", title: "Araya", desc: "Araya 记忆库自动维护管理。" },
+  { id: "components", title: "组件", desc: "管理 ASR/TTS/MC控制器 组件。" },
+  { id: "mcp", title: "MCP 服务器", desc: "管理 MCP 服务器配置、启停与日志。" },
   // runtime 从侧边栏移除，入口在高级页面
   // { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
-  { id: "triggers", title: "触发器", desc: "计划任务列表与编辑。" },
-  { id: "skills", title: "技能", desc: "Skill 安装、启停、删除。" },
-  { id: "plugins", title: "插件", desc: "插件启停、重载、配置。" },
-  { id: "advanced", title: "高级", desc: "未归类字段与扩展配置。" },
+  { id: "triggers", title: "触发器", desc: "计划AI任务列表与编辑。" },
+  { id: "skills", title: "技能", desc: "Skill 安装与管理" },
+  { id: "plugins", title: "插件", desc: "FaustBot插件安装与管理" },
+  { id: "advanced", title: "高级", desc: "未归类项目与高级配置。" },
 ];
 
 // ── 图谱常量 ──

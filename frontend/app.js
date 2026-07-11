@@ -1251,9 +1251,41 @@ import { initAutocomplete } from './libs/autocomplete.js';
       const request = currentChatRequest;
       currentChatRequest.replyText = reply;
       currentChatRequest.motionTokenBuffer = '';
-      if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim() && !reply.includes('<NO_TTS_OUTPUT>')){
-        await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
+
+      // If there were no delta messages (entries empty), chunk the final reply
+      // into sentences, display them and enqueue TTS for each chunk.
+      if ((!request.entries || request.entries.length === 0) && reply && reply.trim()){
+        try{
+          const split = extractCompletedSentences(reply);
+          request.entries = [];
+          for (const sentence of split.completed){
+            const visible = stripMotionTokens(sentence);
+            if (!visible) continue;
+            request.entries.push({ type: 'text', text: visible });
+            // show bubble immediately
+            showResultBubble('ai', request.entries);
+            // fire-and-forget TTS so UI updates are immediate
+            if (!visible.includes('<NO_TTS_OUTPUT>')){
+              enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
+            }
+          }
+          if (split.rest && split.rest.trim()){
+            const visible = stripMotionTokens(split.rest);
+            if (visible){
+              request.entries.push({ type: 'text', text: visible });
+              showResultBubble('ai', request.entries);
+              if (!visible.includes('<NO_TTS_OUTPUT>')){
+                enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
+              }
+            }
+          }
+        }catch(e){ console.warn('chunking done reply failed', e); }
+      } else {
+        if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim() && !reply.includes('<NO_TTS_OUTPUT>')){
+          await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
+        }
       }
+
       currentChatRequest.pendingBuffer = '';
       agentIsProcessing = false;
       if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
@@ -1716,6 +1748,16 @@ import { initAutocomplete } from './libs/autocomplete.js';
   // wire up buttons (use the ASRController-like API)
   if (startAsrBtn) startAsrBtn.addEventListener('click', ()=> startRecording());
   if (stopAsrBtn) stopAsrBtn.addEventListener('click', ()=> stopRecording());
+  if (textChatSendBtn) textChatSendBtn.addEventListener('click', () => { sendTextChatMessage().catch(()=>{}); });
+  if (textChatInput) {
+    textChatInput.addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        // prevent form submit-like behavior
+        e.preventDefault();
+        sendTextChatMessage().catch(()=>{});
+      }
+    });
+  }
   document.addEventListener('keydown', (e)=>{
     if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')){
       e.preventDefault();

@@ -1,11 +1,11 @@
 {
-  "name": "faust-live2d-frontend",
-  "version": "1.6.3",
+  "name": "faust-frontend",
+  "version": "2.0.0",
   "private": true,
   "main": "electron-main.js",
   "license": "MIT",
   "author": "allenlee",
-  "description": "Faust Live2D frontend application",
+  "description": "FaustBot frontend application",
   "scripts": {
     "start": "electron .",
     "build:bundle": "esbuild libs/configer/.codemirror-entry.js --bundle --platform=browser --format=iife --outfile=libs/codemirror/codemirror-bundle.js --minify-syntax",

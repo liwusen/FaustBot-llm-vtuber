@@ -5,7 +5,7 @@ export function formatResultBubbleText(source, text) {
   if (!raw) return '';
   if (source === 'user') return `用户：${raw}`;
   if (source === 'error') return `!错误!:${raw}`;
-  return `AI：${raw}`;
+  return `${raw}`;
 }
 
 export function formatToolBubbleValue(value) {

@@ -50,13 +50,21 @@ export function initLogPanel() {
 
   function togglePanel() {
     const isHidden = logPanel && logPanel.style.display === 'none';
-    if (logPanel) logPanel.style.display = isHidden ? 'flex' : 'none';
+    if (logPanel) {
+      logPanel.style.display = isHidden ? 'flex' : 'none';
+      try{ logPanel.style.pointerEvents = 'auto'; }catch(e){}
+      try{ logPanel.style.zIndex = '99999'; }catch(e){}
+    }
     if (logWs) { logWs.close(); logWs = null; }
     if (isHidden) connectLogWs();
   }
 
   function open() {
-    if (logPanel) logPanel.style.display = 'flex';
+    if (logPanel) {
+      logPanel.style.display = 'flex';
+      try{ logPanel.style.pointerEvents = 'auto'; }catch(e){}
+      try{ logPanel.style.zIndex = '99999'; }catch(e){}
+    }
     connectLogWs();
   }
 
