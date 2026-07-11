@@ -413,11 +413,24 @@ class UpdateManager:
                 lines.append(f"{pad}if ($rel -eq '{escaped}') {{ $skip = $true }}")
         return lines
 
+    def _preserve_dir_names(self) -> list[str]:
+        names: list[str] = []
+        for pat in PRESERVE_PATTERNS:
+            if not pat.endswith("/"):
+                continue
+            trimmed = pat.rstrip("/")
+            if "/" in trimmed:
+                continue
+            if trimmed:
+                names.append(trimmed)
+        return names
+
     def generate_update_script(self, extracted_src: Path, tag: str, dry_run: bool = False) -> str:
         bat_path = Path(tempfile.gettempdir()) / f"faust_apply_update_{tag}.ps1"
 
         preserve_conds = self._preserve_ps1_conditions(8)
         preserve_rel_conds = self._preserve_rel_ps1_conditions(8)
+        preserve_dir_names = self._preserve_dir_names()
 
         lines = [
             "#!powershell",
@@ -431,6 +444,8 @@ class UpdateManager:
             'if ($DryRun) {',
             "    Write-Host '[DRY-RUN] Mode enabled - no files will be modified'",
             "}",
+            '$copyCount = 0',
+            '$removeCount = 0',
             "",
         ]
 
@@ -453,25 +468,31 @@ class UpdateManager:
             "# ── Step 1: Copy new files (skip preserved) ──",
             'if ($DryRun) { Write-Host "Step 1: Scanning files to copy..." }',
             'else { Write-Host "Step 1: Copying update files..." }',
-            "Get-ChildItem -LiteralPath $extracted -Force | ForEach-Object {",
-            "    $name = $_.Name",
-            "    $skip = $false",
+            "function Copy-FaustTree($srcRoot, $dstRoot, $prefix) {",
+            "    Get-ChildItem -LiteralPath $srcRoot -Force | ForEach-Object {",
+            "        $name = $_.Name",
+            '        $rel = if ([string]::IsNullOrEmpty($prefix)) { $name } else { "$prefix/$name" }',
+            "        $skip = $false",
         ]
-        lines += preserve_conds
+        lines += preserve_rel_conds
         lines += [
-            "    if (-not $skip) {",
-            "        $dest = Join-Path $installRoot $name",
+            "        if ($skip) { return }",
+            "        $dest = Join-Path $dstRoot $name",
+            '        if ($_.PSIsContainer) {',
+            '            if (-not $DryRun -and -not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }',
+            '            Copy-FaustTree $_.FullName $dest $rel',
+            '            return',
+            '        }',
             '        if ($DryRun) {',
             '            Write-Host "  [DRY-RUN] Would copy: $name"',
-            '        } else {',
-            "            if ($_.PSIsContainer) {",
-            "                Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force",
-            "            } else {",
-            "                Copy-Item -LiteralPath $_.FullName -Destination $dest -Force",
-            "            }",
-            "        }",
+            '            return',
+            '        }',
+            '        Copy-Item -LiteralPath $_.FullName -Destination $dest -Force',
+            '        $script:copyCount += 1',
+            '        if (($script:copyCount % 100) -eq 0) { Write-Host ("{0} file writed" -f $script:copyCount) }',
             "    }",
             "}",
+            "Copy-FaustTree $extracted $installRoot ''",
             'if (-not $DryRun) { Write-Host "Step 1 done." }',
             "",
         ]
@@ -484,27 +505,47 @@ class UpdateManager:
             "",
             "# Build relative path set from extracted release",
             '$newItems = @{}',
-            'Get-ChildItem -LiteralPath $extracted -Recurse -Force | ForEach-Object {',
-            '    $rel = $_.FullName.Substring($extracted.Length + 1).Replace("\\", "/")',
-            '    $newItems[$rel.ToLower()] = $true',
-            '}',
-            "",
-            "# Walk install root and delete items not in new release (skip preserved)",
-            'Get-ChildItem -LiteralPath $installRoot -Recurse -Force | ForEach-Object {',
-            '    $rel = $_.FullName.Substring($installRoot.Length + 1).Replace("\\", "/")',
-            '    if ($newItems.ContainsKey($rel.ToLower())) { return }',
-            '    $skip = $false',
+            "function Collect-NewItems($srcRoot, $prefix) {",
+            '    Get-ChildItem -LiteralPath $srcRoot -Force | ForEach-Object {',
+            '        $name = $_.Name',
+            '        $rel = if ([string]::IsNullOrEmpty($prefix)) { $name } else { "$prefix/$name" }',
+            '        $skip = $false',
         ]
         lines += preserve_rel_conds
         lines += [
-            "    if (-not $skip) {",
+            '        if ($skip) { return }',
+            '        $script:newItems[$rel.ToLower()] = $true',
+            '        if ($_.PSIsContainer) { Collect-NewItems $_.FullName $rel }',
+            '    }',
+            '}',
+            'Collect-NewItems $extracted ""',
+            "",
+            "# Walk install root and delete items not in new release (skip preserved)",
+            '$preserveDirNames = @(' + ', '.join(f'"{name}"' for name in preserve_dir_names) + ')',
+            'function Remove-Orphans($root, $prefix) {',
+            '    Get-ChildItem -LiteralPath $root -Force | ForEach-Object {',
+            '        $name = $_.Name',
+            '        if ($_.PSIsContainer -and ($preserveDirNames -contains $name)) { return }',
+            '        $rel = if ([string]::IsNullOrEmpty($prefix)) { $name } else { "$prefix/$name" }',
+            '        if ($script:newItems.ContainsKey($rel.ToLower())) {',
+            '            if ($_.PSIsContainer) { Remove-Orphans $_.FullName $rel }',
+            '            return',
+            '        }',
+            '        $skip = $false',
+        ]
+        lines += preserve_rel_conds
+        lines += [
+            '        if ($skip) { return }',
             '        if ($DryRun) {',
             '            Write-Host "  [DRY-RUN] Would remove: $rel"',
-            '        } else {',
-            '            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue',
+            '            return',
             '        }',
-            "    }",
-            "}",
+            '        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue',
+            '        $script:removeCount += 1',
+            '        if (($script:removeCount % 100) -eq 0) { Write-Host ("{0} file writed" -f $script:removeCount) }',
+            '    }',
+            '}',
+            'Remove-Orphans $installRoot ""',
             "",
             "# Remove empty directories left behind",
             'if (-not $DryRun) {',
