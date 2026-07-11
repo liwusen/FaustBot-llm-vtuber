@@ -8,14 +8,12 @@
 </div>
 
 ### 一个AI驱动的 Vtuber/桌宠
-
-**仍然处于早期开发阶段**
-
+### 🎉Faustbot 2.0 已发布!
 ---
 
 ### 功能列表
 
-- [x] 多AGENT支持
+- [x] 多角色支持
 
 - [x] ASR 语音识别
 
@@ -23,31 +21,21 @@
 
 - [x] 音乐播放（唱歌）
 
-- [x] 多模态模型记忆系统
-
-- [x] 每个Agent单独的Workspace
+- [x] 多模态树状 长期记忆系统
 
 - [x] 灵动交互系统 (前端HTML小窗口交互)
 
-- [x] 编辑文件，文件读写等基本工具
+- [x] 编辑文件，文件读写等基本能力
 
-- [x] 调用VLM操作用户电脑
+- [x] 多模态能力:读屏幕\摄像头\图片
 
 - [x] 在线搜索
 
 - [x] AI 玩 Minecraft (基于Mineflyer构建，无缝体验)
 
-- [x] 读取屏幕内容
-
-- [x] 高速响应 平均时间<1s
-
-- [x] 插件系统 [插件市场](https://liwusen.github.io/FaustBot-llm-vtuber/)
+- [x] 多功能插件系统 [插件市场](https://liwusen.github.io/FaustBot-llm-vtuber/)
 
 - [x] 兼容Openclaw Skill && Clawhub 技能
-
-- [x] 操作网页 (Agent Browser)
-
-- [x] 多模态模型支持
 
 - [x] 云端语音识别/文字转语音支持
 
@@ -55,17 +43,9 @@
 
 - [x] 高效的工具实现
 
----
+- [x] MCP 客户端支持
 
-### 功能计划(长期)
-
-| 大饼         | 解释                 | 预计时间        |
-| ---------- | ------------------ | ----------- |
-| Minecraft  | 使用Mineflyer，从底层完成  | 完成          |
-| 游览器 操作     | Agent Browser 能力接入 | 完成(Skill系统) |
-| OCR/VLLM支持 |                    | 完成          |
-| 前端优化       |                    | 完成          |
-| 灵动交互       | 允许AI编写HTML实现交互     | 完成          |
+- [x] AI自动操作游览器
 
 ---
 
