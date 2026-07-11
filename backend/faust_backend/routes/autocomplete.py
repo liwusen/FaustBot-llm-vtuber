@@ -10,6 +10,44 @@ log = get_logger("faust.autocomplete")
 router = APIRouter(tags=["autocomplete"])
 router.description = "斜杠命令自动补全：/skill:<slug> 等"
 
+BASE_COMMANDS = [
+    {
+        "label": "clear",
+        "detail": "清空当前 Agent 会话 checkpoint，并重建运行时。",
+        "insert_text": "/clear",
+    },
+    {
+        "label": "compact",
+        "detail": "压缩当前会话上下文。",
+        "insert_text": "/compact",
+    },
+    {
+        "label": "session",
+        "detail": "查看当前会话上下文 token 占用。",
+        "insert_text": "/session",
+    },
+    {
+        "label": "status",
+        "detail": "查看 Skill、Plugin、服务与 MCP 概览。",
+        "insert_text": "/status",
+    },
+    {
+        "label": "thinking on",
+        "detail": "启用思考模式。",
+        "insert_text": "/thinking on",
+    },
+    {
+        "label": "thinking off",
+        "detail": "关闭思考模式。",
+        "insert_text": "/thinking off",
+    },
+    {
+        "label": "skill:",
+        "detail": "查看所有可用技能，选择后输入 skill 名称过滤",
+        "insert_text": "/skill:",
+    },
+]
+
 
 @router.post("/faust/autocomplete")
 async def autocomplete(payload: dict):
@@ -23,19 +61,33 @@ async def autocomplete(payload: dict):
 
     cmd_text = text[1:cursor].lstrip()
     items: list[dict] = []
-    
-    # ── Skill autocomplete ──
-    # Show /skill: command when user types just `/`, then filter skills after `skill:`
+
+    lower_cmd = cmd_text.lower()
+
+    # ── Base command autocomplete ──
     if not cmd_text:
-        # Just `/` typed — show /skill: as a command option
-        items.append({
-            "type": "command",
-            "label": "skill:",
-            "detail": "查看所有可用技能，选择后输入 skill 名称过滤",
-            "insert_text": "/skill:",
-            "cursor_offset": len("/skill:"),
-        })
-    elif cmd_text.lower().startswith("skill"):
+        for command in BASE_COMMANDS:
+            items.append({
+                "type": "command",
+                "label": command["label"],
+                "detail": command["detail"],
+                "insert_text": command["insert_text"],
+                "cursor_offset": len(command["insert_text"]),
+            })
+        return {"items": items}
+
+    for command in BASE_COMMANDS:
+        label = str(command["label"])
+        if label.startswith(lower_cmd):
+            items.append({
+                "type": "command",
+                "label": label,
+                "detail": command["detail"],
+                "insert_text": command["insert_text"],
+                "cursor_offset": len(command["insert_text"]),
+            })
+
+    if lower_cmd.startswith("skill"):
         prefix = ""
         if ":" in cmd_text:
             parts = cmd_text.split(":", 1)
@@ -49,7 +101,7 @@ async def autocomplete(payload: dict):
                 slug = str(s.get("slug") or "")
                 if not s.get("enabled", True):
                     continue
-                if prefix and prefix not in slug:
+                if prefix and not slug.startswith(prefix):
                     continue
                 label = slug
                 detail = str(s.get("description") or _read_skill_summary(slug) or "")

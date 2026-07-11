@@ -80,13 +80,15 @@ async def admin_put_mcp_server(server_id: str, payload: dict):
         "command": str(body.get("command") or "node").strip(),
         "args": [str(x) for x in list(body.get("args") or [])],
         "url": str(body.get("url") or "").strip(),
+        "headers": {str(k): str(v) for k, v in dict(body.get("headers") or {}).items()},
     }
-    if transport == "sse":
+    if transport in {"sse", "streamable-http", "streamable_http", "http"}:
         item["custom"] = True
         item.pop("command", None)
     elif not item["custom"]:
         item.pop("command", None)
         item.pop("url", None)
+        item.pop("headers", None)
     mcp_servers = _load_mcp_config()
     mcp_servers[server_id] = item
     _save_mcp_config(mcp_servers)

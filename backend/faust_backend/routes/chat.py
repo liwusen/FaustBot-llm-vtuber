@@ -1,6 +1,8 @@
 import json
 import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.base import empty_checkpoint
 
 import faust_backend.backend2front as backend2frontend
 import faust_backend.events as events
@@ -8,16 +10,197 @@ import faust_backend.nimble as nimble
 import faust_backend.araya_runtime as araya_runtime
 import faust_backend.trigger_manager as trigger_manager
 import faust_backend.live_mode as live_mode
+import faust_backend.admin_runtime as admin_runtime
+import faust_backend.config_loader as conf
+import faust_backend.service_manager as service_manager
+import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import (
     invoke_agent_locked, stream_chat_agent_events, schedule_memory_record_sync,
+    rebuild_runtime, _build_chat_model,
 )
+from faust_backend.mcp_manager import get_mcp_manager
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.chat")
 
 router = APIRouter(tags=["chat"])
 router.description = "聊天/通信：WebSocket 流式聊天、命令转发、命令反馈，以及遗留的 POST 聊天接口"
+
+COMPACT_SYSTEM_PROMPT = """你是一个对话压缩器。你的任务是把当前 Agent 会话压缩成一段高密度中文摘要，供系统作为后续上下文继续使用。
+
+要求：
+1. 保留用户目标、未完成事项、关键约束、重要偏好、当前代码状态、失败尝试与结论。
+2. 保留仍然有效的文件路径、命令、配置状态、MCP/Plugin/Skill/服务状态。
+3. 图片或多模态内容只能转述其与任务相关的信息，不要保留无关细节。
+4. 工具调用必须折叠成“做了什么、结果是什么、后续影响是什么”。
+5. 不要写寒暄，不要写面向用户的话，不要写 Markdown 标题。
+6. 输出必须是单段或少量短段落纯文本，直接可作为系统上下文拼接。"""
+
+
+def _is_slash_command(text: str) -> bool:
+    return str(text or "").startswith("/")
+
+
+def _parse_slash_command(text: str) -> tuple[str, str]:
+    raw = str(text or "").strip()
+    body = raw[1:].strip()
+    if not body:
+        return "", ""
+    parts = body.split(None, 1)
+    name = str(parts[0] or "").strip().lower()
+    arg = str(parts[1] or "").strip() if len(parts) > 1 else ""
+    return name, arg
+
+
+async def _get_checkpoint_messages() -> list:
+    if state.checkpointer is None:
+        return []
+    cfg = {"configurable": {"thread_id": state.THREAD_ID}}
+    checkpoint_tuple = await state.checkpointer.aget_tuple(cfg)
+    if checkpoint_tuple is None:
+        return []
+    checkpoint = getattr(checkpoint_tuple, "checkpoint", None)
+    if not isinstance(checkpoint, dict):
+        return []
+    values = checkpoint.get("channel_values") or {}
+    messages = values.get("messages") or []
+    return list(messages) if isinstance(messages, list) else []
+
+
+def _message_to_plain_text(message) -> str:
+    msg_type = type(message).__name__
+    content = getattr(message, "content", "")
+    text = state.message_content_to_text(content)
+    if not text and isinstance(content, list):
+        text = json.dumps(content, ensure_ascii=False)
+    return f"[{msg_type}] {text}".strip()
+
+
+async def _collect_status_summary() -> str:
+    skill_manager._ensure_builtin_skills(agent_name=state.AGENT_NAME)
+    skills = [item for item in skill_manager.list_skills(agent_name=state.AGENT_NAME) if item.get("enabled", True)]
+    plugins = state.plugin_manager.list_plugins() if state.plugin_manager else []
+    enabled_plugins = [item for item in plugins if item.get("enabled")]
+    services = service_manager.list_services(include_log=False)
+    mcp_items = get_mcp_manager().list_server_statuses(include_log=False)
+    lines = [
+        f"Agent: {state.AGENT_NAME}",
+        f"Thinking: {'on' if conf.THINKING_ENABLED else 'off'}",
+        f"Skills({len(skills)}): " + (", ".join(item.get("slug") or "" for item in skills) if skills else "none"),
+        f"Plugins({len(enabled_plugins)}): " + (", ".join(item.get("id") or "" for item in enabled_plugins) if enabled_plugins else "none"),
+        "Services:",
+    ]
+    for item in services:
+        lines.append(f"- {item.get('key')}: {'running' if item.get('is_running') else 'stopped'}")
+    lines.append("MCP:")
+    for item in mcp_items:
+        lines.append(f"- {item.get('server_id')}: {item.get('status')} tools={item.get('tool_count')}")
+    return "\n".join(lines)
+
+
+async def _set_thinking_enabled(enabled: bool) -> str:
+    admin_runtime.save_config({"public": {"THINKING_ENABLED": bool(enabled)}})
+    await rebuild_runtime(reset_dialog=False, no_initial_chat=True)
+    return f"Thinking 已{'开启' if enabled else '关闭'}"
+
+
+async def _session_token_summary() -> str:
+    messages = await _get_checkpoint_messages()
+    if not messages:
+        return "当前会话没有可统计的上下文。"
+    chat_model = _build_chat_model(model_name=conf.CHAT_MODEL)
+    try:
+        total = chat_model.get_num_tokens_from_messages(messages)
+        return f"当前会话 messages={len(messages)}，估算 tokens={total}"
+    except NotImplementedError:
+        joined = "\n\n".join(_message_to_plain_text(message) for message in messages)
+        try:
+            total = chat_model.get_num_tokens(joined)
+            return f"当前会话 messages={len(messages)}，估算 tokens={total}（按纯文本降级估算）"
+        except Exception:
+            approx = max(1, len(joined.encode("utf-8")) // 4)
+            return f"当前会话 messages={len(messages)}，估算 tokens≈{approx}（按字节降级估算）"
+
+
+async def _clear_current_session() -> str:
+    if state.checkpointer is not None and hasattr(state.checkpointer, "adelete_thread"):
+        await state.checkpointer.adelete_thread(str(state.THREAD_ID))
+    info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
+    return f"已清空当前会话并重建运行时。ready={info.get('ready')} status={info.get('status')}"
+
+
+async def _compact_session_stream(websocket: WebSocket) -> str:
+    messages = await _get_checkpoint_messages()
+    if not messages:
+        return "当前会话没有可压缩的上下文。"
+    transcript = "\n\n".join(_message_to_plain_text(message) for message in messages)
+    llm = _build_chat_model(model_name=conf.CHAT_MODEL)
+    chunks: list[str] = []
+    payload = [
+        SystemMessage(content=COMPACT_SYSTEM_PROMPT),
+        HumanMessage(content=transcript),
+    ]
+    async for chunk in llm.astream(payload):
+        delta = state.message_content_to_text(getattr(chunk, "content", ""))
+        if not delta:
+            continue
+        chunks.append(delta)
+        await websocket.send_text(json.dumps({"type": "delta", "content": delta}, ensure_ascii=False))
+    summary = "".join(chunks).strip()
+    if not summary:
+        raise RuntimeError("对话压缩结果为空")
+    await _replace_session_with_summary(summary)
+    return summary
+
+
+async def _replace_session_with_summary(summary: str) -> None:
+    if state.checkpointer is None:
+        raise RuntimeError("checkpointer 未初始化，无法压缩会话")
+    if hasattr(state.checkpointer, "adelete_thread"):
+        await state.checkpointer.adelete_thread(str(state.THREAD_ID))
+    checkpoint = empty_checkpoint()
+    checkpoint["channel_values"]["messages"] = [
+        SystemMessage(content=f"你的压缩后的上下文:\n{summary}")
+    ]
+    checkpoint["updated_channels"] = ["messages"]
+    config = {
+        "configurable": {
+            "thread_id": str(state.THREAD_ID),
+            "checkpoint_ns": "",
+        }
+    }
+    metadata = {
+        "source": "compact",
+        "step": 0,
+        "parents": {},
+        "ls_integration": "faust_slash_compact",
+    }
+    await state.checkpointer.aput(config, checkpoint, metadata, {"messages": 1})
+
+
+async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -> tuple[bool, str]:
+    if not _is_slash_command(text):
+        return False, ""
+    name, arg = _parse_slash_command(text)
+    if not name:
+        return True, "空命令"
+    if name == "thinking":
+        lowered = arg.lower()
+        if lowered not in {"on", "off"}:
+            return True, "用法: /thinking on 或 /thinking off"
+        return True, await _set_thinking_enabled(lowered == "on")
+    if name == "status":
+        return True, await _collect_status_summary()
+    if name == "session":
+        return True, await _session_token_summary()
+    if name == "clear":
+        return True, await _clear_current_session()
+    if name == "compact":
+        if websocket is None:
+            return True, "POST 接口暂不支持 /compact，请使用 WebSocket 聊天接口。"
+        return True, await _compact_session_stream(websocket)
+    return True, f"未知命令: /{name}"
 
 
 @router.post("/faust/chat")
@@ -27,6 +210,9 @@ async def chat_post(payload: dict):
         text = payload.get('text') or payload.get('message')
     if not text:
         return {"error": "no text provided"}
+    handled, command_reply = await _handle_slash_command(text)
+    if handled:
+        return {"reply": command_reply}
     if not state.RUNTIME_READY or state.agent is None:
         return {"error": state.runtime_not_ready_message(), "runtime": state.runtime_status_payload()}
     try:
@@ -130,6 +316,11 @@ async def chat_websocket(websocket: WebSocket):
                 text = payload.get("text") or payload.get("message")
             if not text:
                 await websocket.send_text(json.dumps({"type": "error", "error": "no text provided"}, ensure_ascii=False))
+                continue
+            handled, command_reply = await _handle_slash_command(text, websocket)
+            if handled:
+                await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
+                await websocket.send_text(json.dumps({"type": "done", "reply": command_reply}, ensure_ascii=False))
                 continue
             if not state.RUNTIME_READY or state.agent is None:
                 await websocket.send_text(json.dumps({"type": "error", "error": state.runtime_not_ready_message(), "runtime": state.runtime_status_payload()}, ensure_ascii=False))
