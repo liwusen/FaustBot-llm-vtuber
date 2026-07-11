@@ -75,6 +75,7 @@ PUBLIC_CONFIG_DEFAULTS = {
         "emotions": [],
         "tapImages": [],
         "mouthShapes": [],
+        "scale": 1.0,
         "motionDurationMs": 3000,
         "tapDurationMs": 700,
     },
@@ -233,6 +234,14 @@ def list_available_models() -> List[Dict[str, str]]:
     image_cfg = public_cfg.get("IMAGE_MODEL_CONFIG") or {}
     if isinstance(image_cfg, dict) and any(image_cfg.get(key) for key in ("baseImages", "emotions", "tapImages", "mouthShapes")):
         results.append({"label": "Images 模型", "path": "IMAGE_MODEL_CONFIG", "type": "images"})
+
+    image_root = Path(conf.IMAGE_MODEL_ROOT)
+    if image_root.exists():
+        for image_file in sorted(image_root.rglob("*")):
+            if not image_file.is_file() or image_file.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+                continue
+            rel = image_file.relative_to(image_root).as_posix()
+            results.append({"label": f"Image Asset | {image_file.stem}", "path": rel, "type": "image-asset"})
 
     return sorted(results, key=lambda x: x["path"])
 

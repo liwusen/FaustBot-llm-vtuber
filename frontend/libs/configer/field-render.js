@@ -445,6 +445,14 @@ function renderConfigModule(moduleId) {
         renderEmotions();
 
         const settingsBar = el("div", "toolbar");
+        const scaleInput = el("input", "number");
+        scaleInput.type = "number";
+        scaleInput.step = "0.05";
+        scaleInput.min = "0.1";
+        scaleInput.max = "4";
+        scaleInput.value = String(clone.scale || 1.0);
+        scaleInput.placeholder = "图片缩放";
+        scaleInput.addEventListener("input", () => { clone.scale = Number(scaleInput.value || 1.0); });
         const motionInput = el("input", "number");
         motionInput.type = "number";
         motionInput.value = String(clone.motionDurationMs || 3000);
@@ -455,7 +463,7 @@ function renderConfigModule(moduleId) {
         tapInput.value = String(clone.tapDurationMs || 700);
         tapInput.placeholder = "Tap 持续 ms";
         tapInput.addEventListener("input", () => { clone.tapDurationMs = Number(tapInput.value || 700); });
-        settingsBar.append(el("span", "card-help", "情绪持续(ms)"), motionInput, el("span", "card-help", "Tap 持续(ms)"), tapInput);
+        settingsBar.append(el("span", "card-help", "图片缩放"), scaleInput, el("span", "card-help", "情绪持续(ms)"), motionInput, el("span", "card-help", "Tap 持续(ms)"), tapInput);
 
         const actions = el("div", "toolbar");
         actions.append(

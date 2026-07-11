@@ -21,6 +21,7 @@ SKILL_TEMPLATE_ROOT = p_join(PROJECT_ROOT, 'skill_template')
 CONFIG_FILE_P_PATH = p_join(CONFIG_ROOT, 'faust.config.private.json')
 CONFIG_FILE_P_EXAMPLE = p_join(PROJECT_ROOT, 'faust.config.private.example.json')
 DATA_ROOT = p_join(CONFIG_ROOT, 'data')
+IMAGE_MODEL_ROOT = p_join(CONFIG_ROOT, 'models', 'image')
 CONFIG_FILE_PATH = p_join(CONFIG_ROOT, 'faust.config.json')
 PRIVATE_CONFIG_AUTO_CREATED = False
 PRIVATE_CONFIG_WAS_MISSING = False
@@ -69,7 +70,7 @@ def _ensure_faustbot_init():
         print("[config_loader]  ~/.faustbot 初始化完成")
 
     # Always ensure subdirectories and voice files exist
-    for subdir in ("data", "cache", "voices", "logs"):
+    for subdir in ("data", "cache", "voices", "logs", os.path.join("models", "image")):
         (faustbot / subdir).mkdir(parents=True, exist_ok=True)
 
     src_voices = project_root / "voices"

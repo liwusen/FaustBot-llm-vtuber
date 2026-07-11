@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
@@ -84,12 +85,21 @@ function getRepoRootDir() {
   return path.resolve(findFrontendProjectDir(), '..');
 }
 
+function getFaustHomeDir() {
+  return path.join(os.homedir(), '.faustbot');
+}
+
+function getImageModelDir() {
+  return path.join(getFaustHomeDir(), 'models', 'image');
+}
+
 function getStaticBases() {
   const frontendProjectDir = findFrontendProjectDir();
   const repoRootDir = getRepoRootDir();
   return {
     frontend: frontendProjectDir,
     repo: repoRootDir,
+    image_models: getImageModelDir(),
   };
 }
 
@@ -184,6 +194,8 @@ function resolveFrontendAssetPath(relativePath) {
     candidatePaths.push({ baseKey: 'frontend', path: path.join(frontendProjectDir, withoutFrontendPrefix) });
     candidatePaths.push({ baseKey: 'repo', path: path.join(repoRootDir, trimmed) });
     candidatePaths.push({ baseKey: 'repo', path: path.join(repoRootDir, withoutFrontendPrefix) });
+    candidatePaths.push({ baseKey: 'image_models', path: path.join(getImageModelDir(), trimmed) });
+    candidatePaths.push({ baseKey: 'image_models', path: path.join(getImageModelDir(), withoutFrontendPrefix) });
 
     if (/^2D\//i.test(withoutFrontendPrefix)) {
       candidatePaths.push({ baseKey: 'frontend', path: path.join(frontendProjectDir, withoutFrontendPrefix) });

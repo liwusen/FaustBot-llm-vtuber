@@ -16,11 +16,19 @@ VRM_EXPRESSIONS = ["neutral", "happy", "angry", "sad", "relaxed", "surprised"]
 def _resolve_live2d_model_path() -> Path:
     cfg = conf.config or {}
     model_rel = str(cfg.get("LIVE2D_MODEL_PATH", "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json") or "").strip()
-    frontend_root = Path(conf.CONFIG_ROOT).parent / "frontend"
     model_path = Path(model_rel)
-    if not model_path.is_absolute():
-        model_path = frontend_root / model_rel
-    return model_path
+    if model_path.is_absolute():
+        return model_path
+    frontend_root = Path(conf.PROJECT_ROOT).parent / "frontend"
+    candidates = [
+        frontend_root / model_rel,
+        frontend_root / "models" / model_rel,
+        Path(conf.CONFIG_ROOT) / model_rel,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def _read_model_motion_names(model_path: Path) -> list[str]:

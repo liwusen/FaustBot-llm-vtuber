@@ -1882,6 +1882,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
         path: String(item && item.path || '').trim(),
         openness: Math.max(0, Math.min(1, Number(item && item.openness) || 0)),
       })).filter((item) => item.path) : [],
+      scale: Math.max(0.1, Math.min(4, Number(cfg.scale) || 1.0)),
       motionDurationMs: Math.max(200, Number(cfg.motionDurationMs) || 3000),
       tapDurationMs: Math.max(100, Number(cfg.tapDurationMs) || 700),
     };
@@ -1911,6 +1912,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
       emotions,
       tapImages: await resolveList(cfg.tapImages),
       mouthShapes,
+      scale: cfg.scale,
       motionDurationMs: cfg.motionDurationMs,
       tapDurationMs: cfg.tapDurationMs,
     };
@@ -2049,6 +2051,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     app.stage.addChild(sprite);
     clearOverlay();
     baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
+    baseScale *= Math.max(0.1, Number(resolvedConfig.scale) || 1.0);
     const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
       ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
       : null;
