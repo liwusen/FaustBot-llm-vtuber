@@ -129,7 +129,7 @@ def load_configs():
     # —— Main LLM (all text/chat/speech/vision tasks) ——
     CHAT_API_KEY = private_config.get('CHAT_API_KEY', '')
     if not CHAT_API_KEY:
-        raise RuntimeError("未配置 CHAT_API_KEY，请检查 faust.config.private.json")
+        print("[config_loader] Critical: CHAT_API_KEY is not set in the private config. Some features may not work properly.")
     CHAT_MODEL = config.get('CHAT_MODEL', 'gpt-4o')
     CHAT_API_BASE = config.get('CHAT_API_BASE', 'https://www.dmxapi.cn/v1')
 
