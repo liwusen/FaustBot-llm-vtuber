@@ -1,8 +1,7 @@
 import functools
 import subprocess
 import sys
-import logging
-import uvicorn
+import time
 def show_return_wrapper(func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
@@ -58,4 +57,60 @@ class CrossPlatformClipboard:
                                       capture_output=True, text=True)
                 return result.stdout
 
-logger=logging.getLogger("uvicorn")
+class PerfTimer:
+
+    def __init__(self, names=None):
+        self._timers = {}
+        self._active = {}
+        self._order = names or []
+
+    def begin(self, name):
+        if name not in self._order:
+            self._order.append(name)
+        self._active[name] = time.perf_counter()
+
+    def end(self, name):
+        t = time.perf_counter()
+        start = self._active.pop(name, None)
+        delta = t - start if start is not None else 0
+        self._timers[name] = self._timers.get(name, 0) + delta
+        return delta
+
+    def drain(self):
+        for name in list(self._active.keys()):
+            self.end(name)
+
+    def get(self, name):
+        return self._timers.get(name, 0)
+
+    def total(self):
+        return sum(self._timers.values())
+
+    def itemize(self):
+        items = []
+        total = self.total()
+        for name in self._order:
+            ms = self._timers.get(name, 0) * 1000
+            items.append(f"{name}:{ms:.0f}ms")
+        items.append(f"= {total * 1000:.0f}ms")
+        return " ".join(items)
+
+    def print_pref(self, extra=""):
+        line = self.itemize()
+        if extra:
+            line = f"{line} | {extra}"
+        print(line)
+        self.reset(keep_order=True)
+
+    def __str__(self):
+        line = self.itemize()
+        if extra:
+            line = f"{line} | {extra}"
+        self.reset(keep_order=True)
+        return line
+    
+    def reset(self, keep_order=True):
+        self._timers.clear()
+        self._active.clear()
+        if not keep_order:
+            self._order.clear()

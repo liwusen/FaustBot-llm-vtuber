@@ -100,7 +100,7 @@ log.info("所有库加载完成")
 
 # ── 入口 ──
 if __name__ == "__main__":
-    log.info("FAUST 后端主服务正在启动，端口 %d...", PORT)
+    log.info("FaustBot 后端主服务正在启动，端口 %d...", PORT)
     config = uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="info")
     state.uvicorn_server = uvicorn.Server(config)
     state.uvicorn_server.run()
