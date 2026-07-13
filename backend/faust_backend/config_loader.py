@@ -66,7 +66,8 @@ def _ensure_faustbot_init():
                     elif item.is_file() and item.name != "plugins.state.json":
                         shutil.copy(item, dest)
             print(f"[config_loader]  已复制 default_plugins/ → {dst_plugins}")
-
+        else:
+            print(f"[config_loader]  WARNING:默认插件目录 {src_plugins} 不存在，跳过复制。")
         print("[config_loader]  ~/.faustbot 初始化完成")
 
     # Always ensure subdirectories and voice files exist
