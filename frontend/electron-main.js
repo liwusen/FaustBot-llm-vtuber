@@ -93,12 +93,22 @@ function getImageModelDir() {
   return path.join(getFaustHomeDir(), 'models', 'image');
 }
 
+function getLive2DModelDir() {
+  return path.join(getFaustHomeDir(), 'models', '2D');
+}
+
+function getVrmModelDir() {
+  return path.join(getFaustHomeDir(), 'models', 'VRM');
+}
+
 function getStaticBases() {
   const frontendProjectDir = findFrontendProjectDir();
   const repoRootDir = getRepoRootDir();
   return {
     frontend: frontendProjectDir,
     repo: repoRootDir,
+    live2d_models: getLive2DModelDir(),
+    vrm_models: getVrmModelDir(),
     image_models: getImageModelDir(),
   };
 }
@@ -189,17 +199,25 @@ function resolveFrontendAssetPath(relativePath) {
   } else {
     const trimmed = normalized.replace(/^[/\\]+/, '');
     const withoutFrontendPrefix = trimmed.replace(/^frontend\//i, '');
+    const withoutModel2DPrefix = withoutFrontendPrefix.replace(/^2D\//i, '');
+    const withoutVrmPrefix = withoutFrontendPrefix.replace(/^VRM\//i, '');
 
     candidatePaths.push({ baseKey: 'frontend', path: path.join(frontendProjectDir, trimmed) });
     candidatePaths.push({ baseKey: 'frontend', path: path.join(frontendProjectDir, withoutFrontendPrefix) });
     candidatePaths.push({ baseKey: 'repo', path: path.join(repoRootDir, trimmed) });
     candidatePaths.push({ baseKey: 'repo', path: path.join(repoRootDir, withoutFrontendPrefix) });
+    candidatePaths.push({ baseKey: 'live2d_models', path: path.join(getLive2DModelDir(), withoutModel2DPrefix) });
+    candidatePaths.push({ baseKey: 'vrm_models', path: path.join(getVrmModelDir(), withoutVrmPrefix) });
     candidatePaths.push({ baseKey: 'image_models', path: path.join(getImageModelDir(), trimmed) });
     candidatePaths.push({ baseKey: 'image_models', path: path.join(getImageModelDir(), withoutFrontendPrefix) });
 
     if (/^2D\//i.test(withoutFrontendPrefix)) {
+      candidatePaths.push({ baseKey: 'live2d_models', path: path.join(getLive2DModelDir(), withoutModel2DPrefix) });
       candidatePaths.push({ baseKey: 'frontend', path: path.join(frontendProjectDir, withoutFrontendPrefix) });
       candidatePaths.push({ baseKey: 'repo', path: path.join(repoRootDir, 'frontend', withoutFrontendPrefix) });
+    }
+    if (/^VRM\//i.test(withoutFrontendPrefix)) {
+      candidatePaths.push({ baseKey: 'vrm_models', path: path.join(getVrmModelDir(), withoutVrmPrefix) });
     }
   }
 
@@ -940,7 +958,27 @@ app.on('open-url', (event, url) => {
 });
 
 const BACKEND_PORT_TO_CHECK = 13900;
-const BACKEND_DIR = path.join(__dirname, '..', 'backend');
+
+function findBackendDir() {
+  const exeDir = path.dirname(process.execPath);
+  const frontendDir = findFrontendProjectDir();
+  const candidates = [
+    path.join(frontendDir, '..', 'backend'),
+    path.join(__dirname, '..', 'backend'),
+    path.join(exeDir, 'backend'),
+    path.join(exeDir, '..', 'backend'),
+    path.join(process.resourcesPath, 'backend'),
+    path.join(process.resourcesPath, '..', 'backend'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'MAIN.bat'))) {
+      return path.resolve(candidate);
+    }
+  }
+  return path.resolve(candidates[0]);
+}
+
+const BACKEND_DIR = findBackendDir();
 const BACKEND_MAIN = path.join(BACKEND_DIR, 'main.py');
 
 function checkPort(port){
@@ -955,7 +993,8 @@ function checkPort(port){
 }
 
 function startBackendInPowerShell(){
-  const psCmd = "chcp 65001 | Out-Null; cd '" + BACKEND_DIR.replace(/'/g, "''") + "'; ./MAIN.bat";
+  const mainBat = path.join(BACKEND_DIR, 'MAIN.bat');
+  const psCmd = "chcp 65001 | Out-Null; cd '" + BACKEND_DIR.replace(/'/g, "''") + "'; & '" + mainBat.replace(/'/g, "''") + "'";
   // Use cmd.exe /c start to force a new console window (spawn from GUI Electron doesn't create one)
   // Must pass the whole command as a single string so cmd.exe parses "start" args correctly
   const child = spawn(

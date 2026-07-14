@@ -8,12 +8,12 @@ set "GET_PIP_URL=https://bootstrap.pypa.io/get-pip.py"
 set "SOURCE_MODE=cn"
 set "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
 set "NPM_REGISTRY=https://registry.npmmirror.com/"
-set "INSTALL_PYTHON=0"
+set "INSTALL_PYTHON="
 set "INSTALL_TORCH=0"
-set "INSTALL_PY_REQ=0"
-set "INSTALL_SYS_NODE=0"
-set "INSTALL_BUNDLE_NODE=0"
-set "INSTALL_TTS=0"
+set "INSTALL_PY_REQ="
+set "INSTALL_SYS_NODE="
+set "INSTALL_BUNDLE_NODE="
+set "INSTALL_TTS="
 set "TORCH_VARIANT=cpu"
 set "TTS_VARIANT=standard"
 set "SHOW_HELP=0"
@@ -192,7 +192,12 @@ if "%INSTALL_TORCH%"=="0" (
   echo.
   goto show_help_with_error
 )
-if "%INSTALL_TORCH%"=="1" set "INSTALL_PY_REQ=1"
+if "%INSTALL_PY_REQ%"=="" set "INSTALL_PY_REQ=0"
+if "%INSTALL_PYTHON%"=="" set "INSTALL_PYTHON=0"
+if "%INSTALL_SYS_NODE%"=="" set "INSTALL_SYS_NODE=0"
+if "%INSTALL_BUNDLE_NODE%"=="" set "INSTALL_BUNDLE_NODE=0"
+if "%INSTALL_TTS%"=="" set "INSTALL_TTS=0"
+if "%INSTALL_TORCH%"=="1" if "%INSTALL_PY_REQ%"=="0" set "INSTALL_PY_REQ=1"
 
 if "%SKIP_ADMIN_CHECK%"=="0" (
   net session >nul 2>&1

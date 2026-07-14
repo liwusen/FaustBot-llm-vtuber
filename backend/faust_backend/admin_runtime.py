@@ -219,17 +219,17 @@ def list_available_models() -> List[Dict[str, str]]:
     results: List[Dict[str, str]] = []
     public_cfg = get_public_config()
 
-    models_2d = frontend_root / "models" / "2D" if (frontend_root / "models" / "2D").exists() else frontend_root / "2D"
+    models_2d = Path(conf.LIVE2D_MODEL_ROOT)
     if models_2d.exists():
         for model_file in models_2d.rglob("*.model3.json"):
-            rel = model_file.relative_to(frontend_root).as_posix()
-            results.append({"label": model_file.parent.name, "path": rel, "type": "live2d"})
+            rel = model_file.relative_to(models_2d).as_posix()
+            results.append({"label": model_file.parent.name, "path": f"2D/{rel}", "type": "live2d"})
 
-    models_vrm = frontend_root / "models" / "VRM" if (frontend_root / "models" / "VRM").exists() else None
-    if models_vrm and models_vrm.exists():
+    models_vrm = Path(conf.VRM_MODEL_ROOT)
+    if models_vrm.exists():
         for vrm_file in models_vrm.rglob("*.vrm"):
-            rel = vrm_file.relative_to(frontend_root).as_posix()
-            results.append({"label": vrm_file.stem, "path": rel, "type": "vrm"})
+            rel = vrm_file.relative_to(models_vrm).as_posix()
+            results.append({"label": vrm_file.stem, "path": f"VRM/{rel}", "type": "vrm"})
 
     image_cfg = public_cfg.get("IMAGE_MODEL_CONFIG") or {}
     if isinstance(image_cfg, dict) and any(image_cfg.get(key) for key in ("baseImages", "emotions", "tapImages", "mouthShapes")):

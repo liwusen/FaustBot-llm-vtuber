@@ -22,6 +22,11 @@ BASE_COMMANDS = [
         "insert_text": "/compact",
     },
     {
+        "label": "config",
+        "detail": "打开配置中心。",
+        "insert_text": "/config",
+    },
+    {
         "label": "session",
         "detail": "查看当前会话上下文 token 占用。",
         "insert_text": "/session",

@@ -1364,6 +1364,22 @@ import { initAutocomplete } from './libs/autocomplete.js';
     if (!textChatInput || !textChatSendBtn) return;
     const text = (textChatInput.value || '').trim();
     if (!text || textChatSending) return;
+    if (text === '/config') {
+      textChatInput.value = '';
+      if (textChatStatus) textChatStatus.textContent = '正在打开配置中心';
+      try {
+        showResultBubble('user', text);
+        if (window.api && window.api.openConfigWindow) {
+          await window.api.openConfigWindow();
+          showResultBubble('ai', '已打开配置中心');
+        } else {
+          showResultBubble('error', '当前环境不支持打开配置中心');
+        }
+      } finally {
+        if (textChatStatus) textChatStatus.textContent = '文字待命';
+      }
+      return;
+    }
     // Auto-interrupt if agent is currently processing
     if (agentIsProcessing) {
       interruptAgent();
@@ -1749,15 +1765,6 @@ import { initAutocomplete } from './libs/autocomplete.js';
   if (startAsrBtn) startAsrBtn.addEventListener('click', ()=> startRecording());
   if (stopAsrBtn) stopAsrBtn.addEventListener('click', ()=> stopRecording());
   if (textChatSendBtn) textChatSendBtn.addEventListener('click', () => { sendTextChatMessage().catch(()=>{}); });
-  if (textChatInput) {
-    textChatInput.addEventListener('keydown', (e)=>{
-      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        // prevent form submit-like behavior
-        e.preventDefault();
-        sendTextChatMessage().catch(()=>{});
-      }
-    });
-  }
   document.addEventListener('keydown', (e)=>{
     if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')){
       e.preventDefault();
@@ -1895,6 +1902,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     } catch (err) {
       if (String(err && err.message || '') === 'stale model load request') return;
       showOverlay('加载 VRM 模型失败：' + err);
+      showResultBubble('error', 'VRM 模型加载失败：' + String(err && err.message ? err.message : err));
       console.error(err);
     }
   }
@@ -2230,6 +2238,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }).catch(err => {
       if (String(err && err.message || '') === 'stale model load request') return;
       showOverlay('加载模型失败：' + err);
+      showResultBubble('error', 'Live2D 模型加载失败：' + String(err && err.message ? err.message : err));
       console.error(err);
     });
   }

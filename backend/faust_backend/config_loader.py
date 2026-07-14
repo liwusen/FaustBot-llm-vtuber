@@ -21,10 +21,57 @@ SKILL_TEMPLATE_ROOT = p_join(PROJECT_ROOT, 'skill_template')
 CONFIG_FILE_P_PATH = p_join(CONFIG_ROOT, 'faust.config.private.json')
 CONFIG_FILE_P_EXAMPLE = p_join(PROJECT_ROOT, 'faust.config.private.example.json')
 DATA_ROOT = p_join(CONFIG_ROOT, 'data')
+MODEL_ROOT = p_join(CONFIG_ROOT, 'models')
+LIVE2D_MODEL_ROOT = p_join(MODEL_ROOT, '2D')
+VRM_MODEL_ROOT = p_join(MODEL_ROOT, 'VRM')
 IMAGE_MODEL_ROOT = p_join(CONFIG_ROOT, 'models', 'image')
 CONFIG_FILE_PATH = p_join(CONFIG_ROOT, 'faust.config.json')
 PRIVATE_CONFIG_AUTO_CREATED = False
 PRIVATE_CONFIG_WAS_MISSING = False
+
+
+def _copy_missing_file(src: Path, dst: Path) -> None:
+    if dst.exists() or not src.is_file():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(src, dst)
+
+
+def _copy_missing_tree(src_root: Path, dst_root: Path) -> None:
+    if not src_root.exists() or not src_root.is_dir():
+        return
+    dst_root.mkdir(parents=True, exist_ok=True)
+    for item in src_root.iterdir():
+        dst = dst_root / item.name
+        if item.is_dir():
+            _copy_missing_tree(item, dst)
+        elif item.is_file():
+            _copy_missing_file(item, dst)
+
+
+def _ensure_model_templates(faustbot: Path, project_root: Path) -> None:
+    model_root = faustbot / 'models'
+    live2d_root = model_root / '2D'
+    vrm_root = model_root / 'VRM'
+    image_root = model_root / 'image'
+    live2d_root.mkdir(parents=True, exist_ok=True)
+    vrm_root.mkdir(parents=True, exist_ok=True)
+    image_root.mkdir(parents=True, exist_ok=True)
+
+    frontend_root = project_root.parent / 'frontend'
+    live2d_sources = [
+        frontend_root / 'models' / '2D',
+        frontend_root / '2D',
+    ]
+    vrm_sources = [
+        frontend_root / 'models' / 'live2d' / 'VRM',
+        frontend_root / 'models' / 'VRM',
+    ]
+
+    for src in live2d_sources:
+        _copy_missing_tree(src, live2d_root)
+    for src in vrm_sources:
+        _copy_missing_tree(src, vrm_root)
 
 
 def _ensure_faustbot_init():
@@ -71,8 +118,18 @@ def _ensure_faustbot_init():
         print("[config_loader]  ~/.faustbot 初始化完成")
 
     # Always ensure subdirectories and voice files exist
-    for subdir in ("data", "cache", "voices", "logs", os.path.join("models", "image")):
+    for subdir in (
+        "data",
+        "cache",
+        "voices",
+        "logs",
+        os.path.join("models", "image"),
+        os.path.join("models", "2D"),
+        os.path.join("models", "VRM"),
+    ):
         (faustbot / subdir).mkdir(parents=True, exist_ok=True)
+
+    _ensure_model_templates(faustbot, project_root)
 
     src_voices = project_root / "voices"
     if src_voices.exists():

@@ -20,7 +20,9 @@ def _resolve_live2d_model_path() -> Path:
     if model_path.is_absolute():
         return model_path
     frontend_root = Path(conf.PROJECT_ROOT).parent / "frontend"
+    live2d_root = Path(conf.LIVE2D_MODEL_ROOT)
     candidates = [
+        live2d_root / model_rel.replace("2D/", "", 1),
         frontend_root / model_rel,
         frontend_root / "models" / model_rel,
         Path(conf.CONFIG_ROOT) / model_rel,
