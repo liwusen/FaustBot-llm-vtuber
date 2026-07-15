@@ -21,7 +21,7 @@ log=logger.get_logger("faust.update.manager")
 
 GITHUB_OWNER = "liwusen"
 GITHUB_REPO = "FaustBot-llm-vtuber"
-GH_PROXY = "https://edgeone.gh-proxy.org"
+GH_PROXY = "https://gh-proxy.org"
 VERSION_FILE = "version.json"
 RELEASE_CACHE_HOURS = 1
 DOWNLOAD_THREADS = 32
@@ -418,32 +418,62 @@ class UpdateManager:
                 names.append(trimmed)
         return names
 
-    def generate_update_script(self, extracted_src: Path, tag: str, dry_run: bool = False) -> str:
-        bat_path = Path(tempfile.gettempdir()) / f"faust_apply_update_{tag}.ps1"
+    def _robocopy_excluded_dirs(self, extracted_src: Path) -> list[str]:
+        items: list[str] = []
+        for pat in PRESERVE_PATTERNS:
+            if not pat.endswith("/"):
+                continue
+            rel = pat.rstrip("/").replace("/", "\\")
+            if not rel:
+                continue
+            items.append(str((extracted_src / rel).resolve()))
+            items.append(str((self.root / rel).resolve()))
+        return items
 
-        preserve_conds = self._preserve_ps1_conditions(8)
-        preserve_rel_conds = self._preserve_rel_ps1_conditions(8)
-        preserve_dir_names = self._preserve_dir_names()
+    def _robocopy_excluded_files(self) -> list[str]:
+        items: list[str] = []
+        for pat in PRESERVE_PATTERNS:
+            if pat.startswith("*."):
+                items.append(pat)
+        return items
+
+    def generate_update_script(self, extracted_src: Path, tag: str, dry_run: bool = False) -> str:
+        bat_path = Path(tempfile.gettempdir()) / f"faust_apply_update_{tag}.bat"
+        excluded_dirs = self._robocopy_excluded_dirs(extracted_src)
+        excluded_files = self._robocopy_excluded_files()
 
         lines = [
-            "#!powershell",
-            "# Faust Auto-Update Script  (generated)",
-            "param([switch]$DryRun)",
+            "@echo off",
+            "setlocal EnableExtensions",
+            "title FaustBot Auto Update",
+            f'set "EXTRACTED={extracted_src}"',
+            f'set "INSTALL_ROOT={self.root}"',
+            f'set "TAG={tag}"',
+            f'set "DRY_RUN={1 if dry_run else 0}"',
             "",
-            f'$extracted = "{extracted_src}"',
-            f'$installRoot = "{self.root}"',
-            f'$tag = "{tag}"',
-            "",
-            'if ($DryRun) {',
-            "    Write-Host '[DRY-RUN] Mode enabled - no files will be modified'",
-            "}",
-            '$copyCount = 0',
-            '$removeCount = 0',
+            "echo FaustBot update script generated for %TAG%",
+            "if not exist \"%EXTRACTED%\" (",
+            "  echo [ERROR] Extracted source not found: %EXTRACTED%",
+            "  exit /b 1",
+            ")",
+            "if not exist \"%INSTALL_ROOT%\" (",
+            "  echo [ERROR] Install root not found: %INSTALL_ROOT%",
+            "  exit /b 1",
+            ")",
             "",
         ]
 
-        if not dry_run:
+        if dry_run:
             lines += [
+                "echo [DRY-RUN] Mode enabled - no files will be modified.",
+                "",
+            ]
+        else:
+            # Write a small PowerShell script that waits for Faust processes to exit,
+            # then call it from the generated .bat. This restores the original
+            # PowerShell waiting logic the user requested.
+            ps1_path = bat_path.with_suffix('.ps1')
+            ps1_lines = [
                 "# Wait for Faust to exit",
                 "Write-Host 'Waiting for Faust processes to exit...'",
                 "do {",
@@ -455,124 +485,64 @@ class UpdateManager:
                 "Write-Host 'All FaustBot processes exited.'",
                 "",
             ]
+            try:
+                ps1_path.write_text("\r\n".join(ps1_lines) + "\r\n", encoding="utf-8")
+                log.debug(f"Wrote PowerShell wait script: {ps1_path}")
+            except Exception as e:
+                log.warning(f"Failed to write PowerShell wait script: {e}")
 
-        # ── Step 1: Copy new files ──
-        lines += [
-            "# ── Step 1: Copy new files (skip preserved) ──",
-            'if ($DryRun) { Write-Host "Step 1: Scanning files to copy..." }',
-            'else { Write-Host "Step 1: Copying update files..." }',
-            "function Copy-FaustTree($srcRoot, $dstRoot, $prefix) {",
-            "    Get-ChildItem -LiteralPath $srcRoot -Force | ForEach-Object {",
-            "        $name = $_.Name",
-            '        $rel = if ([string]::IsNullOrEmpty($prefix)) { $name } else { "$prefix/$name" }',
-            "        $skip = $false",
-        ]
-        lines += preserve_rel_conds
-        lines += [
-            "        if ($skip) { return }",
-            "        $dest = Join-Path $dstRoot $name",
-            '        if ($_.PSIsContainer) {',
-            '            if (-not $DryRun -and -not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }',
-            '            Copy-FaustTree $_.FullName $dest $rel',
-            '            return',
-            '        }',
-            '        if ($DryRun) {',
-            '            Write-Host "  [DRY-RUN] Would copy: $name"',
-            '            return',
-            '        }',
-            '        Copy-Item -LiteralPath $_.FullName -Destination $dest -Force',
-            '        $script:copyCount += 1',
-            '        if (($script:copyCount % 100) -eq 0) { Write-Host ("{0} file writed" -f $script:copyCount) }',
-            "    }",
-            "}",
-            "Copy-FaustTree $extracted $installRoot ''",
-            'if (-not $DryRun) { Write-Host "Step 1 done." }',
-            "",
-        ]
+            lines += [
+                "echo Invoking PowerShell wait script to ensure Faust has exited...",
+                f'set "POWERSHELL_SCRIPT={ps1_path}"',
+                'if exist "%POWERSHELL_SCRIPT%" (',
+                '  powershell -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_SCRIPT%"',
+                ') else (',
+                '  echo [WARN] PowerShell wait script not found, skipping.',
+                ')',
+                "",
+            ]
 
-        # ── Step 2: Remove orphaned files ──
+        robocopy_cmd = ['robocopy "%EXTRACTED%" "%INSTALL_ROOT%" /MIR /R:2 /W:1 /NFL /NDL /NP /MT:16']
+        if dry_run:
+            robocopy_cmd.append("/L")
+        if excluded_dirs:
+            robocopy_cmd.append("/XD")
+            robocopy_cmd.extend(f'"{item}"' for item in excluded_dirs)
+        if excluded_files:
+            robocopy_cmd.append("/XF")
+            robocopy_cmd.extend(f'"{item}"' for item in excluded_files)
+
         lines += [
-            "# ── Step 2: Remove files and folders that exist locally but not in new release ──",
-            'if ($DryRun) { Write-Host "Step 2: Scanning for orphaned items to remove..." }',
-            'else { Write-Host "Step 2: Removing orphaned items..." }',
-            "",
-            "# Build relative path set from extracted release",
-            '$newItems = @{}',
-            "function Collect-NewItems($srcRoot, $prefix) {",
-            '    Get-ChildItem -LiteralPath $srcRoot -Force | ForEach-Object {',
-            '        $name = $_.Name',
-            '        $rel = if ([string]::IsNullOrEmpty($prefix)) { $name } else { "$prefix/$name" }',
-            '        $skip = $false',
-        ]
-        lines += preserve_rel_conds
-        lines += [
-            '        if ($skip) { return }',
-            '        $script:newItems[$rel.ToLower()] = $true',
-            '        if ($_.PSIsContainer) { Collect-NewItems $_.FullName $rel }',
-            '    }',
-            '}',
-            'Collect-NewItems $extracted ""',
-            "",
-            "# Walk install root and delete items not in new release (skip preserved)",
-            '$preserveDirNames = @(' + ', '.join(f'"{name}"' for name in preserve_dir_names) + ')',
-            'function Remove-Orphans($root, $prefix) {',
-            '    Get-ChildItem -LiteralPath $root -Force | ForEach-Object {',
-            '        $name = $_.Name',
-            '        if ($_.PSIsContainer -and ($preserveDirNames -contains $name)) { return }',
-            '        $rel = if ([string]::IsNullOrEmpty($prefix)) { $name } else { "$prefix/$name" }',
-            '        if ($script:newItems.ContainsKey($rel.ToLower())) {',
-            '            if ($_.PSIsContainer) { Remove-Orphans $_.FullName $rel }',
-            '            return',
-            '        }',
-            '        $skip = $false',
-        ]
-        lines += preserve_rel_conds
-        lines += [
-            '        if ($skip) { return }',
-            '        if ($DryRun) {',
-            '            Write-Host "  [DRY-RUN] Would remove: $rel"',
-            '            return',
-            '        }',
-            '        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue',
-            '        $script:removeCount += 1',
-            '        if (($script:removeCount % 100) -eq 0) { Write-Host ("{0} file writed" -f $script:removeCount) }',
-            '    }',
-            '}',
-            'Remove-Orphans $installRoot ""',
-            "",
-            "# Remove empty directories left behind",
-            'if (-not $DryRun) {',
-            '    $dirs = Get-ChildItem -LiteralPath $installRoot -Recurse -Directory -Force | Sort-Object FullName -Descending',
-            '    foreach ($d in $dirs) {',
-            '        $hasChildren = @(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue).Count -gt 0',
-            '        if (-not $hasChildren) {',
-            '            Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue',
-            '        }',
-            '    }',
-            '}',
-            'if (-not $DryRun) { Write-Host "Step 2 done." }',
+            "echo Step 1: Syncing update files with robocopy...",
+            "set RC_EXIT=0",
+            " ".join(robocopy_cmd),
+            "set RC_EXIT=%ERRORLEVEL%",
+            "if %RC_EXIT% GEQ 8 (",
+            "  echo [ERROR] robocopy failed with exit code %RC_EXIT%",
+            "  exit /b %RC_EXIT%",
+            ")",
+            "echo robocopy finished with exit code %RC_EXIT%.",
             "",
         ]
 
-        # ── Finalize ──
         if not dry_run:
             lines += [
-                "# ── Step 3: Run setup ──",
-                'Write-Host "Step 3: Running setup-runtime.bat --torch cpu --tts no..."',
-                '$setup = Join-Path $installRoot "setup-runtime.bat"',
-                'if (Test-Path $setup) {',
-                '    & $setup --torch cpu --tts no --install-python no --install-node yes --source cn',
-                '}',
-                'Write-Host "Setup complete."',
-                'Write-Host "Update to $tag complete."',
-                'Start-Sleep -Seconds 3',
+                "echo Step 2: Running setup-runtime.bat --torch cpu --tts no...",
+                "set \"SETUP_SCRIPT=%INSTALL_ROOT%\\setup-runtime.bat\"",
+                "if exist \"%SETUP_SCRIPT%\" (",
+                "  call \"%SETUP_SCRIPT%\" --torch cpu --tts no --install-python no --install-node yes --source cn",
+                ") else (",
+                "  echo [WARN] setup-runtime.bat not found, skipped.",
+                ")",
+                "echo Update to %TAG% complete.",
             ]
         else:
             lines += [
-                'Write-Host "[DRY-RUN] No files were modified."',
+                "echo [DRY-RUN] No files were modified.",
             ]
+
         log.debug(f"Generated update script for tag={tag}:\n" + "\n".join(lines))
-        bat_path.write_text("\n".join(lines), encoding="utf-8")
+        bat_path.write_text("\r\n".join(lines) + "\r\n", encoding="ascii", errors="ignore")
         return str(bat_path)
 
     async def apply_update(self, tag: str, asset_name: str) -> dict[str, Any]:
@@ -581,7 +551,7 @@ class UpdateManager:
 
         CREATE_NEW_CONSOLE = 0x00000010
         proc = subprocess.Popen(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path],
+            ["cmd.exe", "/c", script_path],
             creationflags=CREATE_NEW_CONSOLE,
         )
 
