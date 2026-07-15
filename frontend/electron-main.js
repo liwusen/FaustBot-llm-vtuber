@@ -1006,7 +1006,7 @@ function startBackendInPowerShell(){
   console.log('后端已在启动，等待就绪…');
 }
 
-function waitForBackend(maxAttempts = 40, interval = 1500) {
+function waitForBackend(maxAttempts = 40, interval = 3000) {
   return new Promise((resolve) => {
     let attempts = 0;
     const poll = () => {
@@ -1036,7 +1036,7 @@ app.whenReady().then(async () => {
     });
     open = await waitForBackend();
     if (!open) {
-      dialog.showErrorBox('启动超时', '后端服务启动超时 (60s)，请检查 MAIN.bat 是否能正常执行。');
+      dialog.showErrorBox('启动超时', 'CRITICAL:后端服务启动超时 (120s)');
       app.quit();
       return;
     }
