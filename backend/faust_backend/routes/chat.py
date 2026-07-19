@@ -21,6 +21,7 @@ from faust_backend.runtime.lifecycle import (
 )
 from faust_backend.mcp_manager import get_mcp_manager
 from faust_backend.logger import get_logger
+from faust_backend.runtime.output_store import reset_output_store
 
 log = get_logger("faust.chat")
 
@@ -126,6 +127,9 @@ async def _session_token_summary() -> str:
 async def _clear_current_session() -> str:
     if state.checkpointer is not None and hasattr(state.checkpointer, "adelete_thread"):
         await state.checkpointer.adelete_thread(str(state.THREAD_ID))
+    if state.subagent_manager is not None:
+        await state.subagent_manager.reset_persistent_state()
+    reset_output_store(clear_persisted=True)
     info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
     return f"已清空当前会话并重建运行时。ready={info.get('ready')} status={info.get('status')}"
 
@@ -159,6 +163,9 @@ async def _replace_session_with_summary(summary: str) -> None:
         raise RuntimeError("checkpointer 未初始化，无法压缩会话")
     if hasattr(state.checkpointer, "adelete_thread"):
         await state.checkpointer.adelete_thread(str(state.THREAD_ID))
+    if state.subagent_manager is not None:
+        await state.subagent_manager.reset_persistent_state()
+    reset_output_store(clear_persisted=True)
     checkpoint = empty_checkpoint()
     checkpoint["channel_values"]["messages"] = [
         SystemMessage(content=f"你的压缩后的上下文:\n{summary}")
@@ -201,6 +208,20 @@ async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -
             return True, "POST 接口暂不支持 /compact，请使用 WebSocket 聊天接口。"
         return True, await _compact_session_stream(websocket)
     return True, f"未知命令: /{name}"
+
+
+def _subagents_summary_payload() -> dict:
+    manager = state.subagent_manager
+    if manager is None:
+        return {"agent_id": "subagents", "type": "subagents_summary", "items": []}
+    return {"agent_id": "subagents", "type": "subagents_summary",
+            "items": manager.list_statuses_light()}
+
+
+def _main_event_payload(event_type: str, **kwargs) -> dict:
+    payload = {"agent_id": "main", "type": event_type}
+    payload.update(kwargs)
+    return payload
 
 
 @router.post("/faust/chat")
@@ -248,6 +269,53 @@ async def chat_websocket(websocket: WebSocket):
     await websocket.accept()
     agent_task: asyncio.Task | None = None
 
+    # ── WS 连接级别的 Subagent 事件转发 ──
+    _subagent_fwd_stop = asyncio.Event()
+    _subagent_fwd_task: asyncio.Task | None = None
+    _subagent_queue = None
+    if state.subagent_manager is not None:
+        _subagent_queue = state.subagent_manager.get_event_queue()
+        # 清空遗留事件
+        while _subagent_queue and not _subagent_queue.empty():
+            try:
+                _subagent_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        async def _forward_subagent_events():
+            while not _subagent_fwd_stop.is_set():
+                try:
+                    event = await asyncio.wait_for(_subagent_queue.get(), timeout=0.5)
+                    await websocket.send_text(json.dumps(event, ensure_ascii=False))
+                except asyncio.TimeoutError:
+                    continue
+                except asyncio.CancelledError:
+                    break
+            # 排空
+            while _subagent_queue and not _subagent_queue.empty():
+                try:
+                    ev = _subagent_queue.get_nowait()
+                    await websocket.send_text(json.dumps(ev, ensure_ascii=False))
+                except asyncio.QueueEmpty:
+                    break
+
+        _subagent_fwd_task = asyncio.create_task(_forward_subagent_events())
+
+    async def _stop_forward_task():
+        nonlocal _subagent_fwd_task
+        if _subagent_fwd_task is None:
+            return
+        _subagent_fwd_stop.set()
+        try:
+            await asyncio.wait_for(_subagent_fwd_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            _subagent_fwd_task.cancel()
+            try:
+                await _subagent_fwd_task
+            except Exception:
+                pass
+        _subagent_fwd_task = None
+
     async def _run_agent_stream(text: str):
         reply = ""
         abort_evt = state.reset_abort_event()
@@ -268,10 +336,12 @@ async def chat_websocket(websocket: WebSocket):
                 if not isinstance(event, dict):
                     continue
                 if event.get("type") == "reasoning_delta":
-                    await websocket.send_text(json.dumps({
-                        "type": "reasoning_delta",
-                        "content": event.get("content", ""),
-                    }, ensure_ascii=False))
+                    await websocket.send_text(json.dumps(_main_event_payload(
+                        "reasoning_delta",
+                        content=event.get("content", ""),
+                    ), ensure_ascii=False))
+                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
                     continue
                 if event.get("type") == "delta":
                     delta_text = state.message_content_to_text(event.get("content"))
@@ -279,10 +349,16 @@ async def chat_websocket(websocket: WebSocket):
                         continue
                     reply += delta_text
                     log.debug("聊天增量: %s", delta_text[:80])
-                    await websocket.send_text(json.dumps({"type": "delta", "content": delta_text}, ensure_ascii=False))
+                    await websocket.send_text(json.dumps(_main_event_payload("delta", content=delta_text), ensure_ascii=False))
+                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
                     continue
                 if event.get("type") in {"tool_start", "tool_result"}:
-                    await websocket.send_text(json.dumps(event, ensure_ascii=False))
+                    payload = dict(event)
+                    payload["agent_id"] = "main"
+                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
             schedule_memory_record_sync(text, reply)
             if pm:
                 post_results = pm._call_pluggy_hook('message_sent', msg=text, response=reply, ctx=None)
@@ -290,10 +366,10 @@ async def chat_websocket(websocket: WebSocket):
                     for r in post_results:
                         if r is not None:
                             reply = r
-            await websocket.send_text(json.dumps({"type": "done", "reply": reply}, ensure_ascii=False))
+            await websocket.send_text(json.dumps(_main_event_payload("done", reply=reply), ensure_ascii=False))
             log.debug("聊天流结束")
         except asyncio.CancelledError:
-            await websocket.send_text(json.dumps({"type": "interrupted"}, ensure_ascii=False))
+            await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
             log.info("聊天流被用户中断")
         return reply
 
@@ -308,24 +384,25 @@ async def chat_websocket(websocket: WebSocket):
             # Handle interrupt message
             if isinstance(payload, dict) and payload.get("type") == "interrupt":
                 state.get_abort_event().set()
-                await websocket.send_text(json.dumps({"type": "interrupt_ack"}, ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("interrupt_ack"), ensure_ascii=False))
                 continue
 
             text = None
             if isinstance(payload, dict):
                 text = payload.get("text") or payload.get("message")
             if not text:
-                await websocket.send_text(json.dumps({"type": "error", "error": "no text provided"}, ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("error", error="no text provided"), ensure_ascii=False))
                 continue
             handled, command_reply = await _handle_slash_command(text, websocket)
             if handled:
-                await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
-#               await websocket.send_text(json.dumps({"type": "delta","content":command_reply}))
-                await websocket.send_text(json.dumps({"type": "done", "reply": command_reply}, ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
+                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("done", reply=command_reply), ensure_ascii=False))
                 log.info(f"Slash Command Result:{command_reply}")
                 continue
             if not state.RUNTIME_READY or state.agent is None:
-                await websocket.send_text(json.dumps({"type": "error", "error": state.runtime_not_ready_message(), "runtime": state.runtime_status_payload()}, ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("error", error=state.runtime_not_ready_message(), runtime=state.runtime_status_payload()), ensure_ascii=False))
                 continue
 
             # Cancel any running agent task before starting a new one
@@ -340,16 +417,23 @@ async def chat_websocket(websocket: WebSocket):
             try:
                 araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
                 events.ignore_trigger_event.set()
-                await websocket.send_text(json.dumps({"type": "start"}, ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
                 agent_task = asyncio.create_task(_run_agent_stream(text))
                 agent_task.add_done_callback(lambda _: events.ignore_trigger_event.clear())
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
-                await websocket.send_text(json.dumps({"type": "error", "error": state.format_chat_error(e)}, ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("error", error=state.format_chat_error(e)), ensure_ascii=False))
     except WebSocketDisconnect:
         log.info("Chat WebSocket 断开")
+        if agent_task is not None and not agent_task.done():
+            agent_task.cancel()
+            try:
+                await agent_task
+            except Exception:
+                pass
+        await _stop_forward_task()
 
 @router.websocket("/faust/command")
 async def command_websocket(websocket: WebSocket):

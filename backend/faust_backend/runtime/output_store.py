@@ -7,9 +7,11 @@ truncated for LLM context and re-read on demand via artifact:// URIs.
 
 from __future__ import annotations
 
+import json
+import os
 import time
-import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -83,9 +85,64 @@ class OutputStore:
     Callers should use the module-level singleton via get_output_store().
     """
 
-    def __init__(self):
+    def __init__(self, storage_path: str | None = None):
         self._artifacts: dict[str, Artifact] = {}
         self._counter: int = 0
+        self._storage_path = str(storage_path or "").strip()
+        self._load()
+
+    @property
+    def storage_path(self) -> str:
+        return self._storage_path
+
+    def _load(self) -> None:
+        if not self._storage_path or not os.path.exists(self._storage_path):
+            return
+        try:
+            payload = json.loads(Path(self._storage_path).read_text(encoding="utf-8"))
+        except Exception:
+            return
+        self._counter = int(payload.get("counter") or 0)
+        self._artifacts = {}
+        for item in list(payload.get("artifacts") or []):
+            try:
+                artifact = Artifact(
+                    output_id=str(item.get("output_id") or ""),
+                    content=str(item.get("content") or ""),
+                    tool_name=str(item.get("tool_name") or ""),
+                    content_type=str(item.get("content_type") or "text"),
+                    content_base64=item.get("content_base64"),
+                    mime_type=item.get("mime_type"),
+                    metadata=dict(item.get("metadata") or {}),
+                    created_at=float(item.get("created_at") or time.time()),
+                )
+            except Exception:
+                continue
+            if artifact.output_id:
+                self._artifacts[artifact.output_id] = artifact
+
+    def _save(self) -> None:
+        if not self._storage_path:
+            return
+        payload = {
+            "counter": self._counter,
+            "artifacts": [
+                {
+                    "output_id": art.output_id,
+                    "content": art.content,
+                    "tool_name": art.tool_name,
+                    "content_type": art.content_type,
+                    "content_base64": art.content_base64,
+                    "mime_type": art.mime_type,
+                    "metadata": art.metadata,
+                    "created_at": art.created_at,
+                }
+                for art in self._artifacts.values()
+            ],
+        }
+        path = Path(self._storage_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def put(self, content: str, *, tool_name: str = "",
             metadata: dict[str, Any] | None = None) -> str:
@@ -102,6 +159,7 @@ class OutputStore:
             tool_name=tool_name,
             metadata=dict(metadata or {}),
         )
+        self._save()
         return output_id
 
     def put_multimodal(self, payload: dict, tool_name: str = "unknown") -> str:
@@ -128,6 +186,7 @@ class OutputStore:
             mime_type=mime,
             metadata={"image_count": len(images), "images": images},
         )
+        self._save()
         return output_id
 
     def get(self, output_id: str) -> Artifact | None:
@@ -160,6 +219,8 @@ class OutputStore:
     def clear(self) -> None:
         """Remove all artifacts."""
         self._artifacts.clear()
+        self._counter = 0
+        self._save()
 
     def __contains__(self, output_id: str) -> bool:
         return output_id in self._artifacts
@@ -192,11 +253,27 @@ _store: OutputStore | None = None
 
 def get_output_store() -> OutputStore:
     global _store
-    if _store is None:
-        _store = OutputStore()
+    try:
+        from faust_backend.runtime import state
+        storage_path = os.path.join(state.AGENT_ROOT, "artifact.json")
+    except Exception:
+        storage_path = ""
+    if _store is None or _store.storage_path != storage_path:
+        _store = OutputStore(storage_path=storage_path)
     return _store
 
 
-def reset_output_store() -> None:
+def reset_output_store(*, clear_persisted: bool = False) -> None:
     global _store
+    if clear_persisted:
+        if _store is not None:
+            _store.clear()
+        else:
+            try:
+                from faust_backend.runtime import state
+                storage_path = os.path.join(state.AGENT_ROOT, "artifact.json")
+                if storage_path and os.path.exists(storage_path):
+                    os.remove(storage_path)
+            except Exception:
+                pass
     _store = None

@@ -26,10 +26,12 @@ import faust_backend.speech_runtime as speech_runtime
 import faust_backend.nimble as nimble
 from faust_backend.plugin_system import PluginManager
 from faust_backend.runtime import middleware
+from faust_backend.runtime.output_store import get_output_store
 from faust_backend.config_loader import args
 
 from faust_backend.runtime import state
 from faust_backend.logger import get_logger
+from faust_backend.subagent_manager import SubagentManager
 
 log = get_logger("faust.lifecycle")
 
@@ -184,6 +186,71 @@ def _compose_runtime_extensions():
     return tools, middlewares
 
 
+def _find_tool_by_name(name: str):
+    target = str(name or "").strip()
+    for tool_item in llm_tools.get_tools_for_agent(state.AGENT_NAME):
+        tool_name = getattr(tool_item, "name", None) or getattr(tool_item, "__name__", "")
+        if str(tool_name).strip() == target:
+            return tool_item
+    raise KeyError(f"Tool not found: {target}")
+
+
+def _build_subagent_toolsets() -> dict[str, list]:
+    from faust_backend.mcp_manager import get_mcp_manager
+
+    toolsets = {
+        "BASESET": [
+            _find_tool_by_name("read"),
+            _find_tool_by_name("search"),
+            _find_tool_by_name("find"),
+        ],
+        "WRITESET": [
+            _find_tool_by_name("write"),
+            _find_tool_by_name("edit"),
+        ],
+        "EXECUTESET": [
+            _find_tool_by_name("execute"),
+        ],
+        "SKILLSET": [
+            _find_tool_by_name("listSkills"),
+        ],
+    }
+    mcp_manager = get_mcp_manager()
+    for item in mcp_manager.list_server_statuses(include_log=False):
+        server_id = str(item.get("server_id") or "").strip()
+        if not server_id or not item.get("running"):
+            continue
+        prefix = f"{server_id}_"
+        matching = []
+        for tool_item in mcp_manager.get_langchain_tools():
+            tool_name = getattr(tool_item, "name", "")
+            if str(tool_name).startswith(prefix):
+                matching.append(tool_item)
+        if matching:
+            toolsets[f"MCP_{server_id.upper()}_SET"] = matching
+    return toolsets
+
+
+async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
+    subagent_db_path = os.path.join(state.AGENT_ROOT, "subagents.db")
+    if state.subagent_manager is not None:
+        try:
+            await state.subagent_manager.aclose()
+        except Exception as exc:
+            log.warning("关闭旧 SubagentManager 失败: %s", exc)
+    manager = SubagentManager(checkpointerPath=subagent_db_path)
+    manager.setChatModel(_build_chat_model(model_name=model_name))
+    _tools, middlewares = _compose_runtime_extensions()
+    manager.setMiddlewares(middlewares)
+    for name, toolset in _build_subagent_toolsets().items():
+        manager.newToolset(name, toolset)
+    manager.restore_persisted_state()
+    state.subagent_manager = manager
+    get_output_store()
+    log.info("SubagentManager 已重建: %s", subagent_db_path)
+    return manager
+
+
 def _build_chat_model(*, model_name: str):
     """Build a ChatOpenAI instance for the main agent.
 
@@ -291,6 +358,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 model_name=conf.CHAT_MODEL,
                 checkpointer=state.checkpointer,
             )
+            await _rebuild_subagent_manager(model_name=conf.CHAT_MODEL)
             log.debug("Agent 已为重建重新创建")
             checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(state.AGENT_ROOT)
             if no_initial_chat and checkpoint_exists:
@@ -419,6 +487,12 @@ async def lifespan(app: FastAPI):
 
     # ── shutdown ──
     log.info("开始关闭 Agent...")
+    if state.subagent_manager is not None:
+        try:
+            await state.subagent_manager.aclose()
+        except Exception as exc:
+            log.warning("关闭 SubagentManager 失败: %s", exc)
+        state.subagent_manager = None
     if not args.save_in_memory:
         if state.conn:
             await state.conn.commit()

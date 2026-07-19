@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-SELECTOR_RE = re.compile(r"^:\d+([+-]\d+)?(-\d+)?(:raw)?$")
+SELECTOR_RE = re.compile(r"^:-?\d+(?:\+\d+|--?\d+)?(:raw)?$")
 SCHEME_ARTIFACT = "artifact"
 SCHEME_MEMORY = "memory"
 SCHEME_SKILL = "skill"
@@ -41,20 +41,15 @@ class ParsedURI:
         raw = s.endswith(":raw")
         if raw:
             s = s[:-4]
-        if "+" in s:
+        if "+" in s and not s.startswith("-"):
             offset, length = s.split("+", 1)
             start = int(offset)
             return (start, start + int(length) - 1)
-        elif "-" in s:
-            parts = s.split("-", 1)
-            if not parts[0]:
-                return (1, int(parts[1]))
-            start = int(parts[0])
-            end = int(parts[1]) if parts[1] else None
-            return (start, end) if end else (start, start)
-        else:
-            n = int(s)
-            return (n, n)
+        range_match = re.match(r"^(-?\d+)-(-?\d+)$", s)
+        if range_match:
+            return (int(range_match.group(1)), int(range_match.group(2)))
+        n = int(s)
+        return (n, n)
 
     @property
     def is_dir(self) -> bool:

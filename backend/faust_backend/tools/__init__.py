@@ -32,3 +32,4 @@ import faust_backend.tools.nimble
 import faust_backend.tools.trigger
 import faust_backend.tools.minecraft
 import faust_backend.tools.skill
+import faust_backend.tools.subagent

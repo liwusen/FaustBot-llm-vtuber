@@ -36,6 +36,7 @@
     </div>
     <div id="asrBubble" data-source="ai" style="display:none;">
       <div id="asrText"></div>
+      <div id="subagentSummary" style="display:none;"></div>
       <button id="hideAsrBubbleBtn" type="button" aria-label="隐藏返回结果" title="隐藏返回结果">×</button>
     </div>
     <div id="modelQuickController" aria-label="模型快捷控制器">
@@ -110,6 +111,17 @@
       </div>
     </div>
     <div id="vrmConfigPanelBody" class="vrm-config-body"></div>
+  </div>
+
+  <div id="subagentPanel" class="floating-panel" style="display:none;">
+    <div id="subagentPanelHeader" class="floating-panel-header">
+      <span id="subagentPanelTitle">Subagent 状态</span>
+      <div class="vrm-config-actions">
+        <button id="subagentStopBtn" type="button" title="停止当前 Subagent">Stop</button>
+        <button id="subagentPanelCloseBtn" type="button" title="关闭">✕</button>
+      </div>
+    </div>
+    <div id="subagentPanelBody" class="vrm-config-body"></div>
   </div>
 
       <!-- 引入 Live2D 依赖 -->

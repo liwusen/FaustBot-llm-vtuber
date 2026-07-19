@@ -6,6 +6,8 @@ import faust_backend.config_loader as conf
 import faust_backend.llm_tools as llm_tools
 from faust_backend.logger import get_logger
 
+from faust_backend.subagent_manager import SubagentManager
+
 log = get_logger("faust.runtime.state")
 
 # ── Agent 核心状态 ──
@@ -46,6 +48,7 @@ forward_queue = asyncio.Queue()
 plugin_heartbeat_task = None
 uvicorn_server = None
 plugin_manager = None  # set by lifecycle
+subagent_manager:SubagentManager|None = None
 
 
 # ── 状态管理 ──

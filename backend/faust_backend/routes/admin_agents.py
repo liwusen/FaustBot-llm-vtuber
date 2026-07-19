@@ -69,6 +69,10 @@ async def admin_delete_agent_checkpoint(agent_name: str):
         fpath = pjoin(conf.CONFIG_ROOT, "agents", agent_name, ext)
         if os.path.exists(fpath):
             os.remove(fpath)
+    for extra in ("artifact.json", "subagents.json"):
+        extra_path = pjoin(conf.CONFIG_ROOT, "agents", agent_name, extra)
+        if os.path.exists(extra_path):
+            os.remove(extra_path)
     return {
         "status": "ok",
         "detail": f"Agent '{agent_name}' 的 checkpoint 已删除，下一次重启或切换 Agent 将会重新创建一个新的 checkpoint 文件。",

@@ -23,7 +23,9 @@ import faust_backend.config_loader as conf
 def memory_store(tmp_path, monkeypatch):
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
     monkeypatch.setattr(conf, "AGENT_NAME", "test_agent")
-    monkeypatch.setattr(conf, "KB_OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(conf, "EMBED_API_KEY", "test-key")
+    monkeypatch.setattr(conf, "EMBED_API_BASE", "http://test.example/v1")
+    monkeypatch.setattr(conf, "EMBED_MODEL", "text-embed-model")
     monkeypatch.setattr(conf, "CHAT_API_KEY", "test-key")
     monkeypatch.setattr(conf, "CHAT_API_BASE", "http://test.example/v1")
     monkeypatch.setattr(conf, "CHAT_MODEL", "gpt-4o")
@@ -687,8 +689,8 @@ class TestPhase7EntityDetail:
     def test_entity_detail_not_entity(self, memory_store):
         nid = store._path_id("/not_an_entity")
         memory_store._add_node(nid, type="file", name="test.txt")
-        detail = memory_store.get_entity_detail(nid)
-        assert detail is None
+        detail:dict = memory_store.get_entity_detail(nid)
+        assert detail["entity_type"]=="file"
 
     def test_entity_detail_shows_kb_refs(self, memory_store):
         eid = memory_store.entity_add("test", kb_refs=["/notes/test.md", "/notes/ref.md"])

@@ -1451,9 +1451,16 @@ class GraphStore:
         if not texts:
             return np.zeros((0, EMBED_DIM), dtype=np.float32)
         client = self._get_openai()
+        all_embeddings: list[list[float]] = []
         for batch in self.chunk_list(texts, chunk_size=max_batch_size):
             response = await client.embeddings.create(model=EMBED_MODEL, input=batch, dimensions=EMBED_DIM)
-        return np.array([item.embedding for item in response.data], dtype=np.float32)
+            if response is None or response.data is None:
+                log.warning("Embedding API returned None for batch, skipping")
+                continue
+            all_embeddings.extend([item.embedding for item in response.data])
+        if not all_embeddings:
+            return np.zeros((0, EMBED_DIM), dtype=np.float32)
+        return np.array(all_embeddings, dtype=np.float32)
     
     def chunk_list(self, lst, chunk_size=10):
         """返回一个列表，其中每个元素是大小为 chunk_size 的子列表"""

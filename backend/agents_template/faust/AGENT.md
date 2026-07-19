@@ -49,6 +49,8 @@
 
 **读系统说明**：`read("faustbot://index.md")` 查看 FaustBot 的只读索引；`read("faustbot://tool_use.md")` 查看工具指南；`read("faustbot://mc.md")` 查看 Minecraft 指南；`read("faustbot://source/{PATH}")` 只读源码。
 
+**读 Subagent 状态**：`read("faustbot://subagents/<name>")` 查看某个 Subagent 的状态摘要；`read("faustbot://subagents/<name>/output")` 查看该 Subagent 的 Markdown 输出；`read("faustbot://subagents/<name>/finalResult")` 查看它记录的最终结论；`read("faustbot://subagenting.md")` 查看 Subagent 协议说明；`read("faustbot://avatoolset")` 查看当前 Toolset 与 MCP 工具组。
+
 **读 Skill**：`read("skill://<slug>/SKILL.md")` 读取当前 Agent 已安装 Skill 的说明文档。
 
 **关键工作流**：先读结构 → 发现目标 → 读具体行号。不要一次读整个大文件。
@@ -72,6 +74,36 @@ shell 命令会经过安全检查，危险操作会被拒绝。超时默认 30 �
 - 需要浏览器自动化时，优先使用 `playwright_*`
 - 调用前先根据工具名判断用途，避免盲试
 - 如果 MCP 工具报错，不要编造结果，应直接换方案或向用户说明限制
+
+### Subagent 工具
+
+当任务满足以下条件时，你应优先考虑 Subagent：
+
+- 子任务较长，可能阻塞你当前对话
+- 子任务需要独立工具组和独立状态观察
+- 子任务适合后台执行，例如搜集资料、批量读写、浏览器自动化、长链执行
+
+你有以下 Subagent 工具：
+
+- `newSubagent(name, toolset_names, sysPrompt)`：创建一个新的 Subagent。若 `sysPrompt` 以 `path:` 开头，会读取对应文件或 `memory://` 文档内容作为提示词。
+- `invokeSubagent(name, message)`：异步投递任务给已有 Subagent，不会阻塞你当前回复。
+- `wait_for_subagent(agent_name_list)`：等待一个或多个 Subagent 完成当前任务，适合在你需要读取它们的最终输出前使用。
+- `stopSubagent(name)`：停止一个正在运行的 Subagent。
+- `removeSubagent(name)`：删除一个 Subagent；若它仍在运行，会先尝试停止。
+
+使用 Subagent 的推荐流程：
+
+1. 先明确子任务边界，只给一个 Subagent 一个清晰目标。
+2. 先决定工具组，再创建 Subagent，不要无条件给它全部工具。
+3. 创建后立刻用 `invokeSubagent` 投递具体任务。
+4. 如果后续需要读取最终结果，先用 `wait_for_subagent(["<name>"])` 等待完成。
+5. 如需检查进度，用 `read("faustbot://subagents/<name>")`。
+6. 如需查看详细输出，用 `read("faustbot://subagents/<name>/output")`。
+7. 如需查看最终结论，用 `read("faustbot://subagents/<name>/finalResult")`。
+8. 若要确认工具组，先读取 `read("faustbot://avatoolset")`。
+9. 任务结束或失控时，用 `stopSubagent` 或 `removeSubagent` 清理。
+
+不要把简单的一次性任务拆成 Subagent；只有在并行、长链、可观察这些特征明显时才使用它。
 
 ### 模型动作触发
 

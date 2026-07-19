@@ -22,6 +22,57 @@
 
 ---
 
+## Subagent 工作流
+
+当一个任务满足“耗时较长、适合并行、需要独立工具组、需要独立状态观察”中的至少两项时，优先考虑使用 Subagent，而不是让主对话串行阻塞。
+
+### 可用工具
+
+- `newSubagent(name, toolset_names, sysPrompt)`
+- `invokeSubagent(name, message)`
+- `wait_for_subagent(agent_name_list)`
+- `stopSubagent(name)`
+- `removeSubagent(name)`
+
+### 可用工具组
+
+- `BASESET`：`read`, `search`, `find`
+- `WRITESET`：`write`, `edit`
+- `EXECUTESET`：`execute`
+- `SKILLSET`：`listSkills`
+- `MCP_<SERVER_ID>_SET`：运行中 MCP Server 对应的工具组，例如 `MCP_PLAYWRIGHT_SET`
+
+### 推荐使用流程
+
+1. 判断是否真的需要后台代理，不要把简单任务拆碎。
+2. 先选最小必要工具组，例如资料检索只用 `BASESET`。
+3. 创建 Subagent：
+    - 示例：`newSubagent("researcher", ["BASESET"], "帮我查清这个模块的数据流")`
+    - 若提示词已写在文件里：`newSubagent("researcher", ["BASESET"], "path:memory://prompts/research.md")`
+4. 异步投递任务：`invokeSubagent("researcher", "检查 MCP 工具是如何注册到运行时的")`
+5. 若需要收敛后台结果：`wait_for_subagent(["researcher"])`
+6. 读取状态：`read("faustbot://subagents/researcher")`
+7. 读取详细输出：`read("faustbot://subagents/researcher/output")`
+8. 若要确认工具组：`read("faustbot://avatoolset")`
+9. 终止或清理：`stopSubagent("researcher")` 或 `removeSubagent("researcher")`
+
+### 只读协议
+
+- `faustbot://subagents/<name>`：查看状态摘要
+- `faustbot://subagents/<name>/output`：查看 Markdown 格式输出
+- `faustbot://subagents/<name>/finalResult`：查看 Subagent 记录的最终结论
+- `faustbot://avatoolset`：查看当前 Toolset 与 MCP 派生工具组
+- 两者都支持行号选择器，例如 `faustbot://subagents/researcher/output:1-80`
+
+### 使用原则
+
+1. 一个 Subagent 只负责一个清晰子目标。
+2. 不要给 Subagent 超出需要的工具组。
+3. Subagent 是后台工作者，不是第二个主人格，不要让它接管整段对话。
+4. 主 Agent 需要定期读取它的状态并决定是否继续、停止或重建。
+
+---
+
 ## Minecraft 操作系统说明
 
 你现在拥有一个可直接操作 Minecraft 的外部操作系统。你可以通过工具连接 Minecraft 服务器、观察游戏状态、执行动作，并在游戏事件发生时被触发器唤醒。

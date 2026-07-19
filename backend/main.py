@@ -1,9 +1,16 @@
+import os
+import sys
+
+if __package__ in {None, ""}:
+    _BACKEND_ROOT = os.path.dirname(os.path.abspath(__file__))
+    if _BACKEND_ROOT not in sys.path:
+        sys.path.insert(0, _BACKEND_ROOT)
+
 from faust_backend.logger import get_logger
 log = get_logger("faust.main")
 import datetime
 log.info("当前时间: %s", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -29,6 +36,8 @@ from faust_backend.routes.audio import router as audio_router
 from faust_backend.routes.system import router as system_router
 from faust_backend.routes.autocomplete import router as autocomplete_router
 from faust_backend.routes.logger_ws import router as logger_ws_router
+from faust_backend.routes.subagents import router as subagents_router
+from faust_backend.routes.debugging import router as debugging_router
 
 # ── 组件管理路由 ──
 from faust_backend.component_api import router as component_router
@@ -58,6 +67,7 @@ routers = [
     admin_services_router, admin_agents_router, admin_skills_router,
     admin_triggers_router, admin_plugins_router, admin_logs_router, admin_mcp_router,
     chat_router, hil_nimble_router, audio_router, system_router, autocomplete_router, component_router, logger_ws_router,
+    subagents_router, debugging_router,
 ]
 for r in routers:
     app.include_router(r)

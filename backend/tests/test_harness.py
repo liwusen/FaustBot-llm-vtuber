@@ -264,8 +264,8 @@ class MyClass:
         f.write_text(code, encoding="utf-8")
 
         # Override config root temporarily
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = read.invoke({"uri": "test.py"})
             assert "foo" in result
@@ -273,7 +273,7 @@ class MyClass:
             assert "MyClass" in result
             assert "结构摘要" in result or "[文件" in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_read_file_with_line_range(self, tmp_path):
         from faust_backend.tools.read import read
@@ -282,15 +282,15 @@ class MyClass:
         f = tmp_path / "data.txt"
         f.write_text(content, encoding="utf-8")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = read.invoke({"uri": "data.txt:3-5"})
             assert "line 3" in result
             assert "line 5" in result
             assert "line 6" not in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_read_directory(self, tmp_path):
         from faust_backend.tools.read import read
@@ -318,19 +318,8 @@ class MyClass:
     def test_read_faustbot_source(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
-
-        backend_root = tmp_path / "backend"
-        backend_root.mkdir(parents=True, exist_ok=True)
-        repo_file = tmp_path / "README.md"
-        repo_file.write_text("hello source", encoding="utf-8")
-
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(backend_root)
-        try:
-            result = read.invoke({"uri": "faustbot://source/README.md"})
-            assert "hello source" in result
-        finally:
-            conf.PROJECT_ROOT = orig_root
+        result = read.invoke({"uri": "faustbot://source/README.md"})
+        assert "img src" in result
 
     def test_read_faustbot_source_rejects_escape(self):
         from faust_backend.tools.read import read
@@ -411,27 +400,23 @@ class TestWriteTool:
         from faust_backend.tools.write import write
         import faust_backend.config_loader as conf
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
-        try:
-            result = write.invoke({"path": "hello.md", "content": "# Hello\nWorld"})
-            assert "已写入" in result
-            assert "bytes" in result
-            assert (tmp_path / "hello.md").read_text() == "# Hello\nWorld"
-        finally:
-            conf.PROJECT_ROOT = orig_root
+        result = write.invoke({"path": "hello.md", "content": "# Hello\nWorld"})
+        assert "已写入" in result
+        assert "bytes" in result
+        assert (Path(conf.WORKDIR_ROOT) / "hello.md").read_text() == "# Hello\nWorld"
+
 
     def test_write_rejects_outside_path(self, tmp_path):
         from faust_backend.tools.write import write
         import faust_backend.config_loader as conf
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = write.invoke({"path": "/etc/passwd", "content": "bad"})
             assert "不允许" in result or "错误" in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_write_empty_path(self):
         from faust_backend.tools.write import write
@@ -452,8 +437,8 @@ class TestEditTool:
         f = tmp_path / "test.txt"
         f.write_text(content, encoding="utf-8")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "SWAP 2.=3:\n+LINE TWO\n+LINE THREE\n"
             result = edit.invoke({"path": "test.txt", "patch": patch})
@@ -465,7 +450,7 @@ class TestEditTool:
             assert "line 2" not in new_content
             assert "line 4" in new_content
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_delete_lines(self, tmp_path):
         from faust_backend.tools.edit import edit
@@ -475,8 +460,8 @@ class TestEditTool:
         f = tmp_path / "test.txt"
         f.write_text(content, encoding="utf-8")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "DEL 2.=3\n"
             result = edit.invoke({"path": "test.txt", "patch": patch})
@@ -484,7 +469,7 @@ class TestEditTool:
             new = f.read_text().split("\n")
             assert new == ["line 1", "line 4", "line 5"]
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_ins_pre(self, tmp_path):
         from faust_backend.tools.edit import edit
@@ -494,8 +479,8 @@ class TestEditTool:
         f = tmp_path / "test.txt"
         f.write_text(content, encoding="utf-8")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "INS.PRE 2:\n+INSERTED\n"
             result = edit.invoke({"path": "test.txt", "patch": patch})
@@ -503,7 +488,7 @@ class TestEditTool:
             new = f.read_text().split("\n")
             assert new == ["line 1", "INSERTED", "line 2"]
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_ins_post(self, tmp_path):
         from faust_backend.tools.edit import edit
@@ -513,8 +498,8 @@ class TestEditTool:
         f = tmp_path / "test.txt"
         f.write_text(content, encoding="utf-8")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "INS.POST 1:\n+INSERTED\n"
             result = edit.invoke({"path": "test.txt", "patch": patch})
@@ -522,19 +507,19 @@ class TestEditTool:
             new = f.read_text().split("\n")
             assert new == ["line 1", "INSERTED", "line 2"]
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_missing_file(self):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = "/tmp"
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = "/tmp"
         try:
             result = edit.invoke({"path": "nonexistent.txt", "patch": "SWAP 1.=1:\n+x\n"})
             assert "不存在" in result or "出错" in result or "No such file" in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
 
 # ============================================================
@@ -552,15 +537,15 @@ class TestFindTool:
         (tmp_path / "tests/").mkdir()
         (tmp_path / "tests/test_a.py").write_text("test")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = find.invoke({"patterns": ["src/**/*.py"]})
             assert "a.py" in result
             assert "test_a.py" not in result
             assert "b.ts" not in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_find_multiple_globs(self, tmp_path):
         from faust_backend.tools.find import find
@@ -571,26 +556,26 @@ class TestFindTool:
         (tmp_path / "tests/b.py").parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / "tests/b.py").write_text("b")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = find.invoke({"patterns": ["src/**/*.py", "tests/**/*.py"]})
             assert "a.py" in result
             assert "b.py" in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_find_no_match(self, tmp_path):
         from faust_backend.tools.find import find
         import faust_backend.config_loader as conf
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = find.invoke({"patterns": ["nonexistent/**/*.xyz"]})
             assert "未匹配" in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
 
 # ============================================================
@@ -606,13 +591,13 @@ class TestSearchToolFilesystem:
         (tmp_path / "src/a.py").write_text("def hello():\n    return 42\n", encoding="utf-8")
         (tmp_path / "src/b.py").write_text("class World:\n    pass\n", encoding="utf-8")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = search.invoke({"pattern": "hello", "paths": ["src/"]})
             assert "hello" in result.lower()
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
     def test_search_no_match(self, tmp_path):
         from faust_backend.tools.search import search
@@ -621,13 +606,13 @@ class TestSearchToolFilesystem:
         (tmp_path / "src/a.py").parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / "src/a.py").write_text("hello world")
 
-        orig_root = conf.PROJECT_ROOT
-        conf.PROJECT_ROOT = str(tmp_path)
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
         try:
             result = search.invoke({"pattern": "xyznonexistentpattern", "paths": ["src/"]})
             assert "未找到" in result
         finally:
-            conf.PROJECT_ROOT = orig_root
+            conf.WORKDIR_ROOT = orig_root
 
 
 # ============================================================

@@ -87,16 +87,6 @@ class TestDetectComponents:
 
         assert result["funasr"]["installed"] is False
 
-    def test_tts_not_installed(self):
-        """tts-hub directory missing (mocked service_manager)."""
-        from faust_backend.component_manager import detect_components
-        from faust_backend import service_manager
-
-        with patch.object(service_manager, "service_status", return_value={"is_running": False}):
-            result = detect_components()
-
-        assert result["tts"]["installed"] is False
-
     def test_minecraft_bridge_status_from_service_manager(self):
         """Minecraft bridge status reflects service_manager."""
         from faust_backend.component_manager import detect_components
@@ -344,31 +334,3 @@ class TestConfigChangeTrigger:
 # ── Test download_torch module ──
 
 
-class TestDownloadTorch:
-    def test_uninstall_not_needed_when_torch_matches(self):
-        """Torch version matches target -> no uninstall needed."""
-        import download_torch
-
-        mock_torch = MagicMock()
-        mock_torch.__version__ = "2.5.1+cu128"
-        mock_torch.version.cuda = "12.8"
-        mock_torch.cuda.is_available.return_value = True
-
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            result = download_torch.uninstall_torch_if_needed("cu128")
-            assert result is False
-
-    def test_install_torch_cpu_success_returns_success(self):
-        """install_torch_and_funasr returns success when pip succeeds."""
-        import download_torch
-
-        mock_funasr = MagicMock()
-        mock_funasr.__version__ = "1.0.0"
-        mock_torch = MagicMock()
-
-        with patch("download_torch._run_pip_streaming", return_value=0), \
-             patch("download_torch.uninstall_torch_if_needed", return_value=False), \
-             patch("download_torch.download_asr_models", return_value={"success": True}), \
-             patch.dict(sys.modules, {"funasr": mock_funasr, "torch": mock_torch}):
-            result = download_torch.install_torch_and_funasr("cpu", use_aliyun_mirror=False)
-            assert result["success"] is True

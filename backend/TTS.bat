@@ -11,7 +11,6 @@ if not defined TTS_ROOT if exist "%~dp0tts-hub\GPT-SoVITS-v2pro-20250604\GPT-SoV
 if not defined TTS_ROOT (
 	echo No supported GPT-SoVITS directory found under backend/tts-hub.
 	echo Run backend\download_tts.py first.
-	pause
 	exit /b 1
 )
 echo Using TTS root: %TTS_ROOT%

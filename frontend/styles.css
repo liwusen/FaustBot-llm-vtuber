@@ -53,6 +53,8 @@ body.click-through #statusDock,
 body.click-through #overlay,
 body.click-through .nimble-window,
 body.click-through #asrBubble,
+body.click-through #subagentSummary,
+body.click-through #subagentPanel,
 body.click-through #hil-approval-host,
 body.click-through #logPanel,
 body.click-through .floating-panel-header,
@@ -284,6 +286,7 @@ body.click-through .hil-approval-shell {
   width: 350px;
   pointer-events:auto;
   display:none;
+  flex-direction: column;
   background: linear-gradient(180deg, rgba(24,29,37,0.92), rgba(15,18,24,0.84));
   color:#fff;
   padding:12px 34px 12px 14px;
@@ -292,7 +295,20 @@ body.click-through .hil-approval-shell {
   box-shadow: 0 14px 32px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.05);
   backdrop-filter: blur(12px);
   transform: translate3d(0,0,0);
-  max-height: 150px;
+  max-height: min(60vh, 560px);
+}
+
+#subagentSummary {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.28);
+  width: 100%;
+  pointer-events: auto;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
 }
 
 /* VAD probability meter styling */
@@ -771,4 +787,129 @@ body.click-through #vrmConfigPanel {
 }
 body.click-through .autocomplete-dropdown {
   pointer-events: auto;
+}
+
+.subagent-summary-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.05);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.subagent-summary-item:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.22);
+}
+
+.subagent-summary-name {
+  font-weight: 600;
+  color: #647086;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.subagent-summary-name:hover {
+  color: #3f6be8;
+}
+
+.subagent-summary-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+#subagentPanel {
+  position: fixed;
+  left: 24px;
+  top: 24px;
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 60px);
+  z-index: 2300;
+  display: none;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(238,242,247,0.92));
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(209, 213, 219, 0.7);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+}
+
+#subagentPanelHeader {
+  cursor: move;
+  color: #111827;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+#subagentPanelBody {
+  color: #111827;
+}
+
+#subagentPanel .vrm-config-actions button {
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #647086;
+  border-radius: 6px;
+  padding: 2px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#subagentPanel .vrm-config-actions button:hover {
+  background: rgba(148, 163, 184, 0.22);
+  border-color: rgba(148, 163, 184, 0.32);
+  color: #1a2433;
+}
+
+.subagent-panel-meta {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 6px 10px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.subagent-panel-meta-key {
+  color: #647086;
+}
+
+.subagent-panel-meta-value {
+  color: #111827;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.subagent-panel-events {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subagent-panel-event {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.subagent-panel-event-type {
+  font-size: 11px;
+  color: #3f6be8;
+  margin-bottom: 4px;
+}
+
+.subagent-panel-event-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1a2433;
 }

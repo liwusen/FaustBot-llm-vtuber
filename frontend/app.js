@@ -36,6 +36,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   const chatStatusEl = document.getElementById('chatStatus');
   const asrBubbleEl = document.getElementById('asrBubble');
   const asrTextEl = document.getElementById('asrText');
+  const subagentSummaryEl = document.getElementById('subagentSummary');
   const hideAsrBubbleBtn = document.getElementById('hideAsrBubbleBtn');
   const vadProbEl = document.getElementById('vadProb');
   const vadProbLabel = document.getElementById('vadProbLabel');
@@ -51,6 +52,12 @@ import { initAutocomplete } from './libs/autocomplete.js';
   const vrmConfigSaveBtn = document.getElementById('vrmConfigSaveBtn');
   const vrmConfigCloseBtn = document.getElementById('vrmConfigCloseBtn');
   const vrmConfigResetBtn = document.getElementById('vrmConfigResetBtn');
+  const subagentPanel = document.getElementById('subagentPanel');
+  const subagentPanelHeader = document.getElementById('subagentPanelHeader');
+  const subagentPanelTitle = document.getElementById('subagentPanelTitle');
+  const subagentPanelBody = document.getElementById('subagentPanelBody');
+  const subagentPanelCloseBtn = document.getElementById('subagentPanelCloseBtn');
+  const subagentStopBtn = document.getElementById('subagentStopBtn');
   const quickController = document.getElementById('modelQuickController');
   const quickToggleAsrBtn = document.getElementById('quickToggleAsr');
   const quickStopBtn = document.getElementById('quickStopBtn');
@@ -72,6 +79,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
   let asrBubbleInitialized = false;
   let asrBubbleSource = 'ai';
   let asrBubbleState = { source: 'ai', entries: [] };
+  let subagentStatuses = [];
+  let subagentEventCache = {};
+  let selectedSubagentName = '';
+  let devToolsLikelyOpen = false;
   let asrTextPinnedToBottom = true;
   let currentLipSyncParamIds = ['ParamMouthOpenY'];
   let activeModelLoadRequestId = 0;
@@ -461,6 +472,18 @@ import { initAutocomplete } from './libs/autocomplete.js';
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
+  function isPointOverSubagentSummary(clientX, clientY){
+    if (!subagentSummaryEl || subagentSummaryEl.style.display === 'none') return false;
+    const rect = subagentSummaryEl.getBoundingClientRect();
+    return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+  }
+
+  function isPointOverSubagentPanel(clientX, clientY){
+    if (!subagentPanel || subagentPanel.style.display === 'none') return false;
+    const rect = subagentPanel.getBoundingClientRect();
+    return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+  }
+
   function isPointOverVRMConfig(clientX, clientY) {
     if (!vrmConfigPanel || vrmConfigPanel.style.display === 'none') return false;
     const rect = vrmConfigPanel.getBoundingClientRect();
@@ -826,6 +849,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
   const CHAT_HOST = BACKEND_HOST;
   const CHAT_PORT = BACKEND_PORT;
   const CHAT_ENDPOINT = `ws://${CHAT_HOST}:${CHAT_PORT}/faust/chat`;
+  const SUBAGENT_STATUS_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/subagents-status`;
+  const SUBAGENT_DELETE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/subagents`;
   const NIMBLE_CALLBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/callback`;
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
@@ -1124,15 +1149,47 @@ import { initAutocomplete } from './libs/autocomplete.js';
   }
 
   async function handleChatWsMessage(ev){
-    if (!currentChatRequest) return;
     let raw = ev.data;
     if (raw && typeof raw !== 'string') {
       raw = await decodeWsPayload(raw);
     }
+    console.info(":Chat Websocket:",raw)
     let msg = null;
     try{ msg = JSON.parse(raw); }catch(e){ msg = { type: 'error', error: String(e) }; }
     if (!msg) return;
     emitAppPluginEvent('chat_message', msg);
+    const agentId = String(msg.agent_id || 'main').trim() || 'main';
+
+    // step 1: subagents 概况 → 更新摘要栏
+    if (msg.agent_id === 'subagents') {
+      if (msg.type === 'subagents_summary') {
+        setSubagentStatuses(Array.isArray(msg.items) ? msg.items : []);
+      }
+      return;
+    }
+
+    // step 2: subagent 流式事件 → 暂存到缓存，不进入主气泡
+    if (agentId !== 'main') {
+      if (agentId && agentId.startsWith('subagent-')) {
+        const name = agentId.slice('subagent-'.length);
+        if (!subagentEventCache[name]) subagentEventCache[name] = [];
+        const cached = subagentEventCache[name];
+        const last = cached[cached.length - 1];
+        if ((msg.type === 'reasoning_delta' || msg.type === 'delta') && last && last.type === msg.type) {
+          last.content = (last.content || '') + (msg.content || '');
+          last.ts = msg.ts || Date.now();
+        } else {
+          cached.push({ ...msg, ts: msg.ts || Date.now() });
+        }
+        if (cached.length > 500) cached.splice(0, cached.length - 500);
+        if (selectedSubagentName === name) {
+          renderSubagentPanelFromCache(name);
+        }
+      }
+      return;
+    }
+
+    if (!currentChatRequest) return;
 
     if (msg.type === 'start'){
       resetStreamTtsState();
@@ -1146,11 +1203,12 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
 
     if (msg.type === 'tool_start'){
+      const toolName = String(msg.tool_name || '未知工具');
       if (!currentChatRequest.entries) currentChatRequest.entries = [];
       currentChatRequest.entries.push({
         type: 'tool',
         callId: String(msg.call_id || ''),
-        toolName: String(msg.tool_name || '未知工具'),
+        toolName,
         args: msg.args || {},
         output: '',
         done: false,
@@ -1247,8 +1305,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
 
     if (msg.type === 'done'){
-      const reply = stripMotionTokens(msg.reply || currentChatRequest.replyText || '');
       const request = currentChatRequest;
+      let reply = stripMotionTokens(msg.reply || currentChatRequest.replyText || '');
       currentChatRequest.replyText = reply;
       currentChatRequest.motionTokenBuffer = '';
 
@@ -1450,6 +1508,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   function hideResultBubble(){
     if (!asrBubbleEl) return;
     asrBubbleEl.style.display = 'none';
+    if (subagentSummaryEl) subagentSummaryEl.style.display = 'none';
     asrBubbleInitialized = false;
   }
 
@@ -1472,6 +1531,193 @@ import { initAutocomplete } from './libs/autocomplete.js';
       updateAsrTextPosition(true);
       scrollAsrTextToBottom(true);
     }
+  }
+
+  function formatSubagentEventSummary(item){
+    if (!item) return '';
+    return String(item.last_event_summary || item.last_error || '').trim();
+  }
+
+  function setSubagentStatuses(items){
+    subagentStatuses = Array.isArray(items) ? items.map((item)=> ({ ...item })) : [];
+    renderSubagentSummary();
+    if (selectedSubagentName) {
+      const next = subagentStatuses.find((item)=> String(item.name || '') === selectedSubagentName);
+      if (next) renderSubagentPanel(next);
+    }
+  }
+
+  function renderSubagentSummary(){
+    if (!subagentSummaryEl) return;
+    const STATUS_CN= {
+      idle: '空闲', pending: '排队中', running: '运行中',
+      stopping: '停止中', stopped: '已停止', error: '错误',
+    };
+    const visibleItems = Array.isArray(subagentStatuses) ? subagentStatuses : [];
+    if (!visibleItems.length){
+      subagentSummaryEl.style.display = 'none';
+      subagentSummaryEl.innerHTML = '';
+      // 如果 asrText 也没有内容，隐藏整个气泡
+      if (asrBubbleEl && asrBubbleEl.style.display !== 'none' && asrTextEl && !asrTextEl.textContent.trim()) {
+        asrBubbleEl.style.display = 'none';
+      }
+      return;
+    }
+    subagentSummaryEl.style.display = 'flex';
+    if (asrBubbleEl && asrBubbleEl.style.display === 'none'){
+      asrBubbleEl.style.display = 'flex';
+    }
+    subagentSummaryEl.innerHTML = visibleItems.map((item)=>{
+      const name = escapeHtml(String(item.name || 'Unnamed'));
+      const rawStatus = String(item.status || 'unknown').trim().toLowerCase();
+      const status = escapeHtml(STATUS_CN[rawStatus] || rawStatus);
+      const title = escapeHtml(formatSubagentEventSummary(item));
+      return `<div class="subagent-summary-item" data-subagent-name="${name}" title="${title}"><span class="subagent-summary-name">${name}:${status}</span></div>`;
+    }).join('');
+    console.log('[SubagentSummary] rendered', visibleItems.length, 'items, html:', subagentSummaryEl.innerHTML.substring(0, 200));
+    console.log('[SubagentSummary] display:', subagentSummaryEl.style.display, 'parent display:', asrBubbleEl ? asrBubbleEl.style.display : '?', 'data-source:', asrBubbleEl ? asrBubbleEl.dataset.source : '?');
+  }
+
+  function renderSubagentPanelFromCache(name){
+    const status = subagentStatuses.find(s => String(s.name || '') === name);
+    if (!status) return;
+    const events = subagentEventCache[name] || [];
+    renderSubagentPanel({ ...status, recent_events: events });
+  }
+
+  function normalizeSubagentPanelEvents(events){
+    const source = Array.isArray(events) ? events : [];
+    const normalized = [];
+    for (const event of source){
+      if (!event || typeof event !== 'object') continue;
+      const eventType = String(event.type || '').trim();
+      if (!eventType) continue;
+      const last = normalized[normalized.length - 1];
+      if ((eventType === 'reasoning_delta' || eventType === 'delta') && last && last.type === eventType) {
+        last.content = String(last.content || '') + String(event.content || '');
+        last.ts = event.ts;
+        continue;
+      }
+      normalized.push({ ...event });
+    }
+    return normalized;
+  }
+
+  function formatSubagentPanelEvent(event){
+    const eventType = String(event.type || '').trim();
+    if (eventType === 'reasoning_delta') return { label: '思考', body: String(event.content || '') };
+    if (eventType === 'delta') return { label: '输出', body: String(event.content || '') };
+    if (eventType === 'tool_start') return { label: '调用工具', body: String(event.tool_name || '') };
+    if (eventType === 'queued') {
+      const content = (((event.message || {}).messages || [])[0] || {}).content || '';
+      return { label: '排队中', body: String(content) };
+    }
+    if (eventType === 'input') {
+      const content = (((event.message || {}).messages || [])[0] || {}).content || '';
+      return { label: '主Agent消息', body: String(content) };
+    }
+    if (eventType === 'error') return { label: '错误', body: String(event.content || event.error || '') };
+    if (eventType === 'stopping') return { label: '停止中', body: '已发送停止请求' };
+    if (eventType === 'stopped') return { label: '已停止', body: 'Subagent 已停止' };
+    return { label: eventType || 'event', body: typeof event === 'object' ? JSON.stringify(event, null, 2) : String(event || '') };
+  }
+
+  function renderSubagentPanel(item){
+    if (!subagentPanel || !subagentPanelBody || !item) return;
+    selectedSubagentName = String(item.name || '');
+    if (subagentPanelTitle) subagentPanelTitle.textContent = `Subagent: ${selectedSubagentName}`;
+    const events = normalizeSubagentPanelEvents(item.recent_events);
+    subagentPanelBody.innerHTML = [
+      '<div class="subagent-panel-meta">',
+      `<div class="subagent-panel-meta-key">状态</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.status || 'unknown'))}</div>`,
+      `<div class="subagent-panel-meta-key">工具组</div><div class="subagent-panel-meta-value">${escapeHtml((item.toolsets || []).join(', ') || '(none)')}</div>`,
+      `<div class="subagent-panel-meta-key">Prompt</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.system_prompt_summary || ''))}</div>`,
+      `<div class="subagent-panel-meta-key">错误</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.last_error || ''))}</div>`,
+      '</div>',
+      '<div class="subagent-panel-events">',
+      (events.length ? events.map((event)=>{
+        const formatted = formatSubagentPanelEvent(event);
+        return `<div class="subagent-panel-event"><div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div></div>`;
+      }).join('') : '<div class="subagent-panel-event"><div class="subagent-panel-event-body">暂无事件</div></div>'),
+      '</div>',
+    ].join('');
+    subagentPanel.style.display = 'flex';
+    if (clickThroughController) clickThroughController.forceInteractive();
+  }
+
+  function hideSubagentPanel(){
+    if (!subagentPanel) return;
+    subagentPanel.style.display = 'none';
+  }
+
+  async function openSubagentPanelByName(name){
+    if (subagentEventCache[name] && subagentEventCache[name].length > 0) {
+      renderSubagentPanelFromCache(name);
+      return;
+    }
+    try {
+      const r = await fetch(SUBAGENT_STATUS_ENDPOINT);
+      const j = await r.json();
+      console.info(":subagent status:",j)
+      const items = Array.isArray(j.items) ? j.items : [];
+      const target = items.find(item => String(item.name || '') === name);
+      if (target) {
+        subagentEventCache[name] = Array.isArray(target.recent_events) ? target.recent_events.map(e => ({...e})) : [];
+        renderSubagentPanel(target);
+      }
+    } catch(e) {
+      console.warn('openSubagentPanelByName failed', e);
+    }
+  }
+
+  async function stopSelectedSubagent(){
+    if (!selectedSubagentName) return;
+    const r = await fetch(`${SUBAGENT_DELETE_ENDPOINT}/${encodeURIComponent(selectedSubagentName)}`, { method: 'DELETE' });
+    if (!r.ok){
+      const txt = await r.text();
+      throw new Error(txt || `HTTP ${r.status}`);
+    }
+    await refreshSubagentStatuses();
+    hideSubagentPanel();
+  }
+
+  async function refreshSubagentStatuses(){
+    try{
+      const r = await fetch(SUBAGENT_STATUS_ENDPOINT);
+      const j = await r.json().catch(()=>({}));
+      console.log(":subagent status:",j)
+      setSubagentStatuses(Array.isArray(j.items) ? j.items : []);
+    }catch(e){
+      console.warn('refreshSubagentStatuses failed', e);
+    }
+  }
+
+  function initSubagentPanelDrag(){
+    if (!subagentPanel || !subagentPanelHeader) return;
+    let draggingPanel = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    const onMove = (ev)=>{
+      if (!draggingPanel) return;
+      subagentPanel.style.left = `${Math.max(8, ev.clientX - offsetX)}px`;
+      subagentPanel.style.top = `${Math.max(8, ev.clientY - offsetY)}px`;
+      subagentPanel.style.right = 'auto';
+    };
+    const onUp = ()=>{
+      draggingPanel = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    subagentPanelHeader.addEventListener('mousedown', (ev)=>{
+      if (ev.target && ev.target.closest('button')) return;
+      const rect = subagentPanel.getBoundingClientRect();
+      draggingPanel = true;
+      offsetX = ev.clientX - rect.left;
+      offsetY = ev.clientY - rect.top;
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
   }
 
   function showAsrText(text){
@@ -2322,7 +2568,18 @@ import { initAutocomplete } from './libs/autocomplete.js';
       let interactiveActive = false;
       let pendingTimeout = null;
 
+      function detectDevToolsLikelyOpen(){
+        try {
+          const widthGap = Math.abs(window.outerWidth - window.innerWidth);
+          const heightGap = Math.abs(window.outerHeight - window.innerHeight);
+          devToolsLikelyOpen = widthGap > 160 || heightGap > 160;
+        } catch (_e) {
+          devToolsLikelyOpen = false;
+        }
+      }
+
       function setIgnore(ignore){
+        if (devToolsLikelyOpen) ignore = false;
         try{ app.renderer.view.style.pointerEvents = ignore ? 'none' : 'auto'; }catch(e){}
         window.api.setIgnoreMouseEvents(ignore).catch(()=>{});
       }
@@ -2332,22 +2589,32 @@ import { initAutocomplete } from './libs/autocomplete.js';
         pendingTimeout = setTimeout(()=>{
           pendingTimeout = null;
           if (clickThroughEnabled && !interactiveActive && !interactionLocked){
+            detectDevToolsLikelyOpen();
             setIgnore(true);
           }
         }, 140);
       }
 
       function onGlobalMouseMove(e){
+        detectDevToolsLikelyOpen();
         hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);
         hoverModel = isPointerOnModel(e.clientX, e.clientY);
         const overAsrBubble = isPointOverAsrBubble(e.clientX, e.clientY);
+        const overSubagentSummary = isPointOverSubagentSummary(e.clientX, e.clientY);
+        const overSubagentPanel = isPointOverSubagentPanel(e.clientX, e.clientY);
         const overHilApproval = hil.isPointOver(e.clientX, e.clientY);
         const overVRMConfig = isPointOverVRMConfig(e.clientX, e.clientY);
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
-        //console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
-        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
+        //console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overSubagentSummary, overSubagentPanel, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
+        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
+        if (devToolsLikelyOpen) {
+          interactiveActive = true;
+          setIgnore(false);
+          refreshQuickControllerVisibility();
+          return;
+        }
         if (overInteractive){
           if (!interactiveActive){
             interactiveActive = true;
@@ -2364,8 +2631,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
         enable(){
           clickThroughEnabled = true;
           document.body.classList.add('click-through');
+          detectDevToolsLikelyOpen();
           setIgnore(true);
           window.addEventListener('mousemove', onGlobalMouseMove, { passive: true });
+          window.addEventListener('resize', detectDevToolsLikelyOpen, { passive: true });
         },
         disable(){
           clickThroughEnabled = false;
@@ -2373,6 +2642,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
           if (pendingTimeout) { clearTimeout(pendingTimeout); pendingTimeout = null; }
           document.body.classList.remove('click-through');
           window.removeEventListener('mousemove', onGlobalMouseMove);
+          window.removeEventListener('resize', detectDevToolsLikelyOpen);
           setIgnore(false);
         },
         setInteractiveLock(locked){
@@ -2460,11 +2730,28 @@ import { initAutocomplete } from './libs/autocomplete.js';
       if (clickThroughController) clickThroughController.forceInteractive();
     }, { passive: true });
   }
+  if (subagentSummaryEl){
+    subagentSummaryEl.addEventListener('mouseenter', ()=>{
+      if (clickThroughController) clickThroughController.forceInteractive();
+    });
+    subagentSummaryEl.addEventListener('click', (ev)=>{
+      const item = ev.target && ev.target.closest ? ev.target.closest('[data-subagent-name]') : null;
+      if (!item) return;
+      const name = String(item.getAttribute('data-subagent-name') || '');
+      renderSubagentPanelFromCache(name);
+    });
+  }
   if (hideAsrBubbleBtn){
     hideAsrBubbleBtn.addEventListener('click', ()=>{
       hideResultBubble();
     });
   }
+  if (subagentPanelCloseBtn) subagentPanelCloseBtn.addEventListener('click', ()=>{ hideSubagentPanel(); });
+  if (subagentStopBtn) subagentStopBtn.addEventListener('click', async ()=>{
+    try{ await stopSelectedSubagent(); }catch(e){ showResultBubble('error', '停止 Subagent 失败: ' + String(e && e.message ? e.message : e)); }
+  });
+  initSubagentPanelDrag();
+  refreshSubagentStatuses();
   if (trayToggleBtn) trayToggleBtn.addEventListener('click', async ()=>{
     try{
       if (window.api && window.api.hideToTray) await window.api.hideToTray();

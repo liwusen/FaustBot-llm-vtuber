@@ -166,10 +166,7 @@ def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:
         return f"[找不到 artifact: {output_id}]"
 
     if parsed.selector_lines:
-        start, end = parsed.selector_lines
-        lines = art.content.split("\n")
-        selected = lines[start - 1:end]
-        return "\n".join(selected)
+        return _apply_selector_to_text(art.content, parsed.selector_lines)
 
     # Image/multimodal artifacts: return plain text if requested
     if force_plain_text and art.content_type in ("image", "multimodal"):
@@ -230,10 +227,7 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
 
     content = result.get("content", "")
     if parsed.selector_lines:
-        start, end = parsed.selector_lines
-        lines = content.split("\n")
-        selected = lines[start - 1:end]
-        return "\n".join(selected)
+        return _apply_selector_to_text(content, parsed.selector_lines)
     return content
 
 
@@ -309,7 +303,10 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
             "index.md",
             "tool_use.md",
             "mc.md",
+            "subagenting.md",
+            "avatoolset",
             "pc_info",
+            "subagents/",
             "source/",
         ]
         lines = ["faustbot:// 可用资源:"]
@@ -324,13 +321,20 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
             "- faustbot://index.md",
             "- faustbot://tool_use.md",
             "- faustbot://mc.md",
+            "- faustbot://subagenting.md",
+            "- faustbot://avatoolset",
             "- faustbot://pc_info",
+            "- faustbot://subagents/{name}",
+            "- faustbot://subagents/{name}/output",
             "- faustbot://source/{PATH}",
             "",
             "使用说明：",
             "- 先读 faustbot://index.md 了解可用内容。",
             "- 想看工具使用规范，读取 faustbot://tool_use.md。",
             "- 想看 Minecraft 指南，读取 faustbot://mc.md。",
+            "- 想看 Subagent 协议与用法，读取 faustbot://subagenting.md。",
+            "- 想看当前可用 Toolset 与 MCP 工具组，读取 faustbot://avatoolset。",
+            "- 想看 Subagent 状态，读取 faustbot://subagents/{name}。",
             "- 想只读源码，读取 faustbot://source/{PATH}。",
         ])
         return _apply_selector_to_text(content, parsed.selector_lines)
@@ -341,6 +345,14 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
 
     if path == "mc.md":
         content = _read_task_section("## Minecraft 操作系统说明")
+        return _apply_selector_to_text(content, parsed.selector_lines)
+
+    if path == "subagenting.md":
+        content = _read_subagenting_doc()
+        return _apply_selector_to_text(content, parsed.selector_lines)
+
+    if path == "avatoolset":
+        content = _read_avatoolset_doc()
         return _apply_selector_to_text(content, parsed.selector_lines)
 
     if path == "pc_info":
@@ -356,7 +368,105 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     if path.startswith("source/"):
         return _read_faustbot_source(parsed)
 
+    if path == "subagents":
+        return _apply_selector_to_text(_list_subagents(), parsed.selector_lines)
+
+    if path.startswith("subagents/"):
+        return _read_faustbot_subagents(parsed)
+
     return f"[未知 faustbot 资源: {path}]"
+
+
+def _read_subagenting_doc() -> str:
+    return "\n".join([
+        "# Subagent 协议与用法",
+        "",
+        "可用只读资源：",
+        "- faustbot://subagents/{name}",
+        "- faustbot://subagents/{name}/output",
+        "- faustbot://avatoolset",
+        "",
+        "建议工作流：",
+        "1. 先读取 faustbot://subagents/{name} 查看状态、工具组、最近事件。",
+        "2. 需要看完整工作输出时，再读取 faustbot://subagents/{name}/output。",
+        "3. 若输出过长，优先使用行号选择器，例如 faustbot://subagents/demo/output:1-80。",
+        "4. 若要了解可用 Toolset 或 MCP 派生工具组，读取 faustbot://avatoolset。",
+        "",
+        "状态字段说明：",
+        "- idle: 空闲",
+        "- pending: 已排队，等待执行",
+        "- running: 正在执行",
+        "- stopping: 已请求停止",
+        "- stopped: 已停止",
+        "- error: 执行出错",
+        "",
+        "输出读取说明：",
+        "- faustbot://subagents/{name}/output 返回 Markdown 文本。",
+        "- 其中会包含 system prompt、主 Agent 发送给 Subagent 的消息、思考摘要、普通输出文本、以及工具调用名称。",
+        "- 不会包含工具参数或原始 JSON 明细。",
+    ])
+
+
+def _read_avatoolset_doc() -> str:
+    from faust_backend.runtime import state
+
+    manager = state.subagent_manager
+    lines = [
+        "# Available Toolsets For Subagents",
+        "",
+        "这个只读文件列出当前 Subagent 可用的 Toolset 以及对应工具，包括运行时动态生成的 MCP 工具组。",
+        "若需要使用 MCP 工具组，先读取这里确认具体 Toolset 名称，再在 newSubagent(...) 中传入该 Toolset。",
+        "",
+    ]
+    if manager is None:
+        lines.append("(subagent manager 未初始化)")
+        return "\n".join(lines)
+    lines.append(manager.format_available_toolsets())
+    return "\n".join(lines)
+
+
+def _list_subagents() -> str:
+    from faust_backend.runtime import state
+
+    manager = state.subagent_manager
+    if manager is None:
+        return "(subagent manager 未初始化)"
+    items = manager.list_statuses()
+    if not items:
+        return "(没有可用的 subagent)"
+    lines = ["faustbot://subagents 可用资源:"]
+    for item in items:
+        name = str(item.get("name") or "")
+        lines.append(f"  faustbot://subagents/{name}")
+        lines.append(f"  faustbot://subagents/{name}/output")
+        lines.append(f"  faustbot://subagents/{name}/finalResult")
+    return "\n".join(lines)
+
+
+def _read_faustbot_subagents(parsed) -> str:
+    from faust_backend.runtime import state
+
+    manager = state.subagent_manager
+    if manager is None:
+        return "(subagent manager 未初始化)"
+    raw = str(parsed.path or "").strip("/")
+    suffix = raw[len("subagents/"):]
+    if not suffix:
+        return _list_subagents()
+    parts = [part for part in suffix.split("/") if part]
+    if not parts:
+        return _list_subagents()
+    agent_name = parts[0]
+    try:
+        if len(parts) > 1 and parts[1] == "output":
+            content = manager.format_subagent_output(agent_name)
+        elif len(parts) > 1 and parts[1] == "finalResult":
+            content = manager.format_subagent_final_result(agent_name)
+        else:
+            content = manager.format_subagent_overview(agent_name)
+    except ValueError as exc:
+        return f"[{exc}]"
+    return _apply_selector_to_text(content, parsed.selector_lines)
 
 
 def _read_faustbot_source(parsed) -> str:
@@ -566,7 +676,21 @@ def _apply_selector_to_text(content: str, selector_lines: tuple[int, int] | None
         return content
     start, end = selector_lines
     lines = content.split("\n")
-    return "\n".join(lines[start - 1:end])
+    if not lines:
+        return ""
+
+    def _resolve(line_no: int) -> int:
+        if line_no < 0:
+            return len(lines) + line_no + 1
+        return line_no
+
+    resolved_start = max(1, _resolve(start))
+    resolved_end = max(1, _resolve(end))
+    if resolved_start > resolved_end:
+        resolved_start, resolved_end = resolved_end, resolved_start
+    resolved_start = min(resolved_start, len(lines))
+    resolved_end = min(resolved_end, len(lines))
+    return "\n".join(lines[resolved_start - 1:resolved_end])
 
 
 def _read_file(parsed, *, force_plain_text: bool = False) -> str:
@@ -605,10 +729,7 @@ def _read_file(parsed, *, force_plain_text: bool = False) -> str:
         return f"读取文件出错: {e}"
 
     if parsed.selector_lines:
-        start, end = parsed.selector_lines
-        lines = content.split("\n")
-        selected = lines[start - 1:end]
-        return "\n".join(selected)
+        return _apply_selector_to_text(content, parsed.selector_lines)
 
     # For code files, return structural summary
     if file_path.suffix in (".py", ".ts", ".js", ".rs", ".go", ".java", ".cpp", ".c",
