@@ -13,17 +13,22 @@ function parsePluginFieldValue(fieldType, rawValue) {
 }
 
 function renderPluginsModule() {
+  async function refreshPluginUi() {
+    await loadPluginAssets(true);
+    await ensureModuleData("plugins");
+    refreshModule();
+  }
+
   const top = el("div", "toolbar");
   top.append(
     makeButton("刷新", async () => { await ensureModuleData("plugins"); refreshModule(); }),
-    makeButton("重载插件", async () => { await cfgApi("POST", "/faust/admin/plugins/reload", { apply_runtime: true, no_initial_chat: true }); await ensureModuleData("plugins"); refreshModule(); }, "btn btn-secondary"),
+    makeButton("重载插件", async () => { await cfgApi("POST", "/faust/admin/plugins/reload", { apply_runtime: true, no_initial_chat: true }); await refreshPluginUi(); }, "btn btn-secondary"),
     makeButton("从 ZIP 安装", async () => {
       const zipPath = await window.api.configOpenFile({ title: "选择插件 ZIP 文件", filters: [{ name: "ZIP", extensions: ["zip"] }] });
       if (!zipPath) return;
       const overwrite = window.confirm("若插件已存在是否覆盖安装?");
       await cfgApi("POST", "/faust/admin/plugins/install-zip", { zip_path: zipPath, overwrite, apply_runtime: true, no_initial_chat: true, reset_dialog: false });
-      await ensureModuleData("plugins");
-      refreshModule();
+      await refreshPluginUi();
     }),
     makeButton("打包为 ZIP", async () => {
       if (!state.selectedPluginId) return;
@@ -50,13 +55,12 @@ function renderPluginsModule() {
     });
     const ops = el("div", "toolbar compact");
     ops.append(
-      makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/enable`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true }); await ensureModuleData("plugins"); refreshModule(); }),
-      makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/disable`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true }); await ensureModuleData("plugins"); refreshModule(); }),
+      makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/enable`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true }); await refreshPluginUi(); }),
+      makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/disable`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true }); await refreshPluginUi(); }),
       makeButton("删除", async () => {
         if (!window.confirm(`确定删除插件 ${pid} ?`)) return;
         await cfgApi("DELETE", `/faust/admin/plugins/${encodeURIComponent(pid)}`, null, { apply_runtime: "true", reset_dialog: "false", no_initial_chat: "true" });
-        await ensureModuleData("plugins");
-        refreshModule();
+        await refreshPluginUi();
       })
     );
     row.append(ops);
@@ -152,6 +156,7 @@ function renderPluginsModule() {
         reset_dialog: false,
         no_initial_chat: true,
       });
+      await loadPluginAssets(true);
       await ensureModuleData("plugins");
       showBanner("success", `插件 ${selected.id} 配置已保存并重载。`);
       refreshModule();

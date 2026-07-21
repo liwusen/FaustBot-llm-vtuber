@@ -51,6 +51,7 @@ import faust_backend.edge_tts_api as edge_tts_api
 
 # ── FastAPI 应用 ──
 app = FastAPI(title="FaustBot Backend Main Service",lifespan=lifespan,version="2.0",description="FaustBot 后端主服务，提供核心功能和 API 接口。")
+state.fastapi_app = app
 
 # ── CORS ──
 app.add_middleware(
@@ -77,7 +78,7 @@ araya_api.register_araya_routes(app)
 app.include_router(live_api.router)
 app.include_router(update_api.router)
 app.include_router(memory_api.router)
-edge_tts_api.register_edge_tts_routes(app)
+edge_tts_api.register_edge_tts_routes(app)#TODO: 以上几个路由应该使用router注册
 
 # ── 插件前端静态资源挂载 ──
 from fastapi.staticfiles import StaticFiles

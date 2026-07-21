@@ -32,6 +32,7 @@ from faust_backend.runtime.uri import (
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
 from faust_backend.logger import get_logger
+from faust_backend.tools.vfs import ensure_source_file, get_faustbot_vfs, run_coro_sync
 
 log = get_logger("faust.tools.read")
 
@@ -295,197 +296,38 @@ def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
 
 def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     del force_plain_text
-    path = str(parsed.path or "").strip("/")
-
-    if not path or parsed.is_dir:
-        # 列出所有 faustbot 可用资源
-        items = [
-            "index.md",
-            "tool_use.md",
-            "mc.md",
-            "subagenting.md",
-            "avatoolset",
-            "pc_info",
-            "subagents/",
-            "source/",
-        ]
+    raw_path = str(parsed.path or "").strip("/")
+    vfs = get_faustbot_vfs(refresh=True)
+    if not raw_path or parsed.is_dir:
+        items = run_coro_sync(vfs.list_dir("/")) or []
         lines = ["faustbot:// 可用资源:"]
-        lines += [f"  faustbot://{item}" for item in items]
+        for item in items:
+            child_path = "/" + item
+            suffix = "/" if run_coro_sync(vfs.is_dir(child_path)) else ""
+            lines.append(f"  faustbot://{item}{suffix}")
         return "\n".join(lines)
 
-    if path == "index.md":
-        content = "\n".join([
-            "# faustbot:// 只读索引",
-            "",
-            "可读取资源：",
-            "- faustbot://index.md",
-            "- faustbot://tool_use.md",
-            "- faustbot://mc.md",
-            "- faustbot://subagenting.md",
-            "- faustbot://avatoolset",
-            "- faustbot://pc_info",
-            "- faustbot://subagents/{name}",
-            "- faustbot://subagents/{name}/output",
-            "- faustbot://source/{PATH}",
-            "",
-            "使用说明：",
-            "- 先读 faustbot://index.md 了解可用内容。",
-            "- 想看工具使用规范，读取 faustbot://tool_use.md。",
-            "- 想看 Minecraft 指南，读取 faustbot://mc.md。",
-            "- 想看 Subagent 协议与用法，读取 faustbot://subagenting.md。",
-            "- 想看当前可用 Toolset 与 MCP 工具组，读取 faustbot://avatoolset。",
-            "- 想看 Subagent 状态，读取 faustbot://subagents/{name}。",
-            "- 想只读源码，读取 faustbot://source/{PATH}。",
-        ])
-        return _apply_selector_to_text(content, parsed.selector_lines)
-
-    if path == "tool_use.md":
-        content = _read_task_section("## 核心工具速查")
-        return _apply_selector_to_text(content, parsed.selector_lines)
-
-    if path == "mc.md":
-        content = _read_task_section("## Minecraft 操作系统说明")
-        return _apply_selector_to_text(content, parsed.selector_lines)
-
-    if path == "subagenting.md":
-        content = _read_subagenting_doc()
-        return _apply_selector_to_text(content, parsed.selector_lines)
-
-    if path == "avatoolset":
-        content = _read_avatoolset_doc()
-        return _apply_selector_to_text(content, parsed.selector_lines)
-
-    if path == "pc_info":
-        info = "\n".join([
-            "# pc_info",
-            f"username: {getpass.getuser()}",
-            f"platform: {platform.platform()}",
-            f"python: {sys.version.split()[0]}",
-            f"cwd: {os.getcwd()}",
-        ])
-        return _apply_selector_to_text(info, parsed.selector_lines)
-
-    if path.startswith("source/"):
-        return _read_faustbot_source(parsed)
-
-    if path == "subagents":
-        return _apply_selector_to_text(_list_subagents(), parsed.selector_lines)
-
-    if path.startswith("subagents/"):
-        return _read_faustbot_subagents(parsed)
-
-    return f"[未知 faustbot 资源: {path}]"
-
-
-def _read_subagenting_doc() -> str:
-    return "\n".join([
-        "# Subagent 协议与用法",
-        "",
-        "可用只读资源：",
-        "- faustbot://subagents/{name}",
-        "- faustbot://subagents/{name}/output",
-        "- faustbot://avatoolset",
-        "",
-        "建议工作流：",
-        "1. 先读取 faustbot://subagents/{name} 查看状态、工具组、最近事件。",
-        "2. 需要看完整工作输出时，再读取 faustbot://subagents/{name}/output。",
-        "3. 若输出过长，优先使用行号选择器，例如 faustbot://subagents/demo/output:1-80。",
-        "4. 若要了解可用 Toolset 或 MCP 派生工具组，读取 faustbot://avatoolset。",
-        "",
-        "状态字段说明：",
-        "- idle: 空闲",
-        "- pending: 已排队，等待执行",
-        "- running: 正在执行",
-        "- stopping: 已请求停止",
-        "- stopped: 已停止",
-        "- error: 执行出错",
-        "",
-        "输出读取说明：",
-        "- faustbot://subagents/{name}/output 返回 Markdown 文本。",
-        "- 其中会包含 system prompt、主 Agent 发送给 Subagent 的消息、思考摘要、普通输出文本、以及工具调用名称。",
-        "- 不会包含工具参数或原始 JSON 明细。",
-    ])
-
-
-def _read_avatoolset_doc() -> str:
-    from faust_backend.runtime import state
-
-    manager = state.subagent_manager
-    lines = [
-        "# Available Toolsets For Subagents",
-        "",
-        "这个只读文件列出当前 Subagent 可用的 Toolset 以及对应工具，包括运行时动态生成的 MCP 工具组。",
-        "若需要使用 MCP 工具组，先读取这里确认具体 Toolset 名称，再在 newSubagent(...) 中传入该 Toolset。",
-        "",
-    ]
-    if manager is None:
-        lines.append("(subagent manager 未初始化)")
+    normalized = "/" + raw_path
+    if raw_path.startswith("source/"):
+        try:
+            normalized = run_coro_sync(ensure_source_file(vfs, raw_path[len("source/"):]))
+        except Exception as exc:
+            return f"[source 文件不存在或不可读取: {exc}]"
+    if run_coro_sync(vfs.is_dir(normalized)):
+        items = run_coro_sync(vfs.list_dir(normalized)) or []
+        lines = [f"faustbot://{raw_path}/ 内容:"]
+        for item in items:
+            child_path = normalized.rstrip("/") + "/" + item
+            suffix = "/" if run_coro_sync(vfs.is_dir(child_path)) else ""
+            lines.append(f"  faustbot://{raw_path}/{item}{suffix}")
         return "\n".join(lines)
-    lines.append(manager.format_available_toolsets())
-    return "\n".join(lines)
 
-
-def _list_subagents() -> str:
-    from faust_backend.runtime import state
-
-    manager = state.subagent_manager
-    if manager is None:
-        return "(subagent manager 未初始化)"
-    items = manager.list_statuses()
-    if not items:
-        return "(没有可用的 subagent)"
-    lines = ["faustbot://subagents 可用资源:"]
-    for item in items:
-        name = str(item.get("name") or "")
-        lines.append(f"  faustbot://subagents/{name}")
-        lines.append(f"  faustbot://subagents/{name}/output")
-        lines.append(f"  faustbot://subagents/{name}/finalResult")
-    return "\n".join(lines)
-
-
-def _read_faustbot_subagents(parsed) -> str:
-    from faust_backend.runtime import state
-
-    manager = state.subagent_manager
-    if manager is None:
-        return "(subagent manager 未初始化)"
-    raw = str(parsed.path or "").strip("/")
-    suffix = raw[len("subagents/"):]
-    if not suffix:
-        return _list_subagents()
-    parts = [part for part in suffix.split("/") if part]
-    if not parts:
-        return _list_subagents()
-    agent_name = parts[0]
-    try:
-        if len(parts) > 1 and parts[1] == "output":
-            content = manager.format_subagent_output(agent_name)
-        elif len(parts) > 1 and parts[1] == "finalResult":
-            content = manager.format_subagent_final_result(agent_name)
-        else:
-            content = manager.format_subagent_overview(agent_name)
-    except ValueError as exc:
-        return f"[{exc}]"
+    content = run_coro_sync(vfs.read_text(normalized, default=""))
+    if not content:
+        return f"[未知 faustbot 资源: {raw_path}]"
     return _apply_selector_to_text(content, parsed.selector_lines)
 
 
-def _read_faustbot_source(parsed) -> str:
-    source_rel = str(parsed.path or "").strip("/")[len("source/"):]
-    if not source_rel:
-        return _list_directory(_get_faustbot_source_root())
-    rel_path = Path(source_rel)
-    if any(part in (".", "..") for part in rel_path.parts):
-        return "[不允许访问 source 根目录外的路径]"
-    source_root = _get_faustbot_source_root().resolve()
-    target_path = (source_root / rel_path).resolve()
-    if not str(target_path).startswith(str(source_root)):
-        return "[不允许访问 source 根目录外的路径]"
-    if not target_path.exists():
-        return f"[source 文件不存在: {source_rel}]"
-    file_uri = str(target_path)
-    if parsed.selector:
-        file_uri += parsed.selector
-    return _read_file(parse(file_uri))
 
 
 def _read_img_source(parsed, *, force_plain_text: bool = False) -> str:

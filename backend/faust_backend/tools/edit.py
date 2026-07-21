@@ -16,6 +16,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
+from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
 from ._patch_utils import _parse_patch,_parse_range
 log = get_logger("faust.tools.edit")
 
@@ -72,8 +73,9 @@ def edit(path: str, patch: str) -> str:
 
     log.info("edit INPUT path=%s patch_len=%d", path, len(patch))
 
-    # Detect memory:// scheme
+    # Detect memory:// scheme3
     is_memory = path.startswith("memory://")
+    is_faustbot = path.startswith("faustbot://")
     if is_memory:
         mem_path = path[len("memory://"):]
         try:
@@ -88,6 +90,19 @@ def edit(path: str, patch: str) -> str:
             return _msg
         except Exception as e:
             _msg = f"无法读取记忆文档 memory://{mem_path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
+    elif is_faustbot:
+        vfs_path = "/" + path[len("faustbot://"):].strip("/")
+        try:
+            vfs = get_faustbot_vfs(refresh=True)
+            original = run_coro_sync(vfs.read_text(vfs_path, default=""))
+        except Exception as e:
+            _msg = f"无法读取 faustbot 文档 {path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
+        if original == "":
+            _msg = f"文档不存在: {path}"
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
     else:
@@ -161,6 +176,16 @@ def edit(path: str, patch: str) -> str:
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
         _msg = f"已编辑 memory://{mem_path}\n变更: {changes} 行 (原文件 {len(lines)} 行 → 新文件 {len(result.split(chr(10)))} 行)"
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
+    elif is_faustbot:
+        try:
+            run_coro_sync(vfs.write(vfs_path, result))
+        except Exception as e:
+            _msg = f"无法写入 faustbot 文档 {path}: {e}"
+            log.info("edit OUTPUT %s", _msg[:120])
+            return _msg
+        _msg = f"已编辑 {path}\n变更: {changes} 行"
         log.info("edit OUTPUT %s", _msg[:120])
         return _msg
     else:

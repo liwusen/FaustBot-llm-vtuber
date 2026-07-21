@@ -63,3 +63,4 @@ funasr>=0.9.6
 #
 pluggy
 mcp>=1.28,<2
+winsdk; platform_system == "Windows"

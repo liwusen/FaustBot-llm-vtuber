@@ -65,6 +65,36 @@ class PluginContext:
             raise RuntimeError("plugin_config_list is not available")
         return fn()
 
+    def vfs_read_text(self, path: str, default: str = "") -> str:
+        fn = self.config.get("vfs_read_text")
+        if not callable(fn):
+            raise RuntimeError("vfs_read_text is not available")
+        return fn(path, default)
+
+    def vfs_write(self, path: str, content: Any) -> Any:
+        fn = self.config.get("vfs_write")
+        if not callable(fn):
+            raise RuntimeError("vfs_write is not available")
+        return fn(path, content)
+
+    def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True) -> Any:
+        fn = self.config.get("vfs_write_symbolic")
+        if not callable(fn):
+            raise RuntimeError("vfs_write_symbolic is not available")
+        return fn(path, func, should_be_included_in_search)
+
+    def vfs_delete(self, path: str) -> Any:
+        fn = self.config.get("vfs_delete")
+        if not callable(fn):
+            raise RuntimeError("vfs_delete is not available")
+        return fn(path)
+
+    def vfs_list(self, path: str = "/") -> list[str] | None:
+        fn = self.config.get("vfs_list")
+        if not callable(fn):
+            raise RuntimeError("vfs_list is not available")
+        return fn(path)
+
 
 @dataclass
 class ToolSpec:
@@ -166,6 +196,10 @@ class PluginProtocol(Protocol):
         ...
 
     def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
+        ...
+
+    # ── Prompt ──
+    def register_prompt_suffix(self) -> list[str]:
         ...
 
     # ── Triggers ──

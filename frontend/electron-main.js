@@ -750,6 +750,17 @@ function createConfigWindow() {
   return configWindow;
 }
 
+function recreateFrontendMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.close();
+  }
+  //wait a bit for the window to close before creating a new one
+  setTimeout(() => {
+
+    createWindow();
+  }, 300); // wait 300ms before creating a new window
+}
+
 let liveWindow = null;
 
 function createLiveWindow() {
@@ -1097,6 +1108,11 @@ ipcMain.handle('open-config-window', async () => {
 ipcMain.handle('open-live-window', async () => {
   createLiveWindow();
   return { ok: true, mode: 'electron-window' };
+});
+
+ipcMain.handle('recreate-frontend-window', () => {
+  recreateFrontendMainWindow();
+  return { ok: true };
 });
 
 ipcMain.handle('config-api', async (event, req) => {

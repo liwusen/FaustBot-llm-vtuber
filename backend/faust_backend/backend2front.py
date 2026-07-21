@@ -95,3 +95,7 @@ def frontendResetVRMPose() -> None:
 
 def frontendSetVRMLookAt(x_or_dir, y=None, z=None) -> None:
     _bridge.set_vrm_look_at(x_or_dir, y, z)
+
+
+def FrontEndReloadPluginAssets() -> None:
+    _bridge.reload_plugin_assets()

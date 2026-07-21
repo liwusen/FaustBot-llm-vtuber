@@ -49,6 +49,7 @@ plugin_heartbeat_task = None
 uvicorn_server = None
 plugin_manager = None  # set by lifecycle
 subagent_manager:SubagentManager|None = None
+fastapi_app = None
 
 
 # ── 状态管理 ──
@@ -117,6 +118,20 @@ def makeup_init_prompt():
         log.warning("Skill YAML 注入失败: %s", e)
 
     parts.append("\n\n优先使用 read(\"faustbot://index.md\") 获取 FaustBot 的只读系统说明、工具说明、Minecraft 指南和源码入口。\n")
+
+    # ── Plugin prompt suffixes ──
+    try:
+        pm = globals().get('plugin_manager') or None
+        suffix_items: list[str] = []
+        if pm is not None and hasattr(pm, 'collect_prompt_suffixes'):
+            suffix_items = pm.collect_prompt_suffixes() or []
+        if suffix_items:
+            parts.append("\n\n--- Plugin 扩展指令 ---\n")
+            for item in suffix_items:
+                parts.append(item)
+                parts.append("\n")
+    except Exception as e:
+        log.warning("插件 Prompt 后缀收集跳过: %s", e)
 
     PROMPT = "".join(parts)
 

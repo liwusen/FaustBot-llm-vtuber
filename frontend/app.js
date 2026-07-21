@@ -141,9 +141,13 @@ import { initAutocomplete } from './libs/autocomplete.js';
     return false;
   }
 
-  async function loadAppPluginAssets(){
-    if (appPluginAssetsLoaded) return;
+  async function loadAppPluginAssets(forceReload = false){
+    if (appPluginAssetsLoaded && !forceReload) return;
     try{
+      if (forceReload) {
+        document.querySelectorAll('script[data-plugin], link[data-plugin]').forEach((node) => node.remove());
+        appPluginAssetsLoaded = false;
+      }
       if (!window.api || typeof window.api.configRequest !== 'function') {
         console.warn('[loadAppPluginAssets] window.api.configRequest not available');
         return;
@@ -1034,6 +1038,9 @@ import { initAutocomplete } from './libs/autocomplete.js';
         } else if (parts.length >= 3) {
           vrmScene.setLookAtTarget(parseFloat(parts[0]), parseFloat(parts[1]), parseFloat(parts[2]));
         }
+      } else if (cmd === 'RELOAD_PLUGIN_ASSETS'){
+        //window.location.reload();
+        window.api.recreateFrontendWindow();
       }
       else {
         console.warn('Unknown faust command', raw);
@@ -2564,9 +2571,9 @@ import { initAutocomplete } from './libs/autocomplete.js';
     // re-enable ignore after a short debounce.
 
     function createClickThroughController(){
-      let clickThroughEnabled = false;
       let interactiveActive = false;
       let pendingTimeout = null;
+      let listenersAttached = false;
 
       function detectDevToolsLikelyOpen(){
         try {
@@ -2588,7 +2595,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
         if (pendingTimeout) clearTimeout(pendingTimeout);
         pendingTimeout = setTimeout(()=>{
           pendingTimeout = null;
-          if (clickThroughEnabled && !interactiveActive && !interactionLocked){
+          if (!interactiveActive && !interactionLocked){
             detectDevToolsLikelyOpen();
             setIgnore(true);
           }
@@ -2607,7 +2614,6 @@ import { initAutocomplete } from './libs/autocomplete.js';
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
-        //console.log('mousemove', { x: e.clientX, y: e.clientY, hoverQuickController, hoverModel, overAsrBubble, overSubagentSummary, overSubagentPanel, overHilApproval, overVRMConfig, overTextChatBar, overNimble, onNimbleWindow });
         const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
         if (devToolsLikelyOpen) {
           interactiveActive = true;
@@ -2627,26 +2633,27 @@ import { initAutocomplete } from './libs/autocomplete.js';
         refreshQuickControllerVisibility();
       }
 
+      function ensureListeners(){
+        if (listenersAttached) return;
+        listenersAttached = true;
+        window.addEventListener('mousemove', onGlobalMouseMove, { passive: true });
+        window.addEventListener('resize', detectDevToolsLikelyOpen, { passive: true });
+      }
+
       return {
+        // click-through is always enabled — no toggle state
         enable(){
-          clickThroughEnabled = true;
           document.body.classList.add('click-through');
+          ensureListeners();
           detectDevToolsLikelyOpen();
           setIgnore(true);
-          window.addEventListener('mousemove', onGlobalMouseMove, { passive: true });
-          window.addEventListener('resize', detectDevToolsLikelyOpen, { passive: true });
+          interactiveActive = false;
         },
         disable(){
-          clickThroughEnabled = false;
-          interactiveActive = false;
-          if (pendingTimeout) { clearTimeout(pendingTimeout); pendingTimeout = null; }
-          document.body.classList.remove('click-through');
-          window.removeEventListener('mousemove', onGlobalMouseMove);
-          window.removeEventListener('resize', detectDevToolsLikelyOpen);
-          setIgnore(false);
+          // no-op: click-through is always on
+          log.warining('click-through disable() called but ignored');
         },
         setInteractiveLock(locked){
-          if (!clickThroughEnabled) return;
           if (locked){
             interactiveActive = true;
             setIgnore(false);
@@ -2655,7 +2662,6 @@ import { initAutocomplete } from './libs/autocomplete.js';
           }
         },
         forceInteractive(){
-          if (!clickThroughEnabled) return;
           interactiveActive = true;
           setIgnore(false);
         }
@@ -2663,19 +2669,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
 
     clickThroughController = createClickThroughController();
-
-    function setClickThroughOnRenderer(val){
-      if (val) clickThroughController.enable();
-      else clickThroughController.disable();
-    }
-
-    if (clickThrough) clickThrough.addEventListener('change', (e)=>{
-      const val = !!e.target.checked;
-      setClickThroughOnRenderer(val);
-    });
-
-    if (clickThrough && clickThrough.checked) setClickThroughOnRenderer(true);
-    else setClickThroughOnRenderer(false);
+    clickThroughController.enable();
+    // click-through is always on — checkbox changes are ignored
   } else {
     console.warn('未找到鼠标穿透 IPC API');
   }

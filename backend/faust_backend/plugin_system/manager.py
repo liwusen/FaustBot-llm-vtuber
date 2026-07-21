@@ -11,8 +11,10 @@ from types import ModuleType
 from typing import Any
 
 import pluggy
+from fastapi.staticfiles import StaticFiles
 
 import faust_backend.trigger_manager as trigger_manager
+from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
 
 from .hooks import CoreHooks, hookimpl
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
@@ -39,11 +41,21 @@ def _ensure_default_plugins() -> None:
         if src.exists() and src.is_dir():
             for item in src.iterdir():
                 dst_item = dst / item.name
-                if not dst_item.exists():
-                    if item.is_dir():
-                        shutil.copytree(item, dst_item, dirs_exist_ok=True)
-                    elif item.is_file():
-                        shutil.copy(item, dst_item)
+                if item.is_dir():
+                    shutil.copytree(item, dst_item, dirs_exist_ok=True)
+                    if dst_item.exists():
+                        src_children = {child.name for child in item.iterdir()}
+                        for stale in list(dst_item.iterdir()):
+                            if stale.name not in src_children:
+                                if stale.is_dir():
+                                    shutil.rmtree(stale, ignore_errors=True)
+                                else:
+                                    try:
+                                        stale.unlink()
+                                    except OSError:
+                                        pass
+                elif item.is_file():
+                    shutil.copy(item, dst_item)
             return
 
 
@@ -134,6 +146,7 @@ class PluginManager:
         )
 
     def _build_plugin_context(self, plugin_id: str, plugin_dir: Path) -> PluginContext:
+        vfs = get_faustbot_vfs(refresh=True)
         return PluginContext(
             plugin_id=plugin_id,
             plugin_dir=plugin_dir,
@@ -147,6 +160,11 @@ class PluginManager:
                 "plugin_config_get": lambda key, default=None: self._plugin_config_get(plugin_id, key, default),
                 "plugin_config_set": lambda key, value: self._plugin_config_set(plugin_id, key, value),
                 "plugin_config_list": lambda: self._plugin_config_list(plugin_id),
+                "vfs_read_text": lambda path, default="": run_coro_sync(vfs.read_text(path, default=default)),
+                "vfs_write": lambda path, content: run_coro_sync(vfs.write(path, content)),
+                "vfs_write_symbolic": lambda path, func, should_be_included_in_search=True: run_coro_sync(vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search)),
+                "vfs_delete": lambda path: run_coro_sync(vfs.delete(path)),
+                "vfs_list": lambda path="/": run_coro_sync(vfs.list_dir(path)),
             },
         )
 
@@ -780,6 +798,27 @@ class PluginManager:
             except Exception:
                 pass
 
+    def collect_prompt_suffixes(self) -> list[str]:
+        """Collect prompt suffixes from pluggy-registered plugins."""
+        if not self._pluggy_loaded:
+            return []
+        results: list[str] = []
+        for plugin_id, plugin in self._faust_plugins.items():
+            record = self._plugins.get(plugin_id, {})
+            manifest = record.get("manifest")
+            default_enabled = getattr(manifest, "enabled", True) if manifest else True
+            if not self._plugin_enabled(plugin_id, default_enabled):
+                continue
+            try:
+                suffixes = plugin.register_prompt_suffix()
+                if suffixes:
+                    for s in suffixes:
+                        if s and isinstance(s, str):
+                            results.append(s)
+            except Exception:
+                pass
+        return results
+
     def collect_frontend_assets(self) -> list[dict]:
         """Collect frontend assets from pluggy-registered plugins."""
         if not self._pluggy_loaded:
@@ -801,6 +840,34 @@ class PluginManager:
             except Exception:
                 pass
         return assets
+
+    def refresh_app_mounts(self, app) -> None:
+        if app is None:
+            return
+        try:
+            app.router.routes = [
+                route for route in app.router.routes
+                if not getattr(route, "path", "").startswith("/faust/plugins/")
+            ]
+        except Exception:
+            pass
+        self.mount_routes(app)
+        for plugin_id, record in self._plugins.items():
+            ctx = record.get("ctx")
+            plugin_dir = getattr(ctx, "plugin_dir", None)
+            if not plugin_dir:
+                continue
+            frontend_dir = Path(plugin_dir) / "frontend"
+            if not frontend_dir.is_dir():
+                continue
+            try:
+                app.mount(
+                    f"/faust/plugins/{plugin_id}/frontend",
+                    StaticFiles(directory=frontend_dir),
+                    name=f"plugin_frontend_{plugin_id}",
+                )
+            except Exception:
+                pass
 
     # ── Scheduler ──
 

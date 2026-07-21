@@ -118,3 +118,6 @@ class FrontendBridge:
             self._push("VRM_LOOKAT", str(x_or_dir))
         else:
             self._push("VRM_LOOKAT", f"{x_or_dir} {y} {z}")
+
+    def reload_plugin_assets(self) -> None:
+        self._push("RELOAD_PLUGIN_ASSETS")

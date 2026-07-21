@@ -32,6 +32,7 @@ from faust_backend.config_loader import args
 from faust_backend.runtime import state
 from faust_backend.logger import get_logger
 from faust_backend.subagent_manager import SubagentManager
+from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes
 
 log = get_logger("faust.lifecycle")
 
@@ -330,6 +331,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 log.info("模板文件已同步: %s", ", ".join(updated))
             state.makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
+            refresh_runtime_nodes(get_faustbot_vfs(refresh=True))
             from faust_backend.mcp_manager import get_mcp_manager
             mcp_manager = get_mcp_manager()
             mcp_manager.load_config(getattr(conf, "MCP_SERVERS", {}) or {})
@@ -340,6 +342,8 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 plugin_reload = pm.reload()
                 log.info("插件重载摘要: %s", plugin_reload)
                 _sync_plugin_trigger_filters()
+                pm.refresh_app_mounts(state.fastapi_app)
+                backend2frontend.FrontEndReloadPluginAssets()
             if not args.save_in_memory:
                 try:
                     if state.conn is not None:

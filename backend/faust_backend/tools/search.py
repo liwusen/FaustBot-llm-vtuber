@@ -19,6 +19,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
+from faust_backend.tools.vfs import ensure_source_file, get_faustbot_vfs, run_coro_sync
 
 log = get_logger("faust.tools.search")
 
@@ -81,12 +82,16 @@ def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
         paths_list = [str(paths)]
     log.info("search INPUT pattern=%s paths=%s", pattern[:100], paths_list)
     mem_scopes: list[str] = []
+    vfs_scopes: list[str] = []
     fs_paths: list[str] = []
 
     for p in paths_list:
         if p.startswith("memory://"):
             scope = p[len("memory://"):].strip("/") or "/"
             mem_scopes.append(f"/{scope}" if scope != "/" else "/")
+        elif p.startswith("faustbot://"):
+            scope = p[len("faustbot://"):].strip("/") or "/"
+            vfs_scopes.append(f"/{scope}" if scope != "/" else "/")
         else:
             fs_paths.append(p)
 
@@ -95,10 +100,13 @@ def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
     if mem_scopes:
         results.append(_search_memory(pattern, mem_scopes))
 
+    if vfs_scopes:
+        results.append(_search_faustbot(pattern, vfs_scopes))
+
     if fs_paths:
         results.append(_search_filesystem(pattern, fs_paths))
 
-    if not mem_scopes and not fs_paths:
+    if not mem_scopes and not vfs_scopes and not fs_paths:
         return "错误: 没有有效的搜索路径"
 
     result = "\n\n".join(r for r in results if r)
@@ -193,4 +201,29 @@ def _search_filesystem(pattern: str, paths: list[str]) -> str:
     lines = [f"[文件系统] {len(results)} 条结果:"]
     for r in results[:max_results]:
         lines.append(f"  {r['file']}:{r['line']}: {r['text']}")
+    return "\n".join(lines)
+
+
+def _search_faustbot(pattern: str, scopes: list[str]) -> str:
+    vfs = get_faustbot_vfs(refresh=True)
+    results: list[str] = []
+    for scope in scopes:
+        if scope.startswith('/source/'):
+            try:
+                run_coro_sync(ensure_source_file(vfs, scope[len('/source/'):]))
+            except Exception:
+                continue
+        results.extend(run_coro_sync(vfs.search(scope, pattern, include_symbolic=True)))
+    if not results:
+        return f"[faustbot://] 未找到匹配: {pattern}"
+    unique = []
+    seen = set()
+    for item in results:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    lines = [f"[faustbot://] {len(unique)} 条结果:"]
+    for item in unique[:20]:
+        lines.append(f"  faustbot://{item.lstrip('/')}" )
     return "\n".join(lines)

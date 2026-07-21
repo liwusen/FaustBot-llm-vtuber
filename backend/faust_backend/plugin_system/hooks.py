@@ -107,6 +107,12 @@ class CoreHooks:
     def trigger_fire(self, payload: dict, ctx: Any) -> dict | None:
         """Filter/modify trigger on fire."""
 
+    # ── Prompt ──
+
+    @hookspec
+    def register_prompt_suffix(self) -> list[str]:
+        """Return list of prompt suffix strings to append to the main agent's system prompt."""
+
     # ── Config ──
 
     @hookspec

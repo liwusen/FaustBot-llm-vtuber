@@ -14,6 +14,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
+from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes, run_coro_sync
 
 log = get_logger("faust.tools.write")
 
@@ -66,6 +67,10 @@ def write(path: str, content: str) -> str:
         result = _write_memory(raw[len("memory://"):].strip("/"), content)
         log.info("write OUTPUT %s", result[:120])
         return result
+    if raw.startswith("faustbot://"):
+        result = _write_faustbot(raw[len("faustbot://"):].strip("/"), content)
+        log.info("write OUTPUT %s", result[:120])
+        return result
 
     # Filesystem backend
     result = _write_file(raw, content)
@@ -101,6 +106,21 @@ def _write_file(raw: str, content: str) -> str:
         return f"写入文件出错: {e}"
 
     size = len(content.encode("utf-8"))
+    return f"已写入 memory://{path} ({size} bytes)"
+
+
+def _write_faustbot(path: str, content: str) -> str:
+    if not path:
+        return "错误: faustbot:// 路径不能为空"
+    vfs = get_faustbot_vfs(refresh=True)
+    run_coro_sync(refresh_runtime_nodes(vfs))
+    target_path = "/" + path.strip("/")
+    try:
+        run_coro_sync(vfs.write(target_path, content))
+    except Exception as e:
+        return f"写入 faustbot 资源出错: {e}"
+    size = len(content.encode("utf-8"))
+    return f"已写入 faustbot://{path} ({size} bytes)"
     return f"已写入 {raw} ({size} bytes)"
 
 

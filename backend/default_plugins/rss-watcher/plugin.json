@@ -1,0 +1,10 @@
+{
+  "id": "rss-watcher",
+  "name": "RSS Watcher",
+  "version": "0.1.0",
+  "description": "FaustBot RSS 感知插件骨架，提供订阅管理、条目存储、摘要 API 和横幅注入。",
+  "author": "FaustBot",
+  "enabled": false,
+  "entry": "impl.py",
+  "priority": 330
+}

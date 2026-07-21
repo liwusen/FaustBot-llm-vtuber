@@ -114,6 +114,12 @@ class FaustPlugin:
     def trigger_fire(self, payload: dict, ctx: PluginContext) -> dict | None:
         return payload
 
+    # ── Prompt ──
+
+    @hookimpl
+    def register_prompt_suffix(self) -> list[str]:
+        return []
+
     # ── Config ──
 
     @hookimpl

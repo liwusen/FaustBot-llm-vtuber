@@ -112,8 +112,28 @@ async function loadRuntimeSummary() {
 
 // ── Plugin 前端资源加载 ──
 
-async function loadPluginAssets() {
+const BASE_MODULE_IDS = new Set(MODULES.map((m) => m.id));
+
+function resetPluginUiState() {
+  document.querySelectorAll('script[data-plugin], link[data-plugin]').forEach((node) => node.remove());
+  if (window.pluginUI) {
+    window.pluginUI._pages = [];
+    window.pluginUI._cards = [];
+  }
+  for (let index = MODULES.length - 1; index >= 0; index--) {
+    if (!BASE_MODULE_IDS.has(MODULES[index].id)) MODULES.splice(index, 1);
+  }
+  for (const [moduleId, entry] of Object.entries(state.moduleContainers || {})) {
+    if (!BASE_MODULE_IDS.has(moduleId)) {
+      try { entry.div.remove(); } catch (e) {}
+      delete state.moduleContainers[moduleId];
+    }
+  }
+}
+
+async function loadPluginAssets(forceReload = false) {
   try {
+    if (forceReload) resetPluginUiState();
     if (!window.api || typeof window.api.configRequest !== "function") {
       console.warn("[loadPluginAssets] window.api.configRequest not available");
       return;
