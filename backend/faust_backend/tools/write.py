@@ -106,7 +106,7 @@ def _write_file(raw: str, content: str) -> str:
         return f"写入文件出错: {e}"
 
     size = len(content.encode("utf-8"))
-    return f"已写入 memory://{path} ({size} bytes)"
+    return f"已写入 {file_path} ({size} bytes)"
 
 
 def _write_faustbot(path: str, content: str) -> str:
@@ -121,7 +121,6 @@ def _write_faustbot(path: str, content: str) -> str:
         return f"写入 faustbot 资源出错: {e}"
     size = len(content.encode("utf-8"))
     return f"已写入 faustbot://{path} ({size} bytes)"
-    return f"已写入 {raw} ({size} bytes)"
 
 
 def _write_memory(path: str, content: str) -> str:
@@ -135,8 +134,7 @@ def _write_memory(path: str, content: str) -> str:
 
     store = get_memory()
     try:
-        import asyncio
-        result = asyncio.run(store.file_write(path, content))
+        run_coro_sync(store.file_write(path, content))
     except Exception as e:
         return f"写入记忆库出错: {e}"
 
@@ -148,3 +146,4 @@ def _write_memory(path: str, content: str) -> str:
         pass
 
     size = len(content.encode("utf-8"))
+    return f"已写入 memory://{path} ({size} bytes)"

@@ -32,7 +32,7 @@ from faust_backend.runtime.uri import (
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import ensure_source_file, get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import ensure_source_file, get_faustbot_vfs, refresh_runtime_nodes, run_coro_sync
 
 log = get_logger("faust.tools.read")
 
@@ -192,18 +192,18 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
         ct = store._get_node_attr(nid, "content_type", "")
         if ct.startswith("image/"):
             try:
-                result = _asyncio.run(store.attachment_read(path))
-            except (FileNotFoundError, Exception) as e:
+                result = run_coro_sync(store.attachment_read(path))
+            except Exception as e:
                 return f"读取记忆图片出错: {e}"
             desc = result.get("description") or f"记忆图片: {path}"
             if force_plain_text:
-                return f"[图片附件: {path}]\n描述: {desc}\n类型: {result['content_type']}"
+                return f"[图片附件: {path}]\n描述: {desc}\n类型: {result.get('content_type', '')}"
             import json as _json
             payload = {
                 "kind": "multimodal_tool_result",
                 "text": desc,
                 "images": [{
-                    "url": f"data:{result['content_type']};base64,{result['content_base64']}"
+                    "url": f"data:{result.get('content_type', 'image/png')};base64,{result.get('content_base64', '')}"
                 }],
             }
             return _json.dumps(payload, ensure_ascii=False)
@@ -211,16 +211,14 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
     # empty path → tree
     if not path or parsed.is_dir:
         try:
-            import asyncio
-            tree = asyncio.run(store.tree_list(path or "/"))
+            tree = run_coro_sync(store.tree_list(path or "/"))
             return _format_tree(tree)
         except Exception as e:
             return f"读取记忆树出错: {e}"
 
     # document read
     try:
-        import asyncio
-        result = asyncio.run(store.file_read(path))
+        result = run_coro_sync(store.file_read(path))
     except FileNotFoundError:
         return f"[记忆文档不存在: {path}]"
     except Exception as e:
@@ -298,6 +296,7 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     del force_plain_text
     raw_path = str(parsed.path or "").strip("/")
     vfs = get_faustbot_vfs(refresh=True)
+    run_coro_sync(refresh_runtime_nodes(vfs))
     if not raw_path or parsed.is_dir:
         items = run_coro_sync(vfs.list_dir("/")) or []
         lines = ["faustbot:// 可用资源:"]
@@ -434,9 +433,12 @@ def _query_scale(query: dict[str, list[str]]) -> float:
     values = query.get("scale") or []
     if not values:
         return 1.0
-    scale = float(values[-1])
-    if not (0 < scale < 1):
-        raise ValueError("scale 必须满足 0 < scale < 1")
+    try:
+        scale = float(values[-1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"无效的 scale 参数: {values[-1]}") from exc
+    if not (0 < scale <= 1):
+        raise ValueError("scale 必须满足 0 < scale <= 1")
     return scale
 
 

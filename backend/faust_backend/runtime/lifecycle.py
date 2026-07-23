@@ -123,6 +123,7 @@ async def invoke_agent_locked(target_agent, payload, config=None):
                 else:
                     raise
         await _sleep_backoff(attempt)
+    raise RuntimeError("agent invoke retries exhausted")
 
 
 async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_event: asyncio.Event | None = None):

@@ -124,8 +124,31 @@
       }
       if (feedList) {
         feedList.innerHTML = feeds.map(function(feed){
-          return '<div class="list-row"><div><strong>' + feed.name + '</strong><span>' + feed.url + '</span></div><button class="btn btn-ghost" data-feed-id="' + feed.id + '">删除</button></div>';
+          return '<div class="list-row rss-feed-row">'
+            + '<div><strong>' + feed.name + '</strong><span>' + feed.url + '</span></div>'
+            + '<div class="toolbar compact">'
+            + '<button class="btn btn-ghost" data-feed-edit="' + feed.id + '">编辑</button>'
+            + '<button class="btn btn-ghost" data-feed-id="' + feed.id + '">删除</button>'
+            + '</div></div>';
         }).join('') || '<div class="list-row">暂无订阅源</div>';
+        Array.from(feedList.querySelectorAll('button[data-feed-edit]')).forEach(function(button){
+          button.addEventListener('click', async function(){
+            const feedId = button.getAttribute('data-feed-edit');
+            const feed = feeds.find(function(item){ return String(item.id) === String(feedId); });
+            if (!feed) return;
+            const name = window.prompt('RSS 名称', feed.name || '');
+            if (name === null) return;
+            const url = window.prompt('RSS URL', feed.url || '');
+            if (url === null) return;
+            const category = window.prompt('RSS 分类', feed.category || '') || '';
+            await fetchJson('/faust/plugins/rss-watcher/feeds/' + feedId, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: name, url: url, category: category })
+            });
+            refresh();
+          });
+        });
         Array.from(feedList.querySelectorAll('button[data-feed-id]')).forEach(function(button){
           button.addEventListener('click', async function(){
             await fetchJson('/faust/plugins/rss-watcher/feeds/' + button.getAttribute('data-feed-id'), { method: 'DELETE' });

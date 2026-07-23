@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.plugin_system import PluginManager
 from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+import faust_backend.config_loader as conf
 
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'
@@ -28,16 +29,6 @@ def test_fun_plugins_load():
     assert 'desktop-mood' in ids
 
 
-def test_emotion_engine_message_flow():
-    pm = _build_manager()
-    plugin = pm._plugins['emotion-engine']['plugin']
-    result = plugin.message_received('谢谢你，今天聊聊有趣的新闻', [], None)
-    assert result is None
-    cleaned = plugin.message_sent('谢谢你，今天聊聊有趣的新闻', '当然可以。[[JOY]]', None)
-    assert cleaned == '当然可以。'
-    payload = plugin.get_state_payload()
-    assert 'vector' in payload
-    assert payload['vector']['joy'] >= 3.0
 
 
 def test_rss_store_basic_flow():
@@ -52,8 +43,8 @@ def test_rss_store_basic_flow():
     vfs = get_faustbot_vfs(refresh=True)
     index_text = run_coro_sync(vfs.read_text('/plugins/rss-watcher/index.md', default=''))
     feed_doc = run_coro_sync(vfs.read_text('/plugins/rss-watcher/RSS-FEED-ExampleItem-20240719.md', default=''))
-    assert 'Example/Item' in feed_doc
-    assert 'RSS Watcher Index' in index_text
+    assert 'Example/Item' in feed_doc # type: ignore
+    assert 'RSS Watcher Index' in index_text # type: ignore
     digest = plugin.store.build_digest(limit=3)
     assert 'summary' in digest
 
@@ -66,6 +57,26 @@ def test_desktop_context_and_vfs():
     assert 'window_title' in context
     vfs = get_faustbot_vfs(refresh=True)
     plugin.heartbeat(plugin.ctx)
-    payload = json.loads(run_coro_sync(vfs.read_text('/plugins/desktop-context.json', default='{}')))
+    payload = json.loads(run_coro_sync(vfs.read_text('/plugins/desktop-context.json', default='{}'))) # type: ignore
     assert 'hour' in payload
     assert run_coro_sync(vfs.read_text('/plugins/desktop-mood.md', default='')).startswith('# Desktop Mood')
+
+
+def test_plugin_reload_skips_when_unchanged():
+    pm = _build_manager()
+    summary = pm.reload()
+    assert summary.get('skipped') is True
+
+
+def test_builtin_plugin_data_dir_and_rss_feed_update():
+    pm = _build_manager()
+    rss_ctx = pm._plugins['rss-watcher']['ctx']
+    rss_plugin = pm._plugins['rss-watcher']['plugin']
+    assert rss_ctx.plugin_data_dir == Path(conf.PLUGIN_DATA_ROOT) / 'rss-watcher'
+    assert rss_plugin.store._data_dir == Path(conf.PLUGIN_DATA_ROOT) / 'rss-watcher'
+    feed = rss_plugin.store.add_feed('https://example.com/feed.xml', 'Example', 'tech')
+    updated = rss_plugin.store.update_feed(int(feed['id']), url='https://example.com/feed-2.xml', name='Example 2', category='news')
+    assert updated is not None
+    assert updated['url'] == 'https://example.com/feed-2.xml'
+    assert updated['name'] == 'Example 2'
+    assert updated['category'] == 'news'

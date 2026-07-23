@@ -74,7 +74,7 @@ class FaustPlugin:
 
     @hookimpl
     def tool_call_post(self, name: str, args: dict, result: Any, ctx: PluginContext) -> Any:
-        return result
+        return None
 
     # ── Messages ──
 
@@ -83,8 +83,8 @@ class FaustPlugin:
         return None
 
     @hookimpl
-    def message_sent(self, msg: str, response: Any, ctx: PluginContext) -> Any:
-        return response
+    def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
+        return None
 
     # ── Memory ──
 
@@ -108,11 +108,11 @@ class FaustPlugin:
 
     @hookimpl
     def trigger_append(self, payload: dict, ctx: PluginContext) -> dict | None:
-        return payload
+        return None
 
     @hookimpl
     def trigger_fire(self, payload: dict, ctx: PluginContext) -> dict | None:
-        return payload
+        return None
 
     # ── Prompt ──
 

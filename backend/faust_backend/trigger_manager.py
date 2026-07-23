@@ -77,7 +77,13 @@ def _emit_trigger(trigger_payload: dict):
     from faust_backend.runtime import state
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        pm._call_pluggy_hook('trigger_fire', payload=payload, ctx=None)
+        results = pm._call_pluggy_hook('trigger_fire', payload=payload, ctx=None)
+        if results:
+            for item in results:
+                if item is None:
+                    return False
+                if isinstance(item, dict):
+                    payload = item
     return True
 
 class BaseTrigger(BaseModel):
@@ -323,7 +329,14 @@ def append_trigger(trigger: dict | str):
     from faust_backend.runtime import state
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        pm._call_pluggy_hook('trigger_append', payload=trigger, ctx=None)
+        results = pm._call_pluggy_hook('trigger_append', payload=trigger, ctx=None)
+        if results:
+            for item in results:
+                if item is None:
+                    trigger = None
+                    break
+                if isinstance(item, dict):
+                    trigger = item
     if trigger is None:
         raise ValueError("Trigger blocked by append filters")
     global _store

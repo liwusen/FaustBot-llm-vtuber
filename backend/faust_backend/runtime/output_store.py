@@ -175,7 +175,7 @@ class OutputStore:
             url = str(first.get("url") or "")
             if url.startswith("data:"):
                 header, b64 = url.split(",", 1)
-                mime = header[len("data:"):].rstrip(";base64")
+                mime = header[len("data:"):].removesuffix(";base64")
         text = str(payload.get("text") or "")
         self._artifacts[output_id] = Artifact(
             output_id=output_id,
@@ -230,7 +230,7 @@ def _short_tool_name(tool_name: str) -> str:
     """Project a tool name to a shorthand for artifact IDs."""
     name = str(tool_name or "tool").strip()
     # Strip common suffixes
-    for suffix in ("Tool", "_tool", "Tool", "Func"):
+    for suffix in ("Tool", "_tool", "Func"):
         if name.endswith(suffix):
             name = name[:-len(suffix)]
     # Map known tools to short names

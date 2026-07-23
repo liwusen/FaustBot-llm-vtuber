@@ -1313,7 +1313,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
 
     if (msg.type === 'done'){
       const request = currentChatRequest;
-      let reply = stripMotionTokens(msg.reply || currentChatRequest.replyText || '');
+      let reply = stripMotionTokens(currentChatRequest.replyText || '');
       currentChatRequest.replyText = reply;
       currentChatRequest.motionTokenBuffer = '';
 

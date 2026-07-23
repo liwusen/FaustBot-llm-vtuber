@@ -54,9 +54,23 @@ function renderPluginsModule() {
       refreshModule();
     });
     const ops = el("div", "toolbar compact");
+    const switchWrap = el("div", "switch-row");
+    const switchText = el("span", "switch-text", p.enabled ? "已启用" : "已禁用");
+    const switchLabel = el("label", "switch");
+    const switchInput = document.createElement("input");
+    switchInput.type = "checkbox";
+    switchInput.checked = Boolean(p.enabled);
+    const switchSlider = el("span", "switch-slider");
+    switchInput.addEventListener("change", async () => {
+      const enabled = Boolean(switchInput.checked);
+      switchText.textContent = enabled ? "已启用" : "已禁用";
+      await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/${enabled ? "enable" : "disable"}`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true });
+      await refreshPluginUi();
+    });
+    switchLabel.append(switchInput, switchSlider);
+    switchWrap.append(switchText, switchLabel);
     ops.append(
-      makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/enable`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true }); await refreshPluginUi(); }),
-      makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/plugins/${encodeURIComponent(pid)}/disable`, { apply_runtime: true, no_initial_chat: true, reset_dialog: true }); await refreshPluginUi(); }),
+      switchWrap,
       makeButton("删除", async () => {
         if (!window.confirm(`确定删除插件 ${pid} ?`)) return;
         await cfgApi("DELETE", `/faust/admin/plugins/${encodeURIComponent(pid)}`, null, { apply_runtime: "true", reset_dialog: "false", no_initial_chat: "true" });
@@ -110,21 +124,44 @@ function renderPluginsModule() {
       if (!key) continue;
       const type = String(item.type || "str");
       const wrap = el("div", "plugin-field");
-      wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
       let input;
       const val = state.pluginConfigDraft[key];
       if (type === "bool") {
+        const title = el("div", "card-key", `${item.label || key} (${key})`);
+        const help = item.description ? el("p", "card-help", String(item.description)) : null;
+        const row = el("div", "switch-row");
+        const txt = el("span", "switch-text", Boolean(val) ? "已启用" : "已禁用");
+        const label = el("label", "switch");
         input = document.createElement("input");
         input.type = "checkbox";
         input.checked = Boolean(val);
+        const slider = el("span", "switch-slider");
+        label.append(input, slider);
+        row.append(txt, label);
+        input.addEventListener("input", () => {
+          state.pluginConfigDraft[key] = Boolean(input.checked);
+          txt.textContent = Boolean(input.checked) ? "已启用" : "已禁用";
+        });
+        input.addEventListener("change", () => {
+          state.pluginConfigDraft[key] = Boolean(input.checked);
+          txt.textContent = Boolean(input.checked) ? "已启用" : "已禁用";
+        });
+        wrap.append(title);
+        if (help) wrap.append(help);
+        wrap.append(row);
+        form.append(wrap);
+        continue;
       } else if (type === "json") {
+        wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
         input = el("textarea", "textarea");
         input.value = toText(val);
       } else if (type === "int" || type === "float") {
+        wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
         input = el("input", "number");
         input.type = "number";
         input.value = String(val ?? "");
       } else {
+        wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
         input = el("input", "input");
         input.type = SECRET_KEYS.has(key) ? "password" : "text";
         input.value = val === null || val === undefined ? "" : String(val);

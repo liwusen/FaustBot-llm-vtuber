@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import threading
 import time
 from pathlib import Path
@@ -11,7 +10,12 @@ from typing import Any
 from fastapi import APIRouter
 
 import faust_backend.config_loader as conf
-from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
+
+from faust_backend.logger import get_logger
+log = get_logger("faust.plugins.emotion-engine")
+
+from langchain.tools import tool
 
 EMOTION_KEYS = ["joy", "irritation", "pride", "curiosity", "sharpness", "boredom"]
 EMOTION_LABELS = {
@@ -40,7 +44,6 @@ EMOTION_TAG_TO_KEY = {
     "CARE": "joy",
     "CALM": "curiosity",
 }
-EMOTION_TAG_RE = re.compile(r"\[\[([A-Z_]+)\]\]")
 STATE_FILE_NAME = "emotion_state.json"
 HISTORY_LIMIT = 512
 COREMEMORY_START = "<!-- emotion-engine:start -->"
@@ -143,9 +146,9 @@ class EmotionState:
 
 
 class EmotionEngineStore:
-    def __init__(self, plugin_dir: Path):
+    def __init__(self, data_dir: Path):
         self._lock = threading.RLock()
-        self._data_dir = plugin_dir / "data"
+        self._data_dir = data_dir
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self._data_dir / STATE_FILE_NAME
         self._state = self._load_state()
@@ -225,7 +228,13 @@ class EmotionEngineStore:
     def _dominant_from_vector(self, vector: dict[str, float]) -> str:
         return max(EMOTION_KEYS, key=lambda key: float(vector.get(key, 0.0)))
 
-    def _top_emotions(self, count: int = 3) -> list[tuple[str, float]]:
+    def _top_emotions(self, count: int|None = 3) -> list[tuple[str, float]]:
+        if not count:
+            return sorted(
+            ((key, float(self._state.vector.get(key, 0.0))) for key in EMOTION_KEYS),
+            key=lambda item: item[1],
+            reverse=True,
+        )
         return sorted(
             ((key, float(self._state.vector.get(key, 0.0))) for key in EMOTION_KEYS),
             key=lambda item: item[1],
@@ -256,7 +265,7 @@ class EmotionEngineStore:
                 },
             }
 
-    def note_user_message(self, text: str) -> None:
+    def note_user_message(self, text: str) -> str:
         with self._lock:
             self._state.last_user_message = text
             self._state.last_interaction_ts = _now()
@@ -265,6 +274,7 @@ class EmotionEngineStore:
             self._state.recent_user_modes.append(mode)
             self._state.recent_user_modes = self._state.recent_user_modes[-8:]
             self._save_state()
+        return "\n|[System]:当前情绪向量: "+ "; ".join(f"{EMOTION_LABELS[key]}={value:.1f}" for key, value in self._top_emotions(None)) + "\n"
 
     def apply_emotion_tag(self, tag: str) -> dict[str, Any]:
         emotion_key = EMOTION_TAG_TO_KEY.get(str(tag or "").strip().upper())
@@ -341,9 +351,10 @@ class EmotionEngineStore:
         with self._lock:
             top = self._top_emotions(3)
             lines = [
-                "Faust 具有情绪系统。请在最终回复中只输出一个隐藏情绪标签，格式必须是 [[JOY]] / [[IRRITATION]] / [[PRIDE]] / [[CURIOSITY]] / [[SHARPNESS]] / [[BOREDOM]] 之一。",
-                "标签放在回复末尾即可，其他位置不要使用这种格式。该标签会在发送给用户前被移除。",
-                "标签应反映 Faust 当前的主导情绪与本轮回答状态，但不要为了输出标签而牺牲回答质量。",
+                "---FaustBot Emotion Engine---",
+                "FaustBot 具有情绪系统。你可以在回复的最后调用 EmotionInvoke(emotionName) 工具来更新情绪状态。",
+                "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。",
+                "该工具的 tool_start 和 tool_result 不会被显示给用户，请放心调用。",
                 "当前向量: "
                 + "; ".join(f"{EMOTION_LABELS[key]}={value:.1f}" for key, value in top),
             ]
@@ -391,7 +402,8 @@ class Plugin(FaustPlugin):
 
     def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        self.store = EmotionEngineStore(ctx.plugin_dir)
+        data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
+        self.store = EmotionEngineStore(data_dir)
         ctx.register_config(
             [
                 {
@@ -418,9 +430,10 @@ class Plugin(FaustPlugin):
         ctx.vfs_write(
             "/plugins/emotion-engine.md",
             "# Emotion Engine\n\n"
-            "Emotion Engine 通过模型在回复末尾输出的 [[EMOTION_NAME]] 标签来更新 Faust 的情绪状态。\n"
-            "允许的标签包括 [[JOY]] [[IRRITATION]] [[PRIDE]] [[CURIOSITY]] [[SHARPNESS]] [[BOREDOM]] [[CARE]] [[CALM]]。\n"
-            "需要查看当前状态时，读取 faustbot://plugins/emotion-engine-state.json。\n",
+            "Emotion Engine 通过 EmotionInvoke(emotionName) 工具更新情绪状态。\n"
+            "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。\n"
+            "调用后返回当前完整情绪向量。该工具的 tool_start/tool_result 对用户不可见，\n"
+            "请大胆使用。当前状态也可通过 faustbot://plugins/emotion-engine-state.json 读取。\n",
         )
         ctx.vfs_write_symbolic(
             "/plugins/emotion-engine-state.json",
@@ -497,33 +510,36 @@ class Plugin(FaustPlugin):
             )
         ]
 
+    def register_tools(self, ctx: PluginContext) -> list:
+        @tool
+        def EmotionInvoke(emotionName: str) -> str:
+            """更新 Faust 的情绪状态。调用后返回当前完整的情绪向量 JSON。"""
+            if self.store is None:
+                return json.dumps({"error": "store not ready"})
+            analysis = self.store.apply_emotion_tag(str(emotionName or "").strip().upper())
+            if analysis.get("applied"):
+                return json.dumps(self.store.snapshot(self._configs()), ensure_ascii=False)
+            return json.dumps(
+                {"error": f"unknown emotion: {emotionName}", "allowed": "JOY|IRRITATION|PRIDE|CURIOSITY|SHARPNESS|BOREDOM|CARE|CALM"},
+                ensure_ascii=False,
+            )
+        return [ToolSpec(name="EmotionInvoke", tool=EmotionInvoke, enabled_by_default=True, description=EmotionInvoke.__doc__ or "")]
+
     @hookimpl
     def message_received(
         self, msg: Any, history: list, ctx: PluginContext
     ) -> str | None:
         if self.store is None:
+            log.critical("EmotionEngineStore not initialized While processing message")
             return None
-        self.store.note_user_message(str(msg or ""))
-        return None
+        return self.store.note_user_message(str(msg or ""))
+        
 
     @hookimpl
-    def message_sent(self, msg: str, response: Any, ctx: PluginContext) -> Any:
-        if self.store is None:
-            return response
-        reply = str(response or "")
-        tags = EMOTION_TAG_RE.findall(reply)
-        clean_reply = EMOTION_TAG_RE.sub("", reply).strip()
-        analysis = None
-        if tags:
-            analysis = self.store.apply_emotion_tag(tags[-1])
-        self.store.apply_reply(clean_reply)
-        if analysis and self.store.should_write_diary(
-            str(analysis.get("diary_reason") or ""), bool(analysis.get("significant"))
-        ):
-            self._write_diary(analysis)
-        if self.store.snapshot(self._configs()).get("pending_corememory_sync"):
-            self.store.sync_corememory()
-        return clean_reply
+    def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
+        if event.get("type") in {"tool_start", "tool_result"} and event.get("tool_name") == "EmotionInvoke":
+            return None
+        return None
 
     def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None:

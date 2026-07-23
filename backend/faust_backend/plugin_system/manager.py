@@ -80,6 +80,7 @@ class PluginManager:
         self._hot_reload_interval_sec = 2.0
         self._last_reload_ts = 0.0
         self._plugin_fingerprint: dict[str, float] = {}
+        self._plugin_enable_fingerprint: str = ""
         # ── pluggy integration ──
         self._pluggy_manager = pluggy.PluginManager("faustbot")
         self._pluggy_manager.add_hookspecs(CoreHooks)
@@ -127,6 +128,24 @@ class PluginManager:
                     pass
         return fp
 
+    def _build_enabled_fingerprint(self) -> str:
+        states: dict[str, bool] = {}
+        for plugin_dir in sorted(self.plugins_dir.iterdir()):
+            if not plugin_dir.is_dir() or plugin_dir.name.startswith("_"):
+                continue
+            manifest = self._load_manifest(plugin_dir)
+            states[manifest.plugin_id] = self._plugin_enabled(manifest.plugin_id, manifest.enabled)
+        return json.dumps(states, ensure_ascii=False, sort_keys=True)
+
+    def needs_reload(self) -> bool:
+        if not self._plugins or not self._plugin_fingerprint:
+            return True
+        if self._build_plugins_fingerprint() != self._plugin_fingerprint:
+            return True
+        if self._build_enabled_fingerprint() != self._plugin_enable_fingerprint:
+            return True
+        return False
+
     def _load_manifest(self, plugin_dir: Path) -> PluginManifest:
         manifest_path = plugin_dir / "plugin.json"
         raw: dict[str, Any] = {}
@@ -152,6 +171,7 @@ class PluginManager:
         return PluginContext(
             plugin_id=plugin_id,
             plugin_dir=plugin_dir,
+            plugin_data_dir=Path(conf.PLUGIN_DATA_ROOT) / plugin_id,
             config={
                 "trigger_create": trigger_manager.append_trigger,
                 "trigger_list": trigger_manager.list_triggers,
@@ -405,7 +425,14 @@ class PluginManager:
         p_state = self._state.setdefault("plugins", {}).setdefault(plugin_id, {})
         return bool(p_state.get("enabled", default))
 
-    def reload(self) -> dict[str, Any]:
+    def reload(self, *, force: bool = False) -> dict[str, Any]:
+        if not force and not self.needs_reload():
+            return {
+                "loaded": len(self._plugins),
+                "errors": [],
+                "plugins": [pid for pid in self._plugins.keys()],
+                "skipped": True,
+            }
         # unload old plugins
         for plugin_id, record in list(self._plugins.items()):
             plugin = record.get("plugin")
@@ -480,11 +507,13 @@ class PluginManager:
 
         self._save_state()
         self._plugin_fingerprint = self._build_plugins_fingerprint()
+        self._plugin_enable_fingerprint = self._build_enabled_fingerprint()
         self._last_reload_ts = time.time()
         return {
             "loaded": len(self._plugins),
             "errors": errors,
             "plugins": [pid for pid in self._plugins.keys()],
+            "skipped": False,
         }
 
     def configure_hot_reload(self, *, enabled: bool | None = None, interval_sec: float | None = None) -> dict[str, Any]:
@@ -705,7 +734,8 @@ class PluginManager:
                 return []
             result = hook(**kwargs)
             return result if isinstance(result, list) else [result]
-        except Exception:
+        except Exception as exc:
+            log.warning("插件 hook 调用失败 %s: %s", hook_name, exc)
             return []
 
     def _load_schedules(self) -> None:
@@ -893,12 +923,21 @@ class PluginManager:
                             interval = s.get("interval")
                             if not isinstance(interval, (int, float)) or interval <= 0:
                                 continue
-                            callback()
-                        except Exception:
-                            pass
+                            now = time.time()
+                            last_run = float(s.get("last_run") or 0.0)
+                            if now - last_run < float(interval):
+                                continue
+                            s["last_run"] = now
+                            if asyncio.iscoroutinefunction(callback):
+                                asyncio.create_task(callback())
+                            else:
+                                asyncio.create_task(asyncio.to_thread(callback))
+                        except Exception as exc:
+                            log.warning("调度任务执行失败 %s: %s", s_id, exc)
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except Exception as exc:
+                log.warning("调度循环异常: %s", exc)
                 await asyncio.sleep(1.0)
 
     def start_scheduler(self) -> None:

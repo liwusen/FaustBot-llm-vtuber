@@ -76,8 +76,10 @@ class CoreHooks:
         """Intercept/modify incoming user message."""
 
     @hookspec
-    def message_sent(self, msg: str, response: Any, ctx: Any) -> Any:
-        """Modify agent response before sending."""
+    def agent_event_sent(self, event: dict, current_history: list, ctx: Any) -> dict | None:
+        """Called before each agent event is sent to the frontend WebSocket.
+        Return a modified event dict, or None to suppress the event.
+        current_history is the list of events already sent in this turn."""
 
     # ── Memory ──
 

@@ -133,7 +133,12 @@ def _store_and_summarize(store, tool_name: str, result: Any,
         data["text"] = f"{text}\n[图片副本已保存: artifact://{output_id}]"
         return json.dumps(data, ensure_ascii=False)
 
-    output = str(result) if not isinstance(result, str) else result
+    if isinstance(result, str):
+        output = result
+    elif isinstance(result, (dict, list)):
+        output = json.dumps(result, ensure_ascii=False)
+    else:
+        output = str(result)
 
     # Skip trivial results — no need for an artifact
     if len(output) <= 120 and "\n" not in output:

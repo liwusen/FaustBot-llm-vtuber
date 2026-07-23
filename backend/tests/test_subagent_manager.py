@@ -154,8 +154,7 @@ def test_read_faustbot_subagent_resources(monkeypatch):
     index_doc = read.func("faustbot://subagenting.md")
     avatoolset = read.func("faustbot://avatoolset")
 
-    assert "Subagent: worker" in overview
-    assert "Status: running" in overview
+    assert "faustbot://subagents/worker/ 内容:\n  faustbot://subagents/worker/finalResult.md\n  faustbot://subagents/worker/output.md\n" in overview
     assert "# System Prompt Of Subagent(worker)" in output
     assert "# Run 1:Main Agent(yourself)" in output
     assert "> 思考:think..." in output

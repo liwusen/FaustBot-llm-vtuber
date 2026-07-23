@@ -93,9 +93,9 @@ def _parse_time_to_minutes(raw: str) -> int:
 
 
 class RSSWatcherStore:
-    def __init__(self, plugin_dir: Path):
+    def __init__(self, data_dir: Path):
         self._lock = threading.RLock()
-        self._data_dir = plugin_dir / "data"
+        self._data_dir = data_dir
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._data_dir / DB_NAME
         self._meta_path = self._data_dir / "runtime.json"
@@ -136,6 +136,19 @@ class RSSWatcherStore:
             conn.commit()
             row = conn.execute("SELECT id, url, name, category, last_fetch, error_count FROM feeds WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return dict(row) if row else {"id": int(cursor.lastrowid), "url": url, "name": name, "category": category}
+
+    def update_feed(self, feed_id: int, *, url: str, name: str, category: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE feeds SET url = ?, name = ?, category = ? WHERE id = ?",
+                (url, name, category, feed_id),
+            )
+            row = conn.execute(
+                "SELECT id, url, name, category, last_fetch, error_count FROM feeds WHERE id = ?",
+                (feed_id,),
+            ).fetchone()
+            conn.commit()
+            return dict(row) if row else None
 
     def delete_feed(self, feed_id: int) -> bool:
         with self._lock, self._connect() as conn:
@@ -324,6 +337,21 @@ async def delete_feed(feed_id: int):
     return {"status": "ok", "deleted": _PLUGIN.store.delete_feed(feed_id)}
 
 
+@_ROUTER.put('/feeds/{feed_id}')
+async def update_feed(feed_id: int, payload: dict = Body(...)):
+    if _PLUGIN is None or _PLUGIN.store is None:
+        raise HTTPException(status_code=503, detail='plugin not loaded')
+    url = str(payload.get('url') or '').strip()
+    name = str(payload.get('name') or url).strip()
+    category = str(payload.get('category') or '').strip()
+    if not url:
+        raise HTTPException(status_code=400, detail='缺少 RSS URL')
+    item = _PLUGIN.store.update_feed(feed_id, url=url, name=name, category=category)
+    if item is None:
+        raise HTTPException(status_code=404, detail='订阅源不存在')
+    return {"status": "ok", "item": item}
+
+
 @_ROUTER.get('/items')
 async def get_items(limit: int = 50, offset: int = 0):
     if _PLUGIN is None or _PLUGIN.store is None:
@@ -372,7 +400,8 @@ class Plugin(FaustPlugin):
 
     def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        self.store = RSSWatcherStore(ctx.plugin_dir)
+        data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
+        self.store = RSSWatcherStore(data_dir)
         ctx.register_config([
             {"key": "PUSH_THRESHOLD", "type": "int", "label": "推送阈值（条）", "default": 3},
             {"key": "FETCH_INTERVAL_MIN", "type": "int", "label": "拉取间隔（分钟）", "default": 15},
@@ -390,16 +419,16 @@ class Plugin(FaustPlugin):
         )
         ctx.vfs_write("/plugins/rss-watcher/index.md", "# RSS Watcher\n\n暂无 RSS 更新。")
 
-        @hookimpl
-        def plugin_loaded(self, ctx: PluginContext) -> None:
-            global _PLUGIN
-            _PLUGIN = self
+    @hookimpl
+    def plugin_loaded(self, ctx: PluginContext) -> None:
+        global _PLUGIN
+        _PLUGIN = self
 
-        @hookimpl
-        def plugin_unloaded(self, ctx: PluginContext) -> None:
-            global _PLUGIN
-            if _PLUGIN is self:
-                _PLUGIN = None
+    @hookimpl
+    def plugin_unloaded(self, ctx: PluginContext) -> None:
+        global _PLUGIN
+        if _PLUGIN is self:
+            _PLUGIN = None
 
     def category_filter(self) -> str:
         if self.ctx is None:
@@ -534,26 +563,26 @@ class Plugin(FaustPlugin):
             await get_memory().file_write('/rss/saved/' + str(item.get('id')) + '.md', content, description='RSS saved item', declared_by='rss-watcher', index=True, tags=['rss', 'saved'])
         _run_async_background(writer())
 
-        @hookimpl
-        def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
-            self.last_user_activity_ts = time.time()
-            return None
+    @hookimpl
+    def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
+        self.last_user_activity_ts = time.time()
+        return None
 
-        @hookimpl
-        def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
-            if self.store is None:
-                return None
-            text = str(content or '')
-            if 'RSS_SAVED:' not in text:
-                return None
-            try:
-                item_id = int(text.split('RSS_SAVED:', 1)[1].split()[0])
-            except Exception:
-                return None
-            item = self.store.mark_saved(item_id)
-            if item:
-                self.write_saved_item_to_memory(item)
+    @hookimpl
+    def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
+        if self.store is None:
             return None
+        text = str(content or '')
+        if 'RSS_SAVED:' not in text:
+            return None
+        try:
+            item_id = int(text.split('RSS_SAVED:', 1)[1].split()[0])
+        except Exception:
+            return None
+        item = self.store.mark_saved(item_id)
+        if item:
+            self.write_saved_item_to_memory(item)
+        return None
 
     def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None or self.ctx is None:

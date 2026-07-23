@@ -10,6 +10,4 @@ def get_memory(refresh: bool = False) -> GraphStore:
         import faust_backend.config_loader as conf
         from faust_backend.memory.store import GraphStore
         _MEMORY = GraphStore(conf.AGENT_NAME)
-    elif refresh:
-        _MEMORY.refresh(conf.AGENT_NAME)
     return _MEMORY

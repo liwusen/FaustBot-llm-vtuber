@@ -149,6 +149,7 @@ class GraphStore:
         self._embed_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._dirty: bool = False
+        self._bm25_dirty: bool = True
         self._bm25_index: BM25Okapi | None = None
         self._bm25_corpus: list[list[str]] | None = None
         self._extraction_status: dict = {
@@ -212,6 +213,12 @@ class GraphStore:
         _atomic_write_json(self.graph_file, {"nodes": nodes, "edges": edges})
         self._dirty = False
         log.info("save wrote %d nodes, %d edges", len(nodes), len(edges))
+
+    def _mark_bm25_dirty(self) -> None:
+        self._bm25_dirty = True
+
+    def _mark_bm25_clean(self) -> None:
+        self._bm25_dirty = False
 
     def flush(self) -> None:
         self.save()
@@ -539,6 +546,7 @@ class GraphStore:
 
             if chunk_items:
                 await self._embed_and_index(chunk_items)
+            self._mark_bm25_dirty()
 
         self.flush()
         log.info("file_write done path=%s chunks=%d", norm, len(chunks) if index else 0)
@@ -602,6 +610,7 @@ class GraphStore:
 
         if description:
             await self._index_attachment_description(norm, content_type, description)
+        self._mark_bm25_dirty()
 
         self.flush()
 
@@ -686,6 +695,7 @@ class GraphStore:
                 chunks_index.pop(cid, None)
             self._save_chunks_index(chunks_index)
             self._delete_chunk_ids(old_ids)
+            self._mark_bm25_dirty()
 
             if self._has_node(nid):
                 self._graph.remove_node(nid)
@@ -824,6 +834,7 @@ class GraphStore:
         if self._has_node(dest_nid):
             raise FileExistsError(f"目标路径已存在: {dest}")
         ntype = self._get_node_attr(nid, "type", "file")
+        copied_chunk_items: list[dict] = []
         async with self._write_lock:
             if ntype == "file":
                 # 复制文件
@@ -859,6 +870,7 @@ class GraphStore:
                     for ni in new_items:
                         chunks_index[ni["chunk_id"]] = ni
                     self._save_chunks_index(chunks_index)
+                    copied_chunk_items.extend(new_items)
                 ndata = dict(self._graph.nodes[nid])
                 self._add_node(dest_nid, **ndata)
                 parent_dest_nid = _path_id(str(Path(dest).parent))
@@ -918,6 +930,7 @@ class GraphStore:
                             for ni in new_items:
                                 chunks_index[ni["chunk_id"]] = ni
                             self._save_chunks_index(chunks_index)
+                            copied_chunk_items.extend(new_items)
                     except Exception:
                         pass
                     ndata = dict(self._graph.nodes[child_nid])
@@ -926,7 +939,10 @@ class GraphStore:
                     if child_nid != nid:  # not the root
                         p_dest = _path_id(str(Path(new_child_path).parent))
                         self._add_edge(p_dest, new_child_nid, TREE_EDGE)
-            self._repair_tree()
+        if copied_chunk_items:
+            await self._embed_and_index(copied_chunk_items)
+        self._mark_bm25_dirty()
+        self._repair_tree()
         self.flush()
         log.info("file_copy path=%s -> dest=%s type=%s", norm, dest, ntype)
         return {"path": norm, "dest": dest, "type": ntype}
@@ -1040,6 +1056,7 @@ class GraphStore:
                     if np_str.startswith(norm + "/") or np_str == norm:
                         item["node_path"] = np_str.replace(norm, dest, 1)
                 self._save_chunks_index(chunks_index)
+            self._mark_bm25_dirty()
             self._repair_tree()
         self.flush()
         log.info("file_move path=%s -> dest=%s type=%s", norm, dest, ntype)
@@ -1305,7 +1322,7 @@ class GraphStore:
     # ── BM25 index ──
 
     def _ensure_bm25_index(self) -> None:
-        if self._bm25_index is not None and not self._dirty:
+        if self._bm25_index is not None and not self._bm25_dirty:
             return
         from concurrent.futures import ThreadPoolExecutor, as_completed
         docs: list[dict] = []
@@ -1392,12 +1409,14 @@ class GraphStore:
             self._bm25_index = None
             self._bm25_docs = []
             self._bm25_corpus = None
+            self._mark_bm25_clean()
             return
 
         tokenized = [_tokenize(d["text"]) for d in docs]
         self._bm25_corpus = tokenized
         self._bm25_index = BM25Okapi(tokenized)
         self._bm25_docs = docs
+        self._mark_bm25_clean()
 
     def _bm25_search(self, query: str, top_k: int) -> list[dict]:
         self._ensure_bm25_index()
@@ -1473,6 +1492,12 @@ class GraphStore:
             return
         texts = [c["text"] for c in chunk_items]
         embeddings = await self._embed_texts(texts)
+        if len(embeddings) != len(chunk_items):
+            log.critical("embedding count mismatch: expected %d, got %d", len(chunk_items), len(embeddings))
+            raise ValueError(f"embedding count mismatch: expected {len(chunk_items)}, got {len(embeddings)}")
+        if embeddings.ndim != 2 or embeddings.shape[1] != EMBED_DIM:
+            log.critical("embedding dimension mismatch: expected %d, got %s", EMBED_DIM, getattr(embeddings, 'shape', None))
+            raise ValueError(f"embedding dimension mismatch: expected {EMBED_DIM}, got {getattr(embeddings, 'shape', None)}")
         vdb = self._ensure_vdb()
         rows = []
         for item, vec in zip(chunk_items, embeddings):
@@ -2217,6 +2242,9 @@ class GraphStore:
         if not source.exists():
             raise FileNotFoundError(f"源文件不存在: {source}")
         target = kb_path or f"/imports/{source.name}"
-        content = source.read_text(encoding="utf-8")
+        try:
+            content = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"源文件不是 UTF-8 文本，不能直接导入 memory: {source}") from exc
         result = await self.file_write(target, content, declared_by=str(source), index=True)
         return result

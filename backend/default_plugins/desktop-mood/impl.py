@@ -108,9 +108,9 @@ async def _read_smtc_now() -> dict[str, Any] | None:
 
 
 class DesktopMoodStore:
-    def __init__(self, plugin_dir: Path):
+    def __init__(self, data_dir: Path):
         self._lock = threading.RLock()
-        self._data_dir = plugin_dir / 'data'
+        self._data_dir = data_dir
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self._data_dir / STATE_FILE_NAME
         self._state = self._load_state()
@@ -265,7 +265,8 @@ class Plugin(FaustPlugin):
 
     def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        self.store = DesktopMoodStore(ctx.plugin_dir)
+        data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
+        self.store = DesktopMoodStore(data_dir)
         ctx.register_config([
             {"key": "GLOBAL_COOLDOWN_SEC", "type": "int", "label": "全局冷却（秒）", "default": 180},
             {"key": "WEATHER_CITY", "type": "str", "label": "天气城市", "default": 'auto'},

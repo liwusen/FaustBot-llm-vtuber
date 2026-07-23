@@ -437,6 +437,7 @@ async def _ensure_core_structure(vfs: AsyncVirtualFileSystem) -> None:
             child_path = '/' + item if item else '/'
             is_dir = await vfs.is_dir(child_path)
             lines.append(f"- faustbot://{item}{'/' if is_dir else ''}")
+        lines += ['', '源码入口：faustbot://source/{PATH}']
         lines += ['', '建议：优先读取 faustbot://index.md、faustbot://plugins/、faustbot://subagents/。']
         return '\n'.join(lines)
 

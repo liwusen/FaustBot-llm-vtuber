@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from typing import TYPE_CHECKING
 
 import aiosqlite
 import langgraph
@@ -11,13 +12,20 @@ from faust_backend.logger import get_logger
 
 from faust_backend.subagent_manager import SubagentManager
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from faust_backend.memory.store import GraphStore
+from langgraph.graph.state import CompiledStateGraph
+from fastapi import FastAPI
+from uvicorn import Server
+
+if TYPE_CHECKING:
+    from faust_backend.plugin_system.manager import PluginManager
 
 log = get_logger("faust.runtime.state")
 
 # ── Agent 核心状态 ──
-agent = None
+agent: "CompiledStateGraph | None" = None
 agent_lock = asyncio.Lock()
-THREAD_ID = 84
+THREAD_ID = "main"  # langgraph checkpointer 需要这个ID,保持不变即可
 
 # ── 中断信号 ──
 _agent_abort: asyncio.Event | None = None
@@ -35,6 +43,7 @@ def reset_abort_event() -> asyncio.Event:
     _agent_abort = asyncio.Event()
     return _agent_abort
 
+
 # ── SQLite 持久化 ──
 conn: "aiosqlite.Connection | None" = None
 checkpointer: AsyncSqliteSaver | None = None
@@ -50,13 +59,14 @@ PROMPT = ""
 # ── 系统组件 ──
 forward_queue = asyncio.Queue()
 plugin_heartbeat_task = None
-uvicorn_server = None
-plugin_manager = None  # set by lifecycle
-subagent_manager:SubagentManager|None = None
-fastapi_app = None
+uvicorn_server: Server | None = None
+plugin_manager: "PluginManager | None" = None  # set by lifecycle
+subagent_manager: SubagentManager | None = None
+fastapi_app: FastAPI | None = None
 
 
 # ── 状态管理 ──
+
 
 def set_runtime_state(*, ready: bool, status: str, error: str = ""):
     global RUNTIME_READY, RUNTIME_STATUS, RUNTIME_ERROR
@@ -92,6 +102,7 @@ def ensure_agent_runtime_ready() -> None:
 
 # ── Prompt 加载 ──
 
+
 def makeup_init_prompt():
     global PROMPT, AGENT_NAME, AGENT_ROOT
     AGENT_NAME = conf.AGENT_NAME
@@ -109,25 +120,28 @@ def makeup_init_prompt():
     # ── Skill YAML injection ──
     try:
         import faust_backend.skill_manager as skill_manager
+
         skill_manager._ensure_builtin_skills()
         yaml_summary = skill_manager.list_skills_yaml()
         if yaml_summary:
             parts.append("\n\n## 可用技能列表（Skill）\n")
             parts.append("用户输入 `/skill:<slug>` 表示想用该技能。收到该指令后：\n")
-            parts.append("1. 用 read(\"skill://<slug>/SKILL.md\") 读取技能完整说明\n")
+            parts.append('1. 用 read("skill://<slug>/SKILL.md") 读取技能完整说明\n')
             parts.append("2. 按说明执行任务\n")
             parts.append("3. 无需再次询问用户确认，直接执行\n\n")
             parts.append(yaml_summary)
     except Exception as e:
         log.warning("Skill YAML 注入失败: %s", e)
 
-    parts.append("\n\n优先使用 read(\"faustbot://index.md\") 获取 FaustBot 的只读系统说明、工具说明、Minecraft 指南和源码入口。\n")
+    parts.append(
+        '\n\n优先使用 read("faustbot://index.md") 获取 FaustBot 的只读系统说明、工具说明、Minecraft 指南和源码入口。\n'
+    )
 
     # ── Plugin prompt suffixes ──
     try:
-        pm = globals().get('plugin_manager') or None
+        pm = globals().get("plugin_manager") or None
         suffix_items: list[str] = []
-        if pm is not None and hasattr(pm, 'collect_prompt_suffixes'):
+        if pm is not None and hasattr(pm, "collect_prompt_suffixes"):
             suffix_items = pm.collect_prompt_suffixes() or []
         if suffix_items:
             parts.append("\n\n--- Plugin 扩展指令 ---\n")
@@ -149,9 +163,14 @@ except Exception as e:
 
 # ── 工具函数 ──
 
+
 def is_rate_limit_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return ("429" in text) or ("rate" in text and "limit" in text) or ("bad_response_status_code" in text)
+    return (
+        ("429" in text)
+        or ("rate" in text and "limit" in text)
+        or ("bad_response_status_code" in text)
+    )
 
 
 def format_chat_error(exc: Exception) -> str:

@@ -30,7 +30,7 @@ async def admin_list_plugins():
 async def admin_reload_plugins(payload: dict | None = None):
     pm = state.plugin_manager
     if pm:
-        summary = pm.reload()
+        summary = pm.reload(force=True)
         _sync_plugin_trigger_filters()
     else:
         summary = {"error": "plugin_manager not initialized"}
@@ -112,8 +112,7 @@ async def admin_set_plugin_config(plugin_id: str, payload: dict | None = None):
     no_initial_chat = bool(body.get("no_initial_chat", True))
     config_snapshot = state.plugin_manager.set_plugin_config_values(plugin_id, values) if state.plugin_manager else {}
     if state.plugin_manager:
-        reload_summary = state.plugin_manager.reload()
-        _sync_plugin_trigger_filters()
+        reload_summary = {"skipped": True, "reason": "config-only update"}
     else:
         reload_summary = {}
     runtime_info = None

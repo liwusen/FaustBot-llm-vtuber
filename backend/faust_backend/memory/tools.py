@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import threading
 import uuid
 from typing import Any
 import traceback
@@ -18,10 +19,23 @@ def _run(coro) -> Any:
     try:
         loop = asyncio.get_running_loop()
         if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = asyncio.run_coroutine_threadsafe(coro, loop)
-                return future.result(timeout=120)
+            result_box: dict[str, Any] = {}
+            error_box: dict[str, BaseException] = {}
+
+            def _thread_main() -> None:
+                try:
+                    result_box["value"] = asyncio.run(coro)
+                except BaseException as exc:
+                    error_box["error"] = exc
+
+            worker = threading.Thread(target=_thread_main, daemon=True, name="faust-memory-run")
+            worker.start()
+            worker.join(timeout=120)
+            if worker.is_alive():
+                raise TimeoutError("memory coroutine execution timed out")
+            if "error" in error_box:
+                raise error_box["error"]
+            return result_box.get("value")# ?:Review Needed
         return asyncio.run(coro)
     except RuntimeError:
         return asyncio.run(coro)
@@ -200,12 +214,12 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         log.info("_bg_extract_and_save result=%s", result)
         entities = result.get("entities", [])
         relations = result.get("relations", [])
+        name_to_id: dict[str, str] = {}
         if entities and doc_path:
             names = [str(e.get("name", "")) for e in entities]
             name_vecs = await m._embed_texts(names)
             existing_ids = await m.entity_find_similar(name_vecs, threshold=ENTITY_DEDUP_THRESHOLD)
             doc_nid = _path_id(doc_path)
-            name_to_id: dict[str, str] = {}
 
             for item, name_vec, existing_id in zip(entities, name_vecs, existing_ids):
                 name = str(item.get("name", ""))

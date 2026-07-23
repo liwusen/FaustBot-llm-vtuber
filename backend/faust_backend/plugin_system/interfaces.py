@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import asyncio
+import json
+import threading
+import time
 from pathlib import Path
-from typing import Any, Protocol
-
-
+from typing import Any, Callable, Protocol
+from dataclasses import dataclass, field
 @dataclass
 class PluginContext:
     plugin_id: str
     plugin_dir: Path
+    plugin_data_dir: Path | None = None
     config: dict[str, Any] = field(default_factory=dict)
 
     def trigger_create(self, payload: dict | str) -> Any:
@@ -21,13 +24,13 @@ class PluginContext:
         fn = self.config.get("trigger_list")
         if not callable(fn):
             raise RuntimeError("trigger_list is not available")
-        return fn()
+        return fn()  # type: ignore
 
     def trigger_get(self, trigger_id: str) -> dict | None:
         fn = self.config.get("trigger_get")
         if not callable(fn):
             raise RuntimeError("trigger_get is not available")
-        return fn(trigger_id)
+        return fn(trigger_id) # type: ignore
 
     def trigger_update(self, trigger_id: str, payload: dict | str) -> Any:
         fn = self.config.get("trigger_update")
@@ -41,7 +44,7 @@ class PluginContext:
             raise RuntimeError("trigger_delete is not available")
         return fn(trigger_id)
 
-    def register_config(self, schema: str | dict[str, Any]) -> Any:
+    def register_config(self, schema: str | list[dict[str, Any]]) -> Any:
         fn = self.config.get("plugin_config_register")
         if not callable(fn):
             raise RuntimeError("plugin_config_register is not available")
@@ -63,13 +66,13 @@ class PluginContext:
         fn = self.config.get("plugin_config_list")
         if not callable(fn):
             raise RuntimeError("plugin_config_list is not available")
-        return fn()
+        return fn() # type: ignore
 
     def vfs_read_text(self, path: str, default: str = "") -> str:
         fn = self.config.get("vfs_read_text")
         if not callable(fn):
             raise RuntimeError("vfs_read_text is not available")
-        return fn(path, default)
+        return fn(path, default) # type: ignore
 
     def vfs_write(self, path: str, content: Any) -> Any:
         fn = self.config.get("vfs_write")
@@ -90,7 +93,7 @@ class PluginContext:
         return fn(path)
 
     def vfs_list(self, path: str = "/") -> list[str] | None:
-        fn = self.config.get("vfs_list")
+        fn: Callable[[str], list[str] | None] = self.config.get("vfs_list") # type: ignore
         if not callable(fn):
             raise RuntimeError("vfs_list is not available")
         return fn(path)
@@ -182,7 +185,7 @@ class PluginProtocol(Protocol):
     def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
         ...
 
-    def message_sent(self, msg: str, response: Any, ctx: PluginContext) -> Any:
+    def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
         ...
 
     # ── Memory ──

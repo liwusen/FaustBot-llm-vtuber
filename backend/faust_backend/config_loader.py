@@ -25,6 +25,7 @@ MODEL_ROOT = p_join(CONFIG_ROOT, 'models')
 LIVE2D_MODEL_ROOT = p_join(MODEL_ROOT, '2D')
 VRM_MODEL_ROOT = p_join(MODEL_ROOT, 'VRM')
 IMAGE_MODEL_ROOT = p_join(CONFIG_ROOT, 'models', 'image')
+PLUGIN_DATA_ROOT = p_join(CONFIG_ROOT, 'plugin_data')
 CONFIG_FILE_PATH = p_join(CONFIG_ROOT, 'faust.config.json')
 PRIVATE_CONFIG_AUTO_CREATED = False
 PRIVATE_CONFIG_WAS_MISSING = False
@@ -47,6 +48,59 @@ def _copy_missing_tree(src_root: Path, dst_root: Path) -> None:
             _copy_missing_tree(item, dst)
         elif item.is_file():
             _copy_missing_file(item, dst)
+
+
+def _parse_version_parts(raw: str) -> tuple[int, ...]:
+    text = str(raw or "0").strip()
+    if not text:
+        return (0,)
+    parts: list[int] = []
+    for chunk in text.replace('-', '.').split('.'):
+        digits = ''.join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts or [0])
+
+
+def _plugin_manifest_version(plugin_dir: Path) -> tuple[int, ...]:
+    manifest = plugin_dir / 'plugin.json'
+    if not manifest.exists():
+        return (0,)
+    try:
+        raw = json.loads(manifest.read_text(encoding='utf-8'))
+    except Exception:
+        return (0,)
+    return _parse_version_parts(str(raw.get('version') or '0'))
+
+
+def _sync_default_plugins(project_root: Path, faustbot: Path) -> None:
+    src_plugins = project_root / 'default_plugins'
+    if not src_plugins.exists():
+        print(f"[config_loader]  WARNING:默认插件目录 {src_plugins} 不存在，跳过复制。")
+        return
+    dst_plugins = faustbot / 'plugins'
+    dst_plugins.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for item in src_plugins.iterdir():
+        if item.name == 'plugins.state.json':
+            continue
+        dest = dst_plugins / item.name
+        if not dest.exists():
+            if item.is_dir():
+                shutil.copytree(item, dest, dirs_exist_ok=True)
+            elif item.is_file():
+                shutil.copy(item, dest)
+            copied.append(item.name)
+            continue
+        if not item.is_dir() or not dest.is_dir():
+            continue
+        if _plugin_manifest_version(item) > _plugin_manifest_version(dest):
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(item, dest, dirs_exist_ok=True)
+            copied.append(item.name)
+    if copied:
+        print(f"[config_loader]  已同步默认插件: {', '.join(sorted(copied))}")
 
 
 def _ensure_model_templates(faustbot: Path, project_root: Path) -> None:
@@ -101,20 +155,7 @@ def _ensure_faustbot_init():
             shutil.copy(blive_example, faustbot / "blive_config.json")
             print(f"[config_loader]  已创建 {faustbot / 'blive_config.json'}")
 
-        src_plugins = project_root / "default_plugins"
-        if src_plugins.exists():
-            dst_plugins = faustbot / "plugins"
-            dst_plugins.mkdir(parents=True, exist_ok=True)
-            for item in src_plugins.iterdir():
-                dest = dst_plugins / item.name
-                if not dest.exists():
-                    if item.is_dir():
-                        shutil.copytree(item, dest, dirs_exist_ok=True)
-                    elif item.is_file() and item.name != "plugins.state.json":
-                        shutil.copy(item, dest)
-            print(f"[config_loader]  已复制 default_plugins/ → {dst_plugins}")
-        else:
-            print(f"[config_loader]  WARNING:默认插件目录 {src_plugins} 不存在，跳过复制。")
+        _sync_default_plugins(project_root, faustbot)
         print("[config_loader]  ~/.faustbot 初始化完成")
 
     # Always ensure subdirectories and voice files exist
@@ -123,11 +164,14 @@ def _ensure_faustbot_init():
         "cache",
         "voices",
         "logs",
+        "plugin_data",
         os.path.join("models", "image"),
         os.path.join("models", "2D"),
         os.path.join("models", "VRM"),
     ):
         (faustbot / subdir).mkdir(parents=True, exist_ok=True)
+
+    _sync_default_plugins(project_root, faustbot)
 
     _ensure_model_templates(faustbot, project_root)
 

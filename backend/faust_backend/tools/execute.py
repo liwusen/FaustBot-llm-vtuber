@@ -15,6 +15,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
+from faust_backend.tools.vfs import run_coro_sync
 
 log = get_logger("faust.tools.execute")
 
@@ -95,12 +96,12 @@ def _run_shell(command: str, timeout: int, cwd: str) -> str:
         return _run_shell_no_check(command, timeout, cwd)
 
     try:
-        import asyncio as _asyncio
-        ok = _asyncio.run(security_check_command(command))
+        ok = run_coro_sync(security_check_command(command))
         if not ok:
             return "安全检查拒绝执行该命令"
     except Exception as e:
-        log.warning("安全检查调用失败: %s", e)
+        log.warning("安全检查调用失败，已拒绝执行: %s", e)
+        return f"安全检查失败，拒绝执行命令: {e}"
 
     return _run_shell_no_check(command, timeout, cwd)
 
