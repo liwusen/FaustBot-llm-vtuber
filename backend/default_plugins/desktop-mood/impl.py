@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 import faust_backend.backend2front as backend2frontend
-from faust_backend.plugin_system import FaustPlugin, PluginContext
+from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 from faust_backend.tools.vfs import run_coro_sync
 
 from faust_backend.logger import get_logger
@@ -282,10 +282,12 @@ class Plugin(FaustPlugin):
             "规则文件位于 ~/.faustbot/desktop-mood.rules.json，插件会按规则自动触发动作或 event-trigger。\n",
         )
 
+    @hookimpl
     def plugin_loaded(self, ctx: PluginContext) -> None:
         global _PLUGIN
         _PLUGIN = self
 
+    @hookimpl
     def plugin_unloaded(self, ctx: PluginContext) -> None:
         global _PLUGIN
         if _PLUGIN is self:

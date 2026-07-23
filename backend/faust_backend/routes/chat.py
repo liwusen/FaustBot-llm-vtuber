@@ -26,7 +26,7 @@ from faust_backend.runtime.output_store import reset_output_store
 log = get_logger("faust.chat")
 
 router = APIRouter(tags=["chat"])
-router.description = "聊天/通信：WebSocket 流式聊天、命令转发、命令反馈，以及遗留的 POST 聊天接口"
+router.description = "聊天/通信：WebSocket 流式聊天、命令转发、命令反馈，以及遗留的 POST 聊天接口" # type: ignore
 
 COMPACT_SYSTEM_PROMPT = """你是一个对话压缩器。你的任务是把当前 Agent 会话压缩成一段高密度中文摘要，供系统作为后续上下文继续使用。
 
@@ -58,7 +58,7 @@ async def _get_checkpoint_messages() -> list:
     if state.checkpointer is None:
         return []
     cfg = {"configurable": {"thread_id": state.THREAD_ID}}
-    checkpoint_tuple = await state.checkpointer.aget_tuple(cfg)
+    checkpoint_tuple = await state.checkpointer.aget_tuple(cfg) # type: ignore
     if checkpoint_tuple is None:
         return []
     checkpoint = getattr(checkpoint_tuple, "checkpoint", None)
@@ -183,7 +183,7 @@ async def _replace_session_with_summary(summary: str) -> None:
         "parents": {},
         "ls_integration": "faust_slash_compact",
     }
-    await state.checkpointer.aput(config, checkpoint, metadata, {"messages": 1})
+    await state.checkpointer.aput(config, checkpoint, metadata, {"messages": 1}) # type: ignore
 
 
 async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -> tuple[bool, str]:
@@ -248,6 +248,8 @@ async def chat_post(payload: dict):
                         text = r
                         break
         resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": text}]})
+        if not resp:
+            raise RuntimeError()
         reply = state.message_content_to_text(resp["messages"][-1].content)
         if pm:
             post_results = pm._call_pluggy_hook('message_sent', msg=text, response=reply, ctx=None)
@@ -341,7 +343,7 @@ async def chat_websocket(websocket: WebSocket):
                         content=event.get("content", ""),
                     ), ensure_ascii=False))
                     if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False)) #
                     continue
                 if event.get("type") == "delta":
                     delta_text = state.message_content_to_text(event.get("content"))
@@ -489,7 +491,7 @@ async def command_websocket(websocket: WebSocket):
                         trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
                 log.info('触发器激活，正在调用 Agent: %s', trigger_text[:120])
                 resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
-                reply = resp["messages"][-1].content
+                reply = resp["messages"][-1].content# type:ignore
                 log.debug('触发器激活回复: %s', str(reply)[:120])
                 if "<NO_TTS_OUTPUT>" in reply:
                     continue

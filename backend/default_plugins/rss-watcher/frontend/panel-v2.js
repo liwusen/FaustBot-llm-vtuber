@@ -17,7 +17,72 @@
   }
 
   function renderPage(container){
-    container.innerHTML = '<article class="card full-span"><h3 class="card-title">RSS Watcher</h3><p class="card-help">在这里维护 RSS 源、手动抓取并查看摘要。</p><form id="rss-feed-form" class="toolbar rss-form"><input class="input" id="rss-feed-name" placeholder="名称" /><input class="input" id="rss-feed-url" placeholder="https://example.com/feed.xml" /><input class="input" id="rss-feed-category" placeholder="分类" /><button type="submit" class="btn btn-primary">添加</button><button type="button" id="rss-fetch-now" class="btn btn-secondary">立即抓取</button></form></article><article class="card full-span"><h3 class="card-title">推送配置</h3><div class="toolbar rss-form"><input class="input" id="rss-threshold" placeholder="阈值" type="number" min="1" /><input class="input" id="rss-interval" placeholder="抓取间隔(分钟)" type="number" min="1" /><input class="input" id="rss-quiet-start" placeholder="静默开始" /><input class="input" id="rss-quiet-end" placeholder="静默结束" /><input class="input" id="rss-category-filter" placeholder="分类过滤" /><button type="button" id="rss-save-config" class="btn btn-primary">保存配置</button></div></article><article class="card full-span"><h3 class="card-title">订阅源</h3><div id="rss-feed-list" class="list-box rss-list-v2"></div></article><article class="card full-span"><h3 class="card-title">摘要</h3><pre id="rss-digest" class="rss-digest-v2">加载中...</pre></article><article class="card full-span"><h3 class="card-title">最近条目</h3><div id="rss-item-list" class="list-box rss-list-v2"></div></article>';
+    container.innerHTML = `
+<article class="card full-span">
+  <h3 class="card-title">RSS Watcher</h3>
+  <p class="card-help">添加和管理 RSS 订阅源，手动触发抓取，查看近期摘要。</p>
+
+  <form id="rss-feed-form" class="toolbar rss-form">
+    <input class="input" id="rss-feed-name" placeholder="名称" />
+    <input class="input" id="rss-feed-url" placeholder="https://example.com/feed.xml" />
+    <input class="input" id="rss-feed-category" placeholder="分类（如 tech、news）" />
+    <button type="submit" class="btn btn-primary">添加</button>
+    <button type="button" id="rss-fetch-now" class="btn btn-secondary">立即抓取</button>
+  </form>
+</article>
+
+<article class="card full-span">
+  <h3 class="card-title">推送配置</h3>
+
+  <div class="rss-config-vertical">
+    <label class="rss-config-item">
+      <span class="rss-config-label">推送阈值</span>
+      <span class="rss-config-desc">累计多少条新条目时触发播报。推荐 3–5 条。</span>
+      <input class="input" id="rss-threshold" type="number" min="1" max="20" />
+    </label>
+
+    <label class="rss-config-item">
+      <span class="rss-config-label">抓取间隔（分钟）</span>
+      <span class="rss-config-desc">多久检查一次订阅源更新。建议 15–60 分钟。</span>
+      <input class="input" id="rss-interval" type="number" min="5" max="360" />
+    </label>
+
+    <label class="rss-config-item">
+      <span class="rss-config-label">静默开始</span>
+      <span class="rss-config-desc">此时间之后不推送新消息，避免夜间打扰。</span>
+      <input class="input" id="rss-quiet-start" placeholder="如 23:00" />
+    </label>
+
+    <label class="rss-config-item">
+      <span class="rss-config-label">静默结束</span>
+      <span class="rss-config-desc">静默时段结束时间。</span>
+      <input class="input" id="rss-quiet-end" placeholder="如 08:00" />
+    </label>
+
+    <label class="rss-config-item">
+      <span class="rss-config-label">分类过滤</span>
+      <span class="rss-config-desc">只推送指定分类的条目。填写 "all" 不过滤。</span>
+      <input class="input" id="rss-category-filter" placeholder="all / tech / news" />
+    </label>
+
+    <button type="button" id="rss-save-config" class="btn btn-primary" style="align-self:flex-start;margin-top:4px">保存配置</button>
+  </div>
+</article>
+
+<article class="card full-span">
+  <h3 class="card-title">订阅源</h3>
+  <div id="rss-feed-list" class="list-box rss-list-v2"></div>
+</article>
+
+<article class="card full-span">
+  <h3 class="card-title">摘要</h3>
+  <pre id="rss-digest" class="rss-digest-v2">加载中...</pre>
+</article>
+
+<article class="card full-span">
+  <h3 class="card-title">最近条目</h3>
+  <div id="rss-item-list" class="list-box rss-list-v2"></div>
+</article>`;
 
     async function refresh(){
       const results = await Promise.all([

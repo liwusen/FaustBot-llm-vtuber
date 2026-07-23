@@ -1,9 +1,15 @@
+from faust_backend.utils import PerfTimer
+_t = PerfTimer()
+
+_t.begin("builtin")
 import os
 import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+_t.end("builtin")
 
+_t.begin("fastapi&&langchain")
 from fastapi import FastAPI
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
@@ -12,6 +18,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import aiosqlite
 import tqdm
 
+_t.begin("faustbot_backend1")
 import faust_backend.config_loader as conf
 import faust_backend.llm_tools as llm_tools
 import faust_backend.backend2front as backend2frontend
@@ -20,6 +27,9 @@ import faust_backend.araya_runtime as araya_runtime
 import faust_backend.service_manager as service_manager
 import faust_backend.live_api as live_api
 import faust_backend.blive_manager as blive_manager
+_t.end("faustbot_backend1")
+
+_t.begin("faustbot_backend2")
 import faust_backend.minecraft_client as minecraft_client
 import faust_backend.vad_runtime as vad_runtime
 import faust_backend.speech_runtime as speech_runtime
@@ -28,11 +38,15 @@ from faust_backend.plugin_system import PluginManager
 from faust_backend.runtime import middleware
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.config_loader import args
+_t.end("faustbot_backend2")
 
+_t.begin("faustbot_backend3")
 from faust_backend.runtime import state
 from faust_backend.logger import get_logger
 from faust_backend.subagent_manager import SubagentManager
 from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes
+_t.end("faustbot_backend3")
+_t.print_pref()
 
 log = get_logger("faust.lifecycle")
 
@@ -331,7 +345,7 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 log.info("模板文件已同步: %s", ", ".join(updated))
             state.makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
-            refresh_runtime_nodes(get_faustbot_vfs(refresh=True))
+            await refresh_runtime_nodes(get_faustbot_vfs(refresh=True))
             from faust_backend.mcp_manager import get_mcp_manager
             mcp_manager = get_mcp_manager()
             mcp_manager.load_config(getattr(conf, "MCP_SERVERS", {}) or {})
@@ -451,9 +465,6 @@ async def lifespan(app: FastAPI):
         await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(args.no_startup_chat))
         log.info("启动运行时摘要: %s", startup_info)
-        # Mount plugin routes on the FastAPI app with /faust/plugins/{plugin_id}/ prefix
-        if state.plugin_manager:
-            state.plugin_manager.mount_routes(app)
     except Exception as e:
         state.agent = None
         state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))

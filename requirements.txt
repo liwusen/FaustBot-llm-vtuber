@@ -26,7 +26,6 @@ easyocr
 watchdog
 
 #Frontend UI Required
-PySide6
 requests
 
 # KB vector index Required

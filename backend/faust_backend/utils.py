@@ -2,13 +2,17 @@ import functools
 import subprocess
 import sys
 import time
-def show_return_wrapper(func):
+from typing import Callable
+
+def show_return_wrapper(func:Callable):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         result = await func(*args, **kwargs)
         print(f"Returning from {func.__name__}:", result)
         return result
+
     return wrapper
+
 
 class CrossPlatformClipboard:
     def __init__(self):
@@ -19,43 +23,61 @@ class CrossPlatformClipboard:
         if self.system == "win32":
             try:
                 import pyperclip
+
                 pyperclip.copy(text)
             except ImportError:
                 # 使用Windows命令行工具
-                subprocess.run(['clip'], input=text, text=True, check=True)
+                subprocess.run(["clip"], input=text, text=True, check=True)
         elif self.system == "darwin":  # macOS
-            subprocess.run(['pbcopy'], input=text, text=True, check=True)
+            subprocess.run(["pbcopy"], input=text, text=True, check=True)
         elif self.system.startswith("linux"):  # Linux
             try:
-                subprocess.run(['xclip', '-selection', 'clipboard'], 
-                             input=text, text=True, check=True)
+                subprocess.run(
+                    ["xclip", "-selection", "clipboard"],
+                    input=text,
+                    text=True,
+                    check=True,
+                )
             except FileNotFoundError:
-                subprocess.run(['xsel', '--clipboard', '--input'], 
-                             input=text, text=True, check=True)
+                subprocess.run(
+                    ["xsel", "--clipboard", "--input"],
+                    input=text,
+                    text=True,
+                    check=True,
+                )
 
     def paste(self):
         """跨平台从剪切板粘贴文本"""
         if self.system == "win32":
             try:
                 import pyperclip
+
                 return pyperclip.paste()
             except ImportError:
                 # 使用PowerShell
-                result = subprocess.run(['powershell', '-command', 'Get-Clipboard'], 
-                                      capture_output=True, text=True)
+                result = subprocess.run(
+                    ["powershell", "-command", "Get-Clipboard"],
+                    capture_output=True,
+                    text=True,
+                )
                 return result.stdout.strip()
         elif self.system == "darwin":  # macOS
-            result = subprocess.run(['pbpaste'], capture_output=True, text=True)
+            result = subprocess.run(["pbpaste"], capture_output=True, text=True)
             return result.stdout
         elif self.system.startswith("linux"):  # Linux
             try:
-                result = subprocess.run(['xclip', '-selection', 'clipboard', '-o'], 
-                                      capture_output=True, text=True)
+                result = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-o"],
+                    capture_output=True,
+                    text=True,
+                )
                 return result.stdout
             except FileNotFoundError:
-                result = subprocess.run(['xsel', '--clipboard', '--output'], 
-                                      capture_output=True, text=True)
+                result = subprocess.run(
+                    ["xsel", "--clipboard", "--output"], capture_output=True, text=True
+                )
                 return result.stdout
+
 
 class PerfTimer:
 
@@ -104,11 +126,9 @@ class PerfTimer:
 
     def __str__(self):
         line = self.itemize()
-        if extra:
-            line = f"{line} | {extra}"
         self.reset(keep_order=True)
         return line
-    
+
     def reset(self, keep_order=True):
         self._timers.clear()
         self._active.clear()

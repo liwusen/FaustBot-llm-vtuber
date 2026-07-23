@@ -17,7 +17,8 @@ from typing import Any, Callable
 import requests
 
 import faust_backend.logger as logger
-log=logger.get_logger("faust.update.manager")
+
+log = logger.get_logger("faust.update.manager")
 
 GITHUB_OWNER = "liwusen"
 GITHUB_REPO = "FaustBot-llm-vtuber"
@@ -88,8 +89,14 @@ def _gh_download_url(tag: str, asset_name: str, use_proxy: bool) -> str:
 
 
 class DownloadTask:
-    def __init__(self, url: str, dest_path: Path, tag: str, asset_name: str,
-                 num_threads: int = DOWNLOAD_THREADS):
+    def __init__(
+        self,
+        url: str,
+        dest_path: Path,
+        tag: str,
+        asset_name: str,
+        num_threads: int = DOWNLOAD_THREADS,
+    ):
         self.url = url
         self.dest_path = dest_path
         self.tag = tag
@@ -132,7 +139,9 @@ class DownloadTask:
             "asset_name": self.asset_name,
             "total_bytes": self.total_bytes,
             "downloaded_bytes": self.downloaded_bytes,
-            "total_mb": round(self.total_bytes / 1_048_576, 1) if self.total_bytes else 0,
+            "total_mb": (
+                round(self.total_bytes / 1_048_576, 1) if self.total_bytes else 0
+            ),
             "downloaded_mb": round(self.downloaded_bytes / 1_048_576, 1),
             "progress": round(self.progress * 100, 1),
             "speed_mbps": round(self.speed_mbps, 1),
@@ -152,8 +161,10 @@ class DownloadTask:
                 last_exc = e
                 if attempt < DOWNLOAD_MAX_RETRIES:
                     delay = DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                    log.warning(f"Download attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed for "
-                                f"{self.asset_name}, retrying in {delay:.1f}s: {e}")
+                    log.warning(
+                        f"Download attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed for "
+                        f"{self.asset_name}, retrying in {delay:.1f}s: {e}"
+                    )
                     time.sleep(delay)
         raise last_exc  # type: ignore[misc]
 
@@ -176,8 +187,10 @@ class DownloadTask:
                 last_exc = e
                 if attempt < DOWNLOAD_MAX_RETRIES:
                     delay = DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                    log.warning(f"Chunk {idx} attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed "
-                                f"({start}-{end}), retrying in {delay:.1f}s: {e}")
+                    log.warning(
+                        f"Chunk {idx} attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed "
+                        f"({start}-{end}), retrying in {delay:.1f}s: {e}"
+                    )
                     time.sleep(delay)
                 if part.exists():
                     part.unlink()
@@ -200,14 +213,23 @@ class DownloadTask:
             ranges: list[tuple[int, int, int]] = []
             for i in range(self.num_threads):
                 start = i * chunk
-                end = start + chunk - 1 if i < self.num_threads - 1 else self.total_bytes - 1
+                end = (
+                    start + chunk - 1
+                    if i < self.num_threads - 1
+                    else self.total_bytes - 1
+                )
                 if start <= end:
                     ranges.append((start, end, i))
 
             part_paths: list[Path] = []
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_threads) as pool:
-                fut_map = {pool.submit(self._dl_chunk_with_retry, s, e, i): i for s, e, i in ranges}
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.num_threads
+            ) as pool:
+                fut_map = {
+                    pool.submit(self._dl_chunk_with_retry, s, e, i): i
+                    for s, e, i in ranges
+                }
                 for fut in concurrent.futures.as_completed(fut_map):
                     exc = fut.exception()
                     if exc:
@@ -234,8 +256,11 @@ _download_tasks_lock = threading.Lock()
 
 
 def create_download_task(tag: str, asset_name: str, use_proxy: bool) -> str:
-    log.info(f"Creating download task for tag={tag}, asset={asset_name}, use_proxy={use_proxy}")
+    log.info(
+        f"Creating download task for tag={tag}, asset={asset_name}, use_proxy={use_proxy}"
+    )
     import uuid
+
     task_id = uuid.uuid4().hex[:12]
     url = _gh_download_url(tag, asset_name, use_proxy)
     tmp = Path(tempfile.gettempdir()) / f"faust_update_{tag}"
@@ -264,7 +289,11 @@ def cleanup_download_task(task_id: str) -> None:
 
 class UpdateManager:
     def __init__(self, project_root: str | Path | None = None):
-        self.root = Path(project_root).resolve() if project_root else Path(__file__).resolve().parents[2]
+        self.root = (
+            Path(project_root).resolve()
+            if project_root
+            else Path(__file__).resolve().parents[2]
+        )
         self._latest_release: dict[str, Any] | None = None
         self._cached_ts: float = 0.0
         self._tmp_extracted: Path | None = None
@@ -277,13 +306,19 @@ class UpdateManager:
 
     async def check_latest(self, *, force: bool = False) -> dict[str, Any]:
         now = time.time()
-        if not force and self._latest_release and (now - self._cached_ts) < RELEASE_CACHE_HOURS * 3600:
+        if (
+            not force
+            and self._latest_release
+            and (now - self._cached_ts) < RELEASE_CACHE_HOURS * 3600
+        ):
             return self._latest_release
 
         url = _gh_api_url("releases/latest")
         headers = {"Accept": "application/vnd.github+json"}
         try:
-            resp = await asyncio.to_thread(requests.get, url, headers=headers, timeout=15)
+            resp = await asyncio.to_thread(
+                requests.get, url, headers=headers, timeout=15
+            )
             resp.raise_for_status()
             data: dict = resp.json()
         except Exception as e:
@@ -350,7 +385,13 @@ class UpdateManager:
         return extract_to
 
     async def diff_release(self, tag: str, asset_name: str) -> dict[str, Any]:
-        info = {"tag": tag, "asset_name": asset_name, "preserved": [], "overwritten": [], "new_files": []}
+        info = {
+            "tag": tag,
+            "asset_name": asset_name,
+            "preserved": [],
+            "overwritten": [],
+            "new_files": [],
+        }
         src = await self.ensure_extracted(tag, asset_name)
         self._tmp_extracted = src
 
@@ -382,7 +423,9 @@ class UpdateManager:
             escaped = pat.replace("/", "\\")
             trimmed = escaped.rstrip("\\")
             if pat.endswith("/"):
-                lines.append(f"{pad}if ($_.PSIsContainer -and $_.Name -eq '{trimmed}') {{ $skip = $true }}")
+                lines.append(
+                    f"{pad}if ($_.PSIsContainer -and $_.Name -eq '{trimmed}') {{ $skip = $true }}"
+                )
             elif pat.startswith("*."):
                 ext = pat.lstrip("*")
                 lines.append(f"{pad}if ($name -like '*{ext}') {{ $skip = $true }}")
@@ -437,7 +480,9 @@ class UpdateManager:
                 items.append(pat)
         return items
 
-    def generate_update_script(self, extracted_src: Path, tag: str, dry_run: bool = False) -> str:
+    def generate_update_script(
+        self, extracted_src: Path, tag: str, dry_run: bool = False
+    ) -> str:
         bat_path = Path(tempfile.gettempdir()) / f"faust_apply_update_{tag}.bat"
         excluded_dirs = self._robocopy_excluded_dirs(extracted_src)
         excluded_files = self._robocopy_excluded_files()
@@ -452,11 +497,11 @@ class UpdateManager:
             f'set "DRY_RUN={1 if dry_run else 0}"',
             "",
             "echo FaustBot update script generated for %TAG%",
-            "if not exist \"%EXTRACTED%\" (",
+            'if not exist "%EXTRACTED%" (',
             "  echo [ERROR] Extracted source not found: %EXTRACTED%",
             "  exit /b 1",
             ")",
-            "if not exist \"%INSTALL_ROOT%\" (",
+            'if not exist "%INSTALL_ROOT%" (',
             "  echo [ERROR] Install root not found: %INSTALL_ROOT%",
             "  exit /b 1",
             ")",
@@ -472,7 +517,7 @@ class UpdateManager:
             # Write a small PowerShell script that waits for Faust processes to exit,
             # then call it from the generated .bat. This restores the original
             # PowerShell waiting logic the user requested.
-            ps1_path = bat_path.with_suffix('.ps1')
+            ps1_path = bat_path.with_suffix(".ps1")
             ps1_lines = [
                 "# Wait for Faust to exit",
                 "Write-Host 'Waiting for Faust processes to exit...'",
@@ -496,13 +541,15 @@ class UpdateManager:
                 f'set "POWERSHELL_SCRIPT={ps1_path}"',
                 'if exist "%POWERSHELL_SCRIPT%" (',
                 '  powershell -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_SCRIPT%"',
-                ') else (',
-                '  echo [WARN] PowerShell wait script not found, skipping.',
-                ')',
+                ") else (",
+                "  echo [WARN] PowerShell wait script not found, skipping.",
+                ")",
                 "",
             ]
 
-        robocopy_cmd = ['robocopy "%EXTRACTED%" "%INSTALL_ROOT%" /MIR /R:2 /W:1 /NFL /NDL /NP /MT:16']
+        robocopy_cmd = [
+            'robocopy "%EXTRACTED%" "%INSTALL_ROOT%" /MIR /R:2 /W:1 /NFL /NDL /NP /MT:16'
+        ]
         if dry_run:
             robocopy_cmd.append("/L")
         if excluded_dirs:
@@ -528,9 +575,9 @@ class UpdateManager:
         if not dry_run:
             lines += [
                 "echo Step 2: Running setup-runtime.bat --torch cpu --tts no...",
-                "set \"SETUP_SCRIPT=%INSTALL_ROOT%\\setup-runtime.bat\"",
-                "if exist \"%SETUP_SCRIPT%\" (",
-                "  call \"%SETUP_SCRIPT%\" --torch cpu --tts no --install-python no --install-node yes --source cn",
+                'set "SETUP_SCRIPT=%INSTALL_ROOT%\\setup-runtime.bat"',
+                'if exist "%SETUP_SCRIPT%" (',
+                '  call "%SETUP_SCRIPT%" --torch cpu --tts no --install-python no --install-node yes --source cn',
                 ") else (",
                 "  echo [WARN] setup-runtime.bat not found, skipped.",
                 ")",
@@ -542,7 +589,9 @@ class UpdateManager:
             ]
 
         log.debug(f"Generated update script for tag={tag}:\n" + "\n".join(lines))
-        bat_path.write_text("\r\n".join(lines) + "\r\n", encoding="ascii", errors="ignore")
+        bat_path.write_text(
+            "\r\n".join(lines) + "\r\n", encoding="ascii", errors="ignore"
+        )
         return str(bat_path)
 
     async def apply_update(self, tag: str, asset_name: str) -> dict[str, Any]:

@@ -13,7 +13,7 @@ from typing import Any
 import aiohttp
 from fastapi import APIRouter, Body, HTTPException
 
-from faust_backend.plugin_system import FaustPlugin, PluginContext
+from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 
 _ROUTER = APIRouter()
 _PLUGIN: "Plugin | None" = None
@@ -390,14 +390,16 @@ class Plugin(FaustPlugin):
         )
         ctx.vfs_write("/plugins/rss-watcher/index.md", "# RSS Watcher\n\n暂无 RSS 更新。")
 
-    def plugin_loaded(self, ctx: PluginContext) -> None:
-        global _PLUGIN
-        _PLUGIN = self
+        @hookimpl
+        def plugin_loaded(self, ctx: PluginContext) -> None:
+            global _PLUGIN
+            _PLUGIN = self
 
-    def plugin_unloaded(self, ctx: PluginContext) -> None:
-        global _PLUGIN
-        if _PLUGIN is self:
-            _PLUGIN = None
+        @hookimpl
+        def plugin_unloaded(self, ctx: PluginContext) -> None:
+            global _PLUGIN
+            if _PLUGIN is self:
+                _PLUGIN = None
 
     def category_filter(self) -> str:
         if self.ctx is None:
@@ -532,24 +534,26 @@ class Plugin(FaustPlugin):
             await get_memory().file_write('/rss/saved/' + str(item.get('id')) + '.md', content, description='RSS saved item', declared_by='rss-watcher', index=True, tags=['rss', 'saved'])
         _run_async_background(writer())
 
-    def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
-        self.last_user_activity_ts = time.time()
-        return None
+        @hookimpl
+        def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
+            self.last_user_activity_ts = time.time()
+            return None
 
-    def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
-        if self.store is None:
+        @hookimpl
+        def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
+            if self.store is None:
+                return None
+            text = str(content or '')
+            if 'RSS_SAVED:' not in text:
+                return None
+            try:
+                item_id = int(text.split('RSS_SAVED:', 1)[1].split()[0])
+            except Exception:
+                return None
+            item = self.store.mark_saved(item_id)
+            if item:
+                self.write_saved_item_to_memory(item)
             return None
-        text = str(content or '')
-        if 'RSS_SAVED:' not in text:
-            return None
-        try:
-            item_id = int(text.split('RSS_SAVED:', 1)[1].split()[0])
-        except Exception:
-            return None
-        item = self.store.mark_saved(item_id)
-        if item:
-            self.write_saved_item_to_memory(item)
-        return None
 
     def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None or self.ctx is None:

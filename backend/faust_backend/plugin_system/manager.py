@@ -21,7 +21,9 @@ from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 from .plugin_base import FaustPlugin
 
 import faust_backend.config_loader as conf
+from faust_backend.logger import get_logger
 
+log = get_logger(__name__)
 
 class PluginLoadError(RuntimeError):
     pass
@@ -410,9 +412,10 @@ class PluginManager:
             ctx = record.get("ctx")
             try:
                 if isinstance(plugin, FaustPlugin):
+                    self._pluggy_manager.hook.plugin_unloaded(ctx=ctx)
                     self._pluggy_manager.unregister(plugin)
                 if plugin and hasattr(plugin, "on_unload"):
-                    plugin.on_unload(ctx)
+                    plugin.on_unload(ctx) # type: ignore
             except Exception:
                 pass
 
@@ -446,6 +449,7 @@ class PluginManager:
                     self._faust_plugins[manifest.plugin_id] = plugin
                     self._pluggy_loaded = True
                     # Call plugin_loaded hook
+                    log.debug(f"Calling plugin_loaded hook for plugin: {manifest.plugin_id}")
                     self._pluggy_manager.hook.plugin_loaded(ctx=ctx)
                 else:
                     # Old-style plugins
@@ -465,6 +469,7 @@ class PluginManager:
                     "middlewares": middlewares,
                 }
             except Exception as e:
+                log.error("加载插件失败 %s: %s", manifest.plugin_id, e)
                 errors.append({"plugin": manifest.plugin_id, "error": str(e)})
 
         # ── Load schedules from pluggy plugins ──
@@ -750,7 +755,7 @@ class PluginManager:
                 if result.returncode == 0:
                     installed.extend(to_install)
                 else:
-                    errors.append({"plugin": plugin_id, "deps": to_install, "error": result.stderr[:200]})
+                    errors.append({"plugin": plugin_id, "deps": to_install, "error": result.stderr[:200]}) # type: ignore
             except Exception as e:
                 errors.append({"plugin": plugin_id, "error": str(e)})
         return {"installed": installed, "errors": errors}
@@ -771,6 +776,8 @@ class PluginManager:
                 continue
             try:
                 plugin_routes = plugin.register_routes()
+                for plugin_route in plugin_routes or []:
+                    plugin_route.tags = list(set(plugin_route.tags or []) | {f"plugin:{plugin_id}"})
                 if plugin_routes:
                     routers.extend(plugin_routes)
             except Exception:

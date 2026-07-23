@@ -111,7 +111,9 @@ async def download_events(download_id: str):
         try:
             while True:
                 if task.error:
-                    log.error(f"Download task {download_id} failed with error: {task.error}")
+                    log.error(
+                        f"Download task {download_id} failed with error: {task.error}"
+                    )
                     yield f"event: error\ndata: {json.dumps({'error': task.error})}\n\n"
                     return
                 if task.done:

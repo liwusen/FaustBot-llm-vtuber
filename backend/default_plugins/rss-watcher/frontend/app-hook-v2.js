@@ -1,4 +1,4 @@
-(function(){
+(function () {
   const api = window.faustAppUI;
   if (!api) return;
   const baseUrl = (window.faustAppUI && window.faustAppUI.backendBaseUrl) || 'http://127.0.0.1:13900';
@@ -8,7 +8,7 @@
   document.body.appendChild(banner);
   let hideTimer = null;
 
-  async function refresh(){
+  async function refresh() {
     try {
       const res = await fetch(baseUrl + '/faust/plugins/rss-watcher/banner');
       const payload = await res.json();
@@ -19,7 +19,7 @@
       link.href = item.link || '#';
       banner.classList.remove('rss-banner-hidden');
       if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(function(){ banner.classList.add('rss-banner-hidden'); }, 10000);
+      hideTimer = setTimeout(function () { banner.classList.add('rss-banner-hidden'); }, 10000);
     } catch (error) {
       banner.classList.add('rss-banner-hidden');
     }

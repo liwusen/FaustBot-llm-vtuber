@@ -2,11 +2,15 @@ import os
 import json
 import asyncio
 
+import aiosqlite
+import langgraph
+
 import faust_backend.config_loader as conf
 import faust_backend.llm_tools as llm_tools
 from faust_backend.logger import get_logger
 
 from faust_backend.subagent_manager import SubagentManager
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 log = get_logger("faust.runtime.state")
 
@@ -32,8 +36,8 @@ def reset_abort_event() -> asyncio.Event:
     return _agent_abort
 
 # ── SQLite 持久化 ──
-conn = None
-checkpointer = None
+conn: "aiosqlite.Connection | None" = None
+checkpointer: AsyncSqliteSaver | None = None
 
 # ── 运行时就绪状态 ──
 RUNTIME_READY = False
