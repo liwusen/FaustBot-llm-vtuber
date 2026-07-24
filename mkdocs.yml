@@ -1,0 +1,37 @@
+site_name: FaustBot
+site_description: AI 驱动的 Vtuber / 桌宠平台文档
+site_url: https://faustbot.readthedocs.io/
+repo_url: https://github.com/liwusen/FaustBot-llm-vtuber
+repo_name: FaustBot-llm-vtuber
+
+theme:
+  name: mkdocs
+  language: zh
+  palette:
+    primary: blue
+    accent: blue
+
+nav:
+  - 首页: index.md
+  - 基础:
+    - 项目介绍: getting-started.md
+    - 安装指南: installation.md
+    - 配置说明: configuration.md
+  - 概念:
+    - Agent 基础: agent-basics.md
+  - 进阶:
+    - MCP: mcp.md
+    - 开发者环境: devinstall.md
+  - 语音配置:
+    - GPT-Sovits: tts.md
+    - FunASR: funasr.md
+
+markdown_extensions:
+  - tables
+  - fenced_code
+  - codehilite
+  - toc:
+      permalink: true
+
+extra_css:
+  - assets/custom.css

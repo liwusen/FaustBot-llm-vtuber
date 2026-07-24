@@ -1,0 +1,41 @@
+/* Custom CSS for FaustBot Documentation */
+
+:root {
+  --md-primary-fg-color: #2563eb;
+  --md-primary-fg-color--light: #3b82f6;
+  --md-primary-fg-color--dark: #1d4ed8;
+  --md-accent-fg-color: #2563eb;
+}
+
+/* Feature cards styling */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 6px;
+}
+
+/* Table styling */
+.md-typeset table:not([class]) {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-primary-fg-color);
+  color: white;
+}
+
+/* Code block styling */
+.md-typeset pre {
+  border-radius: 6px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+}
+
+/* Navigation styling */
+.md-nav__link {
+  font-size: 0.9rem;
+}
+
+/* Content max width */
+.md-content {
+  max-width: 900px;
+}
