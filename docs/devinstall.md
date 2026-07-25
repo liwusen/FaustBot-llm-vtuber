@@ -115,4 +115,4 @@ npm start
 A: 确认已执行 `pip install -r requirements.txt`，注意必须使用 `.runtime` 下的 Python。
 
 **Q: setup-runtime.bat 脚本出错怎么办？**  
-A: 扔给AI(bushi),让它帮你装
+A: 扔给 AI（bushi），让它帮你装

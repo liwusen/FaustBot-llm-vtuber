@@ -1,6 +1,6 @@
 # MCP Server
 
-FaustBot 内置 MCP (Model Context Protocol) 客户端，支持连接外部 MCP 服务器扩展工具能力。
+FaustBot 内置 MCP（Model Context Protocol）客户端，支持连接外部 MCP 服务器扩展工具能力。
 
 ## 什么是 MCP
 

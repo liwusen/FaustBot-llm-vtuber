@@ -1,28 +1,28 @@
-# FunASR (local ASR)配置指南
+# FunASR (local ASR) 配置指南
 
 1. 进入配置中心
 
-2. 打开 组件页面
+2. 打开组件页面
 
-![](assets/comp.png)
+   ![](assets/comp.png)
 
-3. FunASR(ASR)模块的,使用复选框选择使用哪种PyTorch推理框架
+3. 在 FunASR (ASR) 模块中，使用复选框选择使用哪种 PyTorch 推理框架
 
-    包括cpu,cu121,cu128,cu130
+   包括 cpu, cu121, cu128, cu130
 
-    建议使用cpu推理,默认cpu即可
+   建议使用 cpu 推理，默认 cpu 即可
 
-    勾选 使用阿里云镜像 
+   勾选"使用阿里云镜像"
 
-    如果想要使用GPU推理,请见`PyTorch 版本选择`
+   如果想要使用 GPU 推理，请见 PyTorch 版本选择
 
-4. 页面最下方将会出现日志,等待进度条走到最右边
+4. 页面最下方将会出现日志，等待进度条走到最右边
 
-5. 点击FunASR (ASR)模块的 启动服务
+5. 点击 FunASR (ASR) 模块的"启动服务"
 
-6. 多刷新几次,等待服务状态变为绿色 运行中
+6. 多刷新几次，等待服务状态变为绿色"运行中"
 
-7. 进入 语音 页面,把ASR模式改为 local,点击 保存 和 应用。
+7. 进入语音页面，把 ASR 模式改为 local，点击保存和应用
 
 # PyTorch 版本选择
 
