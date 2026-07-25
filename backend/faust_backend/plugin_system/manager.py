@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import importlib.util
 import json
 import os
@@ -11,7 +12,6 @@ from types import ModuleType
 from typing import Any
 
 import pluggy
-from fastapi.staticfiles import StaticFiles
 
 import faust_backend.trigger_manager as trigger_manager
 from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
@@ -458,6 +458,15 @@ class PluginManager:
                 continue
 
             manifest = self._load_manifest(plugin_dir)
+            if not self._plugin_enabled(manifest.plugin_id, manifest.enabled):
+                self._plugins[manifest.plugin_id] = {
+                    "manifest": manifest,
+                    "ctx": None,
+                    "plugin": None,
+                    "tools": [],
+                    "middlewares": [],
+                }
+                continue
             ctx = self._build_plugin_context(manifest.plugin_id, plugin_dir)
 
             try:
@@ -723,6 +732,30 @@ class PluginManager:
 
         return {"called": called, "errors": errors}
 
+    async def communicate(self, plugin_id: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+        record = self._plugins.get(plugin_id)
+        if not record:
+            raise PluginLoadError(f"Plugin not found: {plugin_id}")
+        manifest: PluginManifest = record["manifest"]
+        if not self._plugin_enabled(plugin_id, manifest.enabled):
+            raise PluginLoadError(f"Plugin is disabled: {plugin_id}")
+        plugin = record.get("plugin")
+        ctx = record.get("ctx")
+        if plugin is None or ctx is None:
+            raise PluginLoadError(f"Plugin is not loaded: {plugin_id}")
+        handler = getattr(plugin, "communicate_handler", None)
+        if not callable(handler):
+            raise PluginLoadError(f"Plugin does not support communicate: {plugin_id}")
+        body = payload if isinstance(payload, dict) else {}
+        result = handler(body, ctx)
+        if inspect.isawaitable(result):
+            result = await result
+        if result is None:
+            return {"status": "ok"}
+        if not isinstance(result, dict):
+            raise PluginLoadError(f"Plugin communicate result must be dict: {plugin_id}")
+        return result
+
     # ── pluggy hook dispatch helpers ──
 
     def _call_pluggy_hook(self, hook_name: str, **kwargs) -> list:
@@ -790,51 +823,6 @@ class PluginManager:
                 errors.append({"plugin": plugin_id, "error": str(e)})
         return {"installed": installed, "errors": errors}
 
-    # ── Route mounting ──
-
-    def collect_routes(self) -> list:
-        """Collect FastAPI routers from pluggy-registered plugins."""
-        if not self._pluggy_loaded:
-            return []
-        routers: list = []
-        for plugin_id, plugin in self._faust_plugins.items():
-            # Skip disabled plugins
-            record = self._plugins.get(plugin_id, {})
-            manifest = record.get("manifest")
-            default_enabled = getattr(manifest, "enabled", True) if manifest else True
-            if not self._plugin_enabled(plugin_id, default_enabled):
-                continue
-            try:
-                plugin_routes = plugin.register_routes()
-                for plugin_route in plugin_routes or []:
-                    plugin_route.tags = list(set(plugin_route.tags or []) | {f"plugin:{plugin_id}"})
-                if plugin_routes:
-                    routers.extend(plugin_routes)
-            except Exception:
-                pass
-        return routers
-
-    def mount_routes(self, app) -> None:
-        """Mount plugin FastAPI routers on the given app with ``/faust/plugins/{plugin_id}/`` prefix.
-
-        This is called during server startup (lifespan) and respects enabled/disabled state.
-        """
-        if not self._pluggy_loaded:
-            return
-        for plugin_id, plugin in self._faust_plugins.items():
-            record = self._plugins.get(plugin_id, {})
-            manifest = record.get("manifest")
-            default_enabled = getattr(manifest, "enabled", True) if manifest else True
-            if not self._plugin_enabled(plugin_id, default_enabled):
-                continue
-            try:
-                plugin_routes = plugin.register_routes()
-                if plugin_routes:
-                    for r in plugin_routes:
-                        app.include_router(r, prefix=f"/faust/plugins/{plugin_id}")
-            except Exception:
-                pass
-
     def collect_prompt_suffixes(self) -> list[str]:
         """Collect prompt suffixes from pluggy-registered plugins."""
         if not self._pluggy_loaded:
@@ -877,34 +865,6 @@ class PluginManager:
             except Exception:
                 pass
         return assets
-
-    def refresh_app_mounts(self, app) -> None:
-        if app is None:
-            return
-        try:
-            app.router.routes = [
-                route for route in app.router.routes
-                if not getattr(route, "path", "").startswith("/faust/plugins/")
-            ]
-        except Exception:
-            pass
-        self.mount_routes(app)
-        for plugin_id, record in self._plugins.items():
-            ctx = record.get("ctx")
-            plugin_dir = getattr(ctx, "plugin_dir", None)
-            if not plugin_dir:
-                continue
-            frontend_dir = Path(plugin_dir) / "frontend"
-            if not frontend_dir.is_dir():
-                continue
-            try:
-                app.mount(
-                    f"/faust/plugins/{plugin_id}/frontend",
-                    StaticFiles(directory=frontend_dir),
-                    name=f"plugin_frontend_{plugin_id}",
-                )
-            except Exception:
-                pass
 
     # ── Scheduler ──
 

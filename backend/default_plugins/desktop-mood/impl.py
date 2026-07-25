@@ -9,8 +9,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException
-
 import faust_backend.backend2front as backend2frontend
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 from faust_backend.tools.vfs import run_coro_sync
@@ -28,7 +26,6 @@ try:
 except Exception:
     _SMTCManager = None
 
-_ROUTER = APIRouter()
 _PLUGIN: "Plugin | None" = None
 STATE_FILE_NAME = 'desktop_mood_state.json'
 RULES_FILE = Path.home() / '.faustbot' / 'desktop-mood.rules.json'
@@ -216,47 +213,6 @@ def _fetch_weather(city: str) -> dict[str, Any] | None:
         return None
 
 
-@_ROUTER.get('/state')
-async def get_state():
-    if _PLUGIN is None or _PLUGIN.store is None:
-        return {"status": "ok", "state": {}}
-    return {"status": "ok", "state": _PLUGIN.store.snapshot()}
-
-
-@_ROUTER.get('/context')
-async def get_context():
-    if _PLUGIN is None:
-        return {"status": "ok", "context": {}}
-    return {"status": "ok", "context": _PLUGIN.collect_context()}
-
-
-@_ROUTER.get('/rules')
-async def get_rules():
-    if _PLUGIN is None or _PLUGIN.store is None:
-        return {"status": "ok", "items": []}
-    return {"status": "ok", "items": _PLUGIN.store.snapshot().get('rules', [])}
-
-
-@_ROUTER.post('/rules')
-async def set_rules(payload: dict = Body(...)):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    items = payload.get('items')
-    if not isinstance(items, list):
-        raise HTTPException(status_code=400, detail='items must be a list')
-    _PLUGIN.store.set_rules(items)
-    return {"status": "ok", "items": items}
-
-
-@_ROUTER.post('/mood')
-async def set_mood(payload: dict = Body(...)):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    mood = str(payload.get('mood') or 'auto').strip()
-    _PLUGIN.store.set_manual_mood(mood)
-    return {"status": "ok", "mood": mood}
-
-
 class Plugin(FaustPlugin):
     def __init__(self):
         self.ctx: PluginContext | None = None
@@ -293,9 +249,6 @@ class Plugin(FaustPlugin):
         global _PLUGIN
         if _PLUGIN is self:
             _PLUGIN = None
-
-    def register_routes(self) -> list:
-        return [_ROUTER]
 
     def register_frontend(self) -> list[dict]:
         return [
@@ -374,6 +327,31 @@ class Plugin(FaustPlugin):
             'holiday': holiday,
             'smtc': smtc,
         }
+
+    def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+        action = str((payload or {}).get('action') or '').strip().lower()
+        if action == 'get_state':
+            return {"status": "ok", "state": self.store.snapshot() if self.store is not None else {}}
+        if action == 'get_context':
+            return {"status": "ok", "context": self.collect_context()}
+        if action == 'get_rules':
+            items = self.store.snapshot().get('rules', []) if self.store is not None else []
+            return {"status": "ok", "items": items}
+        if action == 'set_rules':
+            items = (payload or {}).get('items')
+            if self.store is None:
+                return {"status": "error", "detail": 'plugin not loaded'}
+            if not isinstance(items, list):
+                return {"status": "error", "detail": 'items must be a list'}
+            self.store.set_rules(items)
+            return {"status": "ok", "items": items}
+        if action == 'set_mood':
+            if self.store is None:
+                return {"status": "error", "detail": 'plugin not loaded'}
+            mood = str((payload or {}).get('mood') or 'auto').strip()
+            self.store.set_manual_mood(mood)
+            return {"status": "ok", "mood": mood}
+        return {"status": "error", "detail": f"unknown action: {action}"}
 
     def _render_template(self, template: str, context: dict[str, Any]) -> str:
         battery = (context.get('battery') or {}).get('percent')

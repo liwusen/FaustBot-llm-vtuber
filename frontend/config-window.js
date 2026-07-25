@@ -180,6 +180,7 @@ if (!window.pluginUI) {
   window.pluginUI = {
     _pages: [],
     _cards: [],
+    backendBaseUrl: (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900",
 
     addPage(spec) {
       if (!spec || !spec.id || !spec.label) return;
@@ -204,6 +205,17 @@ if (!window.pluginUI) {
     modifyPage(moduleId, fn) {
       if (typeof fn !== "function") return;
       fn(MODULES.find((m) => m.id === moduleId));
+    },
+
+    communicate(pluginId, payload) {
+      if (!window.api || typeof window.api.configRequest !== "function") {
+        return Promise.reject(new Error("window.api.configRequest 未实现"));
+      }
+      return window.api.configRequest(
+        "POST",
+        `/faust/plugins/${encodeURIComponent(String(pluginId || ""))}/communicate`,
+        payload ?? {}
+      );
     },
   };
 }

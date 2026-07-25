@@ -34,17 +34,15 @@ class FaustPlugin:
     def health_check(self) -> dict | None:
         return None
 
-    # ── Routes ──
-
-    @hookimpl
-    def register_routes(self) -> list:
-        return []
-
     # ── Frontend ──
 
     @hookimpl
     def register_frontend(self) -> list[dict]:
         return []
+
+    @hookimpl
+    def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+        return None
 
     # ── Schedules ──
 

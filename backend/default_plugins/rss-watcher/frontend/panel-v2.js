@@ -1,10 +1,13 @@
 (function(){
   const api = window.pluginUI;
   if (!api) return;
-  const baseUrl = (window.pluginUI && window.pluginUI.backendBaseUrl) || 'http://127.0.0.1:13900';
+
+  async function communicate(payload){
+    return api.communicate('rss-watcher', payload || {});
+  }
 
   async function fetchJson(path, options){
-    const res = await fetch(baseUrl + path, options || {});
+    const res = await fetch(api.backendBaseUrl + path, options || {});
     return res.json();
   }
 
@@ -86,9 +89,9 @@
 
     async function refresh(){
       const results = await Promise.all([
-        fetchJson('/faust/plugins/rss-watcher/feeds'),
-        fetchJson('/faust/plugins/rss-watcher/items?limit=12'),
-        fetchJson('/faust/plugins/rss-watcher/digest'),
+        communicate({ action: 'get_feeds' }),
+        communicate({ action: 'get_items', limit: 12 }),
+        communicate({ action: 'get_digest' }),
         fetchJson('/faust/admin/plugins/rss-watcher/config')
       ]);
       const feeds = results[0].items || [];
@@ -141,17 +144,13 @@
             const url = window.prompt('RSS URL', feed.url || '');
             if (url === null) return;
             const category = window.prompt('RSS 分类', feed.category || '') || '';
-            await fetchJson('/faust/plugins/rss-watcher/feeds/' + feedId, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: name, url: url, category: category })
-            });
+            await communicate({ action: 'update_feed', feed_id: Number(feedId), name: name, url: url, category: category });
             refresh();
           });
         });
         Array.from(feedList.querySelectorAll('button[data-feed-id]')).forEach(function(button){
           button.addEventListener('click', async function(){
-            await fetchJson('/faust/plugins/rss-watcher/feeds/' + button.getAttribute('data-feed-id'), { method: 'DELETE' });
+            await communicate({ action: 'delete_feed', feed_id: Number(button.getAttribute('data-feed-id')) });
             refresh();
           });
         });
@@ -163,7 +162,7 @@
         Array.from(itemList.querySelectorAll('button[data-save-id]')).forEach(function(button){
           if (button.textContent === '已收藏') return;
           button.addEventListener('click', async function(){
-            await fetchJson('/faust/plugins/rss-watcher/items/' + button.getAttribute('data-save-id') + '/save', { method: 'POST' });
+            await communicate({ action: 'save_item', item_id: Number(button.getAttribute('data-save-id')) });
             refresh();
           });
         });
@@ -174,14 +173,11 @@
     if (form) {
       form.addEventListener('submit', async function(event){
         event.preventDefault();
-        await fetchJson('/faust/plugins/rss-watcher/feeds', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: document.getElementById('rss-feed-name').value,
-            url: document.getElementById('rss-feed-url').value,
-            category: document.getElementById('rss-feed-category').value
-          })
+        await communicate({
+          action: 'create_feed',
+          name: document.getElementById('rss-feed-name').value,
+          url: document.getElementById('rss-feed-url').value,
+          category: document.getElementById('rss-feed-category').value
         });
         form.reset();
         refresh();
@@ -190,7 +186,7 @@
     const fetchBtn = document.getElementById('rss-fetch-now');
     if (fetchBtn) {
       fetchBtn.addEventListener('click', async function(){
-        await fetchJson('/faust/plugins/rss-watcher/fetch', { method: 'POST' });
+        await communicate({ action: 'fetch_now' });
         refresh();
       });
     }
@@ -203,7 +199,7 @@
     priority: 16,
     plugin: 'rss-watcher',
     render: function(container){
-      fetchJson('/faust/plugins/rss-watcher/digest').then(function(data){
+      communicate({ action: 'get_digest' }).then(function(data){
         container.innerHTML = '<div class="plugin-mini-card"><p>RSS 摘要条目：' + (data.count || 0) + '</p><p class="plugin-mini-muted">可在管理页添加订阅并手动抓取。</p></div>';
       }).catch(function(){ container.innerHTML = '<div class="plugin-mini-card">RSS 状态不可用</div>'; });
     }

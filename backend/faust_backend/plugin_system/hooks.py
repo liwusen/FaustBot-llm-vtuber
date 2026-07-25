@@ -27,17 +27,15 @@ class CoreHooks:
     def health_check(self) -> dict | None:
         """Return health status dict. First non-None result wins."""
 
-    # ── Routes ──
-
-    @hookspec
-    def register_routes(self) -> list:
-        """Return list of FastAPI APIRouter objects to mount at /faust/plugins/{plugin_id}/."""
-
     # ── Frontend ──
 
     @hookspec
     def register_frontend(self) -> list[dict]:
         """Return list of frontend asset dicts: [{type: 'js'|'css', path: str, ...}]."""
+
+    @hookspec(firstresult=True)
+    def communicate_handler(self, payload: dict, ctx: Any) -> dict | None:
+        """Handle plugin frontend/backend communication via POST /faust/plugins/{plugin_id}/communicate."""
 
     # ── Schedules ──
 

@@ -3,8 +3,10 @@ import subprocess
 import sys
 import time
 from typing import Callable
+import logging
 
-def show_return_wrapper(func:Callable):
+
+def show_return_wrapper(func: Callable):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         result = await func(*args, **kwargs)
@@ -134,3 +136,10 @@ class PerfTimer:
         self._active.clear()
         if not keep_order:
             self._order.clear()
+
+    def log_pref(self, logger: logging.Logger, extra: str = ""):
+        line = self.itemize()
+        if extra:
+            line = f"{line} | {extra}"
+        logger.info(line)
+        self.reset(keep_order=True)

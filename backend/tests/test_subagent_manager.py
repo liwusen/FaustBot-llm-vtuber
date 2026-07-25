@@ -149,8 +149,8 @@ def test_read_faustbot_subagent_resources(monkeypatch):
     monkeypatch.setattr(runtime_state, "subagent_manager", manager)
 
     overview = read.func("faustbot://subagents/worker")
-    output = read.func("faustbot://subagents/worker/output")
-    final_result = read.func("faustbot://subagents/worker/finalResult")
+    output = read.func("faustbot://subagents/worker/output.md")
+    final_result = read.func("faustbot://subagents/worker/finalResult.md")
     index_doc = read.func("faustbot://subagenting.md")
     avatoolset = read.func("faustbot://avatoolset")
 

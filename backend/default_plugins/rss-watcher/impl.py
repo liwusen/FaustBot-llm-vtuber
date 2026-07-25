@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-from fastapi import APIRouter, Body, HTTPException
 
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.logger import get_logger
 
-_ROUTER = APIRouter()
+log = get_logger("faust.plugin.rss-watcher")
 _PLUGIN: "Plugin | None" = None
 DB_NAME = "data.db"
 SCHEMA_SQL = """
@@ -66,23 +66,6 @@ def _run_async_background(coro) -> None:
     threading.Thread(target=runner, daemon=True).start()
 
 
-def _windows_idle_seconds() -> int | None:
-    try:
-        import ctypes
-
-        class LASTINPUTINFO(ctypes.Structure):
-            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
-        info = LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(LASTINPUTINFO)
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-        if user32.GetLastInputInfo(ctypes.byref(info)) == 0:
-            return None
-        return max(0, int((kernel32.GetTickCount() - info.dwTime) // 1000))
-    except Exception:
-        return None
-
 
 def _parse_time_to_minutes(raw: str) -> int:
     try:
@@ -111,7 +94,9 @@ class RSSWatcherStore:
             conn.executescript(SCHEMA_SQL)
             conn.commit()
         if not self._meta_path.exists():
-            self.save_meta({"last_fetch_ts": 0, "last_banner_item_id": 0, "last_digest_ts": 0})
+            self.save_meta(
+                {"last_fetch_ts": 0, "last_banner_item_id": 0, "last_digest_ts": 0}
+            )
 
     def load_meta(self) -> dict[str, Any]:
         try:
@@ -120,11 +105,15 @@ class RSSWatcherStore:
             return {"last_fetch_ts": 0, "last_banner_item_id": 0, "last_digest_ts": 0}
 
     def save_meta(self, meta: dict[str, Any]) -> None:
-        self._meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def list_feeds(self) -> list[dict[str, Any]]:
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT id, url, name, category, last_fetch, error_count FROM feeds ORDER BY id DESC").fetchall()
+            rows = conn.execute(
+                "SELECT id, url, name, category, last_fetch, error_count FROM feeds ORDER BY id DESC"
+            ).fetchall()
             return [dict(row) for row in rows]
 
     def add_feed(self, url: str, name: str, category: str) -> dict[str, Any]:
@@ -134,10 +123,24 @@ class RSSWatcherStore:
                 (url, name, category),
             )
             conn.commit()
-            row = conn.execute("SELECT id, url, name, category, last_fetch, error_count FROM feeds WHERE id = ?", (cursor.lastrowid,)).fetchone()
-            return dict(row) if row else {"id": int(cursor.lastrowid), "url": url, "name": name, "category": category}
+            row = conn.execute(
+                "SELECT id, url, name, category, last_fetch, error_count FROM feeds WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return (
+                dict(row)
+                if row
+                else {
+                    "id": int(cursor.lastrowid),
+                    "url": url,
+                    "name": name,
+                    "category": category,
+                }
+            )
 
-    def update_feed(self, feed_id: int, *, url: str, name: str, category: str) -> dict[str, Any] | None:
+    def update_feed(
+        self, feed_id: int, *, url: str, name: str, category: str
+    ) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
             conn.execute(
                 "UPDATE feeds SET url = ?, name = ?, category = ? WHERE id = ?",
@@ -165,7 +168,9 @@ class RSSWatcherStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def insert_items(self, feed_id: int, items: list[dict[str, Any]], max_items: int) -> int:
+    def insert_items(
+        self, feed_id: int, items: list[dict[str, Any]], max_items: int
+    ) -> int:
         inserted = 0
         with self._lock, self._connect() as conn:
             for item in items:
@@ -186,24 +191,37 @@ class RSSWatcherStore:
                 "DELETE FROM items WHERE id NOT IN (SELECT id FROM items ORDER BY published DESC, id DESC LIMIT ?)",
                 (max_items,),
             )
-            conn.execute("UPDATE feeds SET last_fetch = ?, error_count = 0 WHERE id = ?", (_now(), feed_id))
+            conn.execute(
+                "UPDATE feeds SET last_fetch = ?, error_count = 0 WHERE id = ?",
+                (_now(), feed_id),
+            )
             conn.commit()
         return inserted
 
     def mark_fetch_error(self, feed_id: int) -> None:
         with self._lock, self._connect() as conn:
-            conn.execute("UPDATE feeds SET error_count = error_count + 1, last_fetch = ? WHERE id = ?", (_now(), feed_id))
+            conn.execute(
+                "UPDATE feeds SET error_count = error_count + 1, last_fetch = ? WHERE id = ?",
+                (_now(), feed_id),
+            )
             conn.commit()
 
     def count_unpushed_items(self, category: str | None = None) -> int:
         with self._lock, self._connect() as conn:
             if category and category != "all":
-                row = conn.execute("SELECT COUNT(*) AS c FROM items i JOIN feeds f ON i.feed_id = f.id WHERE i.is_pushed = 0 AND f.category = ?", (category,)).fetchone()
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM items i JOIN feeds f ON i.feed_id = f.id WHERE i.is_pushed = 0 AND f.category = ?",
+                    (category,),
+                ).fetchone()
             else:
-                row = conn.execute("SELECT COUNT(*) AS c FROM items WHERE is_pushed = 0").fetchone()
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM items WHERE is_pushed = 0"
+                ).fetchone()
             return int((row or {"c": 0})["c"])
 
-    def newest_unpushed(self, limit: int, category: str | None = None) -> list[dict[str, Any]]:
+    def newest_unpushed(
+        self, limit: int, category: str | None = None
+    ) -> list[dict[str, Any]]:
         with self._lock, self._connect() as conn:
             if category and category != "all":
                 rows = conn.execute(
@@ -222,7 +240,9 @@ class RSSWatcherStore:
             return
         placeholders = ",".join("?" for _ in item_ids)
         with self._lock, self._connect() as conn:
-            conn.execute(f"UPDATE items SET is_pushed = 1 WHERE id IN ({placeholders})", item_ids)
+            conn.execute(
+                f"UPDATE items SET is_pushed = 1 WHERE id IN ({placeholders})", item_ids
+            )
             conn.commit()
 
     def mark_saved(self, item_id: int) -> dict[str, Any] | None:
@@ -244,7 +264,9 @@ class RSSWatcherStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def build_digest(self, limit: int = 5, category: str | None = None) -> dict[str, Any]:
+    def build_digest(
+        self, limit: int = 5, category: str | None = None
+    ) -> dict[str, Any]:
         items = self.newest_unpushed(limit=limit, category=category)
         if not items:
             items = self.list_items(limit=limit, offset=0)
@@ -257,7 +279,11 @@ class RSSWatcherStore:
             if summary:
                 line += f"：{summary[:120]}"
             lines.append(line)
-        return {"count": len(items), "items": items, "summary": "\n".join(lines) if lines else "今天还没有可播报的新条目。"}
+        return {
+            "count": len(items),
+            "items": items,
+            "summary": "\n".join(lines) if lines else "今天还没有可播报的新条目。",
+        }
 
     def get_banner_item(self) -> dict[str, Any] | None:
         meta = self.load_meta()
@@ -277,119 +303,50 @@ class RSSWatcherStore:
 async def _fetch_text(url: str) -> str:
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, headers={"User-Agent": "FaustBot RSS Watcher/0.1"}) as response:
+        async with session.get(
+            url, headers={"User-Agent": "FaustBot RSS Watcher/0.1"}
+        ) as response:
             response.raise_for_status()
             return await response.text()
 
 
 def _strip_ns(tag: str) -> str:
-    return tag.split('}', 1)[-1]
+    return tag.split("}", 1)[-1]
 
 
 def _parse_feed(xml_text: str) -> list[dict[str, Any]]:
     root = ET.fromstring(xml_text)
     items: list[dict[str, Any]] = []
-    if _strip_ns(root.tag) == 'rss':
-        channel = root.find('channel')
+    if _strip_ns(root.tag) == "rss":
+        channel = root.find("channel")
         if channel is not None:
-            for item in channel.findall('item'):
-                title = (item.findtext('title') or '').strip()
-                link = (item.findtext('link') or '').strip()
-                summary = (item.findtext('description') or '').strip()
+            for item in channel.findall("item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                summary = (item.findtext("description") or "").strip()
                 published = _now()
-                items.append({"title": title, "link": link, "summary": summary, "published": published})
+                items.append(
+                    {
+                        "title": title,
+                        "link": link,
+                        "summary": summary,
+                        "published": published,
+                    }
+                )
     else:
-        for entry in root.findall('.//{*}entry'):
-            title = (entry.findtext('{*}title') or '').strip()
-            link = ''
-            link_node = entry.find('{*}link')
+        for entry in root.findall(".//{*}entry"):
+            title = (entry.findtext("{*}title") or "").strip()
+            link = ""
+            link_node = entry.find("{*}link")
             if link_node is not None:
-                link = str(link_node.attrib.get('href') or '').strip()
-            summary = (entry.findtext('{*}summary') or entry.findtext('{*}content') or '').strip()
-            items.append({"title": title, "link": link, "summary": summary, "published": _now()})
-    return [item for item in items if item.get('title') or item.get('link')]
-
-
-@_ROUTER.get('/feeds')
-async def get_feeds():
-    if _PLUGIN is None or _PLUGIN.store is None:
-        return {"status": "ok", "items": []}
-    return {"status": "ok", "items": _PLUGIN.store.list_feeds()}
-
-
-@_ROUTER.post('/feeds')
-async def create_feed(payload: dict = Body(...)):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    url = str(payload.get('url') or '').strip()
-    name = str(payload.get('name') or url).strip()
-    category = str(payload.get('category') or '').strip()
-    if not url:
-        raise HTTPException(status_code=400, detail='缺少 RSS URL')
-    item = _PLUGIN.store.add_feed(url=url, name=name, category=category)
-    return {"status": "ok", "item": item}
-
-
-@_ROUTER.delete('/feeds/{feed_id}')
-async def delete_feed(feed_id: int):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    return {"status": "ok", "deleted": _PLUGIN.store.delete_feed(feed_id)}
-
-
-@_ROUTER.put('/feeds/{feed_id}')
-async def update_feed(feed_id: int, payload: dict = Body(...)):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    url = str(payload.get('url') or '').strip()
-    name = str(payload.get('name') or url).strip()
-    category = str(payload.get('category') or '').strip()
-    if not url:
-        raise HTTPException(status_code=400, detail='缺少 RSS URL')
-    item = _PLUGIN.store.update_feed(feed_id, url=url, name=name, category=category)
-    if item is None:
-        raise HTTPException(status_code=404, detail='订阅源不存在')
-    return {"status": "ok", "item": item}
-
-
-@_ROUTER.get('/items')
-async def get_items(limit: int = 50, offset: int = 0):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        return {"status": "ok", "items": []}
-    return {"status": "ok", "items": _PLUGIN.store.list_items(limit=limit, offset=offset)}
-
-
-@_ROUTER.get('/digest')
-async def get_digest():
-    if _PLUGIN is None or _PLUGIN.store is None:
-        return {"status": "ok", "count": 0, "items": [], "summary": ''}
-    return {"status": "ok", **_PLUGIN.store.build_digest(limit=5, category=_PLUGIN.category_filter())}
-
-
-@_ROUTER.get('/banner')
-async def get_banner():
-    if _PLUGIN is None or _PLUGIN.store is None:
-        return {"status": "ok", "item": None}
-    return {"status": "ok", "item": _PLUGIN.store.get_banner_item()}
-
-
-@_ROUTER.post('/items/{item_id}/save')
-async def save_item(item_id: int):
-    if _PLUGIN is None or _PLUGIN.store is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    item = _PLUGIN.store.mark_saved(item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail='条目不存在')
-    _PLUGIN.write_saved_item_to_memory(item)
-    return {"status": "ok", "item": item}
-
-
-@_ROUTER.post('/fetch')
-async def fetch_now():
-    if _PLUGIN is None:
-        raise HTTPException(status_code=503, detail='plugin not loaded')
-    result = await _PLUGIN.fetch_all_feeds()
-    return {"status": "ok", **result}
+                link = str(link_node.attrib.get("href") or "").strip()
+            summary = (
+                entry.findtext("{*}summary") or entry.findtext("{*}content") or ""
+            ).strip()
+            items.append(
+                {"title": title, "link": link, "summary": summary, "published": _now()}
+            )
+    return [item for item in items if item.get("title") or item.get("link")]
 
 
 class Plugin(FaustPlugin):
@@ -400,16 +357,48 @@ class Plugin(FaustPlugin):
 
     def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
+        data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / "data")
         self.store = RSSWatcherStore(data_dir)
-        ctx.register_config([
-            {"key": "PUSH_THRESHOLD", "type": "int", "label": "推送阈值（条）", "default": 3},
-            {"key": "FETCH_INTERVAL_MIN", "type": "int", "label": "拉取间隔（分钟）", "default": 15},
-            {"key": "QUIET_START", "type": "str", "label": "静默开始", "default": "23:00"},
-            {"key": "QUIET_END", "type": "str", "label": "静默结束", "default": "08:00"},
-            {"key": "CATEGORY_FILTER", "type": "str", "label": "分类过滤", "default": "all"},
-            {"key": "MAX_ITEMS", "type": "int", "label": "最多保留条目", "default": 500},
-        ])
+        ctx.register_config(
+            [
+                {
+                    "key": "PUSH_THRESHOLD",
+                    "type": "int",
+                    "label": "推送阈值（条）",
+                    "default": 3,
+                },
+                {
+                    "key": "FETCH_INTERVAL_MIN",
+                    "type": "int",
+                    "label": "拉取间隔（分钟）",
+                    "default": 15,
+                },
+                {
+                    "key": "QUIET_START",
+                    "type": "str",
+                    "label": "静默开始",
+                    "default": "23:00",
+                },
+                {
+                    "key": "QUIET_END",
+                    "type": "str",
+                    "label": "静默结束",
+                    "default": "08:00",
+                },
+                {
+                    "key": "CATEGORY_FILTER",
+                    "type": "str",
+                    "label": "分类过滤",
+                    "default": "all",
+                },
+                {
+                    "key": "MAX_ITEMS",
+                    "type": "int",
+                    "label": "最多保留条目",
+                    "default": 500,
+                },
+            ]
+        )
         ctx.vfs_write(
             "/plugins/rss-watcher.md",
             "# RSS Watcher\n\n"
@@ -417,31 +406,35 @@ class Plugin(FaustPlugin):
             "正常对话和被 event-trigger 唤醒时，都可以优先读取 faustbot://plugins/rss-watcher/index.md 获取最近一天的更新概览。\n"
             "若要看某条 RSS 的正文，请读取 faustbot://plugins/rss-watcher/RSS-FEED-*.md。\n",
         )
-        ctx.vfs_write("/plugins/rss-watcher/index.md", "# RSS Watcher\n\n暂无 RSS 更新。")
+        ctx.vfs_write(
+            "/plugins/rss-watcher/index.md", "# RSS Watcher\n\n暂无 RSS 更新。"
+        )
 
     @hookimpl
     def plugin_loaded(self, ctx: PluginContext) -> None:
+        print("LOADED RSS Watcher plugin")
         global _PLUGIN
         _PLUGIN = self
 
     @hookimpl
     def plugin_unloaded(self, ctx: PluginContext) -> None:
+        print("UNLOADED RSS Watcher plugin")
         global _PLUGIN
         if _PLUGIN is self:
             _PLUGIN = None
 
     def category_filter(self) -> str:
         if self.ctx is None:
-            return 'all'
-        return str(self.ctx.get_config('CATEGORY_FILTER', 'all') or 'all')
-
-    def register_routes(self) -> list:
-        return [_ROUTER]
+            return "all"
+        return str(self.ctx.get_config("CATEGORY_FILTER", "all") or "all")
 
     def register_frontend(self) -> list[dict]:
         return [
             {"type": "js", "path": "/faust/plugins/rss-watcher/frontend/panel-v2.js"},
-            {"type": "js", "path": "/faust/plugins/rss-watcher/frontend/app-hook-v2.js"},
+            {
+                "type": "js",
+                "path": "/faust/plugins/rss-watcher/frontend/app-hook-v2.js",
+            },
             {"type": "css", "path": "/faust/plugins/rss-watcher/frontend/panel-v2.css"},
         ]
 
@@ -450,11 +443,19 @@ class Plugin(FaustPlugin):
             if self.ctx is None or self.store is None:
                 return
             meta = self.store.load_meta()
-            interval_min = int(self.ctx.get_config('FETCH_INTERVAL_MIN', 15) or 15)
-            if _now() - int(meta.get('last_fetch_ts') or 0) < interval_min * 60:
+            interval_min = int(self.ctx.get_config("FETCH_INTERVAL_MIN", 15) or 15)
+            if _now() - int(meta.get("last_fetch_ts") or 0) < interval_min * 60:
                 return
             _run_async_background(self.fetch_all_feeds())
-        return [{"id": "rss-watcher-fetch", "interval": 30, "callback": scheduled_fetch, "description": "抓取 RSS 更新"}]
+
+        return [
+            {
+                "id": "rss-watcher-fetch",
+                "interval": 30,
+                "callback": scheduled_fetch,
+                "description": "抓取 RSS 更新",
+            }
+        ]
 
     async def fetch_all_feeds(self) -> dict[str, Any]:
         if self.store is None or self.ctx is None:
@@ -462,30 +463,80 @@ class Plugin(FaustPlugin):
         fetched = 0
         inserted = 0
         errors: list[dict[str, Any]] = []
-        max_items = int(self.ctx.get_config('MAX_ITEMS', 500) or 500)
+        max_items = int(self.ctx.get_config("MAX_ITEMS", 500) or 500)
         feeds = self.store.list_feeds()
         for feed in feeds:
             try:
-                xml_text = await _fetch_text(str(feed.get('url') or ''))
+                xml_text = await _fetch_text(str(feed.get("url") or ""))
                 items = _parse_feed(xml_text)
-                inserted += self.store.insert_items(int(feed['id']), items, max_items=max_items)
+                inserted += self.store.insert_items(
+                    int(feed["id"]), items, max_items=max_items
+                )
                 for item in items:
-                    self._write_item_to_vfs(item, str(feed.get('name') or 'RSS'))
+                    self._write_item_to_vfs(item, str(feed.get("name") or "RSS"))
                 fetched += 1
             except Exception as exc:
-                self.store.mark_fetch_error(int(feed['id']))
-                errors.append({"feed_id": feed.get('id'), "error": str(exc)})
+                self.store.mark_fetch_error(int(feed["id"]))
+                errors.append({"feed_id": feed.get("id"), "error": str(exc)})
         meta = self.store.load_meta()
-        meta['last_fetch_ts'] = _now()
+        meta["last_fetch_ts"] = _now()
         self.store.save_meta(meta)
         self._write_daily_index()
         return {"fetched": fetched, "inserted": inserted, "errors": errors}
 
+    async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+        action = str((payload or {}).get("action") or "").strip().lower()
+        if self.store is None:
+            return {"status": "error", "detail": "plugin not loaded"}
+        if action == "get_feeds":
+            return {"status": "ok", "items": self.store.list_feeds()}
+        if action == "create_feed":
+            url = str((payload or {}).get("url") or "").strip()
+            name = str((payload or {}).get("name") or url).strip()
+            category = str((payload or {}).get("category") or "").strip()
+            if not url:
+                return {"status": "error", "detail": "缺少 RSS URL"}
+            return {"status": "ok", "item": self.store.add_feed(url=url, name=name, category=category)}
+        if action == "delete_feed":
+            feed_id = int((payload or {}).get("feed_id") or 0)
+            return {"status": "ok", "deleted": self.store.delete_feed(feed_id)}
+        if action == "update_feed":
+            feed_id = int((payload or {}).get("feed_id") or 0)
+            url = str((payload or {}).get("url") or "").strip()
+            name = str((payload or {}).get("name") or url).strip()
+            category = str((payload or {}).get("category") or "").strip()
+            if not url:
+                return {"status": "error", "detail": "缺少 RSS URL"}
+            item = self.store.update_feed(feed_id, url=url, name=name, category=category)
+            if item is None:
+                return {"status": "error", "detail": "订阅源不存在"}
+            return {"status": "ok", "item": item}
+        if action == "get_items":
+            limit = int((payload or {}).get("limit") or 50)
+            offset = int((payload or {}).get("offset") or 0)
+            return {"status": "ok", "items": self.store.list_items(limit=limit, offset=offset)}
+        if action == "get_digest":
+            return {"status": "ok", **self.store.build_digest(limit=5, category=self.category_filter())}
+        if action == "get_banner":
+            return {"status": "ok", "item": self.store.get_banner_item()}
+        if action == "save_item":
+            item_id = int((payload or {}).get("item_id") or 0)
+            item = self.store.mark_saved(item_id)
+            if item is None:
+                return {"status": "error", "detail": "条目不存在"}
+            self.write_saved_item_to_memory(item)
+            return {"status": "ok", "item": item}
+        if action == "fetch_now":
+            return {"status": "ok", **(await self.fetch_all_feeds())}
+        return {"status": "error", "detail": f"unknown action: {action}"}
+
     def _write_item_to_vfs(self, item: dict[str, Any], feed_name: str) -> None:
         if self.ctx is None:
             return
-        title = _sanitize_title(item.get('title') or 'untitled')
-        stamp = time.strftime('%Y%m%d', time.localtime(int(item.get('published') or _now())))
+        title = _sanitize_title(item.get("title") or "untitled")
+        stamp = time.strftime(
+            "%Y%m%d", time.localtime(int(item.get("published") or _now()))
+        )
         path = f"/plugins/rss-watcher/RSS-FEED-{title}-{stamp}.md"
         content = (
             f"# {item.get('title') or title}\n\n"
@@ -504,17 +555,25 @@ class Plugin(FaustPlugin):
         if not items:
             lines.append("- 暂无更新")
         for item in items:
-            title = _sanitize_title(item.get('title') or 'untitled')
-            stamp = time.strftime('%Y%m%d', time.localtime(int(item.get('published') or _now())))
-            lines.append(f"- {item.get('feed_name') or 'RSS'} | {item.get('title') or title} | faustbot://plugins/rss-watcher/RSS-FEED-{title}-{stamp}.md")
+            title = _sanitize_title(item.get("title") or "untitled")
+            stamp = time.strftime(
+                "%Y%m%d", time.localtime(int(item.get("published") or _now()))
+            )
+            lines.append(
+                f"- {item.get('feed_name') or 'RSS'} | {item.get('title') or title} | faustbot://plugins/rss-watcher/RSS-FEED-{title}-{stamp}.md"
+            )
         self.ctx.vfs_write("/plugins/rss-watcher/index.md", "\n".join(lines) + "\n")
 
     def _in_quiet_hours(self) -> bool:
         if self.ctx is None:
             return False
         now_minutes = time.localtime().tm_hour * 60 + time.localtime().tm_min
-        start = _parse_time_to_minutes(str(self.ctx.get_config('QUIET_START', '23:00') or '23:00'))
-        end = _parse_time_to_minutes(str(self.ctx.get_config('QUIET_END', '08:00') or '08:00'))
+        start = _parse_time_to_minutes(
+            str(self.ctx.get_config("QUIET_START", "23:00") or "23:00")
+        )
+        end = _parse_time_to_minutes(
+            str(self.ctx.get_config("QUIET_END", "08:00") or "08:00")
+        )
         if start == end:
             return False
         if start < end:
@@ -522,16 +581,13 @@ class Plugin(FaustPlugin):
         return now_minutes >= start or now_minutes < end
 
     def _idle_seconds(self) -> int:
-        idle = _windows_idle_seconds()
-        if idle is not None:
-            return idle
         return int(max(0, time.time() - self.last_user_activity_ts))
 
     def _queue_digest_trigger(self, digest: dict[str, Any]) -> None:
         if self.store is None:
             return
-        items = digest.get('items') or []
-        ids = [int(item['id']) for item in items if item.get('id')]
+        items = digest.get("items") or []
+        ids = [int(item["id"]) for item in items if item.get("id")]
         if ids:
             self.store.mark_pushed(ids)
         try:
@@ -539,20 +595,22 @@ class Plugin(FaustPlugin):
                 "id": f"rss_digest::{_now()}",
                 "type": "event",
                 "event_name": "rss_digest",
-                "payload": {"summary": digest.get('summary', ''), "items": items},
+                "payload": {"summary": digest.get("summary", ""), "items": items},
                 "recall_description": "RSS Watcher 检测到一批新条目，可主动播报摘要。",
                 "lifespan": 7200,
             }
+            log.debug("Triggering RSS digest event: %s", payload)
             self.ctx.trigger_create(payload)
         except Exception:
             pass
         meta = self.store.load_meta()
-        meta['last_digest_ts'] = _now()
+        meta["last_digest_ts"] = _now()
         self.store.save_meta(meta)
 
     def write_saved_item_to_memory(self, item: dict[str, Any]) -> None:
         async def writer() -> None:
             from faust_backend.memory import get_memory
+
             content = (
                 f"# RSS 收藏\n\n"
                 f"- 标题: {item.get('title') or ''}\n"
@@ -560,23 +618,35 @@ class Plugin(FaustPlugin):
                 f"- 链接: {item.get('link') or ''}\n"
                 f"- 摘要: {item.get('summary') or ''}\n"
             )
-            await get_memory().file_write('/rss/saved/' + str(item.get('id')) + '.md', content, description='RSS saved item', declared_by='rss-watcher', index=True, tags=['rss', 'saved'])
+            await get_memory().file_write(
+                "/rss/saved/" + str(item.get("id")) + ".md",
+                content,
+                description="RSS saved item",
+                declared_by="rss-watcher",
+                index=True,
+                tags=["rss", "saved"],
+            )
+
         _run_async_background(writer())
 
     @hookimpl
-    def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
+    def message_received(
+        self, msg: Any, history: list, ctx: PluginContext
+    ) -> str | None:
         self.last_user_activity_ts = time.time()
         return None
 
     @hookimpl
-    def memory_write_post(self, content: str, metadata: dict | None, id: str, ctx: PluginContext) -> None:
+    def memory_write_post(
+        self, content: str, metadata: dict | None, id: str, ctx: PluginContext
+    ) -> None:
         if self.store is None:
             return None
-        text = str(content or '')
-        if 'RSS_SAVED:' not in text:
+        text = str(content or "")
+        if "RSS_SAVED:" not in text:
             return None
         try:
-            item_id = int(text.split('RSS_SAVED:', 1)[1].split()[0])
+            item_id = int(text.split("RSS_SAVED:", 1)[1].split()[0])
         except Exception:
             return None
         item = self.store.mark_saved(item_id)
@@ -585,18 +655,25 @@ class Plugin(FaustPlugin):
         return None
 
     def heartbeat(self, ctx: PluginContext) -> None:
+        log.debug("RSS Watcher heartbeat check")
         if self.store is None or self.ctx is None:
             return
-        threshold = int(self.ctx.get_config('PUSH_THRESHOLD', 3) or 3)
+        threshold = int(self.ctx.get_config("PUSH_THRESHOLD", 3) or 3)
         pending = self.store.count_unpushed_items(category=self.category_filter())
+        log.debug("Pending unpushed items: %d, threshold: %d", pending, threshold)
+        log.debug("Idle seconds: %d", self._idle_seconds())
+        log.debug("In quiet hours: %s", self._in_quiet_hours())
         if pending < threshold:
             return
         if self._idle_seconds() < 120:
             return
         if self._in_quiet_hours():
             return
-        digest = self.store.build_digest(limit=threshold, category=self.category_filter())
-        if digest.get('count', 0) <= 0:
+        digest = self.store.build_digest(
+            limit=threshold, category=self.category_filter()
+        )
+        log.debug("Digest built: %s", digest)
+        if digest.get("count", 0) <= 0:
             return
         self._write_daily_index()
         self._queue_digest_trigger(digest)
@@ -609,7 +686,11 @@ class Plugin(FaustPlugin):
         ]
 
     def health_check(self) -> dict | None:
-        return {"status": "ok", "plugin": "rss-watcher", "feeds": len(self.store.list_feeds()) if self.store else 0}
+        return {
+            "status": "ok",
+            "plugin": "rss-watcher",
+            "feeds": len(self.store.list_feeds()) if self.store else 0,
+        }
 
 
 def get_plugin() -> Plugin:

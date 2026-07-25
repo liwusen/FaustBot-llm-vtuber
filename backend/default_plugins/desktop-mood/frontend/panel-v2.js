@@ -1,10 +1,13 @@
 (function(){
   const api = window.pluginUI;
   if (!api) return;
-  const baseUrl = (window.pluginUI && window.pluginUI.backendBaseUrl) || 'http://127.0.0.1:13900';
+
+  async function communicate(payload){
+    return api.communicate('desktop-mood', payload || {});
+  }
 
   async function fetchJson(path, options){
-    const res = await fetch(baseUrl + path, options || {});
+    const res = await fetch(api.backendBaseUrl + path, options || {});
     return res.json();
   }
 
@@ -13,9 +16,9 @@
 
     async function refresh(){
       const results = await Promise.all([
-        fetchJson('/faust/plugins/desktop-mood/context'),
-        fetchJson('/faust/plugins/desktop-mood/rules'),
-        fetchJson('/faust/plugins/desktop-mood/state'),
+        communicate({ action: 'get_context' }),
+        communicate({ action: 'get_rules' }),
+        communicate({ action: 'get_state' }),
         fetchJson('/faust/admin/plugins/desktop-mood/config')
       ]);
       const context = results[0].context || {};
@@ -51,14 +54,14 @@
             const checkbox = document.querySelector('input[data-rule-index="' + index + '"]');
             return Object.assign({}, rule, { enabled: !!(checkbox && checkbox.checked) });
           });
-          await fetchJson('/faust/plugins/desktop-mood/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: nextRules }) });
+          await communicate({ action: 'set_rules', items: nextRules });
           refresh();
         };
       }
       const saveMood = document.getElementById('desktop-mood-save');
       if (saveMood) {
         saveMood.onclick = async function(){
-          await fetchJson('/faust/plugins/desktop-mood/mood', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mood: document.getElementById('desktop-mood-select').value }) });
+          await communicate({ action: 'set_mood', mood: document.getElementById('desktop-mood-select').value });
           refresh();
         };
       }
@@ -96,7 +99,7 @@
     priority: 17,
     plugin: 'desktop-mood',
     render: function(container){
-      fetchJson('/faust/plugins/desktop-mood/context').then(function(data){
+      communicate({ action: 'get_context' }).then(function(data){
         const context = data.context || {};
         container.innerHTML = '<div class="plugin-mini-card"><p>空闲：' + (context.idle_seconds == null ? '未知' : context.idle_seconds + 's') + '</p><p class="plugin-mini-muted">窗口：' + (context.window_title || '未知') + '</p></div>';
       }).catch(function(){ container.innerHTML = '<div class="plugin-mini-card">桌面状态不可用</div>'; });

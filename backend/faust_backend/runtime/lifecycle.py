@@ -1,4 +1,5 @@
 from faust_backend.utils import PerfTimer
+
 _t = PerfTimer()
 
 _t.begin("builtin")
@@ -7,6 +8,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+
 _t.end("builtin")
 
 _t.begin("fastapi&&langchain")
@@ -27,6 +29,7 @@ import faust_backend.araya_runtime as araya_runtime
 import faust_backend.service_manager as service_manager
 import faust_backend.live_api as live_api
 import faust_backend.blive_manager as blive_manager
+
 _t.end("faustbot_backend1")
 
 _t.begin("faustbot_backend2")
@@ -38,6 +41,7 @@ from faust_backend.plugin_system import PluginManager
 from faust_backend.runtime import middleware
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.config_loader import args
+
 _t.end("faustbot_backend2")
 
 _t.begin("faustbot_backend3")
@@ -45,10 +49,11 @@ from faust_backend.runtime import state
 from faust_backend.logger import get_logger
 from faust_backend.subagent_manager import SubagentManager
 from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes
-_t.end("faustbot_backend3")
-_t.print_pref()
 
+_t.end("faustbot_backend3")
 log = get_logger("faust.lifecycle")
+_t.log_pref(log)
+
 
 
 def init_plugin_manager():
@@ -82,6 +87,7 @@ async def _plugin_heartbeat_loop():
 
 async def _sleep_backoff(attempt: int) -> None:
     import random
+
     base = 0.8 * (2 ** max(0, attempt - 1))
     jitter = random.uniform(0.0, 0.35)
     await asyncio.sleep(min(3.0, base + jitter))
@@ -90,7 +96,9 @@ async def _sleep_backoff(attempt: int) -> None:
 def start_services():
     if not args.no_run_other_backend_services:
         log.info("正在启动后端服务...")
-        for service in tqdm.tqdm(service_manager.get_service_keys(), desc="[main]Starting services"):
+        for service in tqdm.tqdm(
+            service_manager.get_service_keys(), desc="[main]Starting services"
+        ):
             if service == "tts" and not speech_runtime.should_start_local_tts():
                 log.info("跳过本地 TTS 服务（TTS_MODE 不是 local）")
                 continue
@@ -107,7 +115,10 @@ def start_services():
 
 async def invoke_agent_locked(target_agent, payload, config=None):
     if config is None:
-        config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
+        config = {
+            "configurable": {"thread_id": state.THREAD_ID},
+            "recursion_limit": 300,
+        }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
@@ -126,16 +137,23 @@ async def invoke_agent_locked(target_agent, payload, config=None):
     raise RuntimeError("agent invoke retries exhausted")
 
 
-async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_event: asyncio.Event | None = None):
+async def stream_chat_agent_events(
+    target_agent, payload, config=None, *, abort_event: asyncio.Event | None = None
+):
     if config is None:
-        config = {"configurable": {"thread_id": state.THREAD_ID}, "recursion_limit": 300}
+        config = {
+            "configurable": {"thread_id": state.THREAD_ID},
+            "recursion_limit": 300,
+        }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
         async with state.agent_lock:
             log.debug("开始调用 LLM")
             try:
-                async for event in target_agent.astream_events(payload, config=config, version="v2"):
+                async for event in target_agent.astream_events(
+                    payload, config=config, version="v2"
+                ):
                     if not isinstance(event, dict):
                         continue
                     if abort_event and abort_event.is_set():
@@ -148,7 +166,9 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
                         if not chunk or not state.is_ai_message_chunk(chunk):
                             continue
                         # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
-                        additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+                        additional_kwargs = (
+                            getattr(chunk, "additional_kwargs", {}) or {}
+                        )
                         reasoning = (
                             additional_kwargs.get("reasoning_content")
                             or additional_kwargs.get("reasoning")
@@ -163,7 +183,9 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
                     if event_name == "on_tool_start":
                         yield {
                             "type": "tool_start",
-                            "tool_name": str(event.get("name") or data.get("name") or "tool").strip(),
+                            "tool_name": str(
+                                event.get("name") or data.get("name") or "tool"
+                            ).strip(),
                             "args": state.normalize_tool_args(data.get("input")),
                             "call_id": str(event.get("run_id") or ""),
                         }
@@ -171,7 +193,9 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
                     if event_name == "on_tool_end":
                         yield {
                             "type": "tool_result",
-                            "tool_name": str(event.get("name") or data.get("name") or "tool").strip(),
+                            "tool_name": str(
+                                event.get("name") or data.get("name") or "tool"
+                            ).strip(),
                             "output": state.tool_value_to_text(data.get("output")),
                             "call_id": str(event.get("run_id") or ""),
                         }
@@ -188,16 +212,24 @@ async def stream_chat_agent_events(target_agent, payload, config=None, *, abort_
 
 def _compose_runtime_extensions():
     from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
+
     base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
     from faust_backend.mcp_manager import get_mcp_manager
+
     mcp_tools = get_mcp_manager().get_langchain_tools()
     if mcp_tools:
         base_tools.extend(mcp_tools)
     pm = state.plugin_manager
-    tools = pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME) if pm else base_tools
+    tools = (
+        pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME)
+        if pm
+        else base_tools
+    )
     middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
     # Filter out any stale mm_bridge instances from old plugin state
-    middlewares = [m for m in middlewares if not isinstance(m, MultimodalBridgeMiddleware)]
+    middlewares = [
+        m for m in middlewares if not isinstance(m, MultimodalBridgeMiddleware)
+    ]
     middlewares.append(MultimodalBridgeMiddleware())
     return tools, middlewares
 
@@ -205,7 +237,9 @@ def _compose_runtime_extensions():
 def _find_tool_by_name(name: str):
     target = str(name or "").strip()
     for tool_item in llm_tools.get_tools_for_agent(state.AGENT_NAME):
-        tool_name = getattr(tool_item, "name", None) or getattr(tool_item, "__name__", "")
+        tool_name = getattr(tool_item, "name", None) or getattr(
+            tool_item, "__name__", ""
+        )
         if str(tool_name).strip() == target:
             return tool_item
     raise KeyError(f"Tool not found: {target}")
@@ -293,7 +327,10 @@ def _build_chat_model(*, model_name: str):
         if "reasoning_effort" in thinking_params:
             kwargs["reasoning_effort"] = thinking_params.pop("reasoning_effort")
         model_kw = thinking_params.pop("model_kwargs", {})
-        extra = {**thinking_params.pop("extra_body", {}), **kwargs.get("extra_body", {})}
+        extra = {
+            **thinking_params.pop("extra_body", {}),
+            **kwargs.get("extra_body", {}),
+        }
         if extra:
             kwargs["extra_body"] = extra
         kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}
@@ -311,23 +348,19 @@ def _create_agent_with_extensions(*, model_name: str, checkpointer):
         "tools": tools,
     }
     if mgmt_middlewares:
-        try:
-            kwargs["middleware"] = mgmt_middlewares
-            return create_agent(**kwargs)
-        except TypeError:
-            log.debug("create_agent 不接受 'middleware' 参数，尝试 'middlewares'")
-        try:
-            kwargs.pop("middleware", None)
-            kwargs["middlewares"] = mgmt_middlewares
-            return create_agent(**kwargs)
-        except TypeError:
-            log.warning("create_agent 不支持 middleware 参数，已跳过插件 middlewares 注入")
-            kwargs.pop("middlewares", None)
+        kwargs["middleware"] = mgmt_middlewares
+        return create_agent(**kwargs)
     return create_agent(**kwargs)
 
 
-async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool = False):
-    log.info("正在重建运行时，reset_dialog=%s, no_initial_chat=%s", reset_dialog, no_initial_chat)
+async def rebuild_runtime(
+    *, reset_dialog: bool = False, no_initial_chat: bool = False
+):  # TODO: 让逻辑更加清晰
+    log.info(
+        "正在重建运行时，reset_dialog=%s, no_initial_chat=%s",
+        reset_dialog,
+        no_initial_chat,
+    )
     _needs_initial_chat = False
     async with state.agent_lock:
         try:
@@ -337,9 +370,14 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             os.environ["OPENAI_API_KEY"] = conf.CHAT_API_KEY
             os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
             state.AGENT_NAME = conf.AGENT_NAME
-            state.AGENT_ROOT = os.path.join(conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}")
+            state.AGENT_ROOT = os.path.join(
+                conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}"
+            )
             log.info("重建目标 Agent: %s", state.AGENT_NAME)
+
+            # ---Templates Makeup---
             import faust_backend.admin_runtime as admin_runtime
+
             sync_result = admin_runtime.sync_template_files(state.AGENT_NAME)
             if any(sync_result.values()):
                 updated = [k for k, v in sync_result.items() if v]
@@ -347,18 +385,29 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             state.makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
             await refresh_runtime_nodes(get_faustbot_vfs(refresh=True))
+
+            # ---mcp---
             from faust_backend.mcp_manager import get_mcp_manager
+
             mcp_manager = get_mcp_manager()
             mcp_manager.load_config(getattr(conf, "MCP_SERVERS", {}) or {})
             await mcp_manager.sync_servers()
+
+            # ---Araya Runtime---
             araya_runtime.get_araya_runtime(refresh=True).refresh_target_agent()
+
+            # ---Plugins---
             pm = state.plugin_manager
-            if pm:
-                plugin_reload = pm.reload()
+            if (
+                pm and pm.needs_reload()
+            ):  # 不在每次重建时都重载插件，而是仅在插件配置或文件变更时才重载
+                log.info("插件配置或文件变更，正在重载插件...")
+                plugin_reload = pm.reload(force=True)
                 log.info("插件重载摘要: %s", plugin_reload)
                 _sync_plugin_trigger_filters()
-                pm.refresh_app_mounts(state.fastapi_app)
                 backend2frontend.FrontEndReloadPluginAssets()
+
+            # ---langchain Agent---
             if not args.save_in_memory:
                 try:
                     if state.conn is not None:
@@ -367,7 +416,9 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
                 except Exception:
                     pass
                 os.makedirs(state.AGENT_ROOT, exist_ok=True)
-                state.conn = await aiosqlite.connect(os.path.join(state.AGENT_ROOT, 'faust_checkpoint.db'))
+                state.conn = await aiosqlite.connect(
+                    os.path.join(state.AGENT_ROOT, "faust_checkpoint.db")
+                )
                 state.checkpointer = AsyncSqliteSaver(conn=state.conn)
                 log.info("已初始化 SQLite Checkpoint")
             else:
@@ -379,49 +430,92 @@ async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool =
             )
             await _rebuild_subagent_manager(model_name=conf.CHAT_MODEL)
             log.debug("Agent 已为重建重新创建")
-            checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(state.AGENT_ROOT)
+            checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(
+                state.AGENT_ROOT
+            )
             if no_initial_chat and checkpoint_exists:
                 log.info("运行时重建跳过初始对话")
                 state.set_runtime_state(ready=True, status="ready")
-                return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
-                        "initial_chat_skipped": True, "ready": True,
-                        "status": state.RUNTIME_STATUS, "error": ""}
+                return {
+                    "agent_name": state.AGENT_NAME,
+                    "agent_root": state.AGENT_ROOT,
+                    "initial_chat_skipped": True,
+                    "ready": True,
+                    "status": state.RUNTIME_STATUS,
+                    "error": "",
+                }
             _needs_initial_chat = True
         except Exception as e:
             state.agent = None
-            state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+            state.set_runtime_state(
+                ready=False, status="waiting_for_config", error=str(e)
+            )
             log.warning("运行时重建降级: %s", e)
-            return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
-                    "initial_chat_skipped": True, "ready": False,
-                    "status": state.RUNTIME_STATUS, "error": str(e)}
+            return {
+                "agent_name": state.AGENT_NAME,
+                "agent_root": state.AGENT_ROOT,
+                "initial_chat_skipped": True,
+                "ready": False,
+                "status": state.RUNTIME_STATUS,
+                "error": str(e),
+            }
 
     if _needs_initial_chat:
         try:
             if reset_dialog:
-                await invoke_agent_locked(state.agent, {"messages": [{"role": "system", "content": state.PROMPT}]})
+                await invoke_agent_locked(
+                    state.agent,
+                    {"messages": [{"role": "system", "content": state.PROMPT}]},
+                )
             else:
-                await invoke_agent_locked(state.agent, {
-                    "messages": [{"role": "user", "content": (
-                        f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，"
-                        f"请读取agents/{state.AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件"
-                        f"来获取最新的设定内容。\n 这一条对话无需写入日记"
-                    )}]})
+                await invoke_agent_locked(
+                    state.agent,
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，"
+                                    f"请读取agents/{state.AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件"
+                                    f"来获取最新的设定内容。\n 这一条对话无需写入日记"
+                                ),
+                            }
+                        ]
+                    },
+                )
             log.info("运行时重建完成")
             state.set_runtime_state(ready=True, status="ready")
-            return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
-                    "initial_chat_skipped": False, "ready": True,
-                    "status": state.RUNTIME_STATUS, "error": ""}
+            return {
+                "agent_name": state.AGENT_NAME,
+                "agent_root": state.AGENT_ROOT,
+                "initial_chat_skipped": False,
+                "ready": True,
+                "status": state.RUNTIME_STATUS,
+                "error": "",
+            }
         except Exception as e:
             state.agent = None
-            state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
+            state.set_runtime_state(
+                ready=False, status="waiting_for_config", error=str(e)
+            )
             log.warning("运行时重建降级: %s", e)
-            return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
-                    "initial_chat_skipped": True, "ready": False,
-                    "status": state.RUNTIME_STATUS, "error": str(e)}
+            return {
+                "agent_name": state.AGENT_NAME,
+                "agent_root": state.AGENT_ROOT,
+                "initial_chat_skipped": True,
+                "ready": False,
+                "status": state.RUNTIME_STATUS,
+                "error": str(e),
+            }
 
-    return {"agent_name": state.AGENT_NAME, "agent_root": state.AGENT_ROOT,
-            "initial_chat_skipped": True, "ready": True,
-            "status": state.RUNTIME_STATUS, "error": ""}
+    return {
+        "agent_name": state.AGENT_NAME,
+        "agent_root": state.AGENT_ROOT,
+        "initial_chat_skipped": True,
+        "ready": True,
+        "status": state.RUNTIME_STATUS,
+        "error": "",
+    }
 
 
 def schedule_memory_record_sync(user_text: str, assistant_text: str) -> None:
@@ -435,6 +529,7 @@ def schedule_memory_record_sync(user_text: str, assistant_text: str) -> None:
         try:
             llm_tools.refresh_runtime_paths()
             from faust_backend.memory import get_memory
+
             result = await get_memory().add_chat_record(user_text, assistant_text)
             log.info("聊天记录已同步到记忆库: %s", result.get("path"))
         except Exception as exc:
@@ -455,6 +550,7 @@ async def _graceful_shutdown_task():
 async def lifespan(app: FastAPI):
     init_plugin_manager()
     from faust_backend.mcp_manager import get_mcp_manager
+
     mcp_manager = get_mcp_manager()
 
     # ── startup ──
@@ -462,9 +558,12 @@ async def lifespan(app: FastAPI):
     araya_runtime.get_araya_runtime(refresh=True)
     try:
         from faust_backend.memory import get_memory
+
         get_memory(refresh=True)
         await araya_runtime.get_araya_runtime(refresh=True).startup()
-        startup_info = await rebuild_runtime(reset_dialog=False, no_initial_chat=bool(args.no_startup_chat))
+        startup_info = await rebuild_runtime(
+            reset_dialog=False, no_initial_chat=bool(args.no_startup_chat)
+        )
         log.info("启动运行时摘要: %s", startup_info)
     except Exception as e:
         state.agent = None
@@ -491,7 +590,9 @@ async def lifespan(app: FastAPI):
 
     if state.plugin_heartbeat_task is None:
         state.plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
-    live_api.set_rebuild_callback(lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True))
+    live_api.set_rebuild_callback(
+        lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True)
+    )
     try:
         blm = blive_manager.get_blive_manager(refresh=True)
         await blm.start()

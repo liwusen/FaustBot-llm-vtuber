@@ -1,7 +1,6 @@
 (function(){
   const api = window.faustAppUI;
   if (!api) return;
-  const baseUrl = (window.faustAppUI && window.faustAppUI.backendBaseUrl) || 'http://127.0.0.1:13900';
   const overlay = document.createElement('div');
   overlay.className = 'desktop-overlay-v2';
   overlay.innerHTML = '<div class="desktop-widget-v2"><span class="desktop-weather-v2">--</span><span class="desktop-idle-v2">活动中</span></div>';
@@ -11,8 +10,7 @@
 
   async function refresh(){
     try {
-      const res = await fetch(baseUrl + '/faust/plugins/desktop-mood/context');
-      const payload = await res.json();
+      const payload = await api.communicate('desktop-mood', { action: 'get_context' });
       const context = payload.context || {};
       const weather = context.weather || {};
       weatherEl.textContent = weather.text ? (weather.text + ' ' + (weather.temperature_c || '') + 'C') : '天气未启用';

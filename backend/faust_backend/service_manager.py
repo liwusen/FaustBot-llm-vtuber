@@ -86,7 +86,7 @@ def wait_for_service(service, timeout=STARTUP_WAIT_SECONDS):
         process_info = find_process_by_port(service['port'])
         if process_info:
             return process_info
-        time.sleep(0.5)
+        time.sleep(0.05)
     return None
 
 

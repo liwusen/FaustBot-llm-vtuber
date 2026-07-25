@@ -2,10 +2,12 @@
   "id": "clipboard",
   "name": "Clipboard Plugin",
   "version": "1.0.0",
+  "description": "FaustBot 剪贴板插件，提供剪贴板读取工具，已经弃用了",
   "enabled": false,
   "entry": "main.py",
   "permissions": [
     "tool:clipboard"
   ],
-  "priority": 325
+  "priority": 325,
+  "faustbot.internal.mark.builtin": true
 }

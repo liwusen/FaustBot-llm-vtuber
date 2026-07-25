@@ -1,16 +1,17 @@
 (function(){
   const api = window.pluginUI;
   if (!api) return;
-  const baseUrl = (window.pluginUI && window.pluginUI.backendBaseUrl) || 'http://127.0.0.1:13900';
-
+  baseUrl = api.backendBaseUrl;
   async function fetchState(){
-    const res = await fetch(baseUrl + '/faust/plugins/emotion-engine/state');
-    return res.json();
+    return api.communicate('emotion-engine', { action: 'get_state' });
+    console.log('fetchState:', payload);
   }
 
   async function fetchConfig(){
     const res = await fetch(baseUrl + '/faust/admin/plugins/emotion-engine/config');
+    console.log('fetchConfig:', res);
     return res.json();
+    
   }
 
   async function saveConfig(values){
@@ -98,8 +99,9 @@
           };
         }
         drawTrend(document.getElementById('emotion-trend'), history);
-      }).catch(function(){
+      }).catch(function(error){
         container.innerHTML = '<article class="card full-span"><h3 class="card-title">Emotion Engine</h3><p class="card-help">无法获取情绪状态</p></article>';
+        console.error("Failed to fetch emotion engine state or config", error);
       });
     }
   });

@@ -10,5 +10,6 @@
   "permissions": [
     "middleware:context-prune"
   ],
-  "priority": 260
+  "priority": 260,
+  "faustbot.internal.mark.builtin": true
 }

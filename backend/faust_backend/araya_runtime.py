@@ -224,8 +224,7 @@ class ArayaRuntime:
     async def _loop_async(self) -> None:
         while not (self._stop_event and self._stop_event.is_set()):
             try:
-                await asyncio.sleep(30.0)
-#                log.debug("Araya loop tick: checking if should trigger...")
+                await asyncio.sleep(5)
                 should = self.should_trigger()
                 if not should:
                     continue

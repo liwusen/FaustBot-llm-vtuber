@@ -155,11 +155,11 @@ class PluginProtocol(Protocol):
     def health_check(self) -> dict[str, Any] | None:
         ...
 
-    # ── Routes & Frontend ──
-    def register_routes(self) -> list:
+    # ── Frontend ──
+    def register_frontend(self) -> list[dict]:
         ...
 
-    def register_frontend(self) -> list[dict]:
+    def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         ...
 
     def register_schedules(self) -> list[dict]:

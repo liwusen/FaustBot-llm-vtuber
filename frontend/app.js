@@ -227,6 +227,17 @@ import { initAutocomplete } from './libs/autocomplete.js';
       triggerMotion(name){
         return triggerModelMotion(name);
       },
+
+      communicate(pluginId, payload){
+        if (!window.api || typeof window.api.configRequest !== 'function') {
+          return Promise.reject(new Error('window.api.configRequest 未实现'));
+        }
+        return window.api.configRequest(
+          'POST',
+          `/faust/plugins/${encodeURIComponent(String(pluginId || ''))}/communicate`,
+          payload ?? {}
+        );
+      },
     };
   }
 

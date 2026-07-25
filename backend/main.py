@@ -119,7 +119,6 @@ app.include_router(live_api.router)
 app.include_router(update_api.router)
 app.include_router(memory_api.router)
 edge_tts_api.register_edge_tts_routes(app)  # TODO: 以上几个路由应该使用router注册
-
 # ── 插件前端静态资源挂载 ──
 _t.begin("staticfiles")
 from fastapi.staticfiles import StaticFiles
@@ -157,9 +156,9 @@ from faust_backend.component_manager import init_component_guard
 init_component_guard()
 _t.end("services")
 
-_t.print_pref("main.py 导入耗时统计")
+_t.log_pref(log, "启动耗时统计")
 
-log.info("所有库加载完成")
+log.info("所有模块加载完成")
 
 # ── 入口 ──
 if __name__ == "__main__":

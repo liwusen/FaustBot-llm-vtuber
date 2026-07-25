@@ -751,14 +751,17 @@ function createConfigWindow() {
 }
 
 function recreateFrontendMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.close();
-  }
-  //wait a bit for the window to close before creating a new one
+  _isRecreating = true;
   setTimeout(() => {
-
-    createWindow();
-  }, 300); // wait 300ms before creating a new window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+    }
+    //wait a bit for the window to close before creating a new one
+    setTimeout(() => {
+      _isRecreating = false;
+      createWindow();
+    }, 300); // wait 300ms before creating a new window
+  }, 300); // wait 300ms before closing the old window
 }
 
 let liveWindow = null;
@@ -1213,7 +1216,11 @@ ipcMain.handle('faust-log', async (evt, msg) => {
   return { ok: true };
 });
 
-app.on('window-all-closed', ()=>{ if (process.platform !== 'darwin') app.quit() });
+let _isRecreating = false;
+app.on('window-all-closed', ()=>{
+  if (_isRecreating) return;
+  if (process.platform !== 'darwin') app.quit()
+});
 
 app.on('will-quit', ()=>{
   try{ globalShortcut.unregisterAll(); }catch(e){ console.error('unregisterAll failed', e); }

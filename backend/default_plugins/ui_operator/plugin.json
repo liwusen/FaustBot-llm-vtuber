@@ -14,5 +14,6 @@
     "tool:ui-scroll",
     "tool:ui-keyboard"
   ],
-  "priority": 240
+  "priority": 240,
+  "faustbot.internal.mark.builtin": true
 }

@@ -7,8 +7,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
-
 import faust_backend.config_loader as conf
 from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
@@ -48,7 +46,6 @@ STATE_FILE_NAME = "emotion_state.json"
 HISTORY_LIMIT = 512
 COREMEMORY_START = "<!-- emotion-engine:start -->"
 COREMEMORY_END = "<!-- emotion-engine:end -->"
-_ROUTER = APIRouter()
 _PLUGIN: "Plugin | None" = None
 
 
@@ -387,14 +384,6 @@ class EmotionEngineStore:
             self._save_state()
 
 
-@_ROUTER.get("/state")
-async def get_state():
-    plugin = _PLUGIN
-    if plugin is None:
-        return {"status": "error", "detail": "plugin not loaded"}
-    return {"status": "ok", **plugin.get_state_payload()}
-
-
 class Plugin(FaustPlugin):
     def __init__(self):
         self.ctx: PluginContext | None = None
@@ -482,9 +471,6 @@ class Plugin(FaustPlugin):
             return {"vector": dict(DEFAULT_EMOTIONS), "history": [], "config": {}}
         return self.store.snapshot(self._configs())
 
-    def register_routes(self) -> list:
-        return [_ROUTER]
-
     def register_frontend(self) -> list[dict]:
         return [
             {
@@ -525,6 +511,12 @@ class Plugin(FaustPlugin):
             )
         return [ToolSpec(name="EmotionInvoke", tool=EmotionInvoke, enabled_by_default=True, description=EmotionInvoke.__doc__ or "")]
 
+    def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+        action = str((payload or {}).get("action") or "get_state").strip().lower()
+        if action == "get_state":
+            return {"status": "ok", **self.get_state_payload()}
+        return {"status": "error", "detail": f"unknown action: {action}"}
+
     @hookimpl
     def message_received(
         self, msg: Any, history: list, ctx: PluginContext
@@ -532,7 +524,7 @@ class Plugin(FaustPlugin):
         if self.store is None:
             log.critical("EmotionEngineStore not initialized While processing message")
             return None
-        return self.store.note_user_message(str(msg or ""))
+        return msg+self.store.note_user_message(str(msg or ""))
         
 
     @hookimpl

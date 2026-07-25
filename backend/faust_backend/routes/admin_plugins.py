@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 import faust_backend.plugin_market as plugin_market
+from faust_backend.plugin_system.manager import PluginLoadError
 from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import rebuild_runtime, _sync_plugin_trigger_filters
 
@@ -125,6 +126,23 @@ async def admin_set_plugin_config(plugin_id: str, payload: dict | None = None):
         "reload": reload_summary,
         "runtime": runtime_info,
     }
+
+
+@router.post("/faust/plugins/{plugin_id}/communicate")
+async def plugin_communicate(plugin_id: str, payload: dict | None = None):
+    pm = state.plugin_manager
+    if pm is None:
+        raise HTTPException(status_code=503, detail="plugin_manager not initialized")
+    try:
+        result = await pm.communicate(plugin_id, payload)
+    except PluginLoadError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message)
+        if "disabled" in message or "not loaded" in message:
+            raise HTTPException(status_code=503, detail=message)
+        raise HTTPException(status_code=400, detail=message)
+    return result
 
 
 @router.get("/faust/admin/plugin-market/catalog")

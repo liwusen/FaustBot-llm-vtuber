@@ -1,7 +1,6 @@
 (function () {
   const api = window.faustAppUI;
   if (!api) return;
-  const baseUrl = (window.faustAppUI && window.faustAppUI.backendBaseUrl) || 'http://127.0.0.1:13900';
   const banner = document.createElement('div');
   banner.className = 'rss-banner-v2 rss-banner-hidden';
   banner.innerHTML = '<span class="rss-banner-prefix">RSS</span><a class="rss-banner-link" href="#"></a>';
@@ -10,8 +9,7 @@
 
   async function refresh() {
     try {
-      const res = await fetch(baseUrl + '/faust/plugins/rss-watcher/banner');
-      const payload = await res.json();
+      const payload = await api.communicate('rss-watcher', { action: 'get_banner' });
       const item = payload.item;
       if (!item) return;
       const link = banner.querySelector('.rss-banner-link');

@@ -308,8 +308,10 @@ argparser = argparse.ArgumentParser(description="FaustBot Backend Main Service\n
 argparser.add_argument("--agent",type=str,default="NONE",action="store",help="Agent name to use")
 argparser.add_argument("--no-run-other-backend-services",action="store_true",help="Whether to run other backend services as subprocess like ASR/TTS (default: False)")
 argparser.add_argument("--save-in-memory",action="store_true",help="Memory Checkpointer and Store for debugging (default: False)")
+DEBUG_FLAG = False
 argparser.add_argument("--MOO",action="store_true",help="apt-get:???\n这里没有任何彩蛋!!!")
 argparser.add_argument("--no-startup-chat",action="store_true",help="Whether to disable startup chat (default: False)")
+argparser.add_argument("--debug",action="store_true",help="Enable debug mode (default: False)")
 args, _ = argparser.parse_known_args()
 if args.agent != "NONE":
     AGENT_NAME = args.agent
@@ -318,6 +320,9 @@ if args.no_run_other_backend_services:
     print(f"[config_loader] Won't running other backend services as subprocess.")
 if args.save_in_memory:
     print(f"[config_loader] Memory Checkpointer and Store enabled for debugging.")
+if args.debug:
+    print(f"[config_loader] Debug mode enabled.")
+    DEBUG_FLAG = True
 if args.no_startup_chat:
     print(f"[config_loader] Startup chat disabled.")
 if args.MOO:

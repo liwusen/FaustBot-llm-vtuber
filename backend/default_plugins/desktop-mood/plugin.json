@@ -6,5 +6,6 @@
   "author": "FaustBot",
   "enabled": false,
   "entry": "impl.py",
-  "priority": 340
+  "priority": 340,
+  "faustbot.internal.mark.builtin": true
 }

@@ -11,5 +11,6 @@
     "tool:web-search",
     "tool:wiki-search"
   ],
-  "priority": 200
+  "priority": 200,
+  "faustbot.internal.mark.builtin": true
 }

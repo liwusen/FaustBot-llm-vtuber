@@ -5,10 +5,11 @@ from typing import Any
 
 from fastapi import APIRouter, Body
 from faust_backend.routes.subagents import subagent_status_overrides
+from faust_backend.runtime import state
 
 from faust_backend.logger import get_logger
 from faust_backend.runtime import state
-from faust_backend.runtime.lifecycle import stream_chat_agent_events
+from faust_backend.tools.vfs import get_faustbot_vfs
 
 log = get_logger("faust.debugging")
 
@@ -135,3 +136,11 @@ async def subagent_override(body: dict = Body(...)):
 
     log.info("Subagent overrides updated: %d items", len(subagent_status_overrides))
     return {"status": "ok", "overrides": list(subagent_status_overrides)}
+
+@router.get("/faust/debugging/vfs-read/{path:path}")
+async def vfs_read(path: str):
+    """调试接口：读取虚拟文件系统内容"""
+    if get_faustbot_vfs().is_dir(path):
+        return await get_faustbot_vfs().list_dir(path)
+    else:
+        return await get_faustbot_vfs().read(path)
