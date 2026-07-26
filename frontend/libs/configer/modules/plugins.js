@@ -12,6 +12,76 @@ function parsePluginFieldValue(fieldType, rawValue) {
   return rawValue;
 }
 
+function pluginHealthLabel(plugin) {
+  const status = String(((plugin || {}).health || {}).status || "unknown").toLowerCase();
+  const map = {
+    healthy: "正常",
+    ok: "正常",
+    warning: "注意",
+    error: "异常",
+    unknown: "未知",
+  };
+  return map[status] || status;
+}
+
+function mountPluginChart(host, plugin) {
+  if (!host || !window.echarts) return;
+  const chart = window.echarts.init(host, null, { renderer: "svg" });
+  const status = String(((plugin || {}).health || {}).status || "unknown").toLowerCase();
+  const accent = status === "error"
+    ? "#e54447"
+    : status === "warning"
+      ? "#f59e0b"
+      : (plugin && plugin.enabled ? "#3f6be8" : "#b8c6d8");
+  chart.setOption({
+    animation: false,
+    tooltip: { show: false },
+    series: [
+      {
+        type: "pie",
+        radius: ["62%", "84%"],
+        silent: true,
+        label: { show: false },
+        data: [
+          { value: plugin && plugin.enabled ? 72 : 38, itemStyle: { color: accent } },
+          { value: plugin && plugin.enabled ? 28 : 62, itemStyle: { color: "#e6edf7" } },
+        ],
+      },
+    ],
+    graphic: [
+      {
+        type: "circle",
+        left: "center",
+        top: "center",
+        shape: { r: 12 },
+        style: { fill: "#ffffff", stroke: accent, lineWidth: 1.5 },
+      },
+      {
+        type: "text",
+        left: "center",
+        top: "center",
+        style: {
+          text: String((plugin && (plugin.name || plugin.id) || "P")).slice(0, 1).toUpperCase(),
+          fill: accent,
+          fontSize: 12,
+          fontWeight: 700,
+          textAlign: "center",
+          textVerticalAlign: "middle",
+        },
+      },
+    ],
+  });
+}
+
+function createPluginFieldHeader(item, key) {
+  const header = el("div", "field-card-head");
+  const wrap = el("div", "field-card-title-wrap");
+  wrap.append(el("div", "card-title", item.label || key));
+  wrap.append(el("div", "card-key", key));
+  header.append(wrap);
+  return header;
+}
+
 function renderPluginsModule() {
   async function refreshPluginUi() {
     await loadPluginAssets(true);
@@ -43,17 +113,42 @@ function renderPluginsModule() {
   );
   addSection("插件操作", [top]);
 
-  const list = el("div", "list-box");
+  const listCard = el("article", "card full-span");
+  listCard.append(el("h3", "card-title", "插件列表"));
+  const listTable = el("table", "simple-table plugin-list-table");
+  const listHead = el("thead", "");
+  listHead.innerHTML = "<tr><th>插件</th><th>版本</th><th>状态</th><th>操作</th></tr>";
+  listTable.append(listHead);
+  const listBody = el("tbody", "");
+  const chartMounts = [];
   for (const p of state.plugins) {
     const pid = String(p.id || "");
-    const row = el("div", `list-row clickable ${state.selectedPluginId === pid ? "selected" : ""}`.trim());
-    row.append(el("span", "mono", `[${p.enabled ? "ON" : "OFF"}] ${pid} | ${p.version || "-"}`));
+    const row = el("tr", state.selectedPluginId === pid ? "selected" : "");
     row.addEventListener("click", async () => {
       state.selectedPluginId = pid;
       await ensureModuleData("plugins");
       refreshModule();
     });
-    const ops = el("div", "toolbar compact");
+
+    const pluginCell = el("td", "plugin-cell");
+    const pluginMain = el("div", "plugin-row-main");
+    const chartHost = el("div", "plugin-chart-badge");
+    chartMounts.push(() => mountPluginChart(chartHost, p));
+    const pluginText = el("div", "plugin-row-text");
+    pluginText.append(
+      el("strong", "plugin-row-title", p.name || pid),
+      el("div", "plugin-row-subtitle", p.description || pid)
+    );
+    pluginMain.append(chartHost, pluginText);
+    pluginCell.append(pluginMain);
+
+    const versionCell = el("td", "", String(p.version || "-"));
+    const statusCell = el("td", "");
+    statusCell.append(el("span", `tag-chip ${p.enabled ? "" : "tag-chip-muted"}`.trim(), p.enabled ? "已启用" : "已关闭"));
+    statusCell.append(el("div", "plugin-status-note", pluginHealthLabel(p)));
+
+    const opsCell = el("td", "");
+    const ops = el("div", "toolbar compact plugin-row-actions");
     const switchWrap = el("div", "switch-row");
     const switchText = el("span", "switch-text", p.enabled ? "已启用" : "已禁用");
     const switchLabel = el("label", "switch");
@@ -71,16 +166,29 @@ function renderPluginsModule() {
     switchWrap.append(switchText, switchLabel);
     ops.append(
       switchWrap,
-      makeButton("删除", async () => {
+      makeButton("删除", async (evt) => {
+        if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
         if (!window.confirm(`确定删除插件 ${pid} ?`)) return;
         await cfgApi("DELETE", `/faust/admin/plugins/${encodeURIComponent(pid)}`, null, { apply_runtime: "true", reset_dialog: "false", no_initial_chat: "true" });
         await refreshPluginUi();
-      })
+      }, "btn btn-ghost")
     );
-    row.append(ops);
-    list.append(row);
+    opsCell.append(ops);
+
+    row.append(pluginCell, versionCell, statusCell, opsCell);
+    listBody.append(row);
   }
-  addSection("插件列表", [list]);
+  if (!state.plugins.length) {
+    const emptyRow = el("tr", "");
+    const emptyCell = el("td", "table-empty", "当前没有已安装插件。");
+    emptyCell.colSpan = 4;
+    emptyRow.append(emptyCell);
+    listBody.append(emptyRow);
+  }
+  listTable.append(listBody);
+  listCard.append(listTable);
+  appendToActiveModule(listCard);
+  requestAnimationFrame(() => chartMounts.forEach((mount) => mount()));
 
   const selected = state.plugins.find((x) => String(x.id) === String(state.selectedPluginId));
   if (!selected) {
@@ -123,11 +231,12 @@ function renderPluginsModule() {
       const key = String(item.key || "");
       if (!key) continue;
       const type = String(item.type || "str");
-      const wrap = el("div", "plugin-field");
+      const wrap = el("div", "plugin-field field-card");
+      const header = createPluginFieldHeader(item, key);
+      wrap.append(header);
       let input;
       const val = state.pluginConfigDraft[key];
       if (type === "bool") {
-        const title = el("div", "card-key", `${item.label || key} (${key})`);
         const help = item.description ? el("p", "card-help", String(item.description)) : null;
         const row = el("div", "switch-row");
         const txt = el("span", "switch-text", Boolean(val) ? "已启用" : "已禁用");
@@ -146,29 +255,54 @@ function renderPluginsModule() {
           state.pluginConfigDraft[key] = Boolean(input.checked);
           txt.textContent = Boolean(input.checked) ? "已启用" : "已禁用";
         });
-        wrap.append(title);
         if (help) wrap.append(help);
         wrap.append(row);
         form.append(wrap);
         continue;
       } else if (type === "json") {
-        wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
+        if (item.description) wrap.append(el("p", "card-help", String(item.description)));
         input = el("textarea", "textarea");
         input.value = toText(val);
       } else if (type === "int" || type === "float") {
-        wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
+        if (item.description) wrap.append(el("p", "card-help", String(item.description)));
+        const spec = getNumberFieldSpec(key, Number(val ?? 0));
+        if (spec.type === "range") {
+          const sliderWrap = el("div", "slider-field");
+          input = el("input", "range-input");
+          input.type = "range";
+          input.min = String(spec.min);
+          input.max = String(spec.max);
+          input.step = String(spec.step);
+          input.value = String(val ?? spec.min);
+          const meter = el("div", "slider-meter");
+          const valueText = el("strong", "slider-value", "");
+          const hintText = el("span", "slider-hint", `${spec.min} - ${spec.max}${spec.unit || ""}`);
+          meter.append(valueText, hintText);
+          const syncSlider = () => {
+            valueText.textContent = `${Number(input.value || 0).toFixed(spec.step < 1 ? 2 : 0)}${spec.unit || ""}`;
+            const ratio = ((Number(input.value) - spec.min) / (spec.max - spec.min || 1)) * 100;
+            input.style.setProperty("--range-fill", `${Math.max(0, Math.min(100, ratio))}%`);
+          };
+          syncSlider();
+          input.addEventListener("input", () => {
+            syncSlider();
+            state.pluginConfigDraft[key] = input.value;
+          });
+          sliderWrap.append(input, meter);
+          wrap.append(sliderWrap);
+          form.append(wrap);
+          continue;
+        }
         input = el("input", "number");
         input.type = "number";
         input.value = String(val ?? "");
       } else {
-        wrap.append(el("label", "card-key", `${item.label || key} (${key})`));
+        if (item.description) wrap.append(el("p", "card-help", String(item.description)));
         input = el("input", "input");
         input.type = SECRET_KEYS.has(key) ? "password" : "text";
         input.value = val === null || val === undefined ? "" : String(val);
       }
-      if (item.description) {
-        input.title = String(item.description);
-      }
+      if (item.description && input) input.title = String(item.description);
       input.addEventListener("input", () => {
         if (type === "bool") state.pluginConfigDraft[key] = Boolean(input.checked);
         else state.pluginConfigDraft[key] = input.value;

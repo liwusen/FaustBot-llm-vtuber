@@ -83,7 +83,7 @@ function openMcpEditorModal(existing, onSubmit) {
   idInput.type = "text";
   idInput.value = body.server_id;
   if (existing) idInput.disabled = true;
-  makeField("Server ID", idInput);
+  makeField("服务器标识", idInput);
 
   const enabledInput = document.createElement("input");
   enabledInput.type = "checkbox";
@@ -187,7 +187,7 @@ function openMcpEditorModal(existing, onSubmit) {
         headers: _mcpTextToHeaders(headersInput.value),
       };
       if (!payload.server_id) {
-        window.alert("Server ID 不能为空");
+        window.alert("服务器标识不能为空");
         return;
       }
       await onSubmit(payload);
@@ -266,24 +266,24 @@ function renderMcpModule() {
     });
     list.append(row);
   }
-  addSection("Server 列表", [list]);
+  addSection("服务器列表", [list]);
 
   const selected = _mcpSelectedItem();
   if (!selected) {
-    addSection("Server 详情", [el("div", "empty-state", "请选择 MCP server。")]);
+    addSection("服务器详情", [el("div", "empty-state", "请选择 MCP 服务器。")]);
     return;
   }
 
   appendToActiveModule(
     makeInfoCard("基本信息", [
-      { label: "Server ID", value: selected.server_id || selected.id },
+      { label: "服务器标识", value: selected.server_id || selected.id },
       { label: "状态", value: _mcpStatusText(selected) },
       { label: "启用", value: selected.enabled },
       { label: "传输", value: selected.transport || "stdio" },
       { label: "自定义", value: selected.custom },
       { label: "命令", value: selected.command || "builtin" },
       { label: "URL", value: selected.url || "-" },
-      { label: "Headers", value: Object.keys(selected.headers || {}).length ? JSON.stringify(selected.headers) : "-" },
+      { label: "请求头", value: Object.keys(selected.headers || {}).length ? JSON.stringify(selected.headers) : "-" },
       { label: "描述", value: selected.description || "-" },
       { label: "错误", value: selected.error || "-" },
     ])

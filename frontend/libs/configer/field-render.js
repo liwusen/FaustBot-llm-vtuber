@@ -24,6 +24,35 @@ function getMeta(key) {
   return META[key] || { label: key, help: "" };
 }
 
+function getNumberFieldSpec(key, value) {
+  const numericValue = Number(value);
+  const presets = {
+    LIVE2D_MODEL_SCALE: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "x" },
+    TEXT_CHAT_BAR_Y_FACTOR: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
+    OPENAI_TTS_SPEED: { type: "range", min: 0.25, max: 4, step: 0.05, unit: "x" },
+    DECAY_PER_MINUTE: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
+    OVERLAY_INTENSITY: { type: "range", min: 0, max: 100, step: 1, unit: "%" },
+  };
+  if (presets[key]) return presets[key];
+  if (Number.isFinite(numericValue) && numericValue >= 0 && numericValue <= 1) {
+    return { type: "range", min: 0, max: 1, step: 0.01, unit: "" };
+  }
+  return {
+    type: "number",
+    step: Number.isInteger(value) ? 1 : 0.01,
+    unit: "",
+  };
+}
+
+function createFieldHeader(meta, key) {
+  const header = el("div", "field-card-head");
+  const titleWrap = el("div", "field-card-title-wrap");
+  titleWrap.append(el("h3", "card-title", meta.label));
+  titleWrap.append(el("div", "card-key", key));
+  header.append(titleWrap);
+  return header;
+}
+
 function updateValue(scope, key, nextValue) {
   const original = state.original[scope][key];
   state.config[scope][key] = nextValue;
@@ -53,8 +82,8 @@ function refreshDirtyUI() {
 function makeFieldCard(scope, key, value) {
   const meta = getMeta(key);
   const card = el("article", `card full-span ${state.dirty[scope].has(key) ? "dirty" : ""}`.trim());
-  const title = el("h3", "card-title", meta.label);
-  const code = el("div", "card-key", key);
+  card.classList.add("field-card");
+  const header = createFieldHeader(meta, key);
   const help = el("p", "card-help", meta.help || "");
   const controlWrap = el("div", "field-wrap");
   const currentValue = state.config[scope][key];
@@ -112,23 +141,50 @@ function makeFieldCard(scope, key, value) {
     });
     controlWrap.append(input);
   } else if (typeof value === "number") {
-    const input = el("input", "number");
-    input.type = "number";
-    input.name = key;
-    input.value = String(currentValue ?? 0);
-    if (key === "TEXT_CHAT_BAR_Y_FACTOR") {
-      input.step = "0.01";
-      input.min = "0";
-      input.max = "1";
+    const spec = getNumberFieldSpec(key, currentValue ?? value);
+    if (spec.type === "range") {
+      const sliderWrap = el("div", "slider-field");
+      const input = el("input", "range-input");
+      input.type = "range";
+      input.name = key;
+      input.min = String(spec.min);
+      input.max = String(spec.max);
+      input.step = String(spec.step);
+      input.value = String(currentValue ?? value ?? spec.min);
+
+      const meter = el("div", "slider-meter");
+      const valueText = el("strong", "slider-value", "");
+      const hintText = el("span", "slider-hint", `${spec.min} - ${spec.max}${spec.unit || ""}`);
+      meter.append(valueText, hintText);
+
+      const syncSlider = () => {
+        const parsed = normalizeNumberInput(input.value, value);
+        valueText.textContent = `${Number(parsed ?? 0).toFixed(spec.step < 1 ? 2 : 0)}${spec.unit || ""}`;
+        const ratio = ((Number(input.value) - spec.min) / (spec.max - spec.min || 1)) * 100;
+        input.style.setProperty("--range-fill", `${Math.max(0, Math.min(100, ratio))}%`);
+      };
+      syncSlider();
+      input.addEventListener("input", () => {
+        const parsed = normalizeNumberInput(input.value, value);
+        syncSlider();
+        updateValue(scope, key, parsed);
+        card.classList.add("dirty");
+      });
+      sliderWrap.append(input, meter);
+      controlWrap.append(sliderWrap);
     } else {
-      input.step = Number.isInteger(value) ? "1" : "0.01";
+      const input = el("input", "number");
+      input.type = "number";
+      input.name = key;
+      input.value = String(currentValue ?? 0);
+      input.step = String(spec.step);
+      input.addEventListener("input", () => {
+        const parsed = normalizeNumberInput(input.value, value);
+        updateValue(scope, key, parsed);
+        card.classList.add("dirty");
+      });
+      controlWrap.append(input);
     }
-    input.addEventListener("input", () => {
-      const parsed = normalizeNumberInput(input.value, value);
-      updateValue(scope, key, parsed);
-      card.classList.add("dirty");
-    });
-    controlWrap.append(input);
   } else if (key === "TTS_REFER_WAV_PATH") {
     const row = el("div", "toolbar");
     const input = el("input", "input");
@@ -166,7 +222,7 @@ function makeFieldCard(scope, key, value) {
     controlWrap.append(input);
   }
 
-  card.append(title, code, help, controlWrap);
+  card.append(header, help, controlWrap);
   return card;
 }
 

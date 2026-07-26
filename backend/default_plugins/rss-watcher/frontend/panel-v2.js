@@ -19,6 +19,30 @@
     });
   }
 
+  function feedTableRows(feeds){
+    if (!feeds.length) return '<tr><td colspan="4">暂无订阅源</td></tr>';
+    return feeds.map(function(feed){
+      return '<tr>'
+        + '<td>' + (feed.name || '未命名') + '</td>'
+        + '<td>' + (feed.category || '未分类') + '</td>'
+        + '<td>' + (feed.url || '-') + '</td>'
+        + '<td><div class="toolbar compact"><button class="btn btn-ghost" data-feed-edit="' + feed.id + '">编辑</button><button class="btn btn-ghost" data-feed-id="' + feed.id + '">删除</button></div></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function itemTableRows(items){
+    if (!items.length) return '<tr><td colspan="4">暂无条目</td></tr>';
+    return items.map(function(item){
+      return '<tr>'
+        + '<td>' + (item.title || '未命名条目') + '</td>'
+        + '<td>' + (item.feed_name || 'RSS') + '</td>'
+        + '<td>' + (item.link || '-') + '</td>'
+        + '<td><button class="btn btn-ghost" data-save-id="' + item.id + '">' + (item.is_saved ? '已收藏' : '收藏') + '</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
   function renderPage(container){
     container.innerHTML = `
 <article class="card full-span">
@@ -74,7 +98,7 @@
 
 <article class="card full-span">
   <h3 class="card-title">订阅源</h3>
-  <div id="rss-feed-list" class="list-box rss-list-v2"></div>
+  <table class="simple-table"><thead><tr><th>名称</th><th>分类</th><th>地址</th><th>操作</th></tr></thead><tbody id="rss-feed-list"></tbody></table>
 </article>
 
 <article class="card full-span">
@@ -84,7 +108,7 @@
 
 <article class="card full-span">
   <h3 class="card-title">最近条目</h3>
-  <div id="rss-item-list" class="list-box rss-list-v2"></div>
+  <table class="simple-table"><thead><tr><th>标题</th><th>来源</th><th>链接</th><th>操作</th></tr></thead><tbody id="rss-item-list"></tbody></table>
 </article>`;
 
     async function refresh(){
@@ -126,14 +150,7 @@
         };
       }
       if (feedList) {
-        feedList.innerHTML = feeds.map(function(feed){
-          return '<div class="list-row rss-feed-row">'
-            + '<div><strong>' + feed.name + '</strong><span>' + feed.url + '</span></div>'
-            + '<div class="toolbar compact">'
-            + '<button class="btn btn-ghost" data-feed-edit="' + feed.id + '">编辑</button>'
-            + '<button class="btn btn-ghost" data-feed-id="' + feed.id + '">删除</button>'
-            + '</div></div>';
-        }).join('') || '<div class="list-row">暂无订阅源</div>';
+        feedList.innerHTML = feedTableRows(feeds);
         Array.from(feedList.querySelectorAll('button[data-feed-edit]')).forEach(function(button){
           button.addEventListener('click', async function(){
             const feedId = button.getAttribute('data-feed-edit');
@@ -156,9 +173,7 @@
         });
       }
       if (itemList) {
-        itemList.innerHTML = items.map(function(item){
-          return '<div class="list-row"><div><strong>' + (item.title || '未命名条目') + '</strong><span>' + (item.feed_name || 'RSS') + ' · ' + (item.link || '') + '</span></div><button class="btn btn-ghost" data-save-id="' + item.id + '">' + (item.is_saved ? '已收藏' : '收藏') + '</button></div>';
-        }).join('') || '<div class="list-row">暂无条目</div>';
+        itemList.innerHTML = itemTableRows(items);
         Array.from(itemList.querySelectorAll('button[data-save-id]')).forEach(function(button){
           if (button.textContent === '已收藏') return;
           button.addEventListener('click', async function(){
@@ -200,7 +215,7 @@
     plugin: 'rss-watcher',
     render: function(container){
       communicate({ action: 'get_digest' }).then(function(data){
-        container.innerHTML = '<div class="plugin-mini-card"><p>RSS 摘要条目：' + (data.count || 0) + '</p><p class="plugin-mini-muted">可在管理页添加订阅并手动抓取。</p></div>';
+        container.innerHTML = '<div class="plugin-mini-card"><p>摘要条目：' + (data.count || 0) + '</p><p class="plugin-mini-muted">可以在管理页新增订阅源，并手动触发抓取。</p></div>';
       }).catch(function(){ container.innerHTML = '<div class="plugin-mini-card">RSS 状态不可用</div>'; });
     }
   });

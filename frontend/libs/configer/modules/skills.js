@@ -54,14 +54,22 @@ function renderSkillsModule() {
       await window.api.configOpenPath(basePath.replace(/\/$/, ""));
     })
   );
-  addSection("Skill 操作", [top]);
+  addSection("技能操作", [top]);
 
-  const list = el("div", "list-box");
+  const listCard = el("article", "card full-span");
+  listCard.append(el("h3", "card-title", "技能列表"));
+  const list = el("table", "simple-table");
+  list.innerHTML = "<thead><tr><th>技能标识</th><th>版本</th><th>状态</th><th>操作</th></tr></thead>";
+  const tbody = el("tbody", "");
   for (const sk of state.skills) {
     const slug = String(sk.slug || "");
-    const row = el("div", `list-row clickable ${state.selectedSkillSlug === slug ? "selected" : ""}`.trim());
-    const prefix = sk.missing ? "MISSING" : (sk.enabled ? "ON" : "OFF");
-    row.append(el("span", "mono", `[${prefix}] ${slug} v${sk.version || "-"}`));
+    const row = el("tr", state.selectedSkillSlug === slug ? "selected" : "");
+    const statusText = sk.missing ? "缺失" : (sk.enabled ? "已启用" : "已停用");
+    row.append(
+      el("td", "cell-primary", slug),
+      el("td", "", sk.version || "-"),
+      el("td", "", statusText)
+    );
     row.addEventListener("click", async () => {
       state.selectedSkillSlug = slug;
       await ensureModuleData("skills");
@@ -78,12 +86,23 @@ function renderSkillsModule() {
         refreshModule();
       })
     );
-    row.append(ops);
-    list.append(row);
+    const opsCell = el("td", "");
+    opsCell.append(ops);
+    row.append(opsCell);
+    tbody.append(row);
   }
-  addSection("Skill 列表", [list]);
+  if (!state.skills.length) {
+    const row = el("tr", "");
+    const empty = el("td", "table-empty", "当前没有已安装技能。");
+    empty.colSpan = 4;
+    row.append(empty);
+    tbody.append(row);
+  }
+  list.append(tbody);
+  listCard.append(list);
+  appendToActiveModule(listCard);
   if (!state.skillDetail) {
-    addSection("Skill 详情", [el("div", "empty-state", "请选择 Skill 查看详情。")]);
+    addSection("技能详情", [el("div", "empty-state", "请选择技能查看详情。")]);
     return;
   }
 
@@ -91,7 +110,7 @@ function renderSkillsModule() {
   const meta = detail.meta && typeof detail.meta === "object" ? detail.meta : {};
   const files = Array.isArray(detail.files) ? detail.files : [];
 
-  appendToActiveModule(makeInfoCard("Skill 基本信息", [
+  appendToActiveModule(makeInfoCard("技能基本信息", [
     { label: "Slug", value: detail.slug },
     { label: "版本", value: meta.version || "-" },
     { label: "启用状态", value: detail.enabled },
@@ -99,7 +118,7 @@ function renderSkillsModule() {
     { label: "来源", value: detail.source },
     { label: "路径", value: detail.path },
   ]),
-  makeInfoCard("Meta 字段", [
+  makeInfoCard("相关信息", [
     { label: "名称", value: meta.name || meta.title || "-" },
     { label: "作者", value: meta.author || "-" },
     { label: "描述", value: meta.description || "-" },

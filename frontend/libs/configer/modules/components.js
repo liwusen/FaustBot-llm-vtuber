@@ -209,7 +209,7 @@ function renderFunasrCard(container) {
 
   const card = _card(`${statusIcon} FunASR (ASR)`);
   card.append(_row("状态", statusText));
-  card.append(_row("PyTorch", torchInfo));
+  card.append(_row("PyTorch 环境", torchInfo));
   card.append(_row("服务", `${svcStatus} ${svcPort}`));
 
   // 操作区
@@ -255,7 +255,7 @@ function renderTtsCard(container) {
 
   const card = _card(`${statusIcon} TTS`);
   card.append(_row("状态", statusText));
-  card.append(_row("Variant", variantText));
+  card.append(_row("TTS GPU 类型", variantText));
   card.append(_row("服务", `${svcStatus} ${svcPort}`));
 
   const actions = document.createElement("div");

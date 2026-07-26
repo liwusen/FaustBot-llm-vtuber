@@ -20,11 +20,20 @@ function renderRuntimeModule() {
   );
   addSection("运行时控制", [bar]);
 
-  const list = el("div", "list-box");
+  const tableCard = el("article", "card full-span");
+  tableCard.append(el("h3", "card-title", "服务列表"));
+  const list = el("table", "simple-table");
+  list.innerHTML = "<thead><tr><th>服务</th><th>名称</th><th>状态</th><th>端口</th><th>操作</th></tr></thead>";
+  const tbody = el("tbody", "");
   for (const svc of state.services) {
     const key = String(svc.key || "");
-    const row = el("div", `list-row clickable ${state.selectedService === key ? "selected" : ""}`.trim());
-    row.append(el("span", "mono", `[SERVICE] ${key} | ${svc.name || "-"} | ${svc.is_running ? "运行中" : "未运行"} | 端口 ${svc.port || "-"}`));
+    const row = el("tr", state.selectedService === key ? "selected" : "");
+    row.append(
+      el("td", "cell-primary", key),
+      el("td", "", svc.name || "-"),
+      el("td", "", svc.is_running ? "运行中" : "未运行"),
+      el("td", "", svc.port ? String(svc.port) : "-"),
+    );
     const ops = el("div", "toolbar compact");
     ops.addEventListener("click", (evt) => evt.stopPropagation());
     ops.append(
@@ -37,15 +46,26 @@ function renderRuntimeModule() {
       makeButton("停止", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/stop`, {}); await ensureModuleData("runtime"); refreshModule(); }),
       makeButton("重启", async () => { await cfgApi("POST", `/faust/admin/services/${encodeURIComponent(key)}/restart`, {}); await ensureModuleData("runtime"); refreshModule(); })
     );
-    row.append(ops);
+    const opsCell = el("td", "");
+    opsCell.append(ops);
+    row.append(opsCell);
     row.addEventListener("click", async () => {
       state.selectedService = key;
       await ensureModuleData("runtime");
       refreshModule();
     });
-    list.append(row);
+    tbody.append(row);
   }
-  addSection("服务列表", [list]);
+  if (!state.services.length) {
+    const row = el("tr", "");
+    const empty = el("td", "table-empty", "当前没有服务信息。");
+    empty.colSpan = 5;
+    row.append(empty);
+    tbody.append(row);
+  }
+  list.append(tbody);
+  tableCard.append(list);
+  appendToActiveModule(tableCard);
 
   const log = el("textarea", "textarea code-area");
   log.readOnly = true;

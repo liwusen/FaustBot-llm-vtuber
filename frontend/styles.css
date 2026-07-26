@@ -32,23 +32,58 @@ html,body{
   z-index:1000;
   pointer-events:none;
   display:none;
+    --faust-blue-soft: rgba(63, 107, 232, 0.12);
+    --faust-panel-edge: rgba(255, 255, 255, 0.72);
 }
 
+
+  body {
+    position: relative;
+    color: var(--faust-text);
+  }
+
+  body::before,
+  body::after {
+    content: '';
+    position: fixed;
+    pointer-events: none;
+    z-index: 0;
+    filter: blur(16px);
+  }
+
+  body::before {
+    top: 18px;
+    right: 20px;
+    width: 240px;
+    height: 240px;
+    background: radial-gradient(circle, rgba(229, 68, 71, 0.12), rgba(229, 68, 71, 0) 68%);
+  }
+
+  body::after {
+    left: 18px;
+    bottom: 18px;
+    width: 320px;
+    height: 220px;
+    background: radial-gradient(circle, rgba(63, 107, 232, 0.1), rgba(63, 107, 232, 0) 70%);
+  }
 canvas{ display:block; }
 
 /* click-through support:
    - when the body has class `click-through`, the bulk of the window will ignore mouse
      events (so clicks pass through to underlying windows).
    - interactive HUD elements (controls, overlay) keep pointer events enabled so they
+    z-index: 1;
      remain clickable even when overall window is set to ignore mouse events.
 */
 body.click-through, body.click-through #app, body.click-through canvas {
   pointer-events: none; /* default: let clicks pass through */
 }
-
-/* keep these interactive even in click-through mode */
-body.click-through #modelQuickController,
-body.click-through #textChatBar,
+    background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(243, 247, 252, 0.88));
+    color: var(--faust-text);
+    padding:10px 12px;
+    border-radius:12px;
+    border: 1px solid rgba(255,255,255,0.7);
+    box-shadow: 0 12px 28px rgba(32, 55, 91, 0.12);
 body.click-through #statusDock,
 body.click-through #overlay,
 body.click-through .nimble-window,
@@ -91,20 +126,36 @@ body.click-through .hil-approval-shell {
   gap: 8px;
   padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(249, 251, 254, 0.72);
+  background: linear-gradient(180deg, rgba(255,255,255,0.86), rgba(243, 247, 252, 0.76));
   color: var(--faust-muted);
   font-size: 12px;
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(213, 222, 234, 0.8);
-  box-shadow: 0 8px 22px rgba(32, 55, 91, 0.1);
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.74);
+  box-shadow: 0 12px 28px rgba(32, 55, 91, 0.12);
   pointer-events: none;
+}
+
+#statusDock span {
+  position: relative;
+}
+
+#statusDock span + span::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  width: 1px;
+  height: 12px;
+  background: rgba(148, 163, 184, 0.32);
+  transform: translateY(-50%);
 }
 
 #statusDock button {
   pointer-events: auto;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.08);
-  color: #fff;
+  border: 1px solid rgba(213, 222, 234, 0.9);
+  background: rgba(255,255,255,0.88);
+  color: var(--faust-text);
   border-radius: 999px;
   padding: 4px 10px;
   cursor: pointer;
@@ -112,7 +163,8 @@ body.click-through .hil-approval-shell {
 }
 
 #statusDock button:hover {
-  background: rgba(255,255,255,0.16);
+  background: rgba(255,255,255,1);
+  box-shadow: 0 8px 18px rgba(32, 55, 91, 0.1);
 }
 
 #statusDock progress {
@@ -138,8 +190,8 @@ body.click-through .hil-approval-shell {
   transition: opacity 0.18s ease, transform 0.18s ease;
   border-radius: 24px;
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(244, 247, 252, 0.92));
-  border: 1px solid var(--faust-line);
-  box-shadow: var(--faust-shadow), inset 0 1px 0 rgba(255,255,255,0.8);
+  border: 1px solid var(--faust-panel-edge);
+  box-shadow: 0 24px 44px rgba(32, 55, 91, 0.16), inset 0 1px 0 rgba(255,255,255,0.84);
   backdrop-filter: blur(14px);
   pointer-events: auto;
 }
@@ -190,6 +242,7 @@ body.click-through .hil-approval-shell {
   font-size: 12px;
   white-space: nowrap;
   color: var(--faust-text);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
 }
 
 #modelQuickController button:hover {
@@ -223,11 +276,24 @@ body.click-through .hil-approval-shell {
   max-width: min(54vw, 620px);
   padding: 10px 12px;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(244, 247, 252, 0.92));
-  border: 1px solid var(--faust-line);
-  box-shadow: var(--faust-shadow), inset 0 1px 0 rgba(255,255,255,0.82);
+  background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(244, 247, 252, 0.93));
+  border: 1px solid rgba(255,255,255,0.76);
+  box-shadow: 0 20px 36px rgba(32, 55, 91, 0.16), inset 0 1px 0 rgba(255,255,255,0.88);
   backdrop-filter: blur(14px);
   transform: translate(-50%, -50%);
+}
+
+#textChatBar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.84), rgba(233, 240, 255, 0.22));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
 }
 
 #textChatInput {
@@ -250,6 +316,18 @@ body.click-through .hil-approval-shell {
   border-color: rgba(241, 177, 178, 0.92);
   box-shadow: 0 0 0 3px rgba(229, 68, 71, 0.12);
   background: rgba(255,255,255,1);
+}
+
+#textChatInput:focus-visible,
+#textChatSendBtn:focus-visible,
+#modelQuickController button:focus-visible,
+#hideAsrBubbleBtn:focus-visible,
+.floating-panel button:focus-visible,
+.floating-panel input:focus-visible,
+.floating-panel select:focus-visible,
+.floating-panel textarea:focus-visible {
+  outline: 2px solid rgba(63, 107, 232, 0.52);
+  outline-offset: 2px;
 }
 
 #textChatSendBtn {
@@ -292,7 +370,7 @@ body.click-through .hil-approval-shell {
   padding:12px 34px 12px 14px;
   border-radius:16px;
   border: 1px solid rgba(255,255,255,0.12);
-  box-shadow: 0 14px 32px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.05);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.05);
   backdrop-filter: blur(12px);
   transform: translate3d(0,0,0);
   max-height: min(60vh, 560px);
@@ -496,6 +574,15 @@ body.click-through .hil-approval-shell {
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(238,242,247,0.92));
   border-color: rgba(209, 213, 219, 0.7);
   color: #111827;
+}
+
+.floating-panel {
+  border: 1px solid rgba(255,255,255,0.72);
+  box-shadow: 0 22px 42px rgba(32, 55, 91, 0.16);
+}
+
+.floating-panel-header {
+  background: linear-gradient(180deg, rgba(255,255,255,0.52), rgba(255,255,255,0.08));
 }
 
 #asrBubble[data-source="error"] {
@@ -839,8 +926,8 @@ body.click-through .autocomplete-dropdown {
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(238,242,247,0.92));
   backdrop-filter: blur(14px);
   border: 1px solid rgba(209, 213, 219, 0.7);
-  border-radius: 14px;
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.16);
 }
 
 #subagentPanelHeader {
@@ -912,4 +999,46 @@ body.click-through .autocomplete-dropdown {
   font-size: 12px;
   line-height: 1.5;
   color: #1a2433;
+}
+
+@media (max-width: 720px) {
+  #statusDock {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    border-radius: 20px;
+  }
+
+  #textChatBar {
+    left: 50%;
+    bottom: 14px;
+    width: calc(100vw - 24px);
+    max-width: none;
+    min-width: 0;
+    padding: 10px;
+    transform: translate(-50%, 0);
+  }
+
+  #textChatInput {
+    min-width: 0;
+  }
+
+  #modelQuickController {
+    gap: 8px;
+    padding: 10px 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
 }

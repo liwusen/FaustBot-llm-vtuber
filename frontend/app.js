@@ -63,8 +63,6 @@ import { initAutocomplete } from './libs/autocomplete.js';
   const quickStopBtn = document.getElementById('quickStopBtn');
   let agentIsProcessing = false;
   const quickRandomMotionBtn = document.getElementById('quickRandomMotion');
-  const quickScaleUpBtn = document.getElementById('quickScaleUp');
-  const quickScaleDownBtn = document.getElementById('quickScaleDown');
   let Live2DModel=null;
   let textChatSending = false;
   let availableMotions = [];
@@ -218,6 +216,10 @@ import { initAutocomplete } from './libs/autocomplete.js';
           availableMotions: Array.isArray(availableMotions) ? [...availableMotions] : [],
           agentIsProcessing,
         };
+      },
+
+      getModelBounds(){
+        return getModelViewportBounds();
       },
 
       showBubble(text, source = 'ai'){
@@ -405,6 +407,36 @@ import { initAutocomplete } from './libs/autocomplete.js';
       x: (clientX - metrics.canvasRect.left) * (metrics.screenWidth / metrics.canvasRect.width),
       y: (clientY - metrics.canvasRect.top) * (metrics.screenHeight / metrics.canvasRect.height),
     };
+  }
+
+  function getModelViewportBounds(){
+    if (modelType === 'vrm' && vrmScene) {
+      try {
+        const bounds = vrmScene.getBounds();
+        return {
+          left: bounds.x,
+          top: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+    if (!currentModel || !app || !app.renderer) return null;
+    try {
+      const bounds = currentModel.getBounds();
+      const topLeft = live2DToClient(bounds.x, bounds.y);
+      if (!topLeft) return null;
+      return {
+        left: topLeft.x,
+        top: topLeft.y,
+        width: bounds.width * topLeft.scaleX,
+        height: bounds.height * topLeft.scaleY,
+      };
+    } catch (e) {
+      return null;
+    }
   }
 
 
@@ -2713,8 +2745,6 @@ import { initAutocomplete } from './libs/autocomplete.js';
   });
   if (quickStopBtn) quickStopBtn.addEventListener('click', ()=>{ interruptAll(); });
   if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ playRandomMotion(); });
-  if (quickScaleUpBtn) quickScaleUpBtn.addEventListener('click', ()=>{ nudgeScale(0.05); });
-  if (quickScaleDownBtn) quickScaleDownBtn.addEventListener('click', ()=>{ nudgeScale(-0.05); });
   if (quickController){
     quickController.addEventListener('mouseenter', ()=>{
       hoverQuickController = true;

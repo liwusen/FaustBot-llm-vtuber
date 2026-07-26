@@ -25,7 +25,12 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
 
   const metaBox = el("div", "card-help");
   const refreshMetaText = () => {
-    metaBox.textContent = `更新时间： ${formatScalar(meta.updated_at)} | 声明者： ${formatScalar(meta.declared_by)} | 分块数： ${formatScalar(meta.chunk_count)} | 已索引： ${formatScalar(meta.indexed)}`;
+    metaBox.innerHTML = [
+      `<div>更新时间：${formatScalar(meta.updated_at, "更新时间")}</div>`,
+      `<div>声明者：${formatScalar(meta.declared_by, "声明者")}</div>`,
+      `<div>分块数：${formatScalar(meta.chunk_count, "分块数")}</div>`,
+      `<div>已加入索引：${formatScalar(meta.indexed, "状态")}</div>`,
+    ].join("");
   };
   refreshMetaText();
 
