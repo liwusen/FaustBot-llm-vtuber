@@ -31,13 +31,22 @@ function renderTriggersModule() {
       refreshModule();
     })
   );
-  addSection("Trigger 操作", [bar]);
+  addSection("触发器操作", [bar]);
 
-  const list = el("div", "list-box");
+  const tableCard = el("article", "card full-span");
+  tableCard.append(el("h3", "card-title", "触发器列表"));
+  const list = el("table", "simple-table");
+  list.innerHTML = "<thead><tr><th>触发器 ID</th><th>类型</th><th>有效期</th><th>说明</th><th>操作</th></tr></thead>";
+  const tbody = el("tbody", "");
   for (const trig of state.triggers) {
     const tid = String(trig.id || "");
-    const row = el("div", `list-row clickable ${state.selectedTriggerId === tid ? "selected" : ""}`.trim());
-    row.append(el("span", "mono", `[TRIGGER] ${tid} | ${trig.type} | lifespan=${trig.lifespan ?? "-"} | ${trig.recall_description || ""}`));
+    const row = el("tr", state.selectedTriggerId === tid ? "selected" : "");
+    row.append(
+      el("td", "cell-primary", tid),
+      el("td", "", trig.type || "-"),
+      el("td", "", trig.lifespan == null ? "未设置" : String(trig.lifespan)),
+      el("td", "", trig.recall_description || "-"),
+    );
     const ops = el("div", "toolbar compact");
     ops.addEventListener("click", (evt) => evt.stopPropagation());
     ops.append(
@@ -60,12 +69,23 @@ function renderTriggersModule() {
         refreshModule();
       })
     );
-    row.append(ops);
+    const opsCell = el("td", "");
+    opsCell.append(ops);
+    row.append(opsCell);
     row.addEventListener("click", () => {
       state.selectedTriggerId = tid;
       refreshModule();
     });
-    list.append(row);
+    tbody.append(row);
   }
-  addSection("Trigger 列表", [list]);
+  if (!state.triggers.length) {
+    const row = el("tr", "");
+    const empty = el("td", "table-empty", "当前没有 Trigger。 ");
+    empty.colSpan = 5;
+    row.append(empty);
+    tbody.append(row);
+  }
+  list.append(tbody);
+  tableCard.append(list);
+  appendToActiveModule(tableCard);
 }

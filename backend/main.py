@@ -44,6 +44,7 @@ from faust_backend.routes.admin_triggers import router as admin_triggers_router
 from faust_backend.routes.admin_plugins import router as admin_plugins_router
 from faust_backend.routes.admin_logs import router as admin_logs_router
 from faust_backend.routes.admin_mcp import router as admin_mcp_router
+from faust_backend.routes.ui_settings import router as ui_settings_router
 _t.end("admin_routes")
 _t.begin("chat_routes")
 from faust_backend.routes.chat import router as chat_router
@@ -100,6 +101,7 @@ routers = [
     admin_plugins_router,
     admin_logs_router,
     admin_mcp_router,
+    ui_settings_router,
     chat_router,
     hil_nimble_router,
     audio_router,

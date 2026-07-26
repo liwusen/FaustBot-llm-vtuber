@@ -121,7 +121,7 @@ var MODULES = [
   // { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
   { id: "triggers", title: "触发器", desc: "计划AI任务列表与编辑。" },
   { id: "skills", title: "技能", desc: "Skill 安装与管理" },
-  { id: "plugins", title: "插件", desc: "FaustBot插件安装与管理" },
+  { id: "plugins", title: "插件", desc: "FaustBot 插件" },
   { id: "advanced", title: "高级", desc: "未归类项目与高级配置。" },
 ];
 
@@ -142,4 +142,11 @@ var GRAPH_EDGE_COLORS = {
 var GRAPH_NODE_RADIUS = 18;
 var GRAPH_EXPAND_DEPTH = 1;
 
+const SCALE_PRESETS = {
+    LIVE2D_MODEL_SCALE: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "x" },
+    TEXT_CHAT_BAR_Y_FACTOR: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
+    OPENAI_TTS_SPEED: { type: "range", min: 0.25, max: 4, step: 0.05, unit: "x" },
+    DECAY_PER_MINUTE: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
+    OVERLAY_INTENSITY: { type: "range", min: 0, max: 100, step: 1, unit: "%" },
+  };
 // End of constants

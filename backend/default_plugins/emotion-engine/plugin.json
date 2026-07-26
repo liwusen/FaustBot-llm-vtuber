@@ -1,7 +1,7 @@
 {
   "id": "emotion-engine",
   "name": "Emotion Engine",
-  "version": "0.1.2",
+  "version": "0.2.2",
   "description": "FaustBot 情绪插件，提供情绪状态、前端面板和主窗口表情浮层。",
   "author": "allenlee",
   "enabled": false,

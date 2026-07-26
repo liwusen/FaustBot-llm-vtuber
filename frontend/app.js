@@ -8,6 +8,8 @@ import { initHilApproval } from './libs/hil-approval.js';
 import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
 import { initAudioPlayback } from './libs/audio-playback.js';
 import { initAutocomplete } from './libs/autocomplete.js';
+import { createUiWidgetManager } from './libs/ui-widget-manager.js';
+import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
 
 
 
@@ -63,6 +65,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   const quickStopBtn = document.getElementById('quickStopBtn');
   let agentIsProcessing = false;
   const quickRandomMotionBtn = document.getElementById('quickRandomMotion');
+  const quickEditLayoutBtn = document.getElementById('quickEditLayoutBtn');
   let Live2DModel=null;
   let textChatSending = false;
   let availableMotions = [];
@@ -92,6 +95,111 @@ import { initAutocomplete } from './libs/autocomplete.js';
   let modelType = 'live2d';
   let _vrmModulePromise = null;
   let appPluginAssetsLoaded = false;
+  let persistedUiWidgetSettings = {};
+  const uiWidgetManager = createUiWidgetManager({ getModelBounds: () => getModelViewportBounds() });
+
+  async function loadUiWidgetSettings() {
+    if (!window.api || typeof window.api.configRequest !== 'function') return;
+    try {
+      const data = await window.api.configRequest('GET', '/faust/ui-setting');
+      const widgets = (data && data.settings && data.settings.widgets) || {};
+      persistedUiWidgetSettings = widgets;
+      Object.entries(widgets).forEach(([id, payload]) => {
+        try { uiWidgetManager.updateWidget(id, payload || {}); } catch (_e) {}
+      });
+    } catch (e) {
+      console.warn('loadUiWidgetSettings failed', e);
+    }
+  }
+
+  async function saveUiWidgetSettings() {
+    if (!window.api || typeof window.api.configRequest !== 'function') return;
+    const widgets = {};
+    uiWidgetManager.listWidgets().forEach((widget) => {
+      widgets[widget.id] = {
+        bindingType: widget.bindingType,
+        coord: widget.coord,
+        offset: widget.offset,
+        scale: widget.scale,
+        hidden: widget.hidden,
+        props: widget.props || {},
+      };
+    });
+    try {
+      await window.api.configRequest('POST', '/faust/ui-setting', { widgets });
+    } catch (e) {
+      console.warn('saveUiWidgetSettings failed', e);
+    }
+  }
+
+  function registerBuiltinWidgets() {
+    uiWidgetManager.registerWidget({
+      id: 'quick-controller',
+      element: quickController,
+      bindingType: 'model',
+      coord: { x: 0.4, y: 0.45 },
+      offset: { x: quickControllerXOffset, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    uiWidgetManager.registerWidget({
+      id: 'text-chat-bar',
+      element: document.getElementById('textChatBar'),
+      bindingType: 'model',
+      coord: { x: 0.5, y: textChatBarYFactor },
+      offset: { x: 0, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'model', coord: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    uiWidgetManager.registerWidget({
+      id: 'asr-bubble',
+      element: asrBubbleEl,
+      bindingType: 'model',
+      coord: { x: 0.5, y: 0 },
+      offset: { x: 0, y: -108 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    uiWidgetManager.registerWidget({
+      id: 'vrm-config-panel',
+      element: vrmConfigPanel,
+      bindingType: 'screen',
+      coord: { x: 24, y: 24 },
+      offset: { x: 0, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    uiWidgetManager.registerWidget({
+      id: 'subagent-panel',
+      element: subagentPanel,
+      bindingType: 'screen',
+      coord: { x: 24, y: 24 },
+      offset: { x: 0, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    uiWidgetManager.registerWidget({
+      id: 'log-panel',
+      element: document.getElementById('logPanel'),
+      bindingType: 'screen',
+      coord: { x: 24, y: 96 },
+      offset: { x: 0, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    Object.entries(persistedUiWidgetSettings || {}).forEach(([id, payload]) => {
+      try { uiWidgetManager.updateWidget(id, payload || {}); } catch (_e) {}
+    });
+  }
+
+  registerBuiltinWidgets();
+
   async function getVRMModule() {
     if (!_vrmModulePromise) {
       _vrmModulePromise = import('./libs/vrm-renderer.bundle.js');
@@ -218,6 +326,31 @@ import { initAutocomplete } from './libs/autocomplete.js';
         };
       },
 
+      registerWidget(spec){
+        const widget = uiWidgetManager.registerWidget(spec);
+        const persisted = persistedUiWidgetSettings && persistedUiWidgetSettings[widget.id];
+        if (persisted) {
+          try { return uiWidgetManager.updateWidget(widget.id, persisted); } catch (_e) {}
+        }
+        return widget;
+      },
+
+      updateWidget(id, patch){
+        return uiWidgetManager.updateWidget(id, patch);
+      },
+
+      getWidget(id){
+        return uiWidgetManager.getWidget(id);
+      },
+
+      listWidgets(){
+        return uiWidgetManager.listWidgets();
+      },
+
+      isWidgetEditMode(){
+        return uiWidgetManager.isEditMode();
+      },
+
       getModelBounds(){
         return getModelViewportBounds();
       },
@@ -242,6 +375,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
       },
     };
   }
+
+  registerBuiltinWidgets();
 
 
 
@@ -450,13 +585,22 @@ import { initAutocomplete } from './libs/autocomplete.js';
 
   function updateQuickControllerPosition(){
     if (!quickController) return;
+    const widget = uiWidgetManager.getWidget('quick-controller');
+    const editMode = uiWidgetManager.isEditMode();
+    quickController.classList.toggle('ui-widget-hidden-preview', !!(editMode && widget && widget.hidden));
+    if (widget && widget.hidden && !editMode) {
+      quickController.classList.remove('visible');
+      quickController.style.display = 'none';
+      return;
+    }
+    quickController.style.display = 'flex';
+    const binding = widget || { coord: { x: 0.4, y: 0.45 }, offset: { x: quickControllerXOffset, y: 0 }, scale: 1 };
     if (modelType === 'vrm' && vrmScene) {
       try{
         const b = vrmScene.getBounds();
-        const left = b.x + b.width * 0.4;
-        const top = b.y;
-        const height = b.height;
-        const controllerScale = Math.max(0.72, Math.min(1.2, 1));
+        const left = b.x + b.width * binding.coord.x;
+        const top = b.y + b.height * binding.coord.y;
+        const controllerScale = Math.max(0.72, Math.min(1.2, 1)) * (binding.scale || 1);
         const rect = quickController.getBoundingClientRect();
         const estimatedWidth = rect.width > 0 ? rect.width : 104;
         const estimatedHeight = rect.height > 0 ? rect.height : 340;
@@ -464,8 +608,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
         const maxLeft = window.innerWidth - estimatedWidth * 0.5 - 8;
         const minTop = estimatedHeight * 0.5 + 8;
         const maxTop = window.innerHeight - estimatedHeight * 0.5 - 8;
-        const anchoredLeft = Math.max(minLeft, Math.min(maxLeft, left + quickControllerXOffset));
-        const anchoredTop = Math.max(minTop, Math.min(maxTop, top + height * 0.45));
+        const anchoredLeft = Math.max(minLeft, Math.min(maxLeft, left + binding.offset.x));
+        const anchoredTop = Math.max(minTop, Math.min(maxTop, top + binding.offset.y));
         quickController.style.left = Math.round(anchoredLeft) + 'px';
         quickController.style.top = Math.round(anchoredTop) + 'px';
         quickController.style.setProperty('--qc-scale', controllerScale.toFixed(3));
@@ -477,10 +621,9 @@ import { initAutocomplete } from './libs/autocomplete.js';
       const b = currentModel.getBounds();
       const topLeft = live2DToClient(b.x, b.y);
       if (!topLeft) return;
-      const left = topLeft.x + topLeft.scaleX * b.width * 0.4;
-      const top = topLeft.y;
-      const height = b.height * topLeft.scaleY;
-      const controllerScale = Math.max(0.72, Math.min(1.2, topLeft.scaleX));
+      const left = topLeft.x + topLeft.scaleX * b.width * binding.coord.x;
+      const top = topLeft.y + topLeft.scaleY * b.height * binding.coord.y;
+      const controllerScale = Math.max(0.72, Math.min(1.2, topLeft.scaleX)) * (binding.scale || 1);
       const rect = quickController.getBoundingClientRect();
       const estimatedWidth = rect.width > 0 ? rect.width : 104;
       const estimatedHeight = rect.height > 0 ? rect.height : 340;
@@ -488,8 +631,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
       const maxLeft = window.innerWidth - estimatedWidth * 0.5 - 8;
       const minTop = estimatedHeight * 0.5 + 8;
       const maxTop = window.innerHeight - estimatedHeight * 0.5 - 8;
-      const anchoredLeft = Math.max(minLeft, Math.min(maxLeft, left + quickControllerXOffset));
-      const anchoredTop = Math.max(minTop, Math.min(maxTop, top + height * 0.45));
+      const anchoredLeft = Math.max(minLeft, Math.min(maxLeft, left + binding.offset.x));
+      const anchoredTop = Math.max(minTop, Math.min(maxTop, top + binding.offset.y));
       quickController.style.left = Math.round(anchoredLeft) + 'px';
       quickController.style.top = Math.round(anchoredTop) + 'px';
       quickController.style.setProperty('--qc-scale', controllerScale.toFixed(3));
@@ -1008,11 +1151,13 @@ import { initAutocomplete } from './libs/autocomplete.js';
         const next = Number(arg);
         if (!Number.isFinite(next)) return;
         textChatBarYFactor = Math.max(0, Math.min(1, next));
+        try { uiWidgetManager.updateWidget('text-chat-bar', { coord: { x: 0.5, y: textChatBarYFactor } }); } catch (e) {}
         updateTextChatBarPosition();
       } else if (cmd === 'SET_QUICK_CONTROLLER_X_OFFSET'){
         const next = Number(arg);
         if (!Number.isFinite(next)) return;
         quickControllerXOffset = Math.max(-400, Math.min(400, next));
+        try { uiWidgetManager.updateWidget('quick-controller', { offset: { x: quickControllerXOffset, y: 0 } }); } catch (e) {}
         updateQuickControllerPosition();
       } else if (cmd === 'SET_MODEL_POSITION'){
         if (!arg) return;
@@ -1564,6 +1709,8 @@ import { initAutocomplete } from './libs/autocomplete.js';
 
   function showResultBubble(source, entries){
     if (!asrTextEl || !asrBubbleEl) return;
+    const widget = uiWidgetManager.getWidget('asr-bubble');
+    if (widget && widget.hidden && !uiWidgetManager.isEditMode()) return;
     asrBubbleSource = source || 'ai';
     asrBubbleEl.dataset.source = asrBubbleSource;
     const normalizedEntries = Array.isArray(entries)
@@ -1783,15 +1930,21 @@ import { initAutocomplete } from './libs/autocomplete.js';
 
   function updateAsrTextPosition(forceSnap = false){
     if (!asrBubbleEl || !asrTextEl) return;
+    const widget = uiWidgetManager.getWidget('asr-bubble') || { coord: { x: 0.5, y: 0 }, offset: { x: 0, y: -108 }, scale: 1 };
+    const editMode = uiWidgetManager.isEditMode();
+    asrBubbleEl.classList.toggle('ui-widget-hidden-preview', !!(editMode && widget.hidden));
+    if (widget.hidden && !editMode) {
+      asrBubbleEl.style.display = 'none';
+      return;
+    }
     if (modelType === 'vrm' && vrmScene) {
       try{
         const b = vrmScene.getBounds();
-        const clientX = b.x + b.width / 2;
-        const clientY = b.y;
-        const offsetY = -108;
+        const clientX = b.x + b.width * widget.coord.x;
+        const clientY = b.y + b.height * widget.coord.y;
         const bubbleWidth = Math.max(asrBubbleEl.offsetWidth, 220);
         asrBubbleTargetX = clientX - bubbleWidth / 2;
-        asrBubbleTargetY = clientY + offsetY;
+        asrBubbleTargetY = clientY + widget.offset.y;
         if (!asrBubbleInitialized || forceSnap){
           asrBubbleCurrentX = asrBubbleTargetX;
           asrBubbleCurrentY = asrBubbleTargetY;
@@ -1803,6 +1956,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
         }
         asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
         asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
+        asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
         asrTextEl.style.fontSize = '20px';
         hil.updatePosition();
       }catch(e){/*ignore*/}
@@ -1811,15 +1965,13 @@ import { initAutocomplete } from './libs/autocomplete.js';
     if (!currentModel || !app || !app.renderer) return;
     try{
       const b = currentModel.getBounds();
-      const anchor = live2DToClient(b.x + b.width / 2, b.y);
+      const anchor = live2DToClient(b.x + b.width * widget.coord.x, b.y + b.height * widget.coord.y);
       if (!anchor) return;
       const clientX = anchor.x;
       const clientY = anchor.y;
-      // position slightly above head
-      const offsetY = -108;
       const bubbleWidth = Math.max(asrBubbleEl.offsetWidth, 220);
       asrBubbleTargetX = clientX - bubbleWidth / 2;
-      asrBubbleTargetY = clientY + offsetY;
+      asrBubbleTargetY = clientY + widget.offset.y;
       if (!asrBubbleInitialized || forceSnap){
         asrBubbleCurrentX = asrBubbleTargetX;
         asrBubbleCurrentY = asrBubbleTargetY;
@@ -1831,6 +1983,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
       }
       asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
       asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
+      asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
       asrTextEl.style.fontSize = '20px';
       hil.updatePosition();
     }catch(e){/*ignore*/}
@@ -1839,11 +1992,19 @@ import { initAutocomplete } from './libs/autocomplete.js';
   function updateTextChatBarPosition(){
     const textChatBar = document.getElementById('textChatBar');
     if (!textChatBar) return;
+    const widget = uiWidgetManager.getWidget('text-chat-bar') || { coord: { x: 0.5, y: textChatBarYFactor }, offset: { x: 0, y: 0 }, scale: 1 };
+    const editMode = uiWidgetManager.isEditMode();
+    textChatBar.classList.toggle('ui-widget-hidden-preview', !!(editMode && widget.hidden));
+    if (widget.hidden && !editMode) {
+      textChatBar.style.display = 'none';
+      return;
+    }
+    textChatBar.style.display = 'flex';
     if (modelType === 'vrm' && vrmScene) {
       try{
         const b = vrmScene.getBounds();
-        const clientX = b.x + b.width * 0.5;
-        const waistY = b.y + b.height * textChatBarYFactor;
+        const clientX = b.x + b.width * widget.coord.x + widget.offset.x;
+        const waistY = b.y + b.height * widget.coord.y + widget.offset.y;
         const rect = textChatBar.getBoundingClientRect();
         const estimatedWidth = rect.width > 0 ? rect.width : 420;
         const estimatedHeight = rect.height > 0 ? rect.height : 64;
@@ -1852,17 +2013,17 @@ import { initAutocomplete } from './libs/autocomplete.js';
         textChatBar.style.left = Math.round(clampedLeft) + 'px';
         textChatBar.style.top = Math.round(clampedTop) + 'px';
         textChatBar.style.bottom = 'auto';
-        textChatBar.style.transform = 'translate(-50%, -50%)';
+        textChatBar.style.transform = `translate(-50%, -50%) scale(${widget.scale || 1})`;
       }catch(e){/*ignore*/}
       return;
     }
     if (!currentModel || !app || !app.renderer) return;
     try{
       const b = currentModel.getBounds();
-      const anchor = live2DToClient(b.x + b.width * 0.5, b.y + b.height * textChatBarYFactor);
+      const anchor = live2DToClient(b.x + b.width * widget.coord.x, b.y + b.height * widget.coord.y);
       if (!anchor) return;
-      const clientX = anchor.x;
-      const waistY = anchor.y;
+      const clientX = anchor.x + widget.offset.x;
+      const waistY = anchor.y + widget.offset.y;
       const rect = textChatBar.getBoundingClientRect();
       const estimatedWidth = rect.width > 0 ? rect.width : 420;
       const estimatedHeight = rect.height > 0 ? rect.height : 64;
@@ -1871,7 +2032,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
       textChatBar.style.left = Math.round(clampedLeft) + 'px';
       textChatBar.style.top = Math.round(clampedTop) + 'px';
       textChatBar.style.bottom = 'auto';
-      textChatBar.style.transform = 'translate(-50%, -50%)';
+      textChatBar.style.transform = `translate(-50%, -50%) scale(${widget.scale || 1})`;
       updateQuickControllerPosition();
     }catch(e){/*ignore*/}
   }
@@ -2556,6 +2717,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
   modelPathInput.value = defaultModel;
   (async ()=>{
     await refreshSpeechRuntimeConfig(true);
+    await loadUiWidgetSettings();
     const runtimeCfg = await loadRuntimeLive2DConfig();
     const configuredModel = runtimeCfg && runtimeCfg.LIVE2D_MODEL_PATH ? String(runtimeCfg.LIVE2D_MODEL_PATH).trim() : '';
     const configuredScale = runtimeCfg && runtimeCfg.LIVE2D_MODEL_SCALE !== undefined && runtimeCfg.LIVE2D_MODEL_SCALE !== null && runtimeCfg.LIVE2D_MODEL_SCALE !== ''
@@ -2575,9 +2737,11 @@ import { initAutocomplete } from './libs/autocomplete.js';
     }
     if (Number.isFinite(configuredTextChatYFactor)) {
       textChatBarYFactor = Math.max(0, Math.min(1, configuredTextChatYFactor));
+      try { uiWidgetManager.updateWidget('text-chat-bar', { coord: { x: 0.5, y: textChatBarYFactor } }); } catch (e) {}
     }
     if (Number.isFinite(configuredQuickControllerXOffset)) {
       quickControllerXOffset = Math.max(-400, Math.min(400, configuredQuickControllerXOffset));
+      try { uiWidgetManager.updateWidget('quick-controller', { offset: { x: quickControllerXOffset, y: 0 } }); } catch (e) {}
     }
     const configuredModelType = runtimeCfg && runtimeCfg.MODEL_TYPE ? String(runtimeCfg.MODEL_TYPE).trim().toLowerCase() : 'live2d';
     const vrmModelPath = configuredModelType === 'vrm'
@@ -2657,7 +2821,7 @@ import { initAutocomplete } from './libs/autocomplete.js';
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
-        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked;
+        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked || uiWidgetManager.isEditMode();
         if (devToolsLikelyOpen) {
           interactiveActive = true;
           setIgnore(false);
@@ -2745,6 +2909,13 @@ import { initAutocomplete } from './libs/autocomplete.js';
   });
   if (quickStopBtn) quickStopBtn.addEventListener('click', ()=>{ interruptAll(); });
   if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ playRandomMotion(); });
+  if (quickEditLayoutBtn) {
+    quickEditLayoutBtn.addEventListener('click', () => {
+      if (window.faustAppUI && typeof window.faustAppUI.toggleWidgetEditMode === 'function') {
+        window.faustAppUI.toggleWidgetEditMode();
+      }
+    });
+  }
   if (quickController){
     quickController.addEventListener('mouseenter', ()=>{
       hoverQuickController = true;
@@ -2815,6 +2986,25 @@ import { initAutocomplete } from './libs/autocomplete.js';
   // ── 日志面板（已抽取到 libs/log-panel.js） ──
   const logPanelCtrl = initLogPanel();
   logPanelCtrl.init();
+
+  const uiWidgetEditor = initUiWidgetEditor({
+    manager: uiWidgetManager,
+    saveSettings: saveUiWidgetSettings,
+    onEditModeChange: (enabled) => {
+      if (clickThroughController) clickThroughController.setInteractiveLock(enabled);
+    },
+    refreshLayout: () => {
+      updateQuickControllerPosition();
+      updateTextChatBarPosition();
+      updateAsrTextPosition(true);
+      refreshQuickControllerVisibility();
+    },
+  });
+
+  if (window.faustAppUI) {
+    window.faustAppUI.toggleWidgetEditMode = () => uiWidgetEditor.toggle();
+    window.faustAppUI.saveWidgetSettings = () => saveUiWidgetSettings();
+  }
 
   // ── 直播模式（已抽取到 libs/live-mode.js） ──
   const liveModeCtrl = initLiveMode();

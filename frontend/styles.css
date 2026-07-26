@@ -13,77 +13,76 @@ html,body{
   --faust-accent: #e54447;
   --faust-accent-strong: #d83f42;
   --faust-blue: #3f6be8;
+  --faust-blue-soft: rgba(63, 107, 232, 0.12);
+  --faust-panel-edge: rgba(255, 255, 255, 0.72);
   --faust-shadow: 0 16px 38px rgba(32, 55, 91, 0.16);
 }
+
+body {
+  position: relative;
+  color: var(--faust-text);
+}
+
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(16px);
+}
+
+body::before {
+  top: 18px;
+  right: 20px;
+  width: 240px;
+  height: 240px;
+  background: radial-gradient(circle, rgba(229, 68, 71, 0.12), rgba(229, 68, 71, 0) 68%);
+}
+
+body::after {
+  left: 18px;
+  bottom: 18px;
+  width: 320px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(63, 107, 232, 0.1), rgba(63, 107, 232, 0) 70%);
+}
+
 #app{
   position:relative;
   width:100%;
   height:100%;
   overflow:hidden;
+  z-index: 1;
 }
 #overlay{
   position:absolute;
   left:12px;
   top:12px;
-  background: rgba(0,0,0,0.45);
-  color:#fff;
-  padding:8px 10px;
-  border-radius:6px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(243, 247, 252, 0.88));
+  color: var(--faust-text);
+  padding:10px 12px;
+  border-radius:12px;
+  border: 1px solid rgba(255,255,255,0.7);
+  box-shadow: 0 12px 28px rgba(32, 55, 91, 0.12);
   z-index:1000;
   pointer-events:none;
   display:none;
-    --faust-blue-soft: rgba(63, 107, 232, 0.12);
-    --faust-panel-edge: rgba(255, 255, 255, 0.72);
 }
-
-
-  body {
-    position: relative;
-    color: var(--faust-text);
-  }
-
-  body::before,
-  body::after {
-    content: '';
-    position: fixed;
-    pointer-events: none;
-    z-index: 0;
-    filter: blur(16px);
-  }
-
-  body::before {
-    top: 18px;
-    right: 20px;
-    width: 240px;
-    height: 240px;
-    background: radial-gradient(circle, rgba(229, 68, 71, 0.12), rgba(229, 68, 71, 0) 68%);
-  }
-
-  body::after {
-    left: 18px;
-    bottom: 18px;
-    width: 320px;
-    height: 220px;
-    background: radial-gradient(circle, rgba(63, 107, 232, 0.1), rgba(63, 107, 232, 0) 70%);
-  }
 canvas{ display:block; }
 
 /* click-through support:
    - when the body has class `click-through`, the bulk of the window will ignore mouse
      events (so clicks pass through to underlying windows).
    - interactive HUD elements (controls, overlay) keep pointer events enabled so they
-    z-index: 1;
      remain clickable even when overall window is set to ignore mouse events.
 */
 body.click-through, body.click-through #app, body.click-through canvas {
   pointer-events: none; /* default: let clicks pass through */
 }
-    background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(243, 247, 252, 0.88));
-    color: var(--faust-text);
-    padding:10px 12px;
-    border-radius:12px;
-    border: 1px solid rgba(255,255,255,0.7);
-    box-shadow: 0 12px 28px rgba(32, 55, 91, 0.12);
+
+body.click-through #modelQuickController,
+body.click-through #textChatBar,
 body.click-through #statusDock,
 body.click-through #overlay,
 body.click-through .nimble-window,
@@ -95,6 +94,10 @@ body.click-through #logPanel,
 body.click-through .floating-panel-header,
 body.click-through .floating-panel ,
 body.click-through .hil-approval-shell {
+  pointer-events: auto;
+}
+body.click-through .emotion-badge-v2,
+body.click-through .ui-widget-property-panel {
   pointer-events: auto;
 }
 
@@ -583,6 +586,94 @@ body.click-through .hil-approval-shell {
 
 .floating-panel-header {
   background: linear-gradient(180deg, rgba(255,255,255,0.52), rgba(255,255,255,0.08));
+}
+
+.ui-widget-editing-target {
+  cursor: move !important;
+}
+
+.ui-widget-hidden-preview {
+  opacity: 0.38 !important;
+  filter: grayscale(0.25);
+}
+
+.ui-widget-editor-overlay {
+  position: fixed;
+  z-index: 4000;
+  pointer-events: none;
+}
+
+.ui-widget-selection-box {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(63, 107, 232, 0.82);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.7), 0 0 0 6px rgba(63, 107, 232, 0.08);
+  background: rgba(63, 107, 232, 0.04);
+  pointer-events: none;
+}
+
+.ui-widget-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #3f6be8;
+  box-shadow: 0 2px 8px rgba(32, 55, 91, 0.18);
+  pointer-events: auto;
+}
+
+.ui-widget-handle.tl { left: -7px; top: -7px; }
+.ui-widget-handle.tr { right: -7px; top: -7px; }
+.ui-widget-handle.bl { left: -7px; bottom: -7px; }
+.ui-widget-handle.br { right: -7px; bottom: -7px; cursor: nwse-resize; }
+
+.ui-widget-property-panel {
+  z-index: 4100;
+  width: 280px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(244,247,252,0.94));
+  border: 1px solid rgba(255,255,255,0.74);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px rgba(32, 55, 91, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.ui-widget-mode-badge {
+  position: fixed;
+  left: 14px;
+  top: 14px;
+  z-index: 99999;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ea5052, #d83f42);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(225, 71, 72, 0.32);
+  border: 1px solid rgba(255,255,255,0.2);
+  pointer-events: none;
+  user-select: none;
+  animation: ui-widget-mode-pulse 3s ease-in-out infinite;
+}
+
+@keyframes ui-widget-mode-pulse {
+  0%, 100% { box-shadow: 0 10px 24px rgba(225, 71, 72, 0.32); }
+  50% { box-shadow: 0 10px 32px rgba(225, 71, 72, 0.58); }
+}
+
+.ui-widget-mode-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.ui-widget-mode-hint {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.72;
 }
 
 #asrBubble[data-source="error"] {

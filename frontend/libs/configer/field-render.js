@@ -26,14 +26,8 @@ function getMeta(key) {
 
 function getNumberFieldSpec(key, value) {
   const numericValue = Number(value);
-  const presets = {
-    LIVE2D_MODEL_SCALE: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "x" },
-    TEXT_CHAT_BAR_Y_FACTOR: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
-    OPENAI_TTS_SPEED: { type: "range", min: 0.25, max: 4, step: 0.05, unit: "x" },
-    DECAY_PER_MINUTE: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
-    OVERLAY_INTENSITY: { type: "range", min: 0, max: 100, step: 1, unit: "%" },
-  };
-  if (presets[key]) return presets[key];
+  
+  if (SCALE_PRESETS[key]) return SCALE_PRESETS[key];
   if (Number.isFinite(numericValue) && numericValue >= 0 && numericValue <= 1) {
     return { type: "range", min: 0, max: 1, step: 0.01, unit: "" };
   }
