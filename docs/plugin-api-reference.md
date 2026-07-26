@@ -11,6 +11,7 @@
 - [Hook 完整参考](#hook-完整参考)
 - [数据结构](#数据结构)
 - [前后端通信](#前后端通信)
+- [UI 小组件 API](#ui-小组件-api)
 - [Admin API](#admin-api)
 - [默认插件示例](#默认插件示例)
 
@@ -622,6 +623,207 @@ const result = await window.faustAppUI.communicate('my-plugin', {
 - 不要通过 `register_routes` 注册插件 Router（已废弃）
 - 所有前后端交互都收敛到 `communicate` 接口
 - 插件前端静态资源仍通过 `/faust/plugins/{plugin_id}/frontend/...` 提供
+
+---
+
+## UI 小组件 API
+
+插件可以通过前端脚本注册自定义 UI 小组件（Widget），并在主界面上显示和交互。
+
+### 概览
+
+- **管理器**：`UiWidgetManager` 管理所有小组件的注册、更新和布局
+- **编辑器**：`UiWidgetEditor` 提供可视化编辑模式（拖拽、缩放、属性面板）
+- **持久化**：小组件配置保存在 `~/.faustbot/ui-settings.json`
+- **API 暴露**：通过 `window.faustAppUI` 暴露给插件前端脚本
+
+### 前端 API（window.faustAppUI）
+
+| 方法 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `registerWidget(spec)` | `WidgetSpec` | `Widget` | 注册新小组件 |
+| `updateWidget(id, patch)` | `id: string, patch: object` | `Widget` | 更新小组件属性 |
+| `getWidget(id)` | `id: string` | `Widget \| null` | 获取单个小组件 |
+| `listWidgets()` | - | `Widget[]` | 列出所有小组件 |
+| `isWidgetEditMode()` | - | `boolean` | 是否处于编辑模式 |
+| `getModelBounds()` | - | `DOMRect \| null` | 获取模型视口边界 |
+
+### WidgetSpec 数据结构
+
+```javascript
+{
+  id: 'my-widget',              // 必需，唯一标识符
+  element: HTMLElement,          // 必需，DOM 元素
+  bindingType: 'model' | 'screen',  // 绑定类型
+  coord: { x: 0.5, y: 0.5 },   // 坐标（model: 相对比例, screen: 像素）
+  offset: { x: 0, y: 0 },      // 偏移量（像素）
+  scale: 1,                     // 缩放比例（最小 0.2）
+  hidden: false,                // 是否隐藏
+  schema: {                     // 属性 schema（用于编辑器）
+    bindingType: 'model',
+    coord: 'point',
+    scale: 'number',
+    hidden: 'boolean',
+    props: {
+      dynamicBackground: 'boolean',
+      fontSize: 'number',
+    }
+  },
+  props: {                      // 自定义属性值
+    dynamicBackground: true,
+    fontSize: 14,
+  }
+}
+```
+
+### bindingType 说明
+
+| 类型 | 坐标系 | 说明 |
+|------|--------|------|
+| `model` | 相对比例 (0-1) | 相对于模型视口的位置，`coord.x` 和 `coord.y` 是比例值 |
+| `screen` | 像素 | 相对于屏幕左上角的绝对位置 |
+
+### 注册小组件示例
+
+```javascript
+// 在插件的 app-hook.js 中
+(function() {
+  const api = window.faustAppUI;
+  if (!api) return;
+
+  // 创建 DOM 元素
+  const badge = document.createElement('div');
+  badge.className = 'my-custom-badge';
+  badge.innerHTML = '<span>My Widget</span>';
+  document.body.appendChild(badge);
+
+  // 注册小组件
+  api.registerWidget({
+    id: 'my-custom-badge',
+    element: badge,
+    bindingType: 'model',
+    coord: { x: 0.1, y: 0.1 },
+    offset: { x: 0, y: 0 },
+    scale: 1,
+    hidden: false,
+    schema: {
+      bindingType: 'model',
+      coord: 'point',
+      scale: 'number',
+      hidden: 'boolean',
+      props: { showLabel: 'boolean' },
+    },
+    props: { showLabel: true },
+  });
+
+  // 布局更新循环
+  function updatePosition() {
+    const widget = api.getWidget('my-custom-badge');
+    const bounds = api.getModelBounds();
+    const editMode = api.isWidgetEditMode();
+
+    if (!bounds || !widget) return;
+
+    // 编辑模式下显示隐藏的小组件
+    if (widget.hidden && !editMode) {
+      badge.style.display = 'none';
+      return;
+    }
+    badge.style.display = '';
+
+    // 计算位置
+    const coord = widget.coord || { x: 0.1, y: 0.1 };
+    const offset = widget.offset || { x: 0, y: 0 };
+    const scale = widget.scale || 1;
+
+    const anchorX = bounds.left + bounds.width * coord.x + offset.x;
+    const anchorY = bounds.top + bounds.height * coord.y + offset.y;
+
+    badge.style.left = Math.round(anchorX) + 'px';
+    badge.style.top = Math.round(anchorY) + 'px';
+    badge.style.transform = `translate(-50%, -50%) scale(${scale})`;
+  }
+
+  // 持续更新位置
+  function loop() {
+    updatePosition();
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
+```
+
+### 编辑模式
+
+- 快捷键：`Ctrl+Shift+E` 切换编辑模式
+- 编辑模式下可以：
+  - 拖拽小组件调整位置
+  - 右键打开属性面板
+  - 拖拽右下角手柄调整缩放
+  - 切换小组件可见性
+- 配置自动保存到 `~/.faustbot/ui-settings.json`
+
+### 后端 API
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| GET | `/faust/ui-setting` | 获取所有小组件配置 |
+| POST | `/faust/ui-setting` | 保存所有小组件配置 |
+
+**请求/响应格式：**
+
+```json
+{
+  "status": "ok",
+  "settings": {
+    "widgets": {
+      "my-widget": {
+        "bindingType": "model",
+        "coord": { "x": 0.1, "y": 0.1 },
+        "offset": { "x": 0, "y": 0 },
+        "scale": 1,
+        "hidden": false,
+        "props": {}
+      }
+    }
+  }
+}
+```
+
+### 内置小组件
+
+| ID | 说明 | bindingType |
+|----|------|-------------|
+| `quick-controller` | 快捷控制器 | model |
+| `text-chat-bar` | 文本输入栏 | model |
+| `asr-bubble` | 语音识别气泡 | model |
+| `vrm-config-panel` | VRM 配置面板 | screen |
+| `subagent-panel` | 子代理面板 | screen |
+| `log-panel` | 日志面板 | screen |
+
+### emotion-engine 示例
+
+emotion-engine 插件注册了一个情感徽章小组件：
+
+```javascript
+api.registerWidget({
+  id: 'emotion-badge',
+  element: badge,
+  bindingType: 'model',
+  coord: { x: 0.08, y: 0.1 },
+  offset: { x: 0, y: 0 },
+  scale: 1,
+  hidden: false,
+  schema: {
+    bindingType: 'model',
+    coord: 'point',
+    scale: 'number',
+    hidden: 'boolean',
+    props: { dynamicBackground: 'boolean' },
+  },
+  props: { dynamicBackground: true },
+});
+```
 
 ---
 
