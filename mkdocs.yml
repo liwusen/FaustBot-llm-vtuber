@@ -22,6 +22,7 @@ nav:
   - 进阶:
     - MCP: mcp.md
     - 开发者环境: devinstall.md
+    - 插件开发指南: create-plugin-guide.md
     - 插件 API Reference: plugin-api-reference.md
   - 语音配置:
     - GPT-Sovits: tts.md

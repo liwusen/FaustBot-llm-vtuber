@@ -655,7 +655,7 @@ const result = await window.faustAppUI.communicate('my-plugin', {
   id: 'my-widget',              // 必需，唯一标识符
   element: HTMLElement,          // 必需，DOM 元素
   bindingType: 'model' | 'screen',  // 绑定类型
-  coord: { x: 0.5, y: 0.5 },   // 坐标（model: 相对比例, screen: 像素）
+  coord: { x: 0.5, y: 0.5 },   // 坐标（model: 相对模型比例, screen: 相对窗口比例，均为 0~1）
   offset: { x: 0, y: 0 },      // 偏移量（像素）
   scale: 1,                     // 缩放比例（最小 0.2）
   hidden: false,                // 是否隐藏
@@ -681,7 +681,7 @@ const result = await window.faustAppUI.communicate('my-plugin', {
 | 类型 | 坐标系 | 说明 |
 |------|--------|------|
 | `model` | 相对比例 (0-1) | 相对于模型视口的位置，`coord.x` 和 `coord.y` 是比例值 |
-| `screen` | 像素 | 相对于屏幕左上角的绝对位置 |
+| `screen` | 相对比例 (0-1) | 相对于窗口尺寸的比例位置，实际像素 = `coord * window.innerWidth/innerHeight` |
 
 ### 注册小组件示例
 
