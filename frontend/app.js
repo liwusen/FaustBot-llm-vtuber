@@ -167,7 +167,7 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
       id: 'vrm-config-panel',
       element: vrmConfigPanel,
       bindingType: 'screen',
-      coord: { x: 24, y: 24 },
+      coord: { x: 0.02, y: 0.03 },
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
@@ -177,7 +177,7 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
       id: 'subagent-panel',
       element: subagentPanel,
       bindingType: 'screen',
-      coord: { x: 24, y: 24 },
+      coord: { x: 0.02, y: 0.03 },
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
@@ -187,7 +187,7 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
       id: 'log-panel',
       element: document.getElementById('logPanel'),
       bindingType: 'screen',
-      coord: { x: 24, y: 96 },
+      coord: { x: 0.02, y: 0.1 },
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
@@ -264,10 +264,11 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
       const baseUrl = window.api.backendBaseUrl || 'http://127.0.0.1:13900';
       if (window.faustAppUI) window.faustAppUI.backendBaseUrl = baseUrl;
       const pending = [];
+      const cacheBust = 'v=' + Date.now();
       for (const asset of assets) {
         if (asset.type === 'js' && asset.path) {
           const script = document.createElement('script');
-          script.src = baseUrl + asset.path;
+          script.src = baseUrl + asset.path + (asset.path.includes('?') ? '&' : '?') + cacheBust;
           script.setAttribute('data-plugin', asset.plugin_id || '');
           pending.push(new Promise((resolve) => {
             script.onload = () => resolve();
@@ -277,7 +278,7 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
         } else if (asset.type === 'css' && asset.path) {
           const link = document.createElement('link');
           link.rel = 'stylesheet';
-          link.href = baseUrl + asset.path;
+          link.href = baseUrl + asset.path + (asset.path.includes('?') ? '&' : '?') + cacheBust;
           link.setAttribute('data-plugin', asset.plugin_id || '');
           document.head.appendChild(link);
         }

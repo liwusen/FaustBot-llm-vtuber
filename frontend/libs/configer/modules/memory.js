@@ -160,12 +160,13 @@ function renderMemoryTree(currentDir) {
   table.append(thead);
   const tbody = document.createElement("tbody");
   table.append(tbody);
-  const addRow = (icon, name, typeText, descText, cls, onclick, oncontext) => {
+  const addRow = (icon, name, typeText, descText, cls, onclick, oncontext, ondblclick) => {
     const tr = document.createElement("tr");
     tr.className = cls || "";
     tr.innerHTML = `<td><span class="col-name mono">${icon} ${name}</span></td><td class=col-type>${typeText}</td><td class=col-desc>${descText}</td>`;
     if (onclick) tr.addEventListener("click", onclick);
     if (oncontext) tr.addEventListener("contextmenu", (evt) => { evt.preventDefault(); oncontext(evt); });
+    if (ondblclick) tr.addEventListener("dblclick", ondblclick);
     tbody.append(tr);
   };
   addRow("\u{1F4C1}", "/ (根目录)", "目录", "", currentDir === "/" ? "selected" : "",
@@ -207,7 +208,11 @@ function renderMemoryTree(currentDir) {
       (evt) => {
         state.kbSelectedPath = node.path;
         renderContextMenu(evt.clientX, evt.clientY, node);
-      }
+      },
+      node.type === "file" ? (async () => {
+        const d = await cfgApi("GET", "/faust/memory/get", null, { path: node.path });
+        await openKbEditorModal(node.path, String(d.content || ""), d.meta || {});
+      }) : null
     );
   }
   addSection("目录: " + currentDir + " (" + nodes.length + " 项)", [table]);

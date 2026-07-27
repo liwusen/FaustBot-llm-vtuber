@@ -70,8 +70,8 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
       };
     }
     return {
-      x: widget.coord.x + widget.offset.x,
-      y: widget.coord.y + widget.offset.y,
+      x: window.innerWidth * widget.coord.x + widget.offset.x,
+      y: window.innerHeight * widget.coord.y + widget.offset.y,
       scale: widget.scale,
     };
   }

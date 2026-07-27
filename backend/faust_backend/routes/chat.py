@@ -338,7 +338,8 @@ async def chat_websocket(websocket: WebSocket):
                         results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
                         if results:
                             for r in results:
-                                if r is None:
+                                if r == "__IGNORED__" or r == "__REMOVED__":
+                                    log.debug("Agent event hook returned empty string, discarding payload")
                                     payload = None
                                     break
                                 if isinstance(r, dict):

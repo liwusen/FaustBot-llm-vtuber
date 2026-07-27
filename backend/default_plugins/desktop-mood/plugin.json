@@ -1,7 +1,7 @@
 {
   "id": "desktop-mood",
   "name": "Desktop Mood",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "FaustBot 桌面情景插件骨架，提供规则、状态浮层和桌面上下文工具。",
   "author": "FaustBot",
   "enabled": false,

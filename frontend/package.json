@@ -8,7 +8,9 @@
   "description": "FaustBot frontend application",
   "scripts": {
     "start": "electron .",
-    "build:bundle": "esbuild libs/configer/.codemirror-entry.js --bundle --platform=browser --format=iife --outfile=libs/codemirror/codemirror-bundle.js --minify-syntax",
+    "build:bundle": "npm run build:codemirror && npm run build:vrm",
+    "build:codemirror": "esbuild libs/configer/.codemirror-entry.js --bundle --platform=browser --format=iife --outfile=libs/codemirror/codemirror-bundle.js --minify-syntax",
+    "build:vrm": "esbuild vrm-renderer.js --bundle --platform=browser --format=esm --outfile=libs/vrm-renderer.bundle.js --minify-syntax",
     "package": "npm run build:bundle && electron-builder --win dir",
     "check-js": "node scripts/check-js-syntax.js"
   },

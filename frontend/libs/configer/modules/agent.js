@@ -188,26 +188,29 @@ function renderAgentModule() {
   );
   addSection("Agent 操作", [actions]);
 
-  const list = el("div", "list-box");
-  for (const item of state.agents) {
-    const row = el("div", `list-row clickable ${state.selectedAgent === item.name ? "selected" : ""}`.trim());
-    row.append(el("span", "mono", `[${item.is_current ? "CURRENT" : "AGENT"}] ${item.name}`));
-    const ops = el("div", "toolbar compact");
-    ops.addEventListener("click", (evt) => evt.stopPropagation());
-    ops.append(makeButton("编辑文件", async () => {
+  const agentRows = state.agents.map((item) => {
+    const name = el("span", "mono", String(item.name || ""));
+    const editBtn = makeButton("编辑文件", async () => {
       state.selectedAgent = String(item.name || "");
       await ensureModuleData("agent");
       openAgentFilesModal(state.selectedAgent, (state.agentDetail && state.agentDetail.files) || {});
-    }));
-    row.append(ops);
-    row.addEventListener("click", async () => {
+    });
+    editBtn.addEventListener("click", (evt) => evt.stopPropagation());
+    return [name, item.is_current ? "当前使用" : "备用", editBtn];
+  });
+  const agentTable = makeSimpleTableCard("Agent 列表", ["名称", "状态", "操作"], agentRows);
+  agentTable.querySelectorAll("tbody tr").forEach((tr, index) => {
+    const item = state.agents[index];
+    if (!item) return;
+    tr.classList.add("clickable");
+    if (state.selectedAgent === item.name) tr.classList.add("selected");
+    tr.addEventListener("click", async () => {
       state.selectedAgent = String(item.name || "");
       await ensureModuleData("agent");
       refreshModule();
     });
-    list.append(row);
-  }
-  addSection("Agent 列表", [list]);
+  });
+  addSection("", [agentTable]);
 
   if (!state.agentDetail || !state.agentDetail.files) {
     addSection("Agent 文件", [el("div", "empty-state", "请选择 Agent 后编辑文件。")]);

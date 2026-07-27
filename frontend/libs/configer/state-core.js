@@ -97,10 +97,13 @@ function addSection(title, bodyNodes, full = true) {
     return;
   }
 
-  const section = el("section", `module-section ${full ? "full-span" : ""}`.trim());
-  const t = el("h3", "section-title", title);
+  const section = el("section", `module-section card ${full ? "full-span" : ""}`.trim());
   const content = el("div", "module-section-content");
-  section.append(t, content);
+  if (title) {
+    const t = el("h3", "section-title", title);
+    section.append(t);
+  }
+  section.append(content);
   for (const node of bodyNodes) content.append(node);
   const target = (state && state._activeContainer) || (els && els.cardsRoot);
   if (target) target.append(section);

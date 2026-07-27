@@ -145,10 +145,11 @@ async function loadPluginAssets(forceReload = false) {
     // Expose backend base URL to plugins so they can make API calls
     if (window.pluginUI) window.pluginUI.backendBaseUrl = baseUrl;
     const loadPromises = [];
+    const cacheBust = "v=" + Date.now();
     for (const a of assets) {
       if (a.type === "js" && a.path) {
         const s = document.createElement("script");
-        s.src = baseUrl + a.path;
+        s.src = baseUrl + a.path + (a.path.includes("?") ? "&" : "?") + cacheBust;
         s.setAttribute("data-plugin", a.plugin_id || "");
         const p = new Promise((resolve, reject) => {
           s.onload = () => { console.log("[plugin] loaded JS:", a.path); resolve(); };
@@ -159,7 +160,7 @@ async function loadPluginAssets(forceReload = false) {
       } else if (a.type === "css" && a.path) {
         const l = document.createElement("link");
         l.rel = "stylesheet";
-        l.href = baseUrl + a.path;
+        l.href = baseUrl + a.path + (a.path.includes("?") ? "&" : "?") + cacheBust;
         l.setAttribute("data-plugin", a.plugin_id || "");
         document.head.appendChild(l);
       }

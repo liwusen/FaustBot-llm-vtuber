@@ -129,13 +129,13 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       updateSelectionBox();
       persist();
     });
-    const xField = makeNumberField(widget.bindingType === 'model' ? '相对 X' : '屏幕 X', widget.coord.x || 0, (value) => {
+    const xField = makeNumberField(widget.bindingType === 'model' ? '相对 X' : '屏幕 X (0~1)', widget.coord.x || 0, (value) => {
       manager.updateWidget(widget.id, { coord: { ...widget.coord, x: value } });
       if (typeof refreshLayout === 'function') refreshLayout();
       updateSelectionBox();
       persist();
     });
-    const yField = makeNumberField(widget.bindingType === 'model' ? '相对 Y' : '屏幕 Y', widget.coord.y || 0, (value) => {
+    const yField = makeNumberField(widget.bindingType === 'model' ? '相对 Y' : '屏幕 Y (0~1)', widget.coord.y || 0, (value) => {
       manager.updateWidget(widget.id, { coord: { ...widget.coord, y: value } });
       if (typeof refreshLayout === 'function') refreshLayout();
       updateSelectionBox();
@@ -252,8 +252,8 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       } else {
         manager.updateWidget(widget.id, {
           coord: {
-            x: dragState.coord.x + dx,
-            y: dragState.coord.y + dy,
+            x: dragState.coord.x + dx / Math.max(1, window.innerWidth),
+            y: dragState.coord.y + dy / Math.max(1, window.innerHeight),
           },
         });
       }

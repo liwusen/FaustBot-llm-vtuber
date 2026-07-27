@@ -76,7 +76,14 @@ function renderSkillsModule() {
       refreshModule();
     });
     const ops = el("div", "toolbar compact");
+    ops.addEventListener("click", (evt) => evt.stopPropagation());
     ops.append(
+      makeButton("编辑", async () => {
+        state.selectedSkillSlug = slug;
+        await ensureModuleData("skills");
+        const detail = state.skillDetail || {};
+        openSkillMdModal(slug, String(detail.skill_md || ""), state.skillsAgent);
+      }, "btn btn-primary"),
       makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/enable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); refreshModule(); }),
       makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/disable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); refreshModule(); }),
       makeButton("删除", async () => {
@@ -133,7 +140,6 @@ function renderSkillsModule() {
   appendToActiveModule(makeSimpleTableCard("Skill 文件清单", ["路径", "类型"], fileRows));
   const skillDocBar = el("div", "toolbar");
   skillDocBar.append(
-    makeButton("编辑 SKILL.md", () => openSkillMdModal(String(detail.slug || ""), String(detail.skill_md || ""), state.skillsAgent), "btn btn-primary"),
     makeButton("查看只读", () => {
       const doc = el("textarea", "textarea code-area code-area-lg");
       doc.readOnly = true;
@@ -141,5 +147,5 @@ function renderSkillsModule() {
       openModal(`SKILL.md 预览 - ${String(detail.slug || "")}`, [doc]);
     })
   );
-  addSection("SKILL.md", [el("div", "card-help", "SKILL.md 编辑已迁移到弹窗。"), skillDocBar]);
+  addSection("SKILL.md", [el("div", "card-help", "编辑请使用技能列表\"操作\"列中的\"编辑\"按钮。"), skillDocBar]);
 }

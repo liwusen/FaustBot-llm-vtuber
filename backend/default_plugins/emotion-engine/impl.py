@@ -273,7 +273,7 @@ class EmotionEngineStore:
             self._save_state()
         return "\n|[System]:当前情绪向量: "+ "; ".join(f"{EMOTION_LABELS[key]}={value:.1f}" for key, value in self._top_emotions(None)) + "\n"
 
-    def apply_emotion_tag(self, tag: str) -> dict[str, Any]:
+    def apply_emotion_tag(self, tag: str, ) -> dict[str, Any]:
         emotion_key = EMOTION_TAG_TO_KEY.get(str(tag or "").strip().upper())
         if not emotion_key:
             return {"applied": False, "tag": tag, "reason": "unknown_tag"}
@@ -310,9 +310,72 @@ class EmotionEngineStore:
                 "diary_reason": f"模型输出情绪标签 {emotion_key}",
             }
 
+    def _process_signed_tag(self,tag: str) -> tuple[int, str | None]:
+        tag = str(tag or "").strip().upper()
+        sign=0
+        for i in range(len(tag)):
+            if tag[i] == "+":
+                sign += 1
+            elif tag[i] == "-":
+                sign -= 1
+            else:
+                break
+        if sign == 0:
+            sign += 1
+        emotion_key = EMOTION_TAG_TO_KEY.get(tag.lstrip("+-").replace("+", "").replace("-", ""))
+        return sign,emotion_key
+                
+
+    def apply_signed_emotion_tag_list(self, tags: list[str]) -> None:
+        """_summary_
+
+        Args:
+            tags (list[str]): 例子:["++JOY","-BOREDOM","+SHARPNESS]
+
+        Returns:
+            dict[str, Any]: 返回应用结果，包含每个标签的应用情况。
+        """
+        for tag in tags:
+            sign, emotion_key = self._process_signed_tag(tag)
+            if not emotion_key:
+                return {"applied": False, "tag": tag, "reason": "unknown_tag"}
+            deltas = {key: 0.0 for key in EMOTION_KEYS}
+            deltas[emotion_key] += 1.8 * sign
+            if emotion_key == "joy":
+                deltas["boredom"] -= 1.0 * sign
+            elif emotion_key == "sharpness":
+                deltas["pride"] += 0.6 * sign
+            elif emotion_key == "boredom":
+                deltas["joy"] -= 0.4 * sign
+            elif emotion_key == "irritation":
+                deltas["joy"] -= 0.3 * sign
+            with self._lock:
+                before = self._dominant_from_vector(self._state.vector)
+                for key, delta in deltas.items():
+                    self._state.vector[key] = _clamp(
+                        self._state.vector.get(key, 0.0) + delta
+                    )
+                after = self._dominant_from_vector(self._state.vector)
+                self._state.dominant_emotion = after
+                self._state.pending_corememory_sync = True
+                self._record_history(f"message_sent:{emotion_key}", deltas)
+                self._save_state()
+
+
+
+
     def apply_reply(self, reply: str) -> None:
         with self._lock:
             self._state.last_reply = reply
+            self._save_state()
+
+    def set_emotion(self, key: str, value: float) -> None:
+        with self._lock:
+            old = self._state.vector.get(key, 0.0)
+            self._state.vector[key] = _clamp(value)
+            self._state.dominant_emotion = self._dominant_from_vector(self._state.vector)
+            self._state.pending_corememory_sync = True
+            self._record_history(f"manual_set:{key}", {key: self._state.vector[key] - old})
             self._save_state()
 
     def heartbeat(self, decay_per_minute: float) -> dict[str, Any]:
@@ -498,22 +561,42 @@ class Plugin(FaustPlugin):
 
     def register_tools(self, ctx: PluginContext) -> list:
         @tool
-        def EmotionInvoke(emotionName: str) -> str:
-            """更新 Faust 的情绪状态。调用后返回当前完整的情绪向量 JSON。"""
+        def EmotionInvokeSigned(tags: list[str]) -> str:
+            """更新FaustBot的情绪状态,支持有符号批量更新
+
+
+
+            Args:
+                tags (list[str]): 情绪标签列表, 例子:["++JOY","-BOREDOM","+SHARPNESS"]
+                                  每一个情绪标签可以带有符号前缀, "+"表示增加, "-"表示减少, "++"表示大幅增加, "--"表示大幅减少。
+                                  当你和用户对话时,每一轮对话都需要调用一次EmotionInvokeSigned来更新情绪状态
+
+            Returns:
+                str: 修改后的情绪向量
+            """
             if self.store is None:
                 return json.dumps({"error": "store not ready"})
-            analysis = self.store.apply_emotion_tag(str(emotionName or "").strip().upper())
-            if analysis.get("applied"):
-                return json.dumps(self.store.snapshot(self._configs()), ensure_ascii=False)
-            return json.dumps(
-                {"error": f"unknown emotion: {emotionName}", "allowed": "JOY|IRRITATION|PRIDE|CURIOSITY|SHARPNESS|BOREDOM|CARE|CALM"},
-                ensure_ascii=False,
-            )
-        return [ToolSpec(name="EmotionInvoke", tool=EmotionInvoke, enabled_by_default=True, description=EmotionInvoke.__doc__ or "")]
+            self.store.apply_signed_emotion_tag_list(tags)
+            return json.dumps(self.store.snapshot(self._configs())["vector"], ensure_ascii=False)
+        return [
+            ToolSpec(name="EmotionInvokeSigned", tool=EmotionInvokeSigned, enabled_by_default=True, description=EmotionInvokeSigned.__doc__ or ""),
+        ]
 
     def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         action = str((payload or {}).get("action") or "get_state").strip().lower()
         if action == "get_state":
+            return {"status": "ok", **self.get_state_payload()}
+        if action == "set_emotion":
+            if self.store is None:
+                return {"status": "error", "detail": "store not ready"}
+            key = str((payload or {}).get("key") or "").strip().lower()
+            if key not in EMOTION_KEYS:
+                return {"status": "error", "detail": f"unknown emotion key: {key}"}
+            try:
+                value = float((payload or {}).get("value"))
+            except (TypeError, ValueError):
+                return {"status": "error", "detail": "invalid value"}
+            self.store.set_emotion(key, value)
             return {"status": "ok", **self.get_state_payload()}
         return {"status": "error", "detail": f"unknown action: {action}"}
 
@@ -530,7 +613,7 @@ class Plugin(FaustPlugin):
     @hookimpl
     def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
         if event.get("type") in {"tool_start", "tool_result"} and event.get("tool_name") == "EmotionInvoke":
-            return None
+            return "__IGNORED__"
         return None
 
     def heartbeat(self, ctx: PluginContext) -> None:
@@ -560,4 +643,5 @@ class Plugin(FaustPlugin):
 
 
 def get_plugin() -> Plugin:
+
     return Plugin()

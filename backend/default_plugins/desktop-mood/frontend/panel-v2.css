@@ -1,5 +1,7 @@
 .desktop-pre-v2 { margin:0; white-space:pre-wrap; font-family:inherit; color:#f6eed0; }
 .desktop-rules-v2 { display:grid; gap:10px; }
 .desktop-rule-row { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; }
-.desktop-overlay-v2 { position:fixed; top:18px; right:18px; z-index:20; pointer-events:none; }
+.desktop-overlay-v2 { position:fixed; z-index:1400; pointer-events:auto; }
+.desktop-overlay-static { top:18px; right:18px; }
+.desktop-overlay-hidden { display:none; }
 .desktop-widget-v2 { display:inline-flex; gap:10px; align-items:center; padding:8px 12px; border-radius:12px; background:rgba(33,26,15,0.86); color:#fff4cf; border:1px solid rgba(255,255,255,0.1); }

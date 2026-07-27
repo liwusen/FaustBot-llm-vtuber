@@ -161,7 +161,8 @@ function makeSimpleTableCard(title, columns, rows) {
       const tr = el("tr", "");
       row.forEach((c, index) => {
         const colLabel = Array.isArray(columns) ? columns[index] : "";
-        tr.append(createTableCell(formatScalar(c, colLabel), index === 0 ? "cell-primary" : ""));
+        const cellValue = c instanceof HTMLElement ? c : formatScalar(c, colLabel);
+        tr.append(createTableCell(cellValue, index === 0 ? "cell-primary" : ""));
       });
       tbody.append(tr);
     }

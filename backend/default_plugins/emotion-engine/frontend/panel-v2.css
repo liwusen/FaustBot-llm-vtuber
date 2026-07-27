@@ -1,5 +1,6 @@
 .emotion-row { display:grid; grid-template-columns:64px 1fr 48px; align-items:center; gap:12px; margin-bottom:10px; }
 .emotion-bar { position:relative; height:10px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden; }
+.emotion-bar-editable { cursor:ew-resize; touch-action:none; }
 .emotion-bar i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg, #ff8ba7, #ffd166); }
 .emotion-history-v2 { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
 .emotion-history-v2 li { display:flex; justify-content:space-between; gap:12px; font-size:12px; }

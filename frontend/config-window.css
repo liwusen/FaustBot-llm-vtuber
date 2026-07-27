@@ -391,6 +391,16 @@ body {
 .explorer-table tr.selected {
   background: #edf3ff;
 }
+.simple-table tbody tr.clickable {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.simple-table tbody tr.clickable:hover {
+  background: #f2f6ff;
+}
+.simple-table tbody tr.selected {
+  background: #edf3ff;
+}
 .explorer-table .col-name {
   max-width: 320px;
   overflow: hidden;
