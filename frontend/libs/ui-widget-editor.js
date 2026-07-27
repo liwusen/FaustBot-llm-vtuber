@@ -329,5 +329,6 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       return manager.isEditMode();
     },
     refreshSelection: updateSelectionBox,
+    refreshGhostState: applyGhostState,
   };
 }

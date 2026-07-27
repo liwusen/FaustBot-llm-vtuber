@@ -1,0 +1,181 @@
+/* 「布景台」— 编辑模式左侧设置面板 */
+.layout-side-panel {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  width: 13vw;
+  min-width: 232px;
+  max-width: 340px;
+  z-index: 3900;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 242, 247, 0.92));
+  backdrop-filter: blur(14px);
+  border-right: 1px solid rgba(209, 213, 219, 0.7);
+  box-shadow: var(--faust-shadow);
+  color: var(--faust-text);
+  transform: translateX(-102%);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: auto;
+}
+
+body.layout-side-panel-open .layout-side-panel {
+  transform: translateX(0);
+}
+
+/* 编辑模式徽章避让面板 */
+body.layout-side-panel-open .ui-widget-mode-badge {
+  left: calc(max(13vw, 232px) + 14px);
+}
+
+.lsp-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--faust-line);
+}
+
+.lsp-title-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--faust-text);
+}
+
+.lsp-title-hint {
+  font-size: 11px;
+  color: var(--faust-muted);
+  letter-spacing: 0.04em;
+}
+
+.lsp-groups {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.lsp-groups::-webkit-scrollbar {
+  width: 6px;
+}
+
+.lsp-groups::-webkit-scrollbar-thumb {
+  background: rgba(190, 201, 217, 0.6);
+  border-radius: 3px;
+}
+
+.lsp-group {
+  border-bottom: 1px solid var(--faust-line);
+}
+
+.lsp-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 14px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--faust-text);
+  transition: background 0.12s;
+}
+
+.lsp-group-header:hover {
+  background: rgba(63, 107, 232, 0.06);
+}
+
+.lsp-group-chevron {
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--faust-muted);
+  border-bottom: 2px solid var(--faust-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.lsp-group.open .lsp-group-chevron {
+  transform: rotate(45deg);
+}
+
+.lsp-group-body-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.24s ease;
+}
+
+.lsp-group.open .lsp-group-body-wrap {
+  grid-template-rows: 1fr;
+}
+
+.lsp-group-body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.lsp-group.open .lsp-group-body {
+  padding-bottom: 8px;
+}
+
+.lsp-empty {
+  padding: 6px 14px 10px;
+  font-size: 12px;
+  color: var(--faust-muted);
+}
+
+/* 公共控件类（插件渲染函数可复用） */
+.lsp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 14px;
+  font-size: 13px;
+  color: var(--faust-text);
+}
+
+.lsp-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.lsp-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.lsp-switch-slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #cfd9e8;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.lsp-switch-slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  transition: transform 0.2s;
+}
+
+.lsp-switch input:checked + .lsp-switch-slider {
+  background: #2fbe71;
+}
+
+.lsp-switch input:checked + .lsp-switch-slider::before {
+  transform: translateX(18px);
+}

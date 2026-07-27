@@ -10,6 +10,7 @@ import { initAudioPlayback } from './libs/audio-playback.js';
 import { initAutocomplete } from './libs/autocomplete.js';
 import { createUiWidgetManager } from './libs/ui-widget-manager.js';
 import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
+import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
 
 
@@ -292,6 +293,8 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
     }
   }
 
+  const layoutSidePanel = initLayoutSidePanel({ manager: uiWidgetManager, saveSettings: saveUiWidgetSettings });
+
   if (!window.faustAppUI) {
     window.faustAppUI = {
       backendBaseUrl: (window.api && window.api.backendBaseUrl) || 'http://127.0.0.1:13900',
@@ -373,6 +376,14 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
           `/faust/plugins/${encodeURIComponent(String(pluginId || ''))}/communicate`,
           payload ?? {}
         );
+      },
+
+      registerSidePanelGroup(spec){
+        return layoutSidePanel.registerGroup(spec);
+      },
+
+      setSidePanelRender(groupId, fn){
+        return layoutSidePanel.setGroupRender(groupId, fn);
       },
     };
   }
@@ -2988,24 +2999,64 @@ import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
   const logPanelCtrl = initLogPanel();
   logPanelCtrl.init();
 
+  function refreshUiWidgetLayout() {
+    updateQuickControllerPosition();
+    updateTextChatBarPosition();
+    updateAsrTextPosition(true);
+    refreshQuickControllerVisibility();
+  }
+
   const uiWidgetEditor = initUiWidgetEditor({
     manager: uiWidgetManager,
     saveSettings: saveUiWidgetSettings,
     onEditModeChange: (enabled) => {
       if (clickThroughController) clickThroughController.setInteractiveLock(enabled);
+      layoutSidePanel.setVisible(enabled);
     },
-    refreshLayout: () => {
-      updateQuickControllerPosition();
-      updateTextChatBarPosition();
-      updateAsrTextPosition(true);
-      refreshQuickControllerVisibility();
-    },
+    refreshLayout: refreshUiWidgetLayout,
   });
 
   if (window.faustAppUI) {
     window.faustAppUI.toggleWidgetEditMode = () => uiWidgetEditor.toggle();
     window.faustAppUI.saveWidgetSettings = () => saveUiWidgetSettings();
   }
+
+  // ── 布景台：系统组件组 ──
+  layoutSidePanel.registerGroup({ id: 'system-widgets', label: '系统组件', order: 0 });
+  layoutSidePanel.setGroupRender('system-widgets', (container) => {
+    const items = [
+      ['quick-controller', '快捷控制器'],
+      ['text-chat-bar', '文字聊天条'],
+      ['asr-bubble', 'ASR 气泡'],
+      ['log-panel', '日志面板'],
+      ['subagent-panel', '子代理面板'],
+      ['vrm-config-panel', 'VRM 配置面板'],
+    ];
+    for (const [widgetId, label] of items) {
+      const widget = uiWidgetManager.getWidget(widgetId);
+      if (!widget) continue;
+      const row = document.createElement('div');
+      row.className = 'lsp-row';
+      const text = document.createElement('span');
+      text.textContent = label;
+      const switchWrap = document.createElement('label');
+      switchWrap.className = 'lsp-switch';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !widget.hidden;
+      const slider = document.createElement('span');
+      slider.className = 'lsp-switch-slider';
+      input.addEventListener('change', () => {
+        uiWidgetManager.updateWidget(widgetId, { hidden: !input.checked });
+        refreshUiWidgetLayout();
+        uiWidgetEditor.refreshGhostState();
+        saveUiWidgetSettings();
+      });
+      switchWrap.append(input, slider);
+      row.append(text, switchWrap);
+      container.appendChild(row);
+    }
+  });
 
   // ── 直播模式（已抽取到 libs/live-mode.js） ──
   const liveModeCtrl = initLiveMode();

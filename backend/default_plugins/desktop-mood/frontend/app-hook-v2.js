@@ -29,6 +29,31 @@
     overlay.classList.add('desktop-overlay-static');
   }
 
+  if (typeof api.registerSidePanelGroup === 'function' && typeof api.setSidePanelRender === 'function') {
+    api.registerSidePanelGroup({ id: 'desktop-mood', label: 'Desktop Mood', plugin: 'desktop-mood', order: 200 });
+    api.setSidePanelRender('desktop-mood', function(container){
+      const widget = typeof api.getWidget === 'function' ? api.getWidget('desktop-weather') : null;
+      const row = document.createElement('div');
+      row.className = 'lsp-row';
+      const text = document.createElement('span');
+      text.textContent = '显示天气浮窗';
+      const switchWrap = document.createElement('label');
+      switchWrap.className = 'lsp-switch';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !(widget && widget.hidden);
+      const slider = document.createElement('span');
+      slider.className = 'lsp-switch-slider';
+      input.addEventListener('change', function(){
+        api.updateWidget('desktop-weather', { hidden: !input.checked });
+        if (typeof api.saveWidgetSettings === 'function') api.saveWidgetSettings();
+      });
+      switchWrap.append(input, slider);
+      row.append(text, switchWrap);
+      container.appendChild(row);
+    });
+  }
+
   function updatePosition(){
     if (!hasWidgetApi) return;
     const widget = api.getWidget('desktop-weather');

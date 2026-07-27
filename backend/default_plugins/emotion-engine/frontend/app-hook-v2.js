@@ -28,6 +28,42 @@
     });
   }
 
+  if (typeof api.registerSidePanelGroup === 'function' && typeof api.setSidePanelRender === 'function') {
+    api.registerSidePanelGroup({ id: 'emotion-engine', label: 'Emotion Engine', plugin: 'emotion-engine', order: 210 });
+    api.setSidePanelRender('emotion-engine', function(container){
+      const widget = typeof api.getWidget === 'function' ? api.getWidget('emotion-badge') : null;
+
+      function makeSwitchRow(labelText, checked, onChange){
+        const row = document.createElement('div');
+        row.className = 'lsp-row';
+        const text = document.createElement('span');
+        text.textContent = labelText;
+        const switchWrap = document.createElement('label');
+        switchWrap.className = 'lsp-switch';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        const slider = document.createElement('span');
+        slider.className = 'lsp-switch-slider';
+        input.addEventListener('change', function(){ onChange(input.checked); });
+        switchWrap.append(input, slider);
+        row.append(text, switchWrap);
+        return row;
+      }
+
+      container.appendChild(makeSwitchRow('显示情绪徽章', !(widget && widget.hidden), function(checked){
+        api.updateWidget('emotion-badge', { hidden: !checked });
+        if (typeof api.saveWidgetSettings === 'function') api.saveWidgetSettings();
+      }));
+      const dynamicBackground = !widget || !widget.props ? true : widget.props.dynamicBackground !== false;
+      container.appendChild(makeSwitchRow('动态背景', dynamicBackground, function(checked){
+        const current = typeof api.getWidget === 'function' ? api.getWidget('emotion-badge') : null;
+        api.updateWidget('emotion-badge', { props: Object.assign({}, current && current.props, { dynamicBackground: checked }) });
+        if (typeof api.saveWidgetSettings === 'function') api.saveWidgetSettings();
+      }));
+    });
+  }
+
   function updatePosition(){
     if (!badge || typeof api.getWidget !== 'function' || typeof api.getModelBounds !== 'function') return;
     const widget = api.getWidget('emotion-badge');

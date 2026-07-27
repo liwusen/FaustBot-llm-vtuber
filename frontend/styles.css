@@ -98,6 +98,7 @@ body.click-through .hil-approval-shell {
 }
 body.click-through .emotion-badge-v2,
 body.click-through .desktop-overlay-v2,
+body.click-through .layout-side-panel,
 body.click-through .ui-widget-property-panel {
   pointer-events: auto;
 }

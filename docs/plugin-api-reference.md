@@ -647,6 +647,8 @@ const result = await window.faustAppUI.communicate('my-plugin', {
 | `listWidgets()` | - | `Widget[]` | 列出所有小组件 |
 | `isWidgetEditMode()` | - | `boolean` | 是否处于编辑模式 |
 | `getModelBounds()` | - | `DOMRect \| null` | 获取模型视口边界 |
+| `registerSidePanelGroup(spec)` | `GroupSpec` | `Group` | 在布景台注册配置组 |
+| `setSidePanelRender(groupId, fn)` | `groupId: string, fn: function` | - | 设置组的渲染函数 |
 
 ### WidgetSpec 数据结构
 
@@ -823,6 +825,66 @@ api.registerWidget({
   },
   props: { dynamicBackground: true },
 });
+```
+
+### 布景台（LayoutSidePanel）
+
+进入小组件编辑模式（Ctrl+Shift+E）后，窗口左侧会滑出「布景台」面板——UI 的集中设置入口。主程序与插件都可以注册配置组，每组有可点击展开/收起的标题栏。
+
+#### GroupSpec 数据结构
+
+```javascript
+{
+  id: 'my-plugin',       // 必需，组唯一标识符
+  label: 'My Plugin',    // 组标题，缺省用 id
+  plugin: 'my-plugin',   // 归属插件 id（元信息）
+  order: 100,            // 排序，越小越靠上（系统组件为 0，缺省 100）
+  collapsed: false,      // 初始是否收起
+}
+```
+
+同 `id` 重复注册视为合并更新（保留展开状态与已设置的渲染函数）。
+
+#### 渲染函数契约
+
+```javascript
+api.setSidePanelRender('my-plugin', (container, ctx) => {
+  // container: 该组内容区 DOM 节点，每次渲染前已被清空，直接 append 即可
+  // ctx: { groupId, refresh }  — refresh() 触发该组重新渲染
+});
+```
+
+- `registerSidePanelGroup` 与 `setSidePanelRender` 的调用顺序无关，任意先后均可。
+- 渲染函数在每次该组重渲染时被调用，必须每次全量重建 DOM，状态以 `getWidget()` 等实时读取为准。
+- 可复用公共样式类：`lsp-row`（一行左标签右控件）、`lsp-switch` + `lsp-switch-slider`（开关）。
+- 不要对布景台内的元素调用 `registerWidget`。
+
+#### 示例：浮窗显隐开关
+
+```javascript
+if (typeof api.registerSidePanelGroup === 'function') {
+  api.registerSidePanelGroup({ id: 'desktop-mood', label: 'Desktop Mood', plugin: 'desktop-mood' });
+  api.setSidePanelRender('desktop-mood', (container) => {
+    const widget = api.getWidget('desktop-weather');
+    const row = document.createElement('div');
+    row.className = 'lsp-row';
+    row.append('显示天气浮窗');
+    const wrap = document.createElement('label');
+    wrap.className = 'lsp-switch';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !(widget && widget.hidden);
+    const slider = document.createElement('span');
+    slider.className = 'lsp-switch-slider';
+    input.addEventListener('change', () => {
+      api.updateWidget('desktop-weather', { hidden: !input.checked });
+      api.saveWidgetSettings();   // 持久化到 ~/.faustbot/ui-settings.json
+    });
+    wrap.append(input, slider);
+    row.append(wrap);
+    container.appendChild(row);
+  });
+}
 ```
 
 ---

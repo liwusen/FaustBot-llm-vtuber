@@ -45,6 +45,8 @@
       "app.js",
       "vrm-renderer.js",
       "styles.css",
+      "styles_log_panel.css",
+      "styles_layout_side_panel.css",
       "config-window.html",
       "config-window.css",
       "config-window.js",
