@@ -43,7 +43,7 @@
     container.innerHTML = '';
 
     const legalNotice = el('div', 'card full-span',
-      '⚠ 法律提示：本功能本质是变声器，产出内容属于对原曲的二次创作。根据法律规定，在公开场合使用需取得原作者授权。');
+      '⚠ 法律提示：本功能通过 AI 变声对原曲进行二次创作。公开传播需取得词曲著作权人及录音制作者授权；若参考音色源自真人声音，还需取得声音权利人同意。仅供个人学习研究使用。');
     legalNotice.style.cssText = 'border-left:4px solid #e6a23c;color:#e6a23c;padding:10px 14px;font-size:13px;';
     container.appendChild(legalNotice);
 
