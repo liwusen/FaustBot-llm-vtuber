@@ -301,7 +301,7 @@ class TestConfigChangeTrigger:
 
     @pytest.mark.asyncio
     async def test_mc_bridge_enabled_triggers_start(self):
-        """MC_BRIDGE_ENABLED true -> start_with_guard('minecraft') called."""
+        """MC_BRIDGE_ENABLED true -> start_with_guard('mc_operator') called."""
         from faust_backend.component_manager import check_and_manage_services
 
         old = {"MC_BRIDGE_ENABLED": False}
@@ -312,7 +312,7 @@ class TestConfigChangeTrigger:
             mock_guard.return_value = guard
             with patch("faust_backend.service_manager.stop_service"):
                 await check_and_manage_services(old, new)
-                guard.start_with_guard.assert_called_once_with("minecraft")
+                guard.start_with_guard.assert_called_once_with("mc_operator")
 
     @pytest.mark.asyncio
     async def test_mc_bridge_disabled_triggers_stop(self):

@@ -84,8 +84,6 @@ function renderSkillsModule() {
         const detail = state.skillDetail || {};
         openSkillMdModal(slug, String(detail.skill_md || ""), state.skillsAgent);
       }, "btn btn-primary"),
-      makeButton("启用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/enable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); refreshModule(); }),
-      makeButton("禁用", async () => { await cfgApi("POST", `/faust/admin/skills/${encodeURIComponent(slug)}/disable`, { agent_name: state.skillsAgent }); await ensureModuleData("skills"); refreshModule(); }),
       makeButton("删除", async () => {
         if (!window.confirm(`确定删除 Skill ${slug} ?`)) return;
         await cfgApi("DELETE", `/faust/admin/skills/${encodeURIComponent(slug)}`, null, { agent_name: state.skillsAgent });

@@ -32,7 +32,12 @@ from faust_backend.runtime.uri import (
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import ensure_source_file, get_faustbot_vfs, refresh_runtime_nodes, run_coro_sync
+from faust_backend.tools.vfs import (
+    ensure_source_file,
+    get_faustbot_vfs,
+    refresh_runtime_nodes,
+    run_coro_sync,
+)
 
 log = get_logger("faust.tools.read")
 
@@ -124,8 +129,13 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
     """
     log.info("read INPUT uri=%s force_plain_text=%s", uri, force_plain_text)
     parsed = parse(uri)
-    log.debug("read parsed: scheme=%s path=%r selector=%r force_plain_text=%r",
-              parsed.scheme, parsed.path, parsed.selector, force_plain_text)
+    log.debug(
+        "read parsed: scheme=%s path=%r selector=%r force_plain_text=%r",
+        parsed.scheme,
+        parsed.path,
+        parsed.selector,
+        force_plain_text,
+    )
 
     if parsed.scheme == SCHEME_ARTIFACT:
         result = _read_artifact(parsed, force_plain_text=force_plain_text)
@@ -160,7 +170,9 @@ def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:
         available = store.list_ids()
         if not available:
             return "(没有可用的 artifact)"
-        return "可用的 artifact:\n" + "\n".join(f"  artifact://{aid}" for aid in available[-20:])
+        return "可用的 artifact:\n" + "\n".join(
+            f"  artifact://{aid}" for aid in available[-20:]
+        )
 
     art = store.get(output_id)
     if art is None:
@@ -187,6 +199,7 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
 
     # Check if this is an image attachment
     import asyncio as _asyncio
+
     nid = _path_id(path)
     if path and store._has_node(nid):
         ct = store._get_node_attr(nid, "content_type", "")
@@ -199,12 +212,15 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
             if force_plain_text:
                 return f"[图片附件: {path}]\n描述: {desc}\n类型: {result.get('content_type', '')}"
             import json as _json
+
             payload = {
                 "kind": "multimodal_tool_result",
                 "text": desc,
-                "images": [{
-                    "url": f"data:{result.get('content_type', 'image/png')};base64,{result.get('content_base64', '')}"
-                }],
+                "images": [
+                    {
+                        "url": f"data:{result.get('content_type', 'image/png')};base64,{result.get('content_base64', '')}"
+                    }
+                ],
             }
             return _json.dumps(payload, ensure_ascii=False)
 
@@ -262,7 +278,8 @@ def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
         files = []
         dirs = []
         for item in items:
-            if item.name.startswith("."): continue
+            if item.name.startswith("."):
+                continue
             if item.is_dir():
                 dirs.append(item.name + "/")
             else:
@@ -309,7 +326,9 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     normalized = "/" + raw_path
     if raw_path.startswith("source/"):
         try:
-            normalized = run_coro_sync(ensure_source_file(vfs, raw_path[len("source/"):]))
+            normalized = run_coro_sync(
+                ensure_source_file(vfs, raw_path[len("source/") :])
+            )
         except Exception as exc:
             return f"[source 文件不存在或不可读取: {exc}]"
     if run_coro_sync(vfs.is_dir(normalized)):
@@ -327,13 +346,11 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     return _apply_selector_to_text(content, parsed.selector_lines)
 
 
-
-
 def _read_img_source(parsed, *, force_plain_text: bool = False) -> str:
     path = str(parsed.path or "").strip("/")
 
     if not path or parsed.is_dir:
-        return "img_source:// 可用资源:\n  img_source://screenshot\n  img_source://camera_0\n使用 read(\"img_source://screenshot?grid=true&scale=0.5\") 截图，使用 read(\"img_source://camera_0\") 访问摄像头。"
+        return 'img_source:// 可用资源:\n  img_source://screenshot\n  img_source://camera_0\n使用 read("img_source://screenshot?grid=true&scale=0.5") 截图，使用 read("img_source://camera_0") 访问摄像头。'
 
     try:
         if path == "screenshot":
@@ -374,7 +391,7 @@ def _get_faustbot_source_root() -> Path:
 
     backend_root = Path(PROJECT_ROOT)
     repo_root = backend_root.parent
-    if getattr(sys, "frozen", False):#FIXME:使用正确的方式查询是否打包
+    if getattr(sys, "frozen", False):  # FIXME:使用正确的方式查询是否打包
         mirror_root = backend_root / "data" / "source"
         if mirror_root.exists():
             return mirror_root
@@ -406,7 +423,9 @@ def _capture_camera_image(camera_id: int) -> Image.Image:
     return Image.fromarray(rgb).convert("RGBA")
 
 
-def _apply_img_source_transforms(image: Image.Image, query: dict[str, list[str]]) -> Image.Image:
+def _apply_img_source_transforms(
+    image: Image.Image, query: dict[str, list[str]]
+) -> Image.Image:
     scale = _query_scale(query)
     if scale < 1.0:
         width = max(1, int(image.width * scale))
@@ -479,7 +498,9 @@ def _image_to_tool_result(
     payload = {
         "kind": "multimodal_tool_result",
         "text": description,
-        "images": [{"url": f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"}],
+        "images": [
+            {"url": f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"}
+        ],
     }
     if metadata:
         payload["meta"] = metadata
@@ -515,7 +536,9 @@ def _extract_markdown_section(content: str, section_title: str) -> str:
     return "\n".join(lines[start:end]).strip()
 
 
-def _apply_selector_to_text(content: str, selector_lines: tuple[int, int] | None) -> str:
+def _apply_selector_to_text(
+    content: str, selector_lines: tuple[int, int] | None
+) -> str:
     if not selector_lines:
         return content
     start, end = selector_lines
@@ -534,7 +557,7 @@ def _apply_selector_to_text(content: str, selector_lines: tuple[int, int] | None
         resolved_start, resolved_end = resolved_end, resolved_start
     resolved_start = min(resolved_start, len(lines))
     resolved_end = min(resolved_end, len(lines))
-    return "\n".join(lines[resolved_start - 1:resolved_end])
+    return "\n".join(lines[resolved_start - 1 : resolved_end])
 
 
 def _read_file(parsed, *, force_plain_text: bool = False) -> str:
@@ -554,6 +577,7 @@ def _read_file(parsed, *, force_plain_text: bool = False) -> str:
     if not file_path.exists():
         # Try as a relative path from agent workdir first, then source root.
         from faust_backend.config_loader import WORKDIR_ROOT, PROJECT_ROOT
+
         for base in (WORKDIR_ROOT, PROJECT_ROOT):
             alt = Path(base) / path_str
             if alt.exists():
@@ -576,8 +600,22 @@ def _read_file(parsed, *, force_plain_text: bool = False) -> str:
         return _apply_selector_to_text(content, parsed.selector_lines)
 
     # For code files, return structural summary
-    if file_path.suffix in (".py", ".ts", ".js", ".rs", ".go", ".java", ".cpp", ".c",
-                            ".h", ".jsx", ".tsx", ".vue", ".rb", ".swift"):
+    if file_path.suffix in (
+        ".py",
+        ".ts",
+        ".js",
+        ".rs",
+        ".go",
+        ".java",
+        ".cpp",
+        ".c",
+        ".h",
+        ".jsx",
+        ".tsx",
+        ".vue",
+        ".rb",
+        ".swift",
+    ):
         return _structural_summary(content, str(file_path))
     return _truncate_long(content)
 
@@ -585,7 +623,9 @@ def _read_file(parsed, *, force_plain_text: bool = False) -> str:
 def _list_directory(dir_path: Path) -> str:
     """Return a simple dirent list."""
     try:
-        entries = sorted(dir_path.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
+        entries = sorted(
+            dir_path.iterdir(), key=lambda e: (e.is_file(), e.name.lower())
+        )
     except Exception as e:
         return f"列出目录出错: {e}"
     lines = []
@@ -615,18 +655,56 @@ def _structural_summary(content: str, path: str) -> str:
             in_docstring = True
             continue
         if in_docstring:
-            if stripped.endswith(('"""', "'''")) or stripped.count('"""') >= 1 or stripped.count("'''") >= 1:
+            if (
+                stripped.endswith(('"""', "'''"))
+                or stripped.count('"""') >= 1
+                or stripped.count("'''") >= 1
+            ):
                 in_docstring = False
             continue
         # Capture top-level declarations
-        if stripped.startswith(("def ", "class ", "async def ", "import ", "from ",
-                                "const ", "let ", "function ", "export ")):
+        if stripped.startswith(
+            (
+                "def ",
+                "class ",
+                "async def ",
+                "import ",
+                "from ",
+                "const ",
+                "let ",
+                "function ",
+                "export ",
+            )
+        ):
             result.append(f"{i}: {stripped}")
+        else:
+            for i in [
+                "def",
+                "class",
+                "async def",
+                "import",
+                "from",
+                "const",
+                "let",
+                "function",
+                "export",
+                "include",
+                "require",
+                "public",
+                "private",
+                "protected",
+                "interface",
+                "struct",
+                "enum",
+            ]:
+                if i in stripped:
+                    result.append(f"{i}: {stripped}")
+                    break
     if not result:
         return _truncate_long(content)
     summary = "\n".join(result)
     total = len(lines)
-    footer = f"\n[文件 {path}: {total} 行, 显示结构摘要。用 read(\"{path}:N-M\") 查看具体行范围]"
+    footer = f'\n[文件 {path}: {total} 行, 显示结构摘要。用 read("{path}:N-M") 查看具体行范围]'
     return summary + footer
 
 
@@ -660,9 +738,16 @@ def _read_image(path: Path, *, force_plain_text: bool = False) -> str:
     if force_plain_text:
         return f"[图片文件: {path.name}]\n大小: {len(raw)} bytes\n类型: {path.suffix}"
     import base64, json
-    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
-                ".svg": "image/svg+xml"}
+
+    mime_map = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".svg": "image/svg+xml",
+    }
     mime = mime_map.get(path.suffix.lower(), "image/png")
     b64 = base64.b64encode(raw).decode("ascii")
     payload = {

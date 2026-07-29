@@ -268,6 +268,10 @@ def get_recent_errors(count: int = 5) -> list[dict[str, Any]]:
                 result.append(item)
     return result
 
+def get_recent_logs(count: int = 20) -> list[dict[str, Any]]:
+    """从环状缓冲区中获取最近 N 条日志记录。"""
+    with _recent_buffer_lock:
+        return list(reversed(_recent_buffer[-count:]))
 
 async def subscribe_ws() -> asyncio.Queue[dict[str, Any]]:
     """创建一个新的 WebSocket 订阅者队列。

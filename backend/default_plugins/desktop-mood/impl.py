@@ -95,10 +95,39 @@ async def _read_smtc_now() -> dict[str, Any] | None:
         props = await session.try_get_media_properties_async()
         info = session.get_playback_info()
         status = str(getattr(info, 'playback_status', 'unknown'))
+        """
+        Changing	1	
+        媒体正在更改。
+
+        Closed	0	
+        媒体已关闭。
+
+        Paused	4	
+        媒体已暂停。
+
+        Playing	3	
+        媒体正在播放。
+
+        Stopped	2	
+        媒体已停止。
+
+        FROM https://learn.microsoft.com/zh-cn/uwp/api/windows.media.mediaplaybackstatus?view=winrt-26100
+        """
+        SMTC_STATUS_MAP = {
+            '1': 'changing',
+            '0': 'closed',
+            '4': 'paused',
+            '3': 'playing',
+            '2': 'stopped',
+            '5': 'seems to be paused?',#我的电脑上有时会返回 5，可能是文档的错误?
+        }
+            
         return {
             'title': str(getattr(props, 'title', '') or ''),
             'artist': str(getattr(props, 'artist', '') or ''),
+            'album': str(getattr(props, 'album_title', '') or ''),
             'status': status,
+            'status_name': SMTC_STATUS_MAP.get(str(status), 'unknown'),
         }
     except Exception:
         return None

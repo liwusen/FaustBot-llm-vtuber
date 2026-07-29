@@ -37,6 +37,15 @@ class CoreHooks:
     def communicate_handler(self, payload: dict, ctx: Any) -> dict | None:
         """Handle plugin frontend/backend communication via POST /faust/plugins/{plugin_id}/communicate."""
 
+    @hookspec(firstresult=True)
+    def sse_communicate_handler(self, params: dict, ctx: Any) -> Any:
+        """Handle GET /faust/plugins/{plugin_id}/sse-communicate?... as a Server-Sent-Events stream.
+
+        Must return an async generator: each yielded dict is sent as one SSE
+        event (`data: <json>`). When the generator returns (or raises), the
+        connection is closed. On client disconnect / plugin reload the
+        generator receives GeneratorExit for cleanup."""
+
     # ── Schedules ──
 
     @hookspec

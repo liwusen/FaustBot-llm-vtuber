@@ -177,7 +177,7 @@ SERVICE_GUARD_CONFIG: dict[str, dict[str, int]] = {
         "cooldown_seconds": 30,
         "port": 5000,
     },
-    "minecraft": {
+    "mc_operator": {
         "max_restarts": 3,
         "cooldown_seconds": 30,
         "port": 18901,
@@ -304,7 +304,7 @@ async def on_component_installed(component: str, details: dict | None = None) ->
 def init_component_guard() -> None:
     """后端启动时初始化组件守护。"""
     guard = get_service_guard()
-    log.info("组件守护已初始化 (minecraft=%s)", guard.get_count("minecraft"))
+    log.info("组件守护已初始化 (mc_operator=%s)", guard.get_count("mc_operator"))
 
 
 async def check_and_manage_services(old_config: dict, new_config: dict) -> None:
@@ -315,21 +315,27 @@ async def check_and_manage_services(old_config: dict, new_config: dict) -> None:
     if old_config.get("ASR_MODE") != new_config.get("ASR_MODE"):
         mode = (new_config.get("ASR_MODE") or "").lower()
         if mode == "local":
+            log.info("Booting ASR service due to config change...")
             await guard.start_with_guard("asr")
         else:
+            log.info("Stopping ASR service due to config change...")
             service_manager.stop_service("asr")
 
     # TTS_MODE
     if old_config.get("TTS_MODE") != new_config.get("TTS_MODE"):
         mode = (new_config.get("TTS_MODE") or "").lower()
         if mode == "local":
+            log.info("Booting TTS service due to config change...")
             await guard.start_with_guard("tts")
         else:
+            log.info("Stopping TTS service due to config change...")
             service_manager.stop_service("tts")
 
     # MC_BRIDGE_ENABLED
     if old_config.get("MC_BRIDGE_ENABLED") != new_config.get("MC_BRIDGE_ENABLED"):
         if new_config.get("MC_BRIDGE_ENABLED"):
-            await guard.start_with_guard("minecraft")
+            log.info("Booting Minecraft Operator service due to config change...")
+            await guard.start_with_guard("mc_operator")
         else:
+            log.info("Stopping Minecraft Operator service due to config change...")
             service_manager.stop_service("mc_operator")

@@ -1,6 +1,6 @@
 node_modules/
 __pycache__/
-package-lock.json
+*-lock.json
 
 asr-hub/
 tts-hub/

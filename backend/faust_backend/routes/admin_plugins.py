@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+import asyncio
+import json
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 import faust_backend.plugin_market as plugin_market
 from faust_backend.plugin_system.manager import PluginLoadError
 from faust_backend.runtime import state
@@ -143,6 +147,81 @@ async def plugin_communicate(plugin_id: str, payload: dict | None = None):
             raise HTTPException(status_code=503, detail=message)
         raise HTTPException(status_code=400, detail=message)
     return result
+
+
+def _map_plugin_error(exc: PluginLoadError) -> HTTPException:
+    message = str(exc)
+    if "not found" in message:
+        return HTTPException(status_code=404, detail=message)
+    if "disabled" in message or "not loaded" in message:
+        return HTTPException(status_code=503, detail=message)
+    if "does not support" in message or "must return" in message:
+        return HTTPException(status_code=409, detail=message)
+    return HTTPException(status_code=400, detail=message)
+
+
+SSE_KEEPALIVE_SEC = 15.0
+
+
+@router.get("/faust/plugins/{plugin_id}/sse-communicate")
+async def plugin_communicate_sse(plugin_id: str, request: Request):
+    """插件 SSE 通道：query 参数透传给插件的 sse_communicate_handler（async generator）。"""
+    pm = state.plugin_manager
+    if pm is None:
+        raise HTTPException(status_code=503, detail="plugin_manager not initialized")
+    params = dict(request.query_params)
+    try:
+        agen, abort = pm.open_sse(plugin_id, params)
+    except PluginLoadError as exc:
+        raise _map_plugin_error(exc)
+
+    async def event_stream():
+        next_task: asyncio.Task | None = None
+        abort_task = asyncio.create_task(abort.wait())
+        try:
+            while not abort.is_set():
+                if next_task is None:
+                    next_task = asyncio.create_task(agen.__anext__())
+                done, _ = await asyncio.wait(
+                    {next_task, abort_task},
+                    timeout=SSE_KEEPALIVE_SEC,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if abort_task in done:
+                    break
+                if next_task in done:
+                    task, next_task = next_task, None
+                    try:
+                        item = task.result()
+                    except StopAsyncIteration:
+                        break
+                    except Exception as exc:
+                        payload = json.dumps({"error": str(exc)}, ensure_ascii=False)
+                        yield f"event: error\ndata: {payload}\n\n"
+                        break
+                    try:
+                        data = json.dumps(item, ensure_ascii=False)
+                    except (TypeError, ValueError) as exc:
+                        payload = json.dumps(
+                            {"error": f"SSE event serialization failed: {exc}"},
+                            ensure_ascii=False)
+                        yield f"event: error\ndata: {payload}\n\n"
+                        break
+                    yield f"data: {data}\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+        finally:
+            if next_task is not None:
+                next_task.cancel()
+            abort_task.cancel()
+            await agen.aclose()
+            pm.close_sse(plugin_id, abort)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/faust/admin/plugin-market/catalog")

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -86,10 +87,10 @@ def _normalize_path(path: str) -> str:
 
 def _atomic_write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # 唯一临时文件名，避免多线程写同一目标时在 tmp 文件上相互冲突（WinError 32）
+    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    if tmp != path:
-        os.replace(tmp, path)
+    os.replace(tmp, path)
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -148,6 +149,7 @@ class GraphStore:
         self._openai_client: AsyncOpenAI | None = None
         self._embed_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
+        self._save_lock = threading.Lock()
         self._dirty: bool = False
         self._bm25_dirty: bool = True
         self._bm25_index: BM25Okapi | None = None
@@ -201,18 +203,20 @@ class GraphStore:
         self._ensure_vdb()
 
     def save(self) -> None:
-        if not self._dirty:
-            return
-        nodes = {}
-        for nid, ndata in self._graph.nodes(data=True):
-            nodes[nid] = dict(ndata) if ndata else {}
-        edges = []
-        for src, tgt, k, edata in self._graph.edges(data=True, keys=True):
-            etype = str(edata.get("type", "relates_to")) if edata else "relates_to"
-            edges.append({"source": src, "target": tgt, "key": str(k), "type": etype})
-        _atomic_write_json(self.graph_file, {"nodes": nodes, "edges": edges})
-        self._dirty = False
-        log.info("save wrote %d nodes, %d edges", len(nodes), len(edges))
+        # 同步工具在线程池中执行，save 可能被多线程并发调用，须串行化
+        with self._save_lock:
+            if not self._dirty:
+                return
+            nodes = {}
+            for nid, ndata in self._graph.nodes(data=True):
+                nodes[nid] = dict(ndata) if ndata else {}
+            edges = []
+            for src, tgt, k, edata in self._graph.edges(data=True, keys=True):
+                etype = str(edata.get("type", "relates_to")) if edata else "relates_to"
+                edges.append({"source": src, "target": tgt, "key": str(k), "type": etype})
+            _atomic_write_json(self.graph_file, {"nodes": nodes, "edges": edges})
+            self._dirty = False
+            log.info("save wrote %d nodes, %d edges", len(nodes), len(edges))
 
     def _mark_bm25_dirty(self) -> None:
         self._bm25_dirty = True

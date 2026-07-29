@@ -86,6 +86,7 @@ class PluginManager:
         self._pluggy_manager.add_hookspecs(CoreHooks)
         self._faust_plugins: dict[str, FaustPlugin] = {}
         self._pluggy_loaded = False
+        self._sse_abort_events: dict[str, set[asyncio.Event]] = {}
 
         # ── Scheduler ──
         self._scheduler_task: asyncio.Task | None = None
@@ -433,6 +434,8 @@ class PluginManager:
                 "plugins": [pid for pid in self._plugins.keys()],
                 "skipped": True,
             }
+        # force-disconnect active SSE streams tied to old plugin instances
+        self.abort_all_sse()
         # unload old plugins
         for plugin_id, record in list(self._plugins.items()):
             plugin = record.get("plugin")
@@ -755,6 +758,44 @@ class PluginManager:
         if not isinstance(result, dict):
             raise PluginLoadError(f"Plugin communicate result must be dict: {plugin_id}")
         return result
+
+    def open_sse(self, plugin_id: str, params: dict[str, Any]):
+        """Open an SSE stream for a plugin. Returns (async_generator, abort_event)."""
+        record = self._plugins.get(plugin_id)
+        if not record:
+            raise PluginLoadError(f"Plugin not found: {plugin_id}")
+        manifest: PluginManifest = record["manifest"]
+        if not self._plugin_enabled(plugin_id, manifest.enabled):
+            raise PluginLoadError(f"Plugin is disabled: {plugin_id}")
+        plugin = record.get("plugin")
+        ctx = record.get("ctx")
+        if plugin is None or ctx is None:
+            raise PluginLoadError(f"Plugin is not loaded: {plugin_id}")
+        handler = getattr(plugin, "sse_communicate_handler", None)
+        if not callable(handler):
+            raise PluginLoadError(f"Plugin does not support sse-communicate: {plugin_id}")
+        agen = handler(dict(params or {}), ctx)
+        if agen is None:
+            raise PluginLoadError(f"Plugin does not support sse-communicate: {plugin_id}")
+        if not hasattr(agen, "__anext__"):
+            raise PluginLoadError(
+                f"sse_communicate_handler must return an async generator: {plugin_id}")
+        abort = asyncio.Event()
+        self._sse_abort_events.setdefault(plugin_id, set()).add(abort)
+        return agen, abort
+
+    def close_sse(self, plugin_id: str, abort: asyncio.Event) -> None:
+        events = self._sse_abort_events.get(plugin_id)
+        if events:
+            events.discard(abort)
+            if not events:
+                self._sse_abort_events.pop(plugin_id, None)
+
+    def abort_all_sse(self) -> None:
+        for events in self._sse_abort_events.values():
+            for event in events:
+                event.set()
+        self._sse_abort_events.clear()
 
     # ── pluggy hook dispatch helpers ──
 

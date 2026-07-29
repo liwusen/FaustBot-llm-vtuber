@@ -50,6 +50,13 @@ class FrontendBridge:
     def play_bg(self, url: str):
         self._push("PLAYBG", url)
 
+    def sing(self, payload: dict) -> None:
+        self._push("SING", payload)
+
+    def sing_stop(self) -> None:
+        self._push("SINGSTOP")
+
+
     def load_model(self, path: str) -> None:
         self._push("LOAD_MODEL", str(path or ""))
 

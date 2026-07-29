@@ -618,6 +618,60 @@ const result = await window.faustAppUI.communicate('my-plugin', {
 });
 ```
 
+### SSE 流式通道（sse-communicate）
+
+插件可实现 `sse_communicate_handler` hook，通过固定路由向前端持续推送事件（如任务进度）。
+
+**后端接口：**
+
+**GET** `/faust/plugins/{plugin_id}/sse-communicate?key=value&...`
+
+- 查询参数以 `dict` 形式传给 hook
+- Hook 必须返回一个 **async generator**，每次 `yield` 的 dict 作为一条 SSE 事件（`data: <json>`）发出
+- 生成器抛出异常时发送 `event: error` 后断开
+- 空闲时每 15 秒发送 keep-alive 注释保持连接
+- 插件重载（reload）时所有活动 SSE 连接会被强制断开；允许多个并发连接
+
+```python
+class Plugin(FaustPlugin):
+    def sse_communicate_handler(self, params: dict, ctx: PluginContext):
+        async def stream():
+            while True:
+                yield {"progress": get_progress(params.get("job_id"))}
+                await asyncio.sleep(1)
+        return stream()
+```
+
+错误语义：404 插件不存在；503 插件禁用/未加载；409 未实现 hook 或返回值不是 async generator。
+
+**前端调用（两个窗口均可）：**
+
+```javascript
+// 返回原生 EventSource
+const es = window.pluginUI.communicateSSE('my-plugin', { job_id: 'abc' });
+// 或主窗口: window.faustAppUI.communicateSSE(...)
+es.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  // ...
+};
+es.close(); // 使用完毕后关闭
+```
+
+### 演唱通道（SING / SINGSTOP）
+
+后端 `FrontendBridge` 提供 `sing(payload)` / `sing_stop()`，向主前端推送 `SING <json>` / `SINGSTOP` 命令。`payload` 格式：`{"title": str, "url": str, "lyrics": str | null}`。song-studio 插件的 app-hook 通过 `faustAppUI.registerCommandHandler` 消费这两个命令并负责播放、口型同步与 TTS 闪避。
+
+主窗口 `faustAppUI` 相关辅助 API：
+
+| 方法 | 说明 |
+|------|------|
+| `attachLipSyncAnalyser(analyser)` | 用任意 WebAudio `AnalyserNode` 驱动模型口型（VRM/Live2D 均支持） |
+| `detachLipSyncAnalyser()` | 停止插件口型驱动并归零嘴型 |
+| `holdChat(flag)` | `true` 时将 `sendToChat` 的消息排队；`false` 时按序补发（演唱期间使用） |
+| `isChatHeld()` | 查询当前是否处于消息暂挂状态 |
+
+TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-end` 全局事件（`window`），插件可据此做音量闪避（ducking）。
+
 ### 设计约束
 
 - 不要通过 `register_routes` 注册插件 Router（已废弃）

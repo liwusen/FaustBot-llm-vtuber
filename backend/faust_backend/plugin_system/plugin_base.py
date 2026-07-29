@@ -44,6 +44,10 @@ class FaustPlugin:
     def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         return None
 
+    @hookimpl
+    def sse_communicate_handler(self, params: dict, ctx: PluginContext) -> Any:
+        return None
+
     # ── Schedules ──
 
     @hookimpl

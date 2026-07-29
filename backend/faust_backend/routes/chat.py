@@ -282,6 +282,7 @@ async def chat_websocket(websocket: WebSocket):
             while not _subagent_fwd_stop.is_set():
                 try:
                     event = await asyncio.wait_for(_subagent_queue.get(), timeout=0.5)
+                    assert event["agent_id"] != "main", "Subagent 事件队列中不应包含主 Agent 事件"
                     await websocket.send_text(json.dumps(event, ensure_ascii=False))
                 except asyncio.TimeoutError:
                     continue

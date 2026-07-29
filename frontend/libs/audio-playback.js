@@ -48,6 +48,7 @@ export function initAudioPlayback({
 
     if (audioEl) {
       try { audioEl.pause(); audioEl.currentTime = 0; } catch (e) {}
+      try { window.dispatchEvent(new CustomEvent('faust-tts-end')); } catch (e) {}
     }
     if (modelType === 'vrm' && vrmScene) {
       vrmScene.stopLipSync();
@@ -77,6 +78,7 @@ export function initAudioPlayback({
     sourceNode.connect(analyser);
     analyser.connect(audioCtx.destination);
     audioEl.onended = () => {
+      try { window.dispatchEvent(new CustomEvent('faust-tts-end')); } catch (e) {}
       if (modelType === 'vrm' && vrmScene) {
         vrmScene.stopLipSync();
       } else {
@@ -84,6 +86,7 @@ export function initAudioPlayback({
       }
     };
     audioEl.play().catch(() => { /* autoplay may be blocked */ });
+    try { window.dispatchEvent(new CustomEvent('faust-tts-start')); } catch (e) {}
 
     if (modelType === 'vrm' && vrmScene) {
       vrmScene.startLipSync(analyser);
@@ -254,5 +257,5 @@ export function initAudioPlayback({
   }
 
 
-  return { stopAudio, startMouthSyncFromFile, synthesizeAndPlay, playOrdered, initEvents };
+  return { stopAudio, startMouthSyncFromFile, synthesizeAndPlay, playOrdered, initEvents, setLipSyncValue: setModelLipSyncValue };
 }

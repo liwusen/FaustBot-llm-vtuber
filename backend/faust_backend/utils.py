@@ -4,7 +4,12 @@ import sys
 import time
 from typing import Callable
 import logging
+import threading
+from pathlib import Path
+import requests
+from faust_backend.logger import get_logger
 
+log = get_logger("faust.utils")
 
 def show_return_wrapper(func: Callable):
     @functools.wraps(func)
@@ -143,3 +148,170 @@ class PerfTimer:
             line = f"{line} | {extra}"
         logger.info(line)
         self.reset(keep_order=True)
+
+RELEASE_CACHE_HOURS = 1
+DOWNLOAD_THREADS = 32
+DOWNLOAD_CHUNK_SIZE = 8192 * 16
+DOWNLOAD_MAX_RETRIES = 3
+DOWNLOAD_RETRY_BASE_DELAY = 2.0
+class DownloadTask:
+    def __init__(
+        self,
+        url: str,
+        dest_path: Path,
+        tag: str,
+        asset_name: str,
+        num_threads: int = DOWNLOAD_THREADS,
+    ):
+        self.url = url
+        self.dest_path = dest_path
+        self.tag = tag
+        self.asset_name = asset_name
+        self.num_threads = num_threads
+        self.total_bytes: int = 0
+        self.downloaded_bytes: int = 0
+        self._lock = threading.Lock()
+        self._start_time: float = 0.0
+        self._done = False
+        self._error: str | None = None
+        self._progress_cb: Callable | None = None
+
+    @property
+    def elapsed(self) -> float:
+        return time.time() - self._start_time if self._start_time else 0.0
+
+    @property
+    def speed_mbps(self) -> float:
+        e = self.elapsed
+        return (self.downloaded_bytes / 1_048_576) / e if e > 0 else 0.0
+
+    @property
+    def progress(self) -> float:
+        if self.total_bytes == 0:
+            return 0.0
+        return min(1.0, self.downloaded_bytes / self.total_bytes)
+
+    @property
+    def done(self) -> bool:
+        return self._done
+
+    @property
+    def error(self) -> str | None:
+        return self._error
+
+    def to_dict(self) -> dict:
+        return {
+            "tag": self.tag,
+            "asset_name": self.asset_name,
+            "total_bytes": self.total_bytes,
+            "downloaded_bytes": self.downloaded_bytes,
+            "total_mb": (
+                round(self.total_bytes / 1_048_576, 1) if self.total_bytes else 0
+            ),
+            "downloaded_mb": round(self.downloaded_bytes / 1_048_576, 1),
+            "progress": round(self.progress * 100, 1),
+            "speed_mbps": round(self.speed_mbps, 1),
+            "elapsed_sec": round(self.elapsed, 1),
+            "done": self._done,
+            "error": self._error,
+        }
+
+    def _request_with_retry(self, method: str, **kwargs) -> requests.Response:
+        last_exc: Exception | None = None
+        for attempt in range(1, DOWNLOAD_MAX_RETRIES + 1):
+            try:
+                r = requests.request(method, self.url, **kwargs)
+                r.raise_for_status()
+                return r
+            except Exception as e:
+                last_exc = e
+                if attempt < DOWNLOAD_MAX_RETRIES:
+                    delay = DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    log.warning(
+                        f"Download attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed for "
+                        f"{self.asset_name}, retrying in {delay:.1f}s: {e}"
+                    )
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
+    def _dl_chunk_with_retry(self, start: int, end: int, idx: int) -> Path:
+        part = self.dest_path.with_suffix(f".part{idx}")
+        h = {"Range": f"bytes={start}-{end}"}
+        last_exc: Exception | None = None
+        for attempt in range(1, DOWNLOAD_MAX_RETRIES + 1):
+            try:
+                r = requests.get(self.url, headers=h, stream=True, timeout=120)
+                r.raise_for_status()
+                with open(part, "wb") as f:
+                    for data in r.iter_content(DOWNLOAD_CHUNK_SIZE):
+                        if data:
+                            f.write(data)
+                            with self._lock:
+                                self.downloaded_bytes += len(data)
+                return part
+            except Exception as e:
+                last_exc = e
+                if attempt < DOWNLOAD_MAX_RETRIES:
+                    delay = DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    log.warning(
+                        f"Chunk {idx} attempt {attempt}/{DOWNLOAD_MAX_RETRIES} failed "
+                        f"({start}-{end}), retrying in {delay:.1f}s: {e}"
+                    )
+                    time.sleep(delay)
+                if part.exists():
+                    part.unlink()
+        raise last_exc  # type: ignore[misc]
+
+    def run(self) -> None:
+        self._start_time = time.time()
+        try:
+            head = self._request_with_retry("HEAD", timeout=15)
+            self.total_bytes = int(head.headers.get("content-length", 0))
+            if self.total_bytes == 0:
+                raise RuntimeError("无法获取文件大小")
+
+            self.dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(self.dest_path, "wb") as f:
+                f.truncate(self.total_bytes)
+
+            chunk = self.total_bytes // self.num_threads
+            ranges: list[tuple[int, int, int]] = []
+            for i in range(self.num_threads):
+                start = i * chunk
+                end = (
+                    start + chunk - 1
+                    if i < self.num_threads - 1
+                    else self.total_bytes - 1
+                )
+                if start <= end:
+                    ranges.append((start, end, i))
+
+            part_paths: list[Path] = []
+
+            import concurrent.futures
+            import shutil
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.num_threads
+            ) as pool:
+                fut_map = {
+                    pool.submit(self._dl_chunk_with_retry, s, e, i): i
+                    for s, e, i in ranges
+                }
+                for fut in concurrent.futures.as_completed(fut_map):
+                    exc = fut.exception()
+                    if exc:
+                        raise exc
+                    part_paths.append(fut.result())
+
+            part_paths.sort(key=lambda p: int(p.suffix.replace(".part", "")))
+            with open(self.dest_path, "wb") as out:
+                for pp in part_paths:
+                    with open(pp, "rb") as f:
+                        shutil.copyfileobj(f, out)
+                    pp.unlink()
+
+            self._done = True
+        except Exception as e:
+            self._error = str(e)

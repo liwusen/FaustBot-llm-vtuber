@@ -218,6 +218,13 @@ if (!window.pluginUI) {
         payload ?? {}
       );
     },
+
+    communicateSSE(pluginId, params) {
+      const base = (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900";
+      const query = new URLSearchParams(params || {}).toString();
+      const url = `${base}/faust/plugins/${encodeURIComponent(String(pluginId || ""))}/sse-communicate${query ? "?" + query : ""}`;
+      return new EventSource(url);
+    },
   };
 }
 

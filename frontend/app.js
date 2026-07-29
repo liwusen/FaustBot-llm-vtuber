@@ -378,12 +378,37 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         );
       },
 
+      communicateSSE(pluginId, params){
+        const base = (window.api && window.api.backendBaseUrl) || 'http://127.0.0.1:13900';
+        const query = new URLSearchParams(params || {}).toString();
+        const url = `${base}/faust/plugins/${encodeURIComponent(String(pluginId || ''))}/sse-communicate${query ? '?' + query : ''}`;
+        return new EventSource(url);
+      },
+
       registerSidePanelGroup(spec){
         return layoutSidePanel.registerGroup(spec);
       },
 
       setSidePanelRender(groupId, fn){
         return layoutSidePanel.setGroupRender(groupId, fn);
+      },
+
+      holdChat(flag){
+        pluginChatHold = !!flag;
+        if (!pluginChatHold) flushHeldChat();
+        return pluginChatHold;
+      },
+
+      isChatHeld(){
+        return pluginChatHold;
+      },
+
+      attachLipSyncAnalyser(analyser){
+        return attachPluginLipSync(analyser);
+      },
+
+      detachLipSyncAnalyser(){
+        detachPluginLipSync();
       },
     };
   }
@@ -885,6 +910,51 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     showOverlay,
     stopBackgroundAudio: () => stopBackgroundAudio(),
   });
+
+  // ── 插件口型同步 / 聊天暂挂（供 faustAppUI 使用，如歌台演唱期间）──
+  let pluginLipSync = null;
+  let pluginChatHold = false;
+  const heldChatQueue = [];
+
+  function attachPluginLipSync(analyser){
+    if (!analyser) return false;
+    detachPluginLipSync();
+    if (modelType === 'vrm' && vrmScene) {
+      try { vrmScene.startLipSync(analyser); } catch (e) { return false; }
+      pluginLipSync = { mode: 'vrm' };
+      return true;
+    }
+    const data = new Uint8Array(analyser.fftSize || 2048);
+    const state = { mode: 'raf', rafId: 0 };
+    const tick = () => {
+      try {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+        const rms = Math.sqrt(sum / data.length);
+        audio.setLipSyncValue(Math.min(1, rms * 5));
+      } catch (e) {}
+      state.rafId = requestAnimationFrame(tick);
+    };
+    state.rafId = requestAnimationFrame(tick);
+    pluginLipSync = state;
+    return true;
+  }
+
+  function detachPluginLipSync(){
+    if (!pluginLipSync) return;
+    if (pluginLipSync.mode === 'raf' && pluginLipSync.rafId) cancelAnimationFrame(pluginLipSync.rafId);
+    if (pluginLipSync.mode === 'vrm' && vrmScene) { try { vrmScene.stopLipSync(); } catch (e) {} }
+    try { audio.setLipSyncValue(0); } catch (e) {}
+    pluginLipSync = null;
+  }
+
+  async function flushHeldChat(){
+    while (heldChatQueue.length && !pluginChatHold) {
+      const text = heldChatQueue.shift();
+      try { await sendToChat(text); } catch (e) { console.warn('flushHeldChat err', e); }
+    }
+  }
   
   // VAD websocket state
   const DEFAULT_VAD_WS_PATH = '/faust/audio/ws/vad';
@@ -1365,11 +1435,11 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     try{ msg = JSON.parse(raw); }catch(e){ msg = { type: 'error', error: String(e) }; }
     if (!msg) return;
     emitAppPluginEvent('chat_message', msg);
-    const agentId = String(msg.agent_id || 'main').trim() || 'main';
-
+    const agentId = msg.agent_id;
     // step 1: subagents 概况 → 更新摘要栏
     if (msg.agent_id === 'subagents') {
       if (msg.type === 'subagents_summary') {
+        log.debug(' MSG ==> Subagents summary received');
         setSubagentStatuses(Array.isArray(msg.items) ? msg.items : []);
       }
       return;
@@ -1378,6 +1448,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     // step 2: subagent 流式事件 → 暂存到缓存，不进入主气泡
     if (agentId !== 'main') {
       if (agentId && agentId.startsWith('subagent-')) {
+        log.debug(' MSG ==> Subagent event received');
         const name = agentId.slice('subagent-'.length);
         if (!subagentEventCache[name]) subagentEventCache[name] = [];
         const cached = subagentEventCache[name];
@@ -1598,6 +1669,11 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
   async function sendToChat(text){
     if (!text) return;
+    if (pluginChatHold) {
+      heldChatQueue.push(text);
+      if (textChatStatus) textChatStatus.textContent = '演唱中，消息已排队';
+      return '';
+    }
     try{
       if (textChatStatus) textChatStatus.textContent = '发送中...';
       if (chatStatusEl) chatStatusEl.textContent = '正在连接聊天流...';
