@@ -1,12 +1,12 @@
 (function(){
   const api = window.faustAppUI;
   if (!api) return;
-  const badge = document.createElement('div');
-  badge.className = 'emotion-badge-v2 emotion-badge-hidden';
-  badge.title = '情绪监控中';
-  badge.innerHTML = '<span class="emotion-badge-icon">🙂</span>';
-  document.body.appendChild(badge);
-  const icon = badge.querySelector('.emotion-badge-icon');
+  const overlay = document.createElement('div');
+  overlay.className = 'emotion-overlay-v2';
+  overlay.innerHTML = '<div class="emotion-badge-v2 emotion-badge-hidden" title="情绪监控中"><span class="emotion-badge-icon">🙂</span></div>';
+  document.body.appendChild(overlay);
+  const badge = overlay.querySelector('.emotion-badge-v2');
+  const icon = overlay.querySelector('.emotion-badge-icon');
 
   if (typeof api.registerWidget === 'function') {
     api.registerWidget({
@@ -25,42 +25,6 @@
         props: { dynamicBackground: 'boolean' },
       },
       props: { dynamicBackground: true },
-    });
-  }
-
-  if (typeof api.registerSidePanelGroup === 'function' && typeof api.setSidePanelRender === 'function') {
-    api.registerSidePanelGroup({ id: 'emotion-engine', label: 'Emotion Engine', plugin: 'emotion-engine', order: 210 });
-    api.setSidePanelRender('emotion-engine', function(container){
-      const widget = typeof api.getWidget === 'function' ? api.getWidget('emotion-badge') : null;
-
-      function makeSwitchRow(labelText, checked, onChange){
-        const row = document.createElement('div');
-        row.className = 'lsp-row';
-        const text = document.createElement('span');
-        text.textContent = labelText;
-        const switchWrap = document.createElement('label');
-        switchWrap.className = 'lsp-switch';
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        const slider = document.createElement('span');
-        slider.className = 'lsp-switch-slider';
-        input.addEventListener('change', function(){ onChange(input.checked); });
-        switchWrap.append(input, slider);
-        row.append(text, switchWrap);
-        return row;
-      }
-
-      container.appendChild(makeSwitchRow('显示情绪徽章', !(widget && widget.hidden), function(checked){
-        api.updateWidget('emotion-badge', { hidden: !checked });
-        if (typeof api.saveWidgetSettings === 'function') api.saveWidgetSettings();
-      }));
-      const dynamicBackground = !widget || !widget.props ? true : widget.props.dynamicBackground !== false;
-      container.appendChild(makeSwitchRow('动态背景', dynamicBackground, function(checked){
-        const current = typeof api.getWidget === 'function' ? api.getWidget('emotion-badge') : null;
-        api.updateWidget('emotion-badge', { props: Object.assign({}, current && current.props, { dynamicBackground: checked }) });
-        if (typeof api.saveWidgetSettings === 'function') api.saveWidgetSettings();
-      }));
     });
   }
 

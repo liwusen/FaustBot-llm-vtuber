@@ -14,12 +14,6 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
   propertyPanel.style.display = 'none';
   document.body.appendChild(propertyPanel);
 
-  const modeBadge = document.createElement('div');
-  modeBadge.className = 'ui-widget-mode-badge';
-  modeBadge.innerHTML = '<span class="ui-widget-mode-icon">🔧</span><span class="ui-widget-mode-text">编辑模式</span><span class="ui-widget-mode-hint">Esc 退出</span>';
-  modeBadge.style.display = 'none';
-  document.body.appendChild(modeBadge);
-
   function persist() {
     if (typeof saveSettings === 'function') {
       Promise.resolve(saveSettings()).catch(() => {});
@@ -43,7 +37,7 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
     });
   }
 
-  function readSelectionRect() {
+  function updateSelectionBox() {
     if (!manager.isEditMode() || !selectedId) {
       overlay.style.display = 'none';
       return;
@@ -64,10 +58,6 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
     overlay.style.top = `${rect.top - 6}px`;
     overlay.style.width = `${rect.width + 12}px`;
     overlay.style.height = `${rect.height + 12}px`;
-  }
-
-  function updateSelectionBox() {
-    requestAnimationFrame(readSelectionRect);
   }
 
   function selectWidget(id) {
@@ -129,13 +119,13 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       updateSelectionBox();
       persist();
     });
-    const xField = makeNumberField(widget.bindingType === 'model' ? '相对 X' : '屏幕 X (0~1)', widget.coord.x || 0, (value) => {
+    const xField = makeNumberField(widget.bindingType === 'model' ? '相对 X' : '屏幕 X', widget.coord.x || 0, (value) => {
       manager.updateWidget(widget.id, { coord: { ...widget.coord, x: value } });
       if (typeof refreshLayout === 'function') refreshLayout();
       updateSelectionBox();
       persist();
     });
-    const yField = makeNumberField(widget.bindingType === 'model' ? '相对 Y' : '屏幕 Y (0~1)', widget.coord.y || 0, (value) => {
+    const yField = makeNumberField(widget.bindingType === 'model' ? '相对 Y' : '屏幕 Y', widget.coord.y || 0, (value) => {
       manager.updateWidget(widget.id, { coord: { ...widget.coord, y: value } });
       if (typeof refreshLayout === 'function') refreshLayout();
       updateSelectionBox();
@@ -186,7 +176,6 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       startY: event.clientY,
       coord: { ...widget.coord },
     };
-    propertyPanel.style.display = 'none';
   }
 
   function beginScale(event) {
@@ -203,35 +192,26 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
     event.stopPropagation();
   }
 
-  function findWidgetByElement(target) {
-    if (!target) return null;
-    return widgetElements().find((w) => w.element === target || w.element.contains(target));
-  }
-
-  document.addEventListener('mousedown', (event) => {
-    if (!manager.isEditMode() || event.button !== 0) return;
-    const widget = findWidgetByElement(event.target);
-    if (!widget) return;
-    event.preventDefault();
-    event.stopPropagation();
-    selectWidget(widget.id);
-    beginDrag(widget, event);
-  }, true);
-
-  document.addEventListener('contextmenu', (event) => {
-    if (!manager.isEditMode()) return;
-    const widget = findWidgetByElement(event.target);
-    if (!widget) return;
-    event.preventDefault();
-    event.stopPropagation();
-    selectWidget(widget.id);
-    openPropertyPanel(widget.id, event.clientX, event.clientY);
-  }, true);
-
   function attachWidget(widget) {
     const el = widget.element;
-    if (!el) return;
-    el.classList.add('ui-widget-editing-target-tag');
+    if (!el || el.dataset.uiWidgetBound === '1') return;
+    el.dataset.uiWidgetBound = '1';
+    el.addEventListener('mousedown', (event) => {
+      if (!manager.isEditMode() || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const current = manager.getWidget(widget.id);
+      if (!current) return;
+      selectWidget(widget.id);
+      beginDrag(current, event);
+    }, true);
+    el.addEventListener('contextmenu', (event) => {
+      if (!manager.isEditMode()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      selectWidget(widget.id);
+      openPropertyPanel(widget.id, event.clientX, event.clientY);
+    }, true);
   }
 
   document.addEventListener('mousemove', (event) => {
@@ -252,8 +232,8 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       } else {
         manager.updateWidget(widget.id, {
           coord: {
-            x: dragState.coord.x + dx / Math.max(1, window.innerWidth),
-            y: dragState.coord.y + dy / Math.max(1, window.innerHeight),
+            x: dragState.coord.x + dx,
+            y: dragState.coord.y + dy,
           },
         });
       }
@@ -283,32 +263,18 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
     beginScale(event);
   });
 
-  let editRafId = null;
-
-  function editRafLoop() {
-    if (!manager.isEditMode()) {
-      editRafId = null;
-      return;
-    }
-    readSelectionRect();
-    editRafId = requestAnimationFrame(editRafLoop);
-  }
-
   function setEditMode(enabled) {
     manager.setEditMode(enabled);
     if (typeof onEditModeChange === 'function') onEditModeChange(manager.isEditMode());
     overlay.style.display = enabled ? 'block' : 'none';
-    modeBadge.style.display = enabled ? 'flex' : 'none';
     if (!enabled) {
       selectedId = '';
       propertyPanel.style.display = 'none';
-      if (editRafId) { cancelAnimationFrame(editRafId); editRafId = null; }
     }
     widgetElements().forEach(attachWidget);
     applyGhostState();
     if (typeof refreshLayout === 'function') refreshLayout();
     updateSelectionBox();
-    if (enabled) editRafLoop();
   }
 
   document.addEventListener('keydown', (event) => {
@@ -329,6 +295,5 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       return manager.isEditMode();
     },
     refreshSelection: updateSelectionBox,
-    refreshGhostState: applyGhostState,
   };
 }

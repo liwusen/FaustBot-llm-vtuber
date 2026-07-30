@@ -1,10 +1,10 @@
 .emotion-row { display:grid; grid-template-columns:64px 1fr 48px; align-items:center; gap:12px; margin-bottom:10px; }
 .emotion-bar { position:relative; height:10px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden; }
-.emotion-bar-editable { cursor:ew-resize; touch-action:none; }
 .emotion-bar i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg, #ff8ba7, #ffd166); }
 .emotion-history-v2 { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
 .emotion-history-v2 li { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
-.emotion-badge-v2 { position:fixed; z-index:1400; width:56px; height:56px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(24,20,40,0.82); color:#fff6f8; border:1px solid rgba(255,255,255,0.12); box-shadow:0 12px 30px rgba(0,0,0,0.16); transform:translate(-50%, -50%); backdrop-filter:blur(12px); pointer-events:auto; }
+.emotion-overlay-v2 { position:fixed; inset:0; z-index:20; pointer-events:none; }
+.emotion-badge-v2 { position:fixed; width:56px; height:56px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(24,20,40,0.82); color:#fff6f8; border:1px solid rgba(255,255,255,0.12); box-shadow:0 12px 30px rgba(0,0,0,0.16); transform:translate(-50%, -50%); backdrop-filter:blur(12px); }
 .emotion-badge-icon { font-size:28px; line-height:1; }
 .emotion-badge-v2[data-mode='joy'] { background:rgba(188,86,113,0.82); }
 .emotion-badge-v2[data-mode='irritation'] { background:rgba(141,54,58,0.82); }
