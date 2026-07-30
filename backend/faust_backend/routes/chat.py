@@ -485,9 +485,14 @@ async def command_websocket(websocket: WebSocket):
                 if isinstance(task, dict):
                     ttype = task.get("type")
                     callback_id = task.get("callback_id")
-                    if ttype == "event" and task.get("event_name") == "nimble_result" and callback_id:
-                        result = (task.get("payload") or {}).get("result")
-                        trigger_text = f"<Trigger>灵动交互窗口收到用户提交。callback_id={callback_id}，用户结果={result}。请继续处理。"
+                    if ttype == "event" and task.get("event_name") == "nimble_message" and callback_id:
+                        msg_payload = (task.get("payload") or {}).get("payload")
+                        trigger_text = (
+                            f"<Trigger>灵动交互窗口消息。callback_id={callback_id}，"
+                            f"payload={json.dumps(msg_payload, ensure_ascii=False)}。"
+                            f"完整对话记录在 faustbot://nimble/{callback_id}/console，"
+                            f"如需回复请用 write 工具向该 console 路径写入消息。"
+                        )
                     elif ttype == "event" and task.get("event_name") == "blive_danmaku":
                         payload = task.get("payload") or {}
                         uname = payload.get("uname", "匿名")
@@ -509,12 +514,7 @@ async def command_websocket(websocket: WebSocket):
                             continue
                         trigger_text = f"<Trigger>灵动交互窗口仍在等待用户操作。callback_id={callback_id}，标题={session.get('title')}，提醒说明={task.get('recall_description') or session.get('recall_text')}。请判断是否需要继续引导用户。"
                     elif ttype == "nimble-expire" and callback_id:
-                        session = nimble.close_nimble_session(callback_id, reason="expired")
-                        if session:
-                            trigger_manager.delete_trigger(session["result_trigger_id"])
-                            trigger_manager.delete_trigger(session["reminder_trigger_id"])
-                            trigger_manager.delete_trigger(session["expire_trigger_id"])
-                            backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": "expired"})
+                        nimble.finalize_close(callback_id, reason="expired")
                         trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
                 log.info('触发器激活，正在调用 Agent: %s', trigger_text[:120])
                 resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})

@@ -41,35 +41,31 @@ async def human_in_loop_feedback_post(payload: dict):
     return {"status": "feedback received", "request_id": request_id, "resolved": resolved}
 
 
-@router.post("/faust/nimble/callback")
-async def nimble_callback_post(payload: dict):
+@router.post("/faust/nimble/message")
+async def nimble_message_post(payload: dict):
     callback_id = None
-    data = None
-    should_close = False
+    create_event_trigger = False
+    message = None
     if isinstance(payload, dict):
         callback_id = payload.get("callback_id")
-        data = payload.get("data")
-        should_close = bool(payload.get("close"))
+        create_event_trigger = bool(payload.get("create_event_trigger"))
+        message = payload.get("payload")
     if not callback_id:
         return {"error": "no callback_id provided"}
-    session = nimble.set_nimble_result(callback_id, data, closed=should_close)
+    session = nimble.record_frontend_message(callback_id, message)
     if not session:
         return {"error": f"unknown callback_id: {callback_id}"}
 
-    trigger_manager.append_trigger({
-        "id": f"nimble_result::{callback_id}",
-        "type": "event",
-        "event_name": "nimble_result",
-        "callback_id": callback_id,
-        "payload": {"result": data, "closed": should_close},
-        "lifespan": 7200,
-    })
-
-    if should_close:
-        trigger_manager.delete_trigger(session["reminder_trigger_id"])
-        trigger_manager.delete_trigger(session["expire_trigger_id"])
-        backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": "submitted"})
-        nimble.cleanup_nimble_session(callback_id)
+    if create_event_trigger:
+        trigger_manager.append_trigger({
+            "id": nimble.message_trigger_id(callback_id),
+            "type": "event",
+            "event_name": "nimble_message",
+            "callback_id": callback_id,
+            "payload": {"payload": message},
+            "recall_description": f"灵动窗口 {callback_id} 收到前端消息，完整对话见 faustbot://nimble/{callback_id}/console",
+            "lifespan": 7200,
+        })
     return {"status": "ok", "callback_id": callback_id}
 
 
@@ -82,22 +78,17 @@ async def nimble_close_post(payload: dict):
         reason = payload.get("reason") or reason
     if not callback_id:
         return {"error": "no callback_id provided"}
-    session = nimble.close_nimble_session(callback_id, reason=reason)
+    session = nimble.finalize_close(callback_id, reason=reason)
     if not session:
         return {"error": f"unknown callback_id: {callback_id}"}
 
     trigger_manager.append_trigger({
-        "id": f"nimble_result::{callback_id}",
+        "id": f"nimble_closed::{callback_id}",
         "type": "event",
-        "event_name": "nimble_result",
+        "event_name": "nimble_message",
         "callback_id": callback_id,
-        "payload": {"closed": True, "reason": reason},
+        "payload": {"payload": {"type": "window-closed", "reason": reason}},
+        "recall_description": f"灵动窗口 {callback_id} 已被关闭（{reason}）。",
         "lifespan": 7200,
     })
-
-    trigger_manager.delete_trigger(session["result_trigger_id"])
-    trigger_manager.delete_trigger(session["reminder_trigger_id"])
-    trigger_manager.delete_trigger(session["expire_trigger_id"])
-    backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": reason})
-    nimble.cleanup_nimble_session(callback_id)
     return {"status": "closed", "callback_id": callback_id}

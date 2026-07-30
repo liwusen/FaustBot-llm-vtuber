@@ -100,6 +100,18 @@ function renderPluginsModule() {
       await cfgApi("POST", "/faust/admin/plugins/install-zip", { zip_path: zipPath, overwrite, apply_runtime: true, no_initial_chat: true, reset_dialog: false });
       await refreshPluginUi();
     }),
+    makeButton("检查更新", async () => {
+      const data = await cfgApi("GET", "/faust/admin/plugin-market/check-updates");
+      state.pluginUpdates = data;
+      const updates = Array.isArray(data.updates) ? data.updates : [];
+      if (updates.length) {
+        const names = updates.map((u) => `${u.name || u.id} (${u.installed_version || "?"} → ${u.latest_version})`).join("、");
+        showBanner("success", `发现 ${updates.length} 个可更新插件: ${names}`);
+      } else {
+        showBanner("success", "所有插件均为最新版本。");
+      }
+      refreshModule();
+    }, "btn btn-secondary"),
     makeButton("打包为 ZIP", async () => {
       if (!state.selectedPluginId) return;
       const outputDir = await window.api.configOpenDirectory({ title: "选择 ZIP 输出目录" });
@@ -111,6 +123,22 @@ function renderPluginsModule() {
       showBanner("success", `插件已打包: ${(data.package || {}).zip_path || "-"}`);
     })
   );
+  const proxyWrap = el("div", "switch-row");
+  const proxyText = el("span", "switch-text", "gh-proxy 镜像加速");
+  const proxyLabel = el("label", "switch");
+  const proxyInput = document.createElement("input");
+  proxyInput.type = "checkbox";
+  proxyInput.checked = Boolean((state.config.public || {}).PLUGIN_MARKET_USE_GH_PROXY);
+  const proxySlider = el("span", "switch-slider");
+  proxyInput.addEventListener("change", async () => {
+    const enabled = Boolean(proxyInput.checked);
+    await cfgApi("POST", "/faust/admin/config", { public: { PLUGIN_MARKET_USE_GH_PROXY: enabled } });
+    if (state.config.public) state.config.public.PLUGIN_MARKET_USE_GH_PROXY = enabled;
+    showBanner("success", enabled ? "插件市场已启用 gh-proxy 镜像。" : "插件市场已关闭 gh-proxy 镜像。");
+  });
+  proxyLabel.append(proxyInput, proxySlider);
+  proxyWrap.append(proxyText, proxyLabel);
+  top.append(proxyWrap);
   addSection("插件操作", [top]);
 
   const listCard = el("article", "card full-span");
@@ -142,7 +170,11 @@ function renderPluginsModule() {
     pluginMain.append(chartHost, pluginText);
     pluginCell.append(pluginMain);
 
+    const updateEntry = ((state.pluginUpdates || {}).updates || []).find((u) => String(u.id) === pid) || null;
     const versionCell = el("td", "", String(p.version || "-"));
+    if (updateEntry) {
+      versionCell.append(el("span", "tag-chip", `可更新 → ${updateEntry.latest_version}`));
+    }
     const statusCell = el("td", "");
     statusCell.append(el("span", `tag-chip ${p.enabled ? "" : "tag-chip-muted"}`.trim(), p.enabled ? "已启用" : "已关闭"));
     statusCell.append(el("div", "plugin-status-note", pluginHealthLabel(p)));
@@ -173,6 +205,17 @@ function renderPluginsModule() {
         await refreshPluginUi();
       }, "btn btn-ghost")
     );
+    if (updateEntry) {
+      ops.append(makeButton("更新", async (evt) => {
+        if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation();
+        await cfgApi("POST", "/faust/admin/plugin-market/sync", { plugin_id: pid, apply_runtime: true, no_initial_chat: true, reset_dialog: false });
+        if (state.pluginUpdates && Array.isArray(state.pluginUpdates.updates)) {
+          state.pluginUpdates.updates = state.pluginUpdates.updates.filter((u) => String(u.id) !== pid);
+        }
+        showBanner("success", `插件 ${pid} 已更新到 ${updateEntry.latest_version}`);
+        await refreshPluginUi();
+      }, "btn btn-primary"));
+    }
     opsCell.append(ops);
 
     row.append(pluginCell, versionCell, statusCell, opsCell);

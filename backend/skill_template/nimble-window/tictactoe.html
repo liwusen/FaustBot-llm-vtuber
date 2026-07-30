@@ -1,0 +1,97 @@
+<div style="padding:14px;color:#fff;font-family:'Segoe UI',sans-serif;">
+  <div id="ttt-status" style="margin-bottom:10px;font-weight:700;">你执 X，先手。点击格子落子。</div>
+  <div id="ttt-board" style="display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,64px);gap:6px;"></div>
+  <div style="margin-top:10px;display:flex;gap:8px;">
+    <button id="ttt-reset" style="padding:6px 14px;border-radius:8px;border:none;background:#3a86ff;color:#fff;cursor:pointer;">重新开始</button>
+  </div>
+</div>
+<script>
+  const SIZE = 3;
+  let board = [];
+  let gameOver = false;
+  let waitingAgent = false;
+  const statusEl = document.getElementById('ttt-status');
+  const boardEl = document.getElementById('ttt-board');
+  const cells = [];
+
+  function newBoard() {
+    board = Array.from({ length: SIZE }, () => Array(SIZE).fill(''));
+    gameOver = false;
+    waitingAgent = false;
+    render();
+    statusEl.textContent = '你执 X，先手。点击格子落子。';
+  }
+
+  function render() {
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const cell = cells[r * SIZE + c];
+        cell.textContent = board[r][c];
+        cell.style.color = board[r][c] === 'X' ? '#3a86ff' : '#ff5d8f';
+      }
+    }
+  }
+
+  function winner() {
+    const lines = [];
+    for (let i = 0; i < SIZE; i++) {
+      lines.push([board[i][0], board[i][1], board[i][2]]);
+      lines.push([board[0][i], board[1][i], board[2][i]]);
+    }
+    lines.push([board[0][0], board[1][1], board[2][2]]);
+    lines.push([board[0][2], board[1][1], board[2][0]]);
+    for (const line of lines) {
+      if (line[0] && line[0] === line[1] && line[1] === line[2]) return line[0];
+    }
+    if (board.flat().every((v) => v)) return 'draw';
+    return null;
+  }
+
+  function finish(result) {
+    gameOver = true;
+    const winnerName = result === 'draw' ? 'draw' : (result === 'X' ? 'user' : 'agent');
+    statusEl.textContent = result === 'draw' ? '平局！' : (result === 'X' ? '你赢了！' : '我赢了~');
+    nimble.sendMessage(false, { game: 'tictactoe', type: 'game_over', winner: winnerName, board });
+  }
+
+  function userMove(r, c) {
+    if (gameOver || waitingAgent || board[r][c]) return;
+    board[r][c] = 'X';
+    render();
+    const result = winner();
+    if (result) { finish(result); return; }
+    waitingAgent = true;
+    statusEl.textContent = '等待对方落子…';
+    nimble.sendMessage(true, { game: 'tictactoe', board, last_move: [r, c], turn: 'agent' });
+  }
+
+  nimble.setMessageHandler((msg) => {
+    if (!msg || msg.type !== 'move' || gameOver) return;
+    const [r, c] = Array.isArray(msg.pos) ? msg.pos : [-1, -1];
+    if (!(r >= 0 && r < SIZE && c >= 0 && c < SIZE) || board[r][c]) {
+      nimble.sendMessage(true, { game: 'tictactoe', type: 'invalid_move', reason: 'cell occupied or out of range', board, turn: 'agent' });
+      return;
+    }
+    board[r][c] = 'O';
+    waitingAgent = false;
+    render();
+    const result = winner();
+    if (result) { finish(result); return; }
+    statusEl.textContent = '轮到你了。';
+  });
+
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      const cell = document.createElement('div');
+      cell.style.cssText = 'display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.08);border-radius:10px;font-size:34px;font-weight:800;cursor:pointer;user-select:none;';
+      cell.addEventListener('click', () => userMove(r, c));
+      boardEl.appendChild(cell);
+      cells.push(cell);
+    }
+  }
+  document.getElementById('ttt-reset').addEventListener('click', () => {
+    newBoard();
+    nimble.sendMessage(true, { game: 'tictactoe', type: 'restart', board, turn: 'user' });
+  });
+  newBoard();
+</script>

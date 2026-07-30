@@ -35,6 +35,7 @@ const state = {
   plugins: [],
   selectedPluginId: "",
   pluginConfigDraft: {},
+  pluginUpdates: null,
   runtimeUpdate: null,
   graphEntities: [],
   graphRelations: [],

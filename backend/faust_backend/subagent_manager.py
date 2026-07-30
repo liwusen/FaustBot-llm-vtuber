@@ -6,6 +6,7 @@ import aiosqlite
 from langchain.chat_models import BaseChatModel
 from asyncio import Event, Lock
 import asyncio
+import contextvars
 from langchain.agents.middleware.types import AgentMiddleware
 import json
 import os
@@ -537,7 +538,12 @@ class SubagentManager:
             raise RuntimeError(f"Agent '{agent_name}' is currently locked.")
         self._touch_subagent(subagent, status="pending", last_error="")
         self._append_event(subagent, {"type": "queued", "message": message})
-        task = asyncio.get_running_loop().create_task(self._run_background(agent_name, message, lockTimeout=lockTimeout))
+        # 用空白 contextvars 上下文创建任务，切断 LangChain 父 run 回调继承，
+        # 否则 subagent 事件会冒泡进主 Agent 的 astream_events 流并被误标为 agent_id=main
+        task = asyncio.get_running_loop().create_task(
+            self._run_background(agent_name, message, lockTimeout=lockTimeout),
+            context=contextvars.Context(),
+        )
         subagent.activeTask = task
         return self._light_status(agent_name)
 

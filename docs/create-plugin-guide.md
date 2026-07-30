@@ -208,32 +208,39 @@ def get_plugin():
 
 ### 概述
 
-Plugin Market 是 FaustBot 的插件分发平台，支持从在线市场安装、打包和分享插件。
+Plugin Market 是 FaustBot 的插件分发平台，由独立仓库 [FaustBotPluginMarket](https://github.com/liwusen/FaustBotPluginMarket) 维护，支持从在线市场安装/更新、打包和分享插件。
 
 ### 市场地址
 
-- **索引地址**：https://github.com/liwusen/FaustBot-llm-vtuber/main/plugins.json
-- **GitHub 仓库**：https://github.com/liwusen/FaustBot-llm-vtuber
+- **索引地址**：https://raw.githubusercontent.com/liwusen/FaustBotPluginMarket/main/plugins.json
+- **GitHub 仓库**：https://github.com/liwusen/FaustBotPluginMarket
+- **市场页面**：GitHub Pages（见仓库 README）
 
-### 安装插件
+### 安装/更新插件
 
-**通过配置中心：**
+**通过 deeplink（市场页面"安装"按钮）：**
 
-1. 打开配置中心 → 插件市场
-2. 浏览可用插件
-3. 点击安装
+```
+faustbot://syncPlugin?id=my-plugin
+```
+
+若插件已存在会直接覆盖更新（安装前有一次安全确认弹窗）。
 
 **通过 API：**
 
 ```bash
-# 从市场安装
-curl -X POST http://localhost:13900/faust/admin/plugin-market/install \
+# 从市场安装/更新（存在即覆盖）
+curl -X POST http://localhost:13900/faust/admin/plugin-market/sync \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "my-plugin"}'
 
+# 检查已安装插件是否有更新
+curl http://localhost:13900/faust/admin/plugin-market/check-updates
+
 # 从本地 ZIP 安装
 curl -X POST http://localhost:13900/faust/admin/plugins/install-zip \
-  -F "file=@my-plugin.zip"
+  -H "Content-Type: application/json" \
+  -d '{"zip_path": "D:/path/my-plugin.zip"}'
 
 # 打包插件为 ZIP
 curl -X POST http://localhost:13900/faust/admin/plugins/package-zip \
@@ -243,15 +250,19 @@ curl -X POST http://localhost:13900/faust/admin/plugins/package-zip \
 
 ### 发布到 Market
 
-1. 创建 GitHub 仓库
-2. 在 `plugin.json` 中添加 `repo` 字段指向仓库
-3. 创建 Release 并上传 ZIP 资产
-4. 向 [faust_plugin_market](https://github.com/liwusen/FaustBot-llm-vtuber) 提交 PR
+发布流程完全由 issue 驱动，无需提交 PR：
+
+1. 将插件打包为 zip（顶层为 `<plugin_id>/` 目录，内含 `plugin.json`），上传到任意 https 直链（如你自己仓库的 Release）
+2. 在 [FaustBotPluginMarket](https://github.com/liwusen/FaustBotPluginMarket) 用 "Submit Plugin" issue 模板提交插件元数据与 zip 链接
+3. 维护者审核后为 issue 添加 `approved` 标签
+4. GitHub Action 自动校验、重打包并发布到市场仓库自己的 Release，同时更新 `plugins.json` 索引
+5. 更新插件时提交新 issue 并提升版本号即可
 
 ### 市场索引格式
 
 ```json
 {
+  "updated_at": "2026-01-01T00:00:00Z",
   "plugins": [
     {
       "id": "my-plugin",
@@ -259,10 +270,11 @@ curl -X POST http://localhost:13900/faust/admin/plugins/package-zip \
       "description": "插件描述",
       "author": "作者",
       "version": "1.0.0",
-      "repo": "owner/repo",
-      "asset_name": "plugin_pack.zip",
+      "download_url": "https://github.com/liwusen/FaustBotPluginMarket/releases/download/plugin-my-plugin-v1.0.0/my-plugin.zip",
       "homepage": "https://...",
-      "tags": ["utility", "ai"]
+      "tags": ["utility", "ai"],
+      "source_issue": 1,
+      "published_at": "2026-01-01T00:00:00Z"
     }
   ]
 }

@@ -41,6 +41,14 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
     return next;
   }
 
+  function removeWidget(id) {
+    const current = widgets.get(String(id));
+    if (!current) return false;
+    widgets.delete(String(id));
+    if (typeof onWidgetChange === 'function') onWidgetChange(current, { reason: 'remove' });
+    return true;
+  }
+
   function getWidget(id) {
     const widget = widgets.get(String(id));
     if (!widget) return null;
@@ -92,6 +100,7 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
   return {
     registerWidget,
     updateWidget,
+    removeWidget,
     getWidget,
     listWidgets,
     getWidgetAnchor,

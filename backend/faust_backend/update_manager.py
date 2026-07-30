@@ -43,6 +43,24 @@ PRESERVE_PATTERNS = [
 ]
 
 
+def is_newer_version(new_tag: str, old_tag: str) -> bool:
+    def _parts(t: str) -> tuple:
+        cleaned = str(t or "").lstrip("Vv")
+        parts = []
+        for seg in re.split(r"[._\-]", cleaned):
+            try:
+                parts.append(int(seg))
+            except ValueError:
+                parts.append(seg)
+        return tuple(parts)
+
+    try:
+        return _parts(new_tag) > _parts(old_tag)
+    except TypeError:
+        # 混合 int/str 段无法比较（版本号格式异常），退化为字符串比较
+        return str(new_tag) > str(old_tag)
+
+
 def _normalize_tag(tag: str) -> str:
     return tag.lstrip("Vv")
 
@@ -187,17 +205,7 @@ class UpdateManager:
 
     @staticmethod
     def _is_newer(new_tag: str, old_tag: str) -> bool:
-        def _parts(t: str) -> tuple:
-            cleaned = t.lstrip("Vv")
-            parts = []
-            for seg in re.split(r"[._\-]", cleaned):
-                try:
-                    parts.append(int(seg))
-                except ValueError:
-                    parts.append(seg)
-            return tuple(parts)
-
-        return _parts(new_tag) > _parts(old_tag)
+        return is_newer_version(new_tag, old_tag)
 
     async def ensure_extracted(self, tag: str, asset_name: str) -> Path:
         tmp = Path(tempfile.gettempdir()) / f"faust_update_{tag}"

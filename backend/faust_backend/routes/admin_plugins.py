@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import faust_backend.plugin_market as plugin_market
 from faust_backend.plugin_system.manager import PluginLoadError
@@ -225,20 +225,29 @@ async def plugin_communicate_sse(plugin_id: str, request: Request):
 
 
 @router.get("/faust/admin/plugin-market/catalog")
-async def admin_plugin_market_catalog(index_url: str | None = Query(default=None)):
+async def admin_plugin_market_catalog():
     try:
-        data = plugin_market.fetch_catalog(index_url=index_url)
+        data = await asyncio.to_thread(plugin_market.fetch_catalog)
         return {"status": "ok", **data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"插件市场读取失败: {e}")
 
 
-@router.post("/faust/admin/plugin-market/install")
-async def admin_plugin_market_install(payload: dict | None = None):
+@router.get("/faust/admin/plugin-market/check-updates")
+async def admin_plugin_market_check_updates():
+    pm = state.plugin_manager
+    installed = pm.list_plugins() if pm else []
+    try:
+        data = await asyncio.to_thread(plugin_market.check_plugin_updates, installed)
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"插件更新检查失败: {e}")
+
+
+@router.post("/faust/admin/plugin-market/sync")
+async def admin_plugin_market_sync(payload: dict | None = None):
     body = payload or {}
     plugin_id = str(body.get("plugin_id") or body.get("id") or "").strip()
-    index_url = body.get("index_url") or body.get("market_url")
-    overwrite = bool(body.get("overwrite", False))
     apply_runtime = bool(body.get("apply_runtime", True))
     reset_dialog = bool(body.get("reset_dialog", False))
     no_initial_chat = bool(body.get("no_initial_chat", True))
@@ -246,9 +255,9 @@ async def admin_plugin_market_install(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="缺少 plugin_id")
     try:
         plugins_dir = state.plugin_manager.plugins_dir if state.plugin_manager else None
-        install_info = plugin_market.install_plugin_from_catalog(
-            plugin_id=plugin_id, plugins_dir=plugins_dir,
-            index_url=index_url, overwrite=overwrite)
+        install_info = await asyncio.to_thread(
+            plugin_market.sync_plugin_from_catalog,
+            plugin_id=plugin_id, plugins_dir=plugins_dir)
         if state.plugin_manager:
             reload_summary = state.plugin_manager.reload()
             _sync_plugin_trigger_filters()
@@ -261,8 +270,6 @@ async def admin_plugin_market_install(payload: dict | None = None):
             "status": "ok", "install": install_info, "reload": reload_summary,
             "runtime": runtime_info, "items": state.plugin_manager.list_plugins() if state.plugin_manager else [],
         }
-    except plugin_market.PluginAlreadyInstalledError as e:
-        raise HTTPException(status_code=409, detail=str(e))
     except plugin_market.PluginMarketError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

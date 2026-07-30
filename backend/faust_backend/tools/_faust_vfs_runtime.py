@@ -83,7 +83,7 @@ class AsyncRWLock:
 
 
 class VfsNode:
-    def __init__(self, *, name: str, is_directory: bool, content: Any = None, symbolic_func: SymbolicFunc | None = None, should_be_included_in_search: bool = True, writable: bool = True):
+    def __init__(self, *, name: str, is_directory: bool, content: Any = None, symbolic_func: SymbolicFunc | None = None, should_be_included_in_search: bool = True, writable: bool = True,write_handler:Callable | None = None,edit_handler: Callable | None = None):
         self.name = name
         self.is_directory = is_directory
         self.content = content
@@ -91,11 +91,22 @@ class VfsNode:
         self.symbolic_func = symbolic_func
         self.should_be_included_in_search = should_be_included_in_search
         self.writable = writable
+        # handler 签名为 (node: VfsNode, content: Any)，支持 sync/async；
+        # 存在 handler 时完全接管写入/编辑，VFS 不再自动替换节点内容
+        self.write_handler: Callable | None = write_handler
+        self.edit_handler: Callable | None = edit_handler
 
     @property
     def is_symbolic(self) -> bool:
         return self.symbolic_func is not None
 
+    @property
+    def has_write_handler(self) -> bool:
+        return self.write_handler is not None
+
+    @property
+    def has_edit_handler(self) -> bool:
+        return self.edit_handler is not None
 
 class AsyncVirtualFileSystem:
     def __init__(self) -> None:
@@ -174,9 +185,33 @@ class AsyncVirtualFileSystem:
             *dirs, file_name = parts
             parent = self._ensure_dir_path_unlocked(dirs)
             existing = parent.children.get(file_name)
-            if existing is not None and existing.is_symbolic and not existing.writable:
-                raise PermissionError(f'Symbolic node is read-only: {self.normalize_path(path)}')
-            parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=content, writable=writable)
+            handler = existing.write_handler if existing is not None else None
+            if handler is None:
+                if existing is not None and existing.is_symbolic and not existing.writable:
+                    raise PermissionError(f'Symbolic node is read-only: {self.normalize_path(path)}')
+                parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=content, writable=writable)
+                return
+        result = handler(existing, content)
+        if inspect.isawaitable(result):
+            await result
+
+    async def edit(self, path: str, edited_content: Any, *, writable: bool = True) -> None:
+        parts = self.get_path_parts(path)
+        if not parts:
+            raise ValueError('Cannot edit root directory')
+        async with self._rwlock.write_lock():
+            *dirs, file_name = parts
+            parent = self._ensure_dir_path_unlocked(dirs)
+            existing = parent.children.get(file_name)
+            handler = existing.edit_handler if existing is not None else None
+            if handler is None:
+                if existing is not None and existing.is_symbolic and not existing.writable:
+                    raise PermissionError(f'Symbolic node is read-only: {self.normalize_path(path)}')
+                parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=edited_content, writable=writable)
+                return
+        result = handler(existing, edited_content)
+        if inspect.isawaitable(result):
+            await result
 
     async def write_symbolic(self, path: str, func: SymbolicFunc, *, should_be_included_in_search: bool = True, writable: bool = False) -> None:
         parts = self.get_path_parts(path)
@@ -186,6 +221,30 @@ class AsyncVirtualFileSystem:
             *dirs, file_name = parts
             parent = self._ensure_dir_path_unlocked(dirs)
             parent.children[file_name] = VfsNode(name=file_name, is_directory=False, symbolic_func=func, should_be_included_in_search=should_be_included_in_search, writable=writable)
+
+    async def set_write_handler(self, path: str, func: Callable) -> None:
+        parts = self.get_path_parts(path)
+        if not parts:
+            raise ValueError('Cannot set write handler on root directory')
+        async with self._rwlock.write_lock():
+            *dirs, file_name = parts
+            parent = self._ensure_dir_path_unlocked(dirs)
+            node = parent.children.get(file_name)
+            if node is None:
+                raise FileNotFoundError(f'VFS node not found: {self.normalize_path(path)}')
+            node.write_handler = func
+
+    async def set_edit_handler(self, path: str, func: Callable) -> None:
+        parts = self.get_path_parts(path)
+        if not parts:
+            raise ValueError('Cannot set edit handler on root directory')
+        async with self._rwlock.write_lock():
+            *dirs, file_name = parts
+            parent = self._ensure_dir_path_unlocked(dirs)
+            node = parent.children.get(file_name)
+            if node is None:
+                raise FileNotFoundError(f'VFS node not found: {self.normalize_path(path)}')
+            node.edit_handler = func
 
     async def read(self, path: str) -> Any:
         async with self._rwlock.read_lock():

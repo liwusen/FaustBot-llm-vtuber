@@ -5,13 +5,16 @@
 1. Agent 非阻塞地创建一个灵动窗口；
 2. 窗口生命周期与对应 trigger 绑定；
 3. 窗口显示期间自动创建一个定时提醒 trigger，提醒 Agent 主动关注该窗口；
-4. 用户提交 / 关闭窗口时，相关 trigger 一并清理；
-5. trigger_manager 和 backend-main 只通过 callback_id / trigger_id 取回上下文。
+4. 双向通信走 console：前端 sendMessage → 追加 "Frontend>" 行（可选 event trigger 唤醒 Agent）；
+   Agent 用 write 工具写 faustbot://nimble/{id}/console → 追加 "You>" 行并推送到前端；
+5. 每个会话在 VFS 暴露 faustbot://nimble/{id}/{summary,console,code-readonly}，关闭即删；
+6. trigger_manager 和 backend-main 只通过 callback_id / trigger_id 取回上下文。
 """
 import json
 import os
 import time
 import uuid
+from datetime import datetime
 from typing import Dict, Any, Optional
 from faust_backend.logger import get_logger
 from faust_backend.config_loader import CONFIG_ROOT
@@ -21,6 +24,7 @@ log = get_logger("faust.nimble")
 _nimble_sessions: Dict[str, Dict[str, Any]] = {}
 PERSISTENT_FILE = os.path.join(CONFIG_ROOT, "persistent_nimble.json")
 PERSISTENT_EXPIRE_TRIGGER_SUFFIX = "__no_expire"
+VFS_NIMBLE_DIR = "/nimble"
 
 
 def _now() -> float:
@@ -49,25 +53,31 @@ def create_nimble_session(
     """
     if persistent:
         lifespan = max(lifespan, 31536000)  # at least 1 year
+    metadata = metadata or {}
+    summary_text = "\n".join([
+        f"标题: {title}",
+        f"用途: {recall_text}",
+        f"metadata: {json.dumps(metadata, ensure_ascii=False)}",
+    ])
     session = {
         "callback_id": callback_id,
         "title": title,
         "html": html,
-        "metadata": metadata or {},
+        "metadata": metadata,
         "created_at": _now(),
         "updated_at": _now(),
         "lifespan": int(max(1, lifespan)),
         "expires_at": _now() + int(max(1, lifespan)),
         "closed": False,
-        "result": None,
         "status": "open",
         "recall_text": recall_text,
         "reminder_interval_seconds": int(max(3, reminder_interval_seconds)),
-        "result_trigger_id": f"nimble_result::{callback_id}",
         "reminder_trigger_id": f"nimble_reminder::{callback_id}",
         "expire_trigger_id": f"nimble_expire::{callback_id}",
         "persistent": persistent,
         "persistent_id": persistent_id,
+        "console": [],
+        "summary_text": summary_text,
     }
     if persistent:
         session["expire_trigger_id"] = f"nimble_expire::{callback_id}{PERSISTENT_EXPIRE_TRIGGER_SUFFIX}"
@@ -89,19 +99,27 @@ def touch_nimble_session(callback_id: str) -> Optional[Dict[str, Any]]:
     return session
 
 
-def set_nimble_result(callback_id: str, data: Any, *, closed: bool = False) -> Optional[Dict[str, Any]]:
+def _console_dumps(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def append_console_line(callback_id: str, line: str) -> Optional[Dict[str, Any]]:
     session = _nimble_sessions.get(callback_id)
     if not session:
-        log.warning("收到未知 callback_id 的结果: %s", callback_id)
+        log.warning("收到未知 callback_id 的 console 消息: %s", callback_id)
         return None
-    session["result"] = data
+    session["console"].append(line)
     session["updated_at"] = _now()
-    session["status"] = "submitted"
-    if closed:
-        session["closed"] = True
-        session["status"] = "closed"
-    log.info("Result stored for: %s", callback_id)
+    if session.get("persistent"):
+        save_persistent_session(session)
     return session
+
+
+def record_frontend_message(callback_id: str, payload: Any) -> Optional[Dict[str, Any]]:
+    """记录一条来自前端 sendMessage 的消息到 console。"""
+    return append_console_line(callback_id, f"Frontend>{_console_dumps(payload)}")
 
 
 def close_nimble_session(callback_id: str, reason: str = "closed") -> Optional[Dict[str, Any]]:
@@ -124,14 +142,122 @@ def is_nimble_session_alive(callback_id: str) -> bool:
     return _now() < float(session.get("expires_at", 0))
 
 
-def get_nimble_result(callback_id: str, *, cleanup: bool = False) -> Any:
+def _vfs_session_dir(callback_id: str) -> str:
+    return f"{VFS_NIMBLE_DIR}/{callback_id}"
+
+
+async def register_session_vfs_nodes(callback_id: str) -> None:
+    """在 VFS 注册 faustbot://nimble/{id}/{summary,console,code-readonly} 三个节点。"""
+    from faust_backend.tools.vfs import get_faustbot_vfs
+
     session = _nimble_sessions.get(callback_id)
     if not session:
+        raise KeyError(f"nimble session 不存在: {callback_id}")
+
+    vfs = get_faustbot_vfs()
+    base = _vfs_session_dir(callback_id)
+    await vfs.mkdir(base)
+
+    def read_summary(_path: str) -> str:
+        s = _nimble_sessions.get(callback_id)
+        if not s:
+            return f"[nimble session 已关闭: {callback_id}]"
+        remain = max(0, int(float(s.get("expires_at", 0)) - _now()))
+        status_lines = [
+            "",
+            "--- 动态状态 ---",
+            f"callback_id: {callback_id}",
+            f"status: {s.get('status')}",
+            f"persistent: {s.get('persistent', False)}",
+            f"created_at: {datetime.fromtimestamp(s['created_at']).isoformat(timespec='seconds')}",
+            f"剩余存活时间: {remain} 秒",
+            f"console 消息数: {len(s.get('console') or [])}",
+        ]
+        return str(s.get("summary_text") or "") + "\n".join(status_lines)
+
+    def write_summary(_node, content) -> None:
+        s = _nimble_sessions.get(callback_id)
+        if not s:
+            raise FileNotFoundError(f"nimble session 已关闭: {callback_id}")
+        s["summary_text"] = str(content or "")
+        s["updated_at"] = _now()
+        if s.get("persistent"):
+            save_persistent_session(s)
+
+    def read_console(_path: str) -> str:
+        s = _nimble_sessions.get(callback_id)
+        if not s:
+            return f"[nimble session 已关闭: {callback_id}]"
+        lines = s.get("console") or []
+        if not lines:
+            return "(console 暂无消息)"
+        return "\n".join(lines)
+
+    def write_console(_node, content) -> None:
+        import faust_backend.backend2front as backend2frontend
+
+        s = _nimble_sessions.get(callback_id)
+        if not s:
+            raise FileNotFoundError(f"nimble session 已关闭: {callback_id}")
+        text = str(content or "").strip()
+        if not text:
+            raise ValueError("console 消息不能为空")
+        try:
+            payload = json.loads(text)
+            line_body = _console_dumps(payload)
+        except (json.JSONDecodeError, ValueError):
+            payload = text
+            line_body = text
+        append_console_line(callback_id, f"You>{line_body}")
+        backend2frontend.FrontEndNimbleMessage({
+            "callback_id": callback_id,
+            "payload": payload,
+        })
+
+    def read_code(_path: str) -> str:
+        s = _nimble_sessions.get(callback_id)
+        if not s:
+            return f"[nimble session 已关闭: {callback_id}]"
+        return str(s.get("html") or "")
+
+    await vfs.write_symbolic(f"{base}/summary", read_summary, writable=True)
+    await vfs.set_write_handler(f"{base}/summary", write_summary)
+    await vfs.set_edit_handler(f"{base}/summary", write_summary)
+    await vfs.write_symbolic(f"{base}/console", read_console, writable=True)
+    await vfs.set_write_handler(f"{base}/console", write_console)
+    await vfs.set_edit_handler(f"{base}/console", write_console)
+    await vfs.write_symbolic(f"{base}/code-readonly", read_code, writable=False)
+    log.info("VFS nodes registered: faustbot:/%s", base)
+
+
+async def unregister_session_vfs_nodes(callback_id: str) -> None:
+    from faust_backend.tools.vfs import get_faustbot_vfs
+
+    vfs = get_faustbot_vfs()
+    await vfs.delete(_vfs_session_dir(callback_id))
+    log.info("VFS nodes removed: faustbot:/%s", _vfs_session_dir(callback_id))
+
+
+def message_trigger_id(callback_id: str) -> str:
+    return f"nimble_message::{callback_id}"
+
+
+def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[str, Any]]:
+    """关闭会话的统一出口：删 trigger、通知前端、清理 VFS 与内存/磁盘记录。"""
+    import faust_backend.backend2front as backend2frontend
+    import faust_backend.trigger_manager as trigger_manager
+    from faust_backend.tools.vfs import run_coro_sync
+
+    session = close_nimble_session(callback_id, reason=reason)
+    if not session:
         return None
-    data = session.get("result")
-    if cleanup:
-        cleanup_nimble_session(callback_id)
-    return data
+    trigger_manager.delete_trigger(session["reminder_trigger_id"])
+    trigger_manager.delete_trigger(session["expire_trigger_id"])
+    trigger_manager.delete_trigger(message_trigger_id(callback_id))
+    backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": reason})
+    run_coro_sync(unregister_session_vfs_nodes(callback_id))
+    cleanup_nimble_session(callback_id)
+    return session
 
 
 def export_window_payload(callback_id: str) -> Optional[Dict[str, Any]]:
@@ -191,6 +317,8 @@ def save_persistent_session(session: dict) -> None:
         "reminder_interval_seconds": session.get("reminder_interval_seconds", 120),
         "lifespan": session.get("lifespan", 1800),
         "metadata": session.get("metadata", {}),
+        "console": list(session.get("console") or []),
+        "summary_text": session.get("summary_text", ""),
     }
     sessions = _load_persistent_file()
     # 替换同 persistent_id 的已有记录
@@ -223,7 +351,6 @@ async def restore_persistent_sessions():
     """在启动时恢复所有持久化 Nimble 窗口。"""
     import faust_backend.backend2front as backend2frontend
     import faust_backend.trigger_manager as trigger_manager
-    from datetime import datetime, timedelta
 
     entries = get_all_persistent_session_data()
     if not entries:
@@ -246,14 +373,9 @@ async def restore_persistent_sessions():
                 persistent=True,
                 persistent_id=entry.get("persistent_id", ""),
             )
-            trigger_manager.append_trigger({
-                "id": session["result_trigger_id"],
-                "type": "event",
-                "event_name": "nimble_result",
-                "callback_id": callback_id,
-                "recall_description": f"持久化窗口 {callback_id} 收到了用户提交结果。",
-                "lifespan": session["lifespan"],
-            })
+            session["console"] = list(entry.get("console") or [])
+            if entry.get("summary_text"):
+                session["summary_text"] = entry["summary_text"]
             trigger_manager.append_trigger({
                 "id": session["reminder_trigger_id"],
                 "type": "nimble-reminder",
@@ -262,6 +384,7 @@ async def restore_persistent_sessions():
                 "recall_description": entry.get("recall_text", ""),
                 "lifespan": session["lifespan"],
             })
+            await register_session_vfs_nodes(callback_id)
             backend2frontend.FrontEndShowNimbleWindow(export_window_payload(callback_id))
             restored += 1
             log.info("持久化 Nimble 窗口已恢复: %s", callback_id)

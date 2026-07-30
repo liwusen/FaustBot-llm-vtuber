@@ -57,6 +57,10 @@ def FrontEndCloseNimbleWindow(payload: dict) -> None:
     _bridge.close_nimble_window(payload)
 
 
+def FrontEndNimbleMessage(payload: dict) -> None:
+    _bridge.nimble_message(payload)
+
+
 def FrontendHIL(context: dict) -> None:
     _bridge.hil_approval(context)
 

@@ -1,0 +1,122 @@
+<div style="padding:14px;color:#fff;font-family:'Segoe UI',sans-serif;">
+  <div id="gmk-status" style="margin-bottom:10px;font-weight:700;">你执黑（B），先手。点击棋盘落子。</div>
+  <canvas id="gmk-canvas" width="450" height="450" style="background:#c8a15a;border-radius:10px;cursor:pointer;"></canvas>
+  <div style="margin-top:10px;display:flex;gap:8px;">
+    <button id="gmk-reset" style="padding:6px 14px;border-radius:8px;border:none;background:#3a86ff;color:#fff;cursor:pointer;">重新开始</button>
+  </div>
+</div>
+<script>
+  const SIZE = 15;
+  const CELL = 30;
+  const PAD = CELL / 2;
+  let board = [];
+  let gameOver = false;
+  let waitingAgent = false;
+  const statusEl = document.getElementById('gmk-status');
+  const canvas = document.getElementById('gmk-canvas');
+  const ctx = canvas.getContext('2d');
+
+  nimble.resize('490px', 'auto');
+
+  function newBoard() {
+    board = Array.from({ length: SIZE }, () => Array(SIZE).fill(''));
+    gameOver = false;
+    waitingAgent = false;
+    render();
+    statusEl.textContent = '你执黑（B），先手。点击棋盘落子。';
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < SIZE; i++) {
+      ctx.beginPath();
+      ctx.moveTo(PAD, PAD + i * CELL);
+      ctx.lineTo(PAD + (SIZE - 1) * CELL, PAD + i * CELL);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(PAD + i * CELL, PAD);
+      ctx.lineTo(PAD + i * CELL, PAD + (SIZE - 1) * CELL);
+      ctx.stroke();
+    }
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (!board[r][c]) continue;
+        ctx.beginPath();
+        ctx.arc(PAD + c * CELL, PAD + r * CELL, CELL * 0.42, 0, Math.PI * 2);
+        ctx.fillStyle = board[r][c] === 'B' ? '#111' : '#f5f5f5';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.stroke();
+      }
+    }
+  }
+
+  function checkWin(r, c) {
+    const piece = board[r][c];
+    const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+    for (const [dr, dc] of dirs) {
+      let count = 1;
+      for (const sign of [1, -1]) {
+        let nr = r + dr * sign;
+        let nc = c + dc * sign;
+        while (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] === piece) {
+          count++;
+          nr += dr * sign;
+          nc += dc * sign;
+        }
+      }
+      if (count >= 5) return true;
+    }
+    return false;
+  }
+
+  function isDraw() {
+    return board.every((row) => row.every((v) => v));
+  }
+
+  function finish(winnerName) {
+    gameOver = true;
+    statusEl.textContent = winnerName === 'draw' ? '平局！' : (winnerName === 'user' ? '你赢了！' : '我赢了~');
+    nimble.sendMessage(false, { game: 'gomoku', type: 'game_over', winner: winnerName, board });
+  }
+
+  canvas.addEventListener('click', (e) => {
+    if (gameOver || waitingAgent) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const c = Math.round(((e.clientX - rect.left) * scaleX - PAD) / CELL);
+    const r = Math.round(((e.clientY - rect.top) * scaleY - PAD) / CELL);
+    if (!(r >= 0 && r < SIZE && c >= 0 && c < SIZE) || board[r][c]) return;
+    board[r][c] = 'B';
+    render();
+    if (checkWin(r, c)) { finish('user'); return; }
+    if (isDraw()) { finish('draw'); return; }
+    waitingAgent = true;
+    statusEl.textContent = '等待对方落子…';
+    nimble.sendMessage(true, { game: 'gomoku', board, last_move: [r, c], turn: 'agent' });
+  });
+
+  nimble.setMessageHandler((msg) => {
+    if (!msg || msg.type !== 'move' || gameOver) return;
+    const [r, c] = Array.isArray(msg.pos) ? msg.pos : [-1, -1];
+    if (!(r >= 0 && r < SIZE && c >= 0 && c < SIZE) || board[r][c]) {
+      nimble.sendMessage(true, { game: 'gomoku', type: 'invalid_move', reason: 'cell occupied or out of range', board, turn: 'agent' });
+      return;
+    }
+    board[r][c] = 'W';
+    waitingAgent = false;
+    render();
+    if (checkWin(r, c)) { finish('agent'); return; }
+    if (isDraw()) { finish('draw'); return; }
+    statusEl.textContent = '轮到你了。';
+  });
+
+  document.getElementById('gmk-reset').addEventListener('click', () => {
+    newBoard();
+    nimble.sendMessage(true, { game: 'gomoku', type: 'restart', board, turn: 'user' });
+  });
+  newBoard();
+</script>

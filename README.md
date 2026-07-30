@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="./document/assets/FaustBot.icon.tiny.png" alt="FaustBot icon" />
+    <img src="./docs/assets/FaustBot.icon.tiny.png" alt="FaustBot icon" />
 </p>
 <div align="center">
 <h1 align="center">FaustBot</h1>
@@ -14,8 +14,7 @@
 ---
 
 > [!WARNING]
-> 使用前须知:本项目仅供技术参考。不得使用本软件生成不符合法律法规的内容，否则后果自负
-> 一切使用非backend/agent_template中的提示词生成的内容与本项目无关
+> 使用前须知:本项目仅供技术参考和学习。不得使用本软件生成不符合法律法规的内容，否则后果自负
 
 ---
 
@@ -55,6 +54,8 @@
 
 - [x] AI自动操作游览器
 
+- [x] 歌曲翻唱
+
 ---
 
 ### 原角色设定
@@ -65,13 +66,22 @@
 
 ---
 
-### 
 
-### 技术实现
+### 致谢
 
-~~Backend的一部分代码来源于 [morettt/my-neuro](https://github.com/morettt/my-neuro)~~
+参考了 [morettt/my-neuro](https://github.com/morettt/my-neuro)(asr_api.py,ASR.bat,TTS.bat)
+
+TTS基于 [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)
+
+mc-operator基于 [PrismarineJS/mineflayer](https://github.com/PrismarineJS/mineflayer)
+
+歌曲翻唱基于 [Plachtaa/seed-vc](https://github.com/Plachtaa/seed-vc)
+
+Agent 的部分工具,虚拟文件系统参考 [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi)
+
+## 技术实现
 
 | 部分       | 实现                    |
 | -------- | --------------------- |
 | Backend  | Python为主体,基于langchain |
-| Frontend | Electron+Qt           |
+| Frontend | Electron          |

@@ -1,0 +1,8 @@
+{
+  "slug": "nimble-window",
+  "name": "灵动窗口指南",
+  "version": "1.0.0",
+  "description": "灵动窗口（Nimble Window）技能：创建交互窗口、console 双向通信协议、以及可与用户对弈的三子棋/五子棋 HTML 模板",
+  "usage": "当需要创建灵动交互窗口、与窗口内页面双向通信、或与用户玩三子棋/五子棋时使用本技能",
+  "builtin": true
+}

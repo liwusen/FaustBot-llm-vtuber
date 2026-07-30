@@ -1356,28 +1356,61 @@
 
 ### 基本使用
 
-```html
-<button onclick="window.nimble.submit({ action: 'confirm', path: 'D:/test' })">确认</button>
-<button onclick="window.nimble.close('cancelled')">取消</button>
+创建窗口后，每个窗口在 VFS 中有一个专属目录 `faustbot://nimble/{callback_id}/`，包含三个节点：
+
+| 路径 | 用途 |
+|------|------|
+| `faustbot://nimble/{id}/summary` | 窗口概览（可用 write 覆写自定义摘要），附带动态状态（存活时间、消息数等） |
+| `faustbot://nimble/{id}/console` | 双向通信控制台：前端消息以 `Frontend>` 行累积；你用 write 工具写入内容即发送给前端 |
+| `faustbot://nimble/{id}/code-readonly` | 窗口 HTML 源码（只读） |
+
+**双向通信协议（console）**：
+
+- 前端 HTML 里调用 `nimble.sendMessage(createEventTrigger, payload)` 发消息给你；`createEventTrigger=true` 时会用 trigger 唤醒你
+- 你用 `write` 工具往 console 路径写入内容，即发送消息给前端；前端通过 `nimble.setMessageHandler(func)` 接收
+- console 内容像终端一样累积，例如：
+
+```
+Frontend>{"result":"hello"}
+You>{"command":"ping"}
 ```
 
-- `submit(data, closeWindow=true)` — 提交数据。默认提交后关闭窗口；传 `false` 可不关窗继续交互
-- `close(reason)` — 关闭窗口
+**保留命令**：写入 console 的内容若符合以下格式，由前端运行时直接拦截执行（不会传给 HTML 的 messageHandler）：
 
-### 窗口操控 API
+```json
+{"type":"command","command":"close-window","args":{}}
+{"type":"command","command":"set-scale","args":{"scale":1.2}}
+{"type":"command","command":"set-coord","args":{"x":0.7,"y":0.2}}
+```
 
-在 HTML 的任意事件中可直接调用：
+- `close-window` — 关闭窗口
+- `set-scale` — 设置窗口缩放（最小 0.2）
+- `set-coord` — 设置窗口位置（x/y 为 0~1 的屏幕比例坐标）
+
+### HTML 内可用的 JS API
+
+窗口内的 `<script>` 会以 `nimble` 参数注入（内联事件属性也可用 `window.nimble`）：
 
 | API | 作用 |
 |-----|------|
-| `window.nimble.submit(data, true/false)` | 提交数据，可选是否关闭窗口 |
-| `window.nimble.close(reason)` | 关闭窗口 |
-| `window.nimble.resize("400px", "300px")` | 调整窗口大小 |
-| `window.nimble.move("100px", "200px")` | 移动窗口位置 |
-| `window.nimble.setDraggable(true)` | 允许用户拖拽标题栏移动窗口 |
-| `window.nimble.setFullscreen(true)` | 全屏透明叠加模式（背景透明、铺满屏幕） |
-| `window.nimble.setFullscreen(false)` | 退出全屏叠加模式，恢复原有尺寸位置 |
-| `window.nimble.getConfig()` | 获取窗口当前状态 |
+| `nimble.sendMessage(createEventTrigger, payload)` | 发送消息到后端 console；`true` 时唤醒你 |
+| `nimble.setMessageHandler(func)` | 注册接收你写入 console 的消息的回调 |
+| `nimble.resize("400px", "300px")` | 调整窗口大小 |
+| `nimble.setFullscreen(true/false)` | 进入/退出全屏透明叠加模式 |
+| `nimble.getConfig()` | 获取窗口当前状态（尺寸、坐标、缩放等） |
+
+窗口位置/缩放由小组件系统管理：用户可在小组件编辑模式拖动，你可通过保留命令 `set-coord` / `set-scale` 调整。
+
+### 用 path: 加载 HTML
+
+`showNimbleWindowTool` 的 `html` 参数支持 `path:` 前缀，从文件加载正文：
+
+- `path:skill://nimble-window/tictactoe.html` — 从技能目录加载
+- `path:faustbot://...` — 从 VFS 加载
+- `path:memory://...` — 从记忆文件加载
+- `path:相对或绝对磁盘路径` — 从磁盘加载
+
+**小游戏**：`nimble-window` 技能内置了三子棋和五子棋的现成 HTML，想跟用户下棋时先 `read("skill://nimble-window/SKILL.md")` 了解玩法协议。
 
 ### 全屏透明模式
 
@@ -1398,7 +1431,7 @@
 <div style="width:100vw;height:100vh;">
   <div class="nimble-pass-through" style="font-size:15vw;color:#00d9ff;" id="clock">00:00:00</div>
   <div class="nimble-pass-through" style="font-size:3vw;color:#8892b0;" id="date">2026-05-09</div>
-  <button onclick="window.nimble.close()">关闭</button>
+  <button onclick="window.nimble.setFullscreen(false)">退出全屏</button>
 </div>
 ```
 
@@ -1434,18 +1467,19 @@ showNimbleWindowTool(
 
 1. **字段较多时**：用输入框（`<input>`）而非语音逐项确认
 2. **布尔选项**：用复选框（`<input type="checkbox">`）
-3. **有限选项**：用按钮列表（多个 `<button>` 各提交不同值）
+3. **有限选项**：用按钮列表（多个 `<button>` 各发送不同 payload）
 4. **提交的数据结构**：保持简洁，用对象组织，避免深层嵌套
-5. **连续交互**：提交时设 `closeWindow=false`，窗口保持打开可继续填写
-6. **窗口关闭后**：你会在 result trigger 中被唤醒，届时检查 `recall_text` 中的 callback_id 并用 `closeNimbleWindowTool` 确保资源清理
+5. **需要唤醒你处理的消息**：`sendMessage(true, payload)`；仅状态同步用 `sendMessage(false, payload)`
+6. **窗口关闭后**：VFS 目录随之删除；用户手动关窗时你会收到 `window-closed` 事件
 
 ### 操作原则
 
 - 创建 Nimble 窗口后不要等待用户立即操作——它是非阻塞的
 - 你会在以下场景被重新唤醒：
-  - **result trigger**：用户提交了数据
+  - **message trigger**：前端调用 `sendMessage(true, ...)` 发来消息，届时先 read console 路径了解完整上下文
   - **reminder trigger**：用户还在犹豫，提醒你去关注
   - **expire trigger**：窗口超时关闭（仅非持久化窗口）
+  - **window-closed 事件**：用户手动关闭了窗口
 - 收到 trigger 后应检查 callback_id，确认哪个窗口触发了唤醒
-- 用户提交后如果任务已完成，调用 `closeNimbleWindowTool` 清理资源
+- 任务完成后调用 `closeNimbleWindowTool` 清理资源
 - 不要在同一轮对话中反复创建相同的 Nimble 窗口

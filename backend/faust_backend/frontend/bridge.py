@@ -78,6 +78,16 @@ class FrontendBridge:
     def close_nimble_window(self, payload: dict) -> None:
         self._push("NIMBLE_CLOSE", payload)
 
+    def nimble_message(self, payload: dict) -> None:
+        # console write handler 可能运行在 run_coro_sync 的临时事件循环里，
+        # 该循环随即关闭，create_task 会被丢弃，因此优先投递到主循环。
+        if self._main_loop is not None and self._main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._push_async("NIMBLE_MESSAGE", payload), self._main_loop
+            )
+            return
+        self._push("NIMBLE_MESSAGE", payload)
+
     def hil_approval(self, context: dict) -> None:
         self._push("HIL_APPROVAL", context)
 

@@ -119,15 +119,15 @@ async def _read_smtc_now() -> dict[str, Any] | None:
             '4': 'paused',
             '3': 'playing',
             '2': 'stopped',
-            '5': 'seems to be paused?',#我的电脑上有时会返回 5，可能是文档的错误?
+#            '5': 'seems to be paused?',#我的电脑上有时会返回 5，可能是文档的错误?
         }
             
         return {
             'title': str(getattr(props, 'title', '') or ''),
             'artist': str(getattr(props, 'artist', '') or ''),
             'album': str(getattr(props, 'album_title', '') or ''),
-            'status': status,
-            'status_name': SMTC_STATUS_MAP.get(str(status), 'unknown'),
+            'status': str(int(status)-1),
+            'status_name': SMTC_STATUS_MAP.get(str(int(status)-1), 'unknown'),#Fuck,Winsdk返回的是实际值+1,和文档上不一样!
         }
     except Exception:
         return None
@@ -387,17 +387,26 @@ class Plugin(FaustPlugin):
         return str(template or '').format(hour=context.get('hour'), battery=int(battery) if battery is not None else '?')
 
     def _show_nimble_note(self, title: str, note: str) -> None:
+        import faust_backend.nimble as nimble
+
         html = '<div style="padding:18px;font-family:Segoe UI;color:#fff;background:rgba(20,20,30,.85);border-radius:16px;">' + note + '</div>'
-        backend2frontend.FrontEndShowNimbleWindow({
-            'callback_id': 'desktop_mood_' + str(_now()),
-            'title': title,
-            'html': html,
-            'lifespan': 25,
-            'expires_at': _now() + 25,
-            'metadata': {'source': 'desktop-mood'},
-            'persistent': False,
-            'persistent_id': '',
-        })
+        callback_id = nimble.build_callback_id()
+        lifespan = 25
+        nimble.create_nimble_session(
+            callback_id,
+            title=title,
+            html=html,
+            recall_text='桌面情景便签，无需回应。',
+            reminder_interval_seconds=lifespan,
+            lifespan=lifespan,
+            metadata={'source': 'desktop-mood'},
+        )
+        run_coro_sync(nimble.register_session_vfs_nodes(callback_id))
+        backend2frontend.FrontEndShowNimbleWindow(nimble.export_window_payload(callback_id))
+        # 便签为纯展示，到期由插件静默关闭，不通过 expire trigger 唤醒 Agent
+        timer = threading.Timer(lifespan, lambda: nimble.finalize_close(callback_id, reason='expired'))
+        timer.daemon = True
+        timer.start()
 
     def _execute_rule(self, rule: dict[str, Any], context: dict[str, Any]) -> None:
         action = rule.get('action') or {}

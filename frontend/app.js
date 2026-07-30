@@ -117,6 +117,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     if (!window.api || typeof window.api.configRequest !== 'function') return;
     const widgets = {};
     uiWidgetManager.listWidgets().forEach((widget) => {
+      // 临时灵动窗口的 widget 不落盘；持久化窗口 id 稳定，允许保存布局
+      if (widget.id.startsWith('nimble::') && !widget.id.startsWith('nimble::persistent_')) return;
       widgets[widget.id] = {
         bindingType: widget.bindingType,
         coord: widget.coord,
@@ -341,6 +343,10 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
       updateWidget(id, patch){
         return uiWidgetManager.updateWidget(id, patch);
+      },
+
+      removeWidget(id){
+        return uiWidgetManager.removeWidget(id);
       },
 
       getWidget(id){
@@ -1123,10 +1129,16 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   const CHAT_ENDPOINT = `ws://${CHAT_HOST}:${CHAT_PORT}/faust/chat`;
   const SUBAGENT_STATUS_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/subagents-status`;
   const SUBAGENT_DELETE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/subagents`;
-  const NIMBLE_CALLBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/callback`;
+  const NIMBLE_MESSAGE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/message`;
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
-  const nimbleWin = initNimbleWindows({ callbackEndpoint: NIMBLE_CALLBACK_ENDPOINT, closeEndpoint: NIMBLE_CLOSE_ENDPOINT });
+  const nimbleWin = initNimbleWindows({
+    messageEndpoint: NIMBLE_MESSAGE_ENDPOINT,
+    closeEndpoint: NIMBLE_CLOSE_ENDPOINT,
+    widgetManager: uiWidgetManager,
+    saveSettings: saveUiWidgetSettings,
+    getPersistedWidgetSettings: (id) => (persistedUiWidgetSettings && persistedUiWidgetSettings[id]) || null,
+  });
   const hil = initHilApproval({ feedbackEndpoint: HIL_FEEDBACK_ENDPOINT });
   let chatWs = null;
   let chatWsReady = null;
@@ -1201,6 +1213,11 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           nimbleWin.close(payload.callback_id, false);
           hil.close(payload.callback_id);
         }
+      } else if (cmd === 'NIMBLE_MESSAGE'){
+        if (!arg) return;
+        let payload = null;
+        try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid NIMBLE_MESSAGE payload', e, arg); return; }
+        nimbleWin.handleMessage(payload);
       } else if (cmd === 'HIL_APPROVAL'){
         if (!arg) return;
         let payload = null;
@@ -1439,7 +1456,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     // step 1: subagents 概况 → 更新摘要栏
     if (msg.agent_id === 'subagents') {
       if (msg.type === 'subagents_summary') {
-        log.debug(' MSG ==> Subagents summary received');
+        console.debug(' MSG ==> Subagents summary received');
         setSubagentStatuses(Array.isArray(msg.items) ? msg.items : []);
       }
       return;
@@ -1448,7 +1465,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     // step 2: subagent 流式事件 → 暂存到缓存，不进入主气泡
     if (agentId !== 'main') {
       if (agentId && agentId.startsWith('subagent-')) {
-        log.debug(' MSG ==> Subagent event received');
+        console.debug(' MSG ==> Subagent event received');
         const name = agentId.slice('subagent-'.length);
         if (!subagentEventCache[name]) subagentEventCache[name] = [];
         const cached = subagentEventCache[name];
@@ -3080,6 +3097,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     updateTextChatBarPosition();
     updateAsrTextPosition(true);
     refreshQuickControllerVisibility();
+    nimbleWin.layoutWindows();
   }
 
   const uiWidgetEditor = initUiWidgetEditor({

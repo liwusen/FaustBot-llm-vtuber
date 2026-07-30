@@ -1,109 +1,121 @@
-// Nimble 窗口系统 — 浮动弹窗，支持拖拽/全屏/回调
-// 用法: const nimble = initNimbleWindows({ callbackEndpoint, closeEndpoint });
+// Nimble 窗口系统 — 以小组件形式注册的浮动弹窗，console 双向通信
+// 用法: const nimble = initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManager, saveSettings, getPersistedWidgetSettings });
 
-export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
-  const nimbleWindows = new Map();
-  let activeNimbleContext = null;
+export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManager, saveSettings, getPersistedWidgetSettings }) {
+  const nimbleWindows = new Map(); // callback_id -> { shell, body, header, api, messageHandler, fullscreen }
   let nimbleDragState = null;
 
-  // DOM: ensure host container
+  const DEFAULT_COORD = { x: 0.72, y: 0.15 };
+
+  function widgetId(callbackId) {
+    return `nimble::${callbackId}`;
+  }
+
   function ensureHost() {
     let host = document.getElementById('nimble-host');
     if (host) return host;
     host = document.createElement('div');
     host.id = 'nimble-host';
     host.style.position = 'fixed';
-    host.style.right = '24px';
-    host.style.top = '120px';
+    host.style.left = '0';
+    host.style.top = '0';
+    host.style.width = '0';
+    host.style.height = '0';
     host.style.zIndex = '1600';
-    host.style.display = 'flex';
-    host.style.flexDirection = 'column';
-    host.style.gap = '12px';
-    host.style.pointerEvents = 'auto';
+    host.style.pointerEvents = 'none';
     document.body.appendChild(host);
     return host;
   }
 
-  // global drag listeners (set up once)
+  function persist() {
+    if (typeof saveSettings === 'function') {
+      Promise.resolve(saveSettings()).catch(() => {});
+    }
+  }
+
+  function layoutWindow(callbackId) {
+    const win = nimbleWindows.get(callbackId);
+    if (!win) return;
+    if (win.fullscreen) return;
+    const widget = widgetManager.getWidget(widgetId(callbackId));
+    if (!widget) return;
+    const shell = win.shell;
+    if (widget.hidden) {
+      shell.style.display = 'none';
+      return;
+    }
+    shell.style.display = '';
+    const anchor = widgetManager.getWidgetAnchor(widgetId(callbackId));
+    if (!anchor) return;
+    shell.style.left = `${anchor.x}px`;
+    shell.style.top = `${anchor.y}px`;
+    shell.style.transformOrigin = 'top left';
+    shell.style.transform = anchor.scale && anchor.scale !== 1 ? `scale(${anchor.scale})` : '';
+  }
+
+  function layoutWindows() {
+    for (const callbackId of nimbleWindows.keys()) layoutWindow(callbackId);
+  }
+
+  window.addEventListener('resize', () => layoutWindows(), { passive: true });
+
+  // 非编辑模式下的标题栏拖拽：直接更新 widget coord
   document.addEventListener('mousemove', (e) => {
     if (!nimbleDragState) return;
-    const { shell, offsetX, offsetY } = nimbleDragState;
-    shell.style.left = (e.clientX - offsetX) + 'px';
-    shell.style.top = (e.clientY - offsetY) + 'px';
-    shell.style.right = 'auto';
+    const { callbackId, startX, startY, coord } = nimbleDragState;
+    try {
+      widgetManager.updateWidget(widgetId(callbackId), {
+        coord: {
+          x: coord.x + (e.clientX - startX) / Math.max(1, window.innerWidth),
+          y: coord.y + (e.clientY - startY) / Math.max(1, window.innerHeight),
+        },
+      });
+    } catch (_e) { nimbleDragState = null; return; }
+    layoutWindow(callbackId);
   });
 
   document.addEventListener('mouseup', () => {
     if (!nimbleDragState) return;
-    const { shell } = nimbleDragState;
-    shell.style.cursor = '';
-    shell.style.userSelect = '';
     nimbleDragState = null;
+    persist();
   });
 
-  function installAPI(callbackId, shell, header) {
-    activeNimbleContext = { callbackId };
-    const getState = () => ({
-      width: shell.style.width,
-      height: shell.style.height,
-      left: shell.style.left,
-      top: shell.style.top,
-      position: shell.style.position,
-      draggable: header ? header.classList.contains('nimble-draggable') : false,
-      fullscreen: shell.classList.contains('nimble-fullscreen'),
-    });
-
-    window.nimble = {
-      submit: async (data, closeWindow = true) => {
-        const r = await fetch(callbackEndpoint, {
+  function buildAPI(callbackId, shell) {
+    const api = {
+      callbackId,
+      sendMessage: async (createEventTrigger, payload) => {
+        const r = await fetch(messageEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: callbackId, data, close: closeWindow }),
+          body: JSON.stringify({
+            callback_id: callbackId,
+            create_event_trigger: !!createEventTrigger,
+            payload,
+          }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok || j.error) throw new Error(j.error || `nimble submit failed: ${r.status}`);
-        if (closeWindow) closeWindowFn(callbackId, false);
+        if (!r.ok || j.error) throw new Error(j.error || `nimble sendMessage failed: ${r.status}`);
         return j;
       },
-      close: async (reason = 'closed_by_user') => {
-        const r = await fetch(closeEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_id: callbackId, reason }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok || j.error) throw new Error(j.error || `nimble close failed: ${r.status}`);
-        closeWindowFn(callbackId, false);
-        return j;
+      setMessageHandler(func) {
+        const win = nimbleWindows.get(callbackId);
+        if (win) win.messageHandler = typeof func === 'function' ? func : null;
       },
       resize(width, height) {
         shell.style.width = width;
         shell.style.height = height;
       },
-      move(x, y) {
-        shell.style.left = x;
-        shell.style.top = y;
-        shell.style.right = 'auto';
-      },
-      setDraggable(enabled) {
-        if (!header) return;
-        header.classList.toggle('nimble-draggable', enabled);
-        header.style.cursor = enabled ? 'grab' : '';
-      },
       setFullscreen(enabled) {
+        const win = nimbleWindows.get(callbackId);
+        if (!win) return;
         if (enabled) {
           shell._nimblePrev = {
             width: shell.style.width,
             height: shell.style.height,
-            left: shell.style.left,
-            top: shell.style.top,
-            right: shell.style.right,
-            position: shell.style.position,
+            transform: shell.style.transform,
           };
-          shell.style.position = 'fixed';
           shell.style.top = '0';
           shell.style.left = '0';
-          shell.style.right = '0';
           shell.style.width = '100vw';
           shell.style.height = '100vh';
           shell.style.maxWidth = 'none';
@@ -112,13 +124,11 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
           shell.style.zIndex = '9999';
           shell.style.background = 'transparent';
           shell.style.backdropFilter = 'none';
+          shell.style.transform = '';
           shell.classList.add('nimble-fullscreen');
+          win.fullscreen = true;
         } else {
           const prev = shell._nimblePrev || {};
-          shell.style.position = prev.position || 'relative';
-          shell.style.top = prev.top || '';
-          shell.style.left = prev.left || '';
-          shell.style.right = prev.right || '';
           shell.style.width = prev.width || '360px';
           shell.style.height = prev.height || '';
           shell.style.maxWidth = '40vw';
@@ -128,30 +138,35 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
           shell.style.background = 'rgba(20,24,30,0.92)';
           shell.style.backdropFilter = 'blur(8px)';
           shell.classList.remove('nimble-fullscreen');
+          win.fullscreen = false;
+          layoutWindow(callbackId);
         }
       },
       getConfig() {
         const rect = shell.getBoundingClientRect();
+        const widget = widgetManager.getWidget(widgetId(callbackId)) || {};
+        const win = nimbleWindows.get(callbackId);
         return {
           callbackId,
           width: rect.width,
           height: rect.height,
           x: rect.left,
           y: rect.top,
-          zIndex: shell.style.zIndex,
-          ...getState(),
+          coord: widget.coord || null,
+          scale: widget.scale || 1,
+          fullscreen: !!(win && win.fullscreen),
         };
       },
     };
+    return api;
   }
 
   function closeWindowFn(callbackId, notifyBackend = true, reason = 'closed_locally') {
     const win = nimbleWindows.get(callbackId);
-    if (win && win.parentNode) win.parentNode.removeChild(win);
+    if (win && win.shell.parentNode) win.shell.parentNode.removeChild(win.shell);
     nimbleWindows.delete(callbackId);
-    if (activeNimbleContext && activeNimbleContext.callbackId === callbackId) {
-      activeNimbleContext = null;
-    }
+    try { widgetManager.removeWidget(widgetId(callbackId)); } catch (_e) {}
+    if (window.nimble && window.nimble.callbackId === callbackId) window.nimble = null;
     if (!notifyBackend) return;
     fetch(closeEndpoint, {
       method: 'POST',
@@ -160,14 +175,63 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     }).catch((e) => console.warn('nimble close notify failed', e));
   }
 
+  function handleReservedCommand(callbackId, message) {
+    if (!message || typeof message !== 'object') return false;
+    if (message.type !== 'command') return false;
+    const args = message.args || {};
+    switch (message.command) {
+      case 'close-window':
+        closeWindowFn(callbackId, true, 'closed_by_agent');
+        return true;
+      case 'set-scale': {
+        const scale = Number(args.scale);
+        if (Number.isFinite(scale) && scale > 0) {
+          try { widgetManager.updateWidget(widgetId(callbackId), { scale: Math.max(0.2, scale) }); } catch (_e) {}
+          layoutWindow(callbackId);
+          persist();
+        }
+        return true;
+      }
+      case 'set-coord': {
+        const x = Number(args.x);
+        const y = Number(args.y);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          try { widgetManager.updateWidget(widgetId(callbackId), { coord: { x, y } }); } catch (_e) {}
+          layoutWindow(callbackId);
+          persist();
+        }
+        return true;
+      }
+      default:
+        console.warn('nimble unknown reserved command', message);
+        return true;
+    }
+  }
+
+  // 后端 NIMBLE_MESSAGE 入口：{callback_id, payload}
+  function handleMessage(payload) {
+    if (!payload || !payload.callback_id) return;
+    const callbackId = payload.callback_id;
+    const win = nimbleWindows.get(callbackId);
+    if (!win) return;
+    const message = payload.payload;
+    if (handleReservedCommand(callbackId, message)) return;
+    if (typeof win.messageHandler === 'function') {
+      try { win.messageHandler(message); } catch (e) { console.warn('nimble messageHandler error', e); }
+    }
+  }
+
   function show(payload) {
     if (!payload || !payload.callback_id) return;
+    const callbackId = payload.callback_id;
     const host = ensureHost();
-    closeWindowFn(payload.callback_id, false);
+    closeWindowFn(callbackId, false);
 
     const shell = document.createElement('div');
     shell.className = 'nimble-window';
-    shell.dataset.callbackId = payload.callback_id;
+    shell.dataset.callbackId = callbackId;
+    shell.style.position = 'fixed';
+    shell.style.pointerEvents = 'auto';
     shell.style.width = '360px';
     shell.style.maxWidth = '40vw';
     shell.style.maxHeight = '70vh';
@@ -186,6 +250,7 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     header.style.padding = '10px 12px';
     header.style.background = 'rgba(255,255,255,0.06)';
     header.style.fontWeight = '700';
+    header.style.cursor = 'grab';
     header.textContent = payload.title || '灵动交互';
 
     const closeBtn = document.createElement('button');
@@ -196,7 +261,7 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     closeBtn.style.border = 'none';
     closeBtn.style.fontSize = '20px';
     closeBtn.style.cursor = 'pointer';
-    closeBtn.onclick = () => closeWindowFn(payload.callback_id, true, 'closed_by_user');
+    closeBtn.onclick = () => closeWindowFn(callbackId, true, 'closed_by_user');
     header.appendChild(closeBtn);
 
     const body = document.createElement('div');
@@ -207,9 +272,30 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     shell.appendChild(header);
     shell.appendChild(body);
     host.appendChild(shell);
-    nimbleWindows.set(payload.callback_id, shell);
 
-    installAPI(payload.callback_id, shell, header);
+    const win = { shell, body, header, api: null, messageHandler: null, fullscreen: false };
+    nimbleWindows.set(callbackId, win);
+
+    // 注册为小组件（screen 绑定）；持久化窗口沿用已保存的布局
+    widgetManager.registerWidget({
+      id: widgetId(callbackId),
+      element: shell,
+      bindingType: 'screen',
+      coord: { ...DEFAULT_COORD },
+      offset: { x: 0, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    const persisted = typeof getPersistedWidgetSettings === 'function' ? getPersistedWidgetSettings(widgetId(callbackId)) : null;
+    if (persisted) {
+      try { widgetManager.updateWidget(widgetId(callbackId), persisted); } catch (_e) {}
+    }
+
+    const api = buildAPI(callbackId, shell);
+    win.api = api;
+    window.nimble = api; // 兼容 HTML 内联事件属性（指向最近显示的窗口）
+
     try {
       body.innerHTML = payload.html || '<div>\u7A7A\u7A97\u53E3</div>';
     } catch (e) {
@@ -217,29 +303,33 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     }
     try {
       body.querySelectorAll('script').forEach((oldScript) => {
-        const newScript = document.createElement('script');
         if (oldScript.src) {
+          const newScript = document.createElement('script');
           newScript.src = oldScript.src;
-        } else {
-          newScript.textContent = oldScript.textContent;
+          oldScript.parentNode.replaceChild(newScript, oldScript);
+          return;
         }
-        oldScript.parentNode.replaceChild(newScript, oldScript);
+        const code = oldScript.textContent || '';
+        oldScript.remove();
+        // 每窗口独立作用域注入 nimble 对象，避免全局单例被后开窗口覆盖
+        new Function('nimble', code)(api);
       });
     } catch (e) {
       console.warn('nimble script exec error', e);
     }
 
     header.addEventListener('mousedown', (e) => {
-      if (!header.classList.contains('nimble-draggable')) return;
       if (e.button !== 0) return;
-      const rect = shell.getBoundingClientRect();
-      const offsetX = e.clientX - rect.left;
-      const offsetY = e.clientY - rect.top;
-      nimbleDragState = { shell, offsetX, offsetY };
-      shell.style.cursor = 'grabbing';
-      shell.style.userSelect = 'none';
+      if (e.target === closeBtn) return;
+      if (widgetManager.isEditMode()) return; // 编辑模式交给 widget editor
+      if (win.fullscreen) return;
+      const widget = widgetManager.getWidget(widgetId(callbackId));
+      if (!widget) return;
+      nimbleDragState = { callbackId, startX: e.clientX, startY: e.clientY, coord: { ...widget.coord } };
       e.preventDefault();
     });
+
+    layoutWindow(callbackId);
   }
 
   function close(callbackId, notifyBackend = true, reason = 'closed_locally') {
@@ -251,11 +341,10 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     if (!host || host.style.display === 'none') return false;
     const el = document.elementFromPoint(clientX, clientY);
     if (!el) return false;
-    // Element is inside nimble-host — either a .nimble-window child or the host container itself
     if (!host.contains(el) && el !== host) return false;
     if (el.closest('.nimble-pass-through')) return false;
     const win = el.closest('.nimble-window');
-    if (!win) return true;  // over host gap/padding — still nimble area
+    if (!win) return true;
     if (win.classList.contains('nimble-fullscreen')) {
       return isInteractiveElement(el);
     }
@@ -267,7 +356,14 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     if (!host) return false;
     const el = document.elementFromPoint(clientX, clientY);
     if (!el) return false;
-    return host.contains(el) || el === host;
+    if (el === host) return true;
+    if (!host.contains(el)) return false;
+    // 非全屏窗口整体算窗口区域；全屏窗口只有交互元素算，避免全屏透明层挡住桌面点击穿透
+    const win = el.closest('.nimble-window');
+    if (win && win.classList.contains('nimble-fullscreen')) {
+      return !el.closest('.nimble-pass-through') && isInteractiveElement(el);
+    }
+    return true;
   }
 
   function isInteractiveElement(el) {
@@ -279,5 +375,5 @@ export function initNimbleWindows({ callbackEndpoint, closeEndpoint }) {
     return false;
   }
 
-  return { show, close, isPointOverNimble, isPointOverWindow, isInteractiveElement };
+  return { show, close, handleMessage, layoutWindows, isPointOverNimble, isPointOverWindow, isInteractiveElement };
 }

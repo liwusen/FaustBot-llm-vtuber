@@ -18,7 +18,7 @@ let _backendReady = false;
 const FAUST_PROTOCOL = 'faustbot';
 const STATIC_PROTOCOL = 'static';
 const FAUST_BACKEND_BASE = 'http://127.0.0.1:13900';
-const FAUST_BACKEND_INSTALL_API = 'http://127.0.0.1:13900/faust/admin/plugin-market/install';
+const FAUST_BACKEND_SYNC_API = 'http://127.0.0.1:13900/faust/admin/plugin-market/sync';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -370,17 +370,14 @@ function parseFaustDeepLink(rawUrl) {
     if (parsed.protocol !== 'faustbot:') return null;
     const action = (parsed.hostname || parsed.pathname.replace(/^\//, '') || '').trim();
 
-    // install plugin (existing behavior)
-    if (action === 'install_plugin') {
+    if (action.toLowerCase() === 'syncplugin') {
       const pluginId = (parsed.searchParams.get('id') || '').trim();
-      const marketUrl = (parsed.searchParams.get('market') || '').trim();
       if (!pluginId) {
         throw new Error('缺少插件 id 参数');
       }
       return {
-        type: 'install_plugin',
+        type: 'sync_plugin',
         pluginId,
-        marketUrl,
         rawUrl,
       };
     }
@@ -422,7 +419,7 @@ function parseFaustDeepLink(rawUrl) {
   }
 }
 
-async function runInstallPluginByDeepLink(task) {
+async function runSyncPluginByDeepLink(task) {
   if (!task) return;
 
   // handle FaustBot Cloud config deeplink
@@ -449,15 +446,15 @@ async function runInstallPluginByDeepLink(task) {
     }
   }
 
-  if (task.type !== 'install_plugin') return;
+  if (task.type !== 'sync_plugin') return;
 
   const targetWindow = mainWindow || BrowserWindow.getFocusedWindow() || undefined;
   const firstConfirm = await dialog.showMessageBox(targetWindow, {
     type: 'warning',
     title: '确认安装第三方插件',
-    message: `即将安装插件：${task.pluginId}`,
-    detail: '该插件由第三方创建，可能包含安全风险。请仅安装你信任来源的插件。是否继续安装？',
-    buttons: ['继续安装', '取消'],
+    message: `即将安装/更新插件：${task.pluginId}`,
+    detail: '该插件由第三方创建，可能包含安全风险。请仅安装你信任来源的插件。若插件已存在将被覆盖更新。是否继续？',
+    buttons: ['继续', '取消'],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
@@ -476,18 +473,14 @@ async function runInstallPluginByDeepLink(task) {
 
   const payload = {
     plugin_id: task.pluginId,
-    overwrite: false,
     apply_runtime: true,
     reset_dialog: false,
     no_initial_chat: true,
   };
-  if (task.marketUrl) {
-    payload.market_url = task.marketUrl;
-  }
 
   try {
-    const result = await postJson(FAUST_BACKEND_INSTALL_API, payload);
-    console.log('[deeplink] plugin install success:', task.pluginId, result);
+    const result = await postJson(FAUST_BACKEND_SYNC_API, payload);
+    console.log('[deeplink] plugin sync success:', task.pluginId, result);
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('plugin-install-result', {
         ok: true,
@@ -496,60 +489,7 @@ async function runInstallPluginByDeepLink(task) {
       });
     }
   } catch (e) {
-    const statusCode = Number(e && e.statusCode) || 0;
-    if (statusCode === 409) {
-      const overwriteConfirm = await dialog.showMessageBox(targetWindow, {
-        type: 'warning',
-        title: '插件已安装',
-        message: `插件 ${task.pluginId} 已存在`,
-        detail: '是否覆盖现有版本并继续安装？',
-        buttons: ['覆盖安装', '取消'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-      });
-
-      if (overwriteConfirm.response === 0) {
-        try {
-          const overwriteResult = await postJson(FAUST_BACKEND_INSTALL_API, {
-            ...payload,
-            overwrite: true,
-          });
-          if (mainWindow && mainWindow.webContents) {
-            mainWindow.webContents.send('plugin-install-result', {
-              ok: true,
-              pluginId: task.pluginId,
-              overwritten: true,
-              result: overwriteResult,
-            });
-          }
-          return;
-        } catch (e2) {
-          console.error('[deeplink] plugin overwrite install failed:', task.pluginId, e2);
-          if (mainWindow && mainWindow.webContents) {
-            mainWindow.webContents.send('plugin-install-result', {
-              ok: false,
-              pluginId: task.pluginId,
-              overwritten: true,
-              error: String(e2),
-            });
-          }
-          return;
-        }
-      }
-
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send('plugin-install-result', {
-          ok: false,
-          pluginId: task.pluginId,
-          canceled: true,
-          error: '用户取消了覆盖安装',
-        });
-      }
-      return;
-    }
-
-    console.error('[deeplink] plugin install failed:', task.pluginId, e);
+    console.error('[deeplink] plugin sync failed:', task.pluginId, e);
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('plugin-install-result', {
         ok: false,
@@ -565,7 +505,7 @@ async function flushPendingDeepLinks() {
   const tasks = pendingDeepLinks.slice();
   pendingDeepLinks = [];
   for (const task of tasks) {
-    await runInstallPluginByDeepLink(task);
+    await runSyncPluginByDeepLink(task);
   }
 }
 

@@ -956,7 +956,8 @@ if (typeof api.registerSidePanelGroup === 'function') {
 | POST | `/faust/admin/plugins/{id}/config` | 设置插件配置 |
 | POST | `/faust/plugins/{id}/communicate` | 插件通信 |
 | GET | `/faust/admin/plugin-market/catalog` | 获取插件市场目录 |
-| POST | `/faust/admin/plugin-market/install` | 从市场安装 |
+| GET | `/faust/admin/plugin-market/check-updates` | 检查已安装插件更新 |
+| POST | `/faust/admin/plugin-market/sync` | 从市场安装/更新（存在即覆盖） |
 | POST | `/faust/admin/plugins/install-zip` | 从 ZIP 安装 |
 | POST | `/faust/admin/plugins/package-zip` | 打包插件为 ZIP |
 | DELETE | `/faust/admin/plugins/{id}` | 删除插件 |

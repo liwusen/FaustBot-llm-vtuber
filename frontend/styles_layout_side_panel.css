@@ -29,6 +29,31 @@ body.layout-side-panel-open .ui-widget-mode-badge {
   left: calc(max(13vw, 232px) + 14px);
 }
 
+/* ── 编辑模式：UI 组件悬浮在布景台之上 ──
+   面板 z-index 为 3900。quick-controller / asr-bubble 位于 #app（z-index:1）
+   的堆叠上下文内，必须抬高 #app 才能越过面板；#app 本身经 body.click-through
+   已是 pointer-events:none，但 pixi canvas 会被 JS 内联设为 auto，故此处强制
+   穿透，否则全屏 canvas 会挡住面板点击。 */
+body.layout-side-panel-open #app {
+  z-index: 3950;
+}
+
+body.layout-side-panel-open #app canvas {
+  pointer-events: none !important;
+}
+
+body.layout-side-panel-open #textChatBar,
+body.layout-side-panel-open #logPanel,
+body.layout-side-panel-open #vrmConfigPanel,
+body.layout-side-panel-open #subagentPanel {
+  z-index: 3950;
+}
+
+/* nimble-host 的 z-index 由 JS 内联设置，需 !important 覆盖 */
+body.layout-side-panel-open #nimble-host {
+  z-index: 3950 !important;
+}
+
 .lsp-title {
   display: flex;
   flex-direction: column;
