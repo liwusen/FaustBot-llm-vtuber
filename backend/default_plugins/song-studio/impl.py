@@ -158,6 +158,8 @@ class Plugin(FaustPlugin):
         refer = str(getattr(conf, "TTS_REFER_WAV_PATH", "") or "").strip()
         if not refer:
             raise RuntimeError("未配置参考音色：请在插件配置中设置 REF_AUDIO_PATH，或配置 TTS 参考音频")
+        if refer=="voices/neuro.wav":
+            refer = "voices/neuro_long.wav"
         path = Path(refer).expanduser()
         if not path.is_absolute():
             path = Path(conf.CONFIG_ROOT) / path

@@ -1,7 +1,7 @@
 {
   "id": "song-studio",
   "name": "歌台 Song Studio",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "description": "AI 翻唱：UVR 人声分离 + Seed-VC 歌声转换，让 Faust 用自己的音色唱歌（点歌/停止/歌词）。",
   "author": "FaustBot",
   "enabled": false,

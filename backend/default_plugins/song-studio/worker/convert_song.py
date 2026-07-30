@@ -43,6 +43,7 @@ def separate(source: Path, work_dir: Path, model_dir: Path) -> tuple[Path, Path]
         lower = name.lower()
         if "(vocals)" in lower:
             vocals = path
+            emit("separate", 100, f"Vocals 分离完成: {path.name}")
         elif "(instrumental)" in lower:
             instrumental = path
     if vocals is None or instrumental is None:
