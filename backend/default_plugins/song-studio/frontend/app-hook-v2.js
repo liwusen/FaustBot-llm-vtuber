@@ -4,6 +4,8 @@
   if (!api) return;
   const PLUGIN_ID = 'song-studio';
   const DUCK_GAIN = 0.18;
+  const WIDGET_ID = 'song-studio-player';
+  const DEFAULT_COORD = { x: 0.5, y: 0.88 };
 
   const state = {
     audioEl: null,
@@ -14,6 +16,7 @@
     lrcIdx: -1,
     ui: null,
     active: false,
+    posRaf: null,
   };
 
   function communicate(payload) {
@@ -49,10 +52,12 @@
     const bar = document.createElement('div');
     bar.id = 'song-studio-player';
     bar.innerHTML =
-      '<span class="song-studio-note">♪</span>' +
-      '<span class="song-studio-title"></span>' +
-      '<span class="song-studio-lyric"></span>' +
-      '<button class="song-studio-stop" title="停止演唱">■</button>';
+      '<div class="song-studio-lyric" style="display:none"></div>' +
+      '<div class="song-studio-meta">' +
+        '<span class="song-studio-note">♪</span>' +
+        '<span class="song-studio-title"></span>' +
+        '<button class="song-studio-stop" title="停止演唱">■</button>' +
+      '</div>';
     bar.querySelector('.song-studio-title').textContent = title || '';
     bar.querySelector('.song-studio-stop').addEventListener('click', () => {
       stopLocal();
@@ -60,12 +65,54 @@
     });
     document.body.appendChild(bar);
     state.ui = bar;
+    registerPlayerWidget(bar);
+  }
+
+  function registerPlayerWidget(bar) {
+    if (typeof api.registerWidget !== 'function') return;
+    api.registerWidget({
+      id: WIDGET_ID,
+      element: bar,
+      bindingType: 'screen',
+      coord: { ...DEFAULT_COORD },
+      offset: { x: 0, y: 0 },
+      scale: 1,
+      hidden: false,
+      schema: { bindingType: 'screen', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
+    });
+    if (state.posRaf) return;
+    const step = () => {
+      if (!state.ui) { state.posRaf = null; return; }
+      updatePlayerPosition();
+      state.posRaf = requestAnimationFrame(step);
+    };
+    state.posRaf = requestAnimationFrame(step);
+  }
+
+  function updatePlayerPosition() {
+    const bar = state.ui;
+    const widget = typeof api.getWidget === 'function' ? api.getWidget(WIDGET_ID) : null;
+    const editMode = typeof api.isWidgetEditMode === 'function' && api.isWidgetEditMode();
+    const coord = widget && widget.coord && Number.isFinite(widget.coord.x) ? widget.coord : DEFAULT_COORD;
+    const offset = widget && widget.offset ? widget.offset : { x: 0, y: 0 };
+    const scale = widget && widget.scale ? widget.scale : 1;
+    bar.style.display = (widget && widget.hidden && !editMode) ? 'none' : '';
+    bar.style.left = Math.round(window.innerWidth * coord.x + (offset.x || 0)) + 'px';
+    bar.style.top = Math.round(window.innerHeight * coord.y + (offset.y || 0)) + 'px';
+    bar.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
   }
 
   function removeUI() {
+    if (state.posRaf) {
+      cancelAnimationFrame(state.posRaf);
+      state.posRaf = null;
+    }
     if (state.ui) {
       try { state.ui.remove(); } catch (e) {}
       state.ui = null;
+      if (typeof api.removeWidget === 'function') {
+        try { api.removeWidget(WIDGET_ID); } catch (e) {}
+      }
     }
   }
 
@@ -78,7 +125,10 @@
     if (idx !== state.lrcIdx) {
       state.lrcIdx = idx;
       const el = state.ui.querySelector('.song-studio-lyric');
-      if (el) el.textContent = idx >= 0 ? state.lrc[idx].line : '';
+      if (el) {
+        el.textContent = idx >= 0 ? state.lrc[idx].line : '';
+        el.style.display = el.textContent ? '' : 'none';
+      }
     }
   }
 

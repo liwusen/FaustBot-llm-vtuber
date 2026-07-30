@@ -2463,9 +2463,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       }
     } catch (err) {
       if (String(err && err.message || '') === 'stale model load request') return;
-      showOverlay('加载 VRM 模型失败：' + err);
       showResultBubble('error', 'VRM 模型加载失败：' + String(err && err.message ? err.message : err));
       console.error(err);
+      if (loadRequestId === activeModelLoadRequestId) showModelLoadFallback();
     }
   }
 
@@ -2533,6 +2533,85 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   function pickRandomItem(items){
     if (!Array.isArray(items) || !items.length) return '';
     return items[Math.floor(Math.random() * items.length)] || '';
+  }
+
+  function createMissingModelTexture(){
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    const cell = 128;
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < 2; col++) {
+        ctx.fillStyle = (row + col) % 2 === 0 ? '#f800f8' : '#000000';
+        ctx.fillRect(col * cell, row * cell, cell, cell);
+      }
+    }
+    return PIXI.Texture.from(canvas);
+  }
+
+  // 模型加载失败时的兜底：显示紫黑错误方块，保持模型锚定的组件正常工作
+  function showModelLoadFallback(){
+    try {
+      if (modelType !== 'live2d') switchToLive2DRenderer();
+      if (!window.PIXI || !app || !app.renderer) return;
+      if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
+      const sprite = new PIXI.Sprite(createMissingModelTexture());
+      currentModel = sprite;
+      availableMotions = [];
+      currentLipSyncParamIds = [];
+      sprite._faustFallback = true;
+      sprite.anchor.set(0.5, 1.0);
+      sprite.x = app.renderer.width - 200;
+      sprite.y = app.renderer.height - 20;
+      sprite.interactive = true;
+      sprite.buttonMode = true;
+      sprite.cursor = 'grab';
+      sprite.on('pointerdown', (e) => {
+        if (clickThroughController) clickThroughController.forceInteractive();
+        setInteractionLock(true);
+        dragging = true;
+        sprite.cursor = 'grabbing';
+        const pos = e.data.global;
+        dragOffset.x = pos.x - sprite.x;
+        dragOffset.y = pos.y - sprite.y;
+      });
+      const endDrag = () => {
+        dragging = false;
+        sprite.cursor = 'grab';
+        setInteractionLock(false);
+        persistModelPositionToBackend();
+      };
+      sprite.on('pointerup', endDrag);
+      sprite.on('pointerupoutside', endDrag);
+      sprite.on('pointermove', (e) => {
+        if (!dragging) return;
+        const pos = e.data.global;
+        let rawX = pos.x - dragOffset.x;
+        let rawY = pos.y - dragOffset.y;
+        rawX = Math.max(160, Math.min(app.renderer.width - 160, rawX));
+        rawY = Math.max(160, Math.min(app.renderer.height - 20, rawY));
+        sprite.x = rawX;
+        sprite.y = rawY;
+        updateQuickControllerPosition();
+      });
+      app.stage.addChild(sprite);
+      baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
+      const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
+        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
+        : null;
+      const configuredY = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_Y !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_Y !== null && runtimeLive2DConfig.LIVE2D_MODEL_Y !== ''
+        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_Y)
+        : null;
+      if (Number.isFinite(configuredX)) sprite.x = configuredX;
+      if (Number.isFinite(configuredY)) sprite.y = configuredY;
+      applyModelScale();
+      clearOverlay();
+      updateTextChatBarPosition();
+      refreshQuickControllerVisibility();
+    } catch (e) {
+      console.error('showModelLoadFallback failed', e);
+    }
   }
 
   async function loadImageModel(rawConfig){
@@ -2681,7 +2760,11 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   function loadModel(path){
     const ext = String(path || '').toLowerCase().trim();
     if (ext === '__faust_images__') {
-      loadImageModel(runtimeImageModelConfig || (runtimeLive2DConfig && runtimeLive2DConfig.IMAGE_MODEL_CONFIG) || {});
+      loadImageModel(runtimeImageModelConfig || (runtimeLive2DConfig && runtimeLive2DConfig.IMAGE_MODEL_CONFIG) || {}).catch((err) => {
+        showResultBubble('error', 'Images 模型加载失败：' + String(err && err.message ? err.message : err));
+        console.error(err);
+        showModelLoadFallback();
+      });
       return;
     }
     if (ext.endsWith('.vrm')) {
@@ -2696,7 +2779,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     // determine Live2DModel constructor (try window.Live2DModel, then PIXI.live2d)
     Live2DModel = (typeof window !== 'undefined' && window.Live2DModel) ? window.Live2DModel : (PIXI && PIXI.live2d && PIXI.live2d.Live2DModel);
     if (!Live2DModel) {
-      showOverlay('未检测到 pixi-live2d-display 库，请检查网络或依赖。');
+      showResultBubble('error', '未检测到 pixi-live2d-display 库，请检查网络或依赖。');
+      showModelLoadFallback();
       return;
     }
     showOverlay('加载模型: ' + path);
@@ -2799,9 +2883,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       }
     }).catch(err => {
       if (String(err && err.message || '') === 'stale model load request') return;
-      showOverlay('加载模型失败：' + err);
       showResultBubble('error', 'Live2D 模型加载失败：' + String(err && err.message ? err.message : err));
       console.error(err);
+      if (loadRequestId === activeModelLoadRequestId) showModelLoadFallback();
     });
   }
 
@@ -2914,6 +2998,19 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         }, 140);
       }
 
+      function isPointOverAnyWidget(x, y){
+        try {
+          for (const widget of uiWidgetManager.listWidgets()){
+            const el = widget.element;
+            if (!el || widget.hidden || !el.isConnected) continue;
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) continue;
+            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return true;
+          }
+        } catch (_e) {}
+        return false;
+      }
+
       function onGlobalMouseMove(e){
         detectDevToolsLikelyOpen();
         hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);
@@ -2926,7 +3023,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         const overTextChatBar = isPointOverTextChatBar(e.clientX, e.clientY);
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
-        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || dragging || interactionLocked || uiWidgetManager.isEditMode();
+        const overWidget = isPointOverAnyWidget(e.clientX, e.clientY);
+        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || overWidget || dragging || interactionLocked || uiWidgetManager.isEditMode();
         if (devToolsLikelyOpen) {
           interactiveActive = true;
           setIgnore(false);

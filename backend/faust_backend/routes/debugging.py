@@ -48,7 +48,7 @@ async def status_get():
 async def snapshot():
     """调试接口：获取当前状态快照"""
     return {
-        "subagents": state.SubagentManager.list_statuses_light(),
+        "subagents": state.subagent_manager.list_statuses_light(),
         "runtime_ready": state.RUNTIME_READY,
         "runtime_status": state.RUNTIME_STATUS,
         "runtime_error": state.RUNTIME_ERROR,
@@ -62,7 +62,7 @@ async def snapshot():
         "python_executable": f"{sys.executable}",
         "last_logs": faust_logger.get_recent_logs(50),
         "last_errors": faust_logger.get_recent_errors(20),
-        "config_raw": Path(CONFIG_ROOT).read_text(encoding="utf-8",errors="ignore") if Path(CONFIG_ROOT).exists() else "",
+        "config_raw": (Path(CONFIG_ROOT)/"faust.config.json").read_text(encoding="utf-8",errors="ignore") if Path(CONFIG_ROOT).exists() else "",
         "private_config_missing": bool(state.conf.PRIVATE_CONFIG_WAS_MISSING),
         "private_config_auto_created": bool(state.conf.PRIVATE_CONFIG_AUTO_CREATED),
         "skills": list_skills(),

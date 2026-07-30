@@ -37,63 +37,75 @@
   word-break: break-all;
 }
 
-/* 主窗口迷你播放条 */
+/* 主窗口迷你播放条（位置由 widget 系统驱动） */
 #song-studio-player {
   position: fixed;
   left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
+  top: 88%;
+  transform: translate(-50%, -50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   max-width: 70vw;
-  padding: 8px 14px;
+  padding: 10px 18px;
   border-radius: 18px;
-  background: rgba(20, 20, 30, 0.82);
-  color: #fff;
-  font-size: 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 242, 247, 0.92));
+  border: 1px solid rgba(190, 201, 217, 0.78);
+  color: #1a2433;
   z-index: 9000;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(6px);
+  box-shadow: 0 16px 38px rgba(32, 55, 91, 0.16);
+  backdrop-filter: blur(12px);
   pointer-events: auto;
 }
 
+#song-studio-player .song-studio-lyric {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a2433;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 66vw;
+  text-align: center;
+}
+
+#song-studio-player .song-studio-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
 #song-studio-player .song-studio-note {
-  color: #7fc4ff;
+  color: #3f6be8;
   animation: song-studio-bounce 1.2s ease-in-out infinite;
 }
 
 #song-studio-player .song-studio-title {
   font-weight: 600;
   white-space: nowrap;
-  max-width: 20vw;
+  max-width: 30vw;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-#song-studio-player .song-studio-lyric {
-  color: rgba(255, 255, 255, 0.85);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
+  color: #647086;
 }
 
 #song-studio-player .song-studio-stop {
-  border: none;
+  border: 1px solid rgba(190, 201, 217, 0.78);
   border-radius: 50%;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.16);
-  color: #ff9b9b;
-  font-size: 12px;
+  background: rgba(26, 36, 51, 0.06);
+  color: #e54447;
+  font-size: 11px;
   line-height: 1;
 }
 
 #song-studio-player .song-studio-stop:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(229, 68, 71, 0.12);
+  border-color: rgba(229, 68, 71, 0.4);
 }
 
 @keyframes song-studio-bounce {

@@ -37,6 +37,7 @@ FaustBot 是一个 AI 驱动的 Vtuber / 桌面伙伴。她会用自己的声音
   画面：桌面上的 Faust 形象 + 一条正在对话的字幕气泡，整体氛围要好看，用于定调
   要点：这是访客看到的第一眼，选最有代表性、最出片的一帧
 -->
+
 <p align="center">
     <img src="./docs/assets/hero.png" alt="FaustBot 桌面演示" width="900" />
 </p>
@@ -55,6 +56,7 @@ FaustBot 是一个 AI 驱动的 Vtuber / 桌面伙伴。她会用自己的声音
   画面：歌台界面正在点歌 / 转换进度 / 形象唱歌状态
   要点：突出"用她的声音唱"这件事，若能录 GIF 展示进度→播放最好
 -->
+
 <p align="center">
     <img src="./docs/assets/song-studio.png" alt="AI 翻唱 - 歌台" width="800" />
 </p>
@@ -69,6 +71,7 @@ FaustBot 可以在形象旁边弹出一个可拖动、可缩放的 HTML 小窗�
   画面：让 AI 即兴生成一个"带炸弹的五子棋"（或其他明显非内置的自定义玩法）小窗，和虚拟形象同框
   要点：用一个古怪、显然没人会预置的玩法，一眼体现"这是 AI 现场动态生成的 HTML"；GIF 展示下棋 + 触雷过程更佳
 -->
+
 <p align="center">
     <img src="./docs/assets/nimble-window.png" alt="灵动窗口 - AI 弹窗互动" width="800" />
 </p>
@@ -83,6 +86,7 @@ FaustBot 会在后台留意你的桌面情景 —— 通过 Windows SMTC 读取 
   画面：因为"检测到你在听歌 / 深夜 / 低电量"而主动说话的对话气泡瞬间
   要点：体现"她注意到了现实里发生的事并主动开口"，这是区别于普通聊天 Agent 的关键
 -->
+
 <p align="center">
     <img src="./docs/assets/desktop-mood.png" alt="Desktop Mood - 感知桌面情景主动互动" width="800" />
 </p>
@@ -102,6 +106,7 @@ FaustBot 拥有一套基于图和生成树存储的三合一混合记忆系统 �
   画面：记忆库/知识图谱可视化，或控制面板里的"记忆"与"Araya 记忆库自动维护"页面
   要点：体现"记忆有结构、会自动整理"，若能展示知识图谱节点关系或 Araya 维护日志更佳
 -->
+
 <p align="center">
     <img src="./docs/assets/memory.png" alt="长期记忆与 Araya 自动维护" width="800" />
 </p>
@@ -116,6 +121,7 @@ FaustBot 内置 B 站直播接入，连上直播间即可接收弹幕并以直�
   画面：直播窗口 + 弹幕滚动 + 形象回应弹幕
   要点：展示"接弹幕 → 回应"的互动闭环
 -->
+
 <p align="center">
     <img src="./docs/assets/live.png" alt="B 站直播互动" width="800" />
 </p>
@@ -150,6 +156,7 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
   画面：控制面板 / Image 模式形象配置界面
   要点：体现"高度可配置"，如果能补一张 Image 模式配图会更贴合上面第一条
 -->
+
 <p align="center">
     <img src="./docs/assets/comp.png" alt="控制面板 - 高度自定义" width="800" />
 </p>
@@ -162,18 +169,21 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 <summary>点击展开查看全部能力</summary>
 
 ### 感知
+
 - [x] ASR 语音识别（本地 / 云端）
 - [x] 多模态能力：读屏幕 / 摄像头 / 图片
 - [x] Desktop Mood：感知系统媒体（SMTC）、空闲、窗口、电量、时段等桌面情景
 - [x] 在线搜索，获取实时信息
 
 ### 记忆
+
 - [x] 三合一混合长期记忆（向量语义 + BM25 关键词 + 知识图谱），带 2-hop 图谱联想与树状目录组织
 - [x] 写入即自动抽取实体关系并去重，构建知识图谱
 - [x] Araya 自动维护代理：空闲时自动归纳索引、去重、修剪图谱、打标签、写审计日志
 - [x] 日记：Agent 主动记录、可被检索与自动整理
 
 ### 交互与输出
+
 - [x] TTS 人声输出（本地 / 云端）
 - [x] 音乐播放（唱歌）与歌曲翻唱（Seed-VC）
 - [x] 灵动窗口：AI 现写 HTML 小窗口实时互动
@@ -181,6 +191,7 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 - [x] 多角色支持
 
 ### Agent 工具
+
 - [x] Subagent 子代理派发
 - [x] Trigger 触发器（定时 / 周期 / 事件 / Python 条件）
 - [x] 文件读写、编辑等基本能力
@@ -201,12 +212,11 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 
 FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 
-
 > [!WARNING]
 > **使用前须知**
->
+> 
 > 本项目仅供技术参考和学习。不得使用本软件生成不符合法律法规的内容，否则后果自负。
->
+> 
 > 使用歌曲翻唱、B 站直播等功能时，所涉及的歌曲、直播内容等版权与合规责任由使用者自行承担。
 
 <p align="center">
@@ -217,10 +227,10 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 
 ## 技术实现
 
-| 部分       | 实现                                   |
-| -------- | ------------------------------------ |
-| Backend  | Python 为主体，基于 LangChain / LangGraph  |
-| Frontend | Electron                             |
+| 部分       | 实现                                  |
+| -------- | ----------------------------------- |
+| Backend  | Python 为主体，基于 LangChain / LangGraph |
+| Frontend | Electron                            |
 
 ---
 
@@ -253,4 +263,3 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 角色设定来源于游戏《Limbus Company》，引用自[边狱公司中文维基](https://limbuscompany.huijiwiki.com/wiki/%E6%B5%AE%E5%A3%AB%E5%BE%B7)。
 
 ---
-

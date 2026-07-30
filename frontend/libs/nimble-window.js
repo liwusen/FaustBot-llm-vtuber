@@ -135,7 +135,7 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
           shell.style.maxHeight = '70vh';
           shell.style.borderRadius = '14px';
           shell.style.zIndex = '';
-          shell.style.background = 'rgba(20,24,30,0.92)';
+          shell.style.background = 'rgba(255,255,255,0.94)';
           shell.style.backdropFilter = 'blur(8px)';
           shell.classList.remove('nimble-fullscreen');
           win.fullscreen = false;
@@ -236,11 +236,11 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     shell.style.maxWidth = '40vw';
     shell.style.maxHeight = '70vh';
     shell.style.overflow = 'hidden';
-    shell.style.background = 'rgba(20,24,30,0.92)';
-    shell.style.border = '1px solid rgba(255,255,255,0.12)';
+    shell.style.background = 'rgba(255,255,255,0.94)';
+    shell.style.border = '1px solid rgba(190,201,217,0.78)';
     shell.style.borderRadius = '14px';
-    shell.style.boxShadow = '0 10px 30px rgba(0,0,0,0.4)';
-    shell.style.color = '#fff';
+    shell.style.boxShadow = '0 16px 38px rgba(32,55,91,0.16)';
+    shell.style.color = '#1a2433';
     shell.style.backdropFilter = 'blur(8px)';
 
     const header = document.createElement('div');
@@ -248,7 +248,7 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     header.style.justifyContent = 'space-between';
     header.style.alignItems = 'center';
     header.style.padding = '10px 12px';
-    header.style.background = 'rgba(255,255,255,0.06)';
+    header.style.background = 'rgba(63,107,232,0.08)';
     header.style.fontWeight = '700';
     header.style.cursor = 'grab';
     header.textContent = payload.title || '灵动交互';
@@ -257,7 +257,7 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     closeBtn.textContent = '\u00D7';
     closeBtn.style.marginLeft = '12px';
     closeBtn.style.background = 'transparent';
-    closeBtn.style.color = '#fff';
+    closeBtn.style.color = '#647086';
     closeBtn.style.border = 'none';
     closeBtn.style.fontSize = '20px';
     closeBtn.style.cursor = 'pointer';

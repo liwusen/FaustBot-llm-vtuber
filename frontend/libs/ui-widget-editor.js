@@ -192,27 +192,37 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
     event.stopPropagation();
   }
 
-  function attachWidget(widget) {
-    const el = widget.element;
-    if (!el || el.dataset.uiWidgetBound === '1') return;
-    el.dataset.uiWidgetBound = '1';
-    el.addEventListener('mousedown', (event) => {
-      if (!manager.isEditMode() || event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const current = manager.getWidget(widget.id);
-      if (!current) return;
-      selectWidget(widget.id);
-      beginDrag(current, event);
-    }, true);
-    el.addEventListener('contextmenu', (event) => {
-      if (!manager.isEditMode()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      selectWidget(widget.id);
-      openPropertyPanel(widget.id, event.clientX, event.clientY);
-    }, true);
+  function widgetFromEvent(event) {
+    if (!manager.isEditMode()) return null;
+    const target = event.target;
+    if (!(target instanceof Node)) return null;
+    if (overlay.contains(target) || propertyPanel.contains(target)) return null;
+    for (const widget of widgetElements()) {
+      if (widget.element.contains(target)) return widget;
+    }
+    return null;
   }
+
+  document.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    const widget = widgetFromEvent(event);
+    if (!widget) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const current = manager.getWidget(widget.id);
+    if (!current) return;
+    selectWidget(widget.id);
+    beginDrag(current, event);
+  }, true);
+
+  document.addEventListener('contextmenu', (event) => {
+    const widget = widgetFromEvent(event);
+    if (!widget) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectWidget(widget.id);
+    openPropertyPanel(widget.id, event.clientX, event.clientY);
+  }, true);
 
   document.addEventListener('mousemove', (event) => {
     if (dragState) {
@@ -232,8 +242,8 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       } else {
         manager.updateWidget(widget.id, {
           coord: {
-            x: dragState.coord.x + dx,
-            y: dragState.coord.y + dy,
+            x: dragState.coord.x + dx / Math.max(1, window.innerWidth),
+            y: dragState.coord.y + dy / Math.max(1, window.innerHeight),
           },
         });
       }
@@ -271,7 +281,6 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       selectedId = '';
       propertyPanel.style.display = 'none';
     }
-    widgetElements().forEach(attachWidget);
     applyGhostState();
     if (typeof refreshLayout === 'function') refreshLayout();
     updateSelectionBox();
@@ -295,5 +304,6 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       return manager.isEditMode();
     },
     refreshSelection: updateSelectionBox,
+    refreshGhostState: applyGhostState,
   };
 }
