@@ -1,0 +1,74 @@
+name: Bug 反馈
+description: 报告一个 FaustBot 的问题或错误
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填写以下信息，以便我们快速定位问题。
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰描述遇到的问题。
+      placeholder: 发生了什么？期望的行为是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供能稳定复现问题的步骤。
+      placeholder: |
+        1. 打开 ...
+        2. 点击 ...
+        3. 出现错误 ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: 相关模块
+      description: 问题主要出现在哪个部分？
+      options:
+        - 后端 (FastAPI / Agent)
+        - 前端 (Electron / Live2D / VRM)
+        - 语音 (VAD / ASR / TTS)
+        - 记忆 (向量 / 知识图谱 / BM25)
+        - 插件系统
+        - 安装 / 打包 (setup-runtime / release)
+        - 其他 / 不确定
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: FaustBot 版本号（见 backend/version.json 或标题栏）。
+      placeholder: "例如 2.6.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      description: 操作系统及版本。
+      placeholder: "例如 Windows 11 26200"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: 粘贴相关的后端/前端日志或错误堆栈，可附截图。
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已搜索现有 Issue，确认没有重复。
+          required: true
