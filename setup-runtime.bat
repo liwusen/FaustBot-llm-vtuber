@@ -346,14 +346,14 @@ if "%INSTALL_SYS_NODE%"=="1" (
     goto fail
   )
   pushd "%FRONTEND_DIR%"
-  npm install --registry=%NPM_REGISTRY%
+  call npm install --registry=%NPM_REGISTRY%
   if errorlevel 1 (
     popd
     goto fail
   )
   popd
   pushd "%MC_OPERATOR_DIR%"
-  npm install --registry=%NPM_REGISTRY%
+  call npm install --registry=%NPM_REGISTRY%
   if errorlevel 1 (
     popd
     goto fail
@@ -408,14 +408,14 @@ if "%INSTALL_BUNDLE_NODE%"=="1" (
     if exist "%NODEJS_DIR%\node_modules\package" ren "%NODEJS_DIR%\node_modules\package" npm
     del "%NODEJS_DIR%\npm.tgz" >nul 2>&1
   )
-  "%NODEJS_DIR%\npm.cmd" --version >nul 2>&1
+  call "%NODEJS_DIR%\npm.cmd" --version >nul 2>&1
   if errorlevel 1 (
     echo bundled npm 初始化失败
     popd
     goto fail
   )
   echo 安装 MCP server 依赖...
-  "%NODEJS_DIR%\npm.cmd" install @playwright/mcp playwright --registry=%NPM_REGISTRY% --no-save --prefix "%NODEJS_DIR%\mcp-server"
+  call "%NODEJS_DIR%\npm.cmd" install @playwright/mcp playwright --registry=%NPM_REGISTRY% --no-save --prefix "%NODEJS_DIR%\mcp-server"
 
   if errorlevel 1 (
     popd
