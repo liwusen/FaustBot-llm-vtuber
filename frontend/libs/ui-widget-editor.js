@@ -230,20 +230,21 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       if (!widget) return;
       const dx = event.clientX - dragState.startX;
       const dy = event.clientY - dragState.startY;
+      const clamp01 = (v) => Math.min(1, Math.max(0, v));
       if (widget.bindingType === 'model') {
         const bounds = manager.getModelBounds();
         if (!bounds || !bounds.width || !bounds.height) return;
         manager.updateWidget(widget.id, {
           coord: {
-            x: dragState.coord.x + dx / bounds.width,
-            y: dragState.coord.y + dy / bounds.height,
+            x: clamp01(dragState.coord.x + dx / bounds.width),
+            y: clamp01(dragState.coord.y + dy / bounds.height),
           },
         });
       } else {
         manager.updateWidget(widget.id, {
           coord: {
-            x: dragState.coord.x + dx / Math.max(1, window.innerWidth),
-            y: dragState.coord.y + dy / Math.max(1, window.innerHeight),
+            x: clamp01(dragState.coord.x + dx / Math.max(1, window.innerWidth)),
+            y: clamp01(dragState.coord.y + dy / Math.max(1, window.innerHeight)),
           },
         });
       }

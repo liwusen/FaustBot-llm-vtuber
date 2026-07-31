@@ -25,6 +25,15 @@ jobs:
         shell: cmd
         run: setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes --install-bundle-node yes
 
+      - name: Verify bundled Node.js runtime
+        shell: pwsh
+        run: |
+          $nodeExe = Join-Path $env:GITHUB_WORKSPACE '.nodejs\node.exe'
+          if (-not (Test-Path $nodeExe)) {
+            throw ".nodejs\node.exe not found - bundled Node.js runtime is missing"
+          }
+          & $nodeExe --version
+
       - name: Create version.json
         shell: pwsh
         run: |
@@ -126,8 +135,21 @@ jobs:
             Copy-Item -LiteralPath $_.FullName -Destination $target -Recurse -Force
           }
 
+          if (-not (Test-Path (Join-Path $stageDir '.nodejs\node.exe'))) {
+            throw ".nodejs\node.exe missing from release stage directory"
+          }
+
           # Full archive (includes .runtime)
           Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $fullArchive -CompressionLevel Optimal
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($fullArchive)
+          try {
+            $hasNode = $zip.Entries | Where-Object { $_.FullName -like '.nodejs/*' } | Select-Object -First 1
+            if (-not $hasNode) { throw ".nodejs missing from full release archive" }
+          } finally {
+            $zip.Dispose()
+          }
 
           # Lite archive: copy stage, remove .runtime, then compress
           Copy-Item -LiteralPath $stageDir -Destination $liteDir -Recurse -Force

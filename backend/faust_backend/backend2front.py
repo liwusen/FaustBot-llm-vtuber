@@ -65,6 +65,10 @@ def FrontendHIL(context: dict) -> None:
     _bridge.hil_approval(context)
 
 
+def FrontEndMarkdownBlock(content: str) -> None:
+    _bridge.markdown_block(content)
+
+
 async def popFrontEndTask() -> str:
     return await _bridge.pop_task()
 

@@ -489,10 +489,25 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     }
   }
 
+  // 模型位置统一使用相对坐标(0-1)，限制在 0.1-0.9
+  function clampModelRelCoord(v){
+    return Math.min(0.9, Math.max(0.1, Number(v) || 0));
+  }
+
+  function readConfiguredModelRelPosition(){
+    const cfg = runtimeLive2DConfig || {};
+    const parse = (raw) => {
+      if (raw === undefined || raw === null || raw === '') return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? clampModelRelCoord(n) : null;
+    };
+    return { x: parse(cfg.LIVE2D_MODEL_X), y: parse(cfg.LIVE2D_MODEL_Y) };
+  }
+
   async function persistModelPositionToBackend(force = false){
-    if (!currentModel) return;
-    const x = Math.round(Number(currentModel.x) || 0);
-    const y = Math.round(Number(currentModel.y) || 0);
+    if (!currentModel || !app || !app.renderer) return;
+    const x = Math.round(clampModelRelCoord(currentModel.x / app.renderer.width) * 1000) / 1000;
+    const y = Math.round(clampModelRelCoord(currentModel.y / app.renderer.height) * 1000) / 1000;
     if (!force && lastPersistedModelPosition && lastPersistedModelPosition.x === x && lastPersistedModelPosition.y === y) return;
     try{
       const r = await fetch(ADMIN_CONFIG_ENDPOINT, {
@@ -1228,6 +1243,21 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           summary: String(payload?.summary || '').trim(),
           severity: String(payload?.severity || 'warning').trim().toLowerCase(),
         });
+      } else if (cmd === 'MD_BLOCK'){
+        if (!arg) return;
+        let payload = null;
+        try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid MD_BLOCK payload', e, arg); return; }
+        const content = String(payload?.content || '').trim();
+        if (!content) return;
+        const entry = { type: 'md', text: content };
+        if (currentChatRequest && Array.isArray(currentChatRequest.entries)) {
+          currentChatRequest.entries.push(entry);
+          showResultBubble('ai', currentChatRequest.entries);
+        } else {
+          const bubbleVisible = asrBubbleEl && asrBubbleEl.style.display !== 'none';
+          const base = (bubbleVisible && asrBubbleState.source === 'ai') ? asrBubbleState.entries : [];
+          showResultBubble('ai', base.concat([entry]));
+        }
       } else if (cmd=="SET_MOTION"){
         if (!arg) return;
         if (modelType === 'vrm' && vrmScene) {
@@ -1271,8 +1301,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           const [xRaw, yRaw] = arg.split(/\s+/);
           const x = Number(xRaw);
           const y = Number(yRaw);
-          if (Number.isFinite(x)) currentModel.x = x;
-          if (Number.isFinite(y)) currentModel.y = y;
+          if (Number.isFinite(x)) currentModel.x = clampModelRelCoord(x) * app.renderer.width;
+          if (Number.isFinite(y)) currentModel.y = clampModelRelCoord(y) * app.renderer.height;
           updateQuickControllerPosition();
           persistModelPositionToBackend(true);
         }
@@ -1592,9 +1622,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       currentChatRequest.pendingBuffer = split.rest;
       console.log("收到增量回复，当前累计文本：", currentChatRequest.replyText);
       for (const sentence of split.completed){
-        if (!sentence.includes('<NO_TTS_OUTPUT>')){
-          enqueueStreamTtsSentence(sentence, getCurrentTtsLang());
-        }
+        enqueueStreamTtsSentence(sentence, getCurrentTtsLang());
       }
       return;
     }
@@ -1618,23 +1646,19 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
             // show bubble immediately
             showResultBubble('ai', request.entries);
             // fire-and-forget TTS so UI updates are immediate
-            if (!visible.includes('<NO_TTS_OUTPUT>')){
-              enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
-            }
+            enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
           }
           if (split.rest && split.rest.trim()){
             const visible = stripMotionTokens(split.rest);
             if (visible){
               request.entries.push({ type: 'text', text: visible });
               showResultBubble('ai', request.entries);
-              if (!visible.includes('<NO_TTS_OUTPUT>')){
-                enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
-              }
+              enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
             }
           }
         }catch(e){ console.warn('chunking done reply failed', e); }
       } else {
-        if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim() && !reply.includes('<NO_TTS_OUTPUT>')){
+        if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim()){
           await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
         }
       }
@@ -1830,9 +1854,36 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     asrBubbleEl.style.display = html ? 'flex' : 'none';
     asrTextEl.innerHTML = html;
     if (html) {
+      hydrateMermaidBlocks(asrTextEl);
       updateAsrTextPosition(true);
       scrollAsrTextToBottom(true);
     }
+  }
+
+  let mermaidInitialized = false;
+  let mermaidSeq = 0;
+  function hydrateMermaidBlocks(root){
+    const fm = window.FaustMarkdown;
+    if (!root || !fm || !fm.mermaid) return;
+    const codes = root.querySelectorAll('.md-block code.language-mermaid');
+    if (!codes.length) return;
+    if (!mermaidInitialized) {
+      fm.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+      mermaidInitialized = true;
+    }
+    const nodes = [];
+    for (const code of codes) {
+      const holder = document.createElement('div');
+      holder.className = 'mermaid';
+      holder.id = `md-mermaid-${++mermaidSeq}`;
+      holder.textContent = code.textContent || '';
+      const pre = code.closest('pre') || code;
+      pre.replaceWith(holder);
+      nodes.push(holder);
+    }
+    fm.mermaid.run({ nodes }).catch((err) => {
+      console.warn('[md-block] mermaid render failed:', err);
+    });
   }
 
   function formatSubagentEventSummary(item){
@@ -2399,7 +2450,10 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       if (vrmDragCleanup) vrmDragCleanup();
       const canvas = vrmScene.getCanvas();
       if (canvas) {
+        let vrmDragButton = 0;
         const onDown = (e) => {
+          if (e.button === 1) e.preventDefault();
+          vrmDragButton = e.button;
           if (clickThroughController) clickThroughController.forceInteractive();
           setInteractionLock(true);
           dragging = true;
@@ -2407,15 +2461,27 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           vrmScene.pointerDown(e.clientX, e.clientY);
         };
         const onUp = () => {
+          const wasRotating = dragging && vrmDragButton === 1;
           dragging = false;
           hoverModel = false;
           vrmScene.pointerUp();
           setInteractionLock(false);
           refreshQuickControllerVisibility();
+          if (wasRotating) {
+            try {
+              const t = vrmScene.getModelTransform();
+              fetch('http://127.0.0.1:13900/faust/admin/vrm-config/model-state', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(t),
+              }).catch(() => {});
+            } catch (err) {}
+          }
         };
         const onMove = (e) => {
           if (!dragging) return;
-          if (e.ctrlKey || e.metaKey) {
+          if (vrmDragButton === 1) {
+            vrmScene.rotateModel(e.clientX);
+          } else if (e.ctrlKey || e.metaKey) {
             vrmScene.orbitCamera(e.clientX, e.clientY);
           } else {
             vrmScene.moveModel(e.clientX, e.clientY);
@@ -2589,22 +2655,17 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         const pos = e.data.global;
         let rawX = pos.x - dragOffset.x;
         let rawY = pos.y - dragOffset.y;
-        rawX = Math.max(160, Math.min(app.renderer.width - 160, rawX));
-        rawY = Math.max(160, Math.min(app.renderer.height - 20, rawY));
+        rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 0.9, rawX));
+        rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 0.9, rawY));
         sprite.x = rawX;
         sprite.y = rawY;
         updateQuickControllerPosition();
       });
       app.stage.addChild(sprite);
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
-      const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
-        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
-        : null;
-      const configuredY = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_Y !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_Y !== null && runtimeLive2DConfig.LIVE2D_MODEL_Y !== ''
-        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_Y)
-        : null;
-      if (Number.isFinite(configuredX)) sprite.x = configuredX;
-      if (Number.isFinite(configuredY)) sprite.y = configuredY;
+      const configuredPos = readConfiguredModelRelPosition();
+      if (configuredPos.x !== null) sprite.x = configuredPos.x * app.renderer.width;
+      if (configuredPos.y !== null) sprite.y = configuredPos.y * app.renderer.height;
       applyModelScale();
       clearOverlay();
       updateTextChatBarPosition();
@@ -2729,11 +2790,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       const pos = e.data.global;
       let rawX = pos.x - dragOffset.x;
       let rawY = pos.y - dragOffset.y;
-      const marginTop = 160;
-      const marginBottom = 20;
-      const marginX = 160;
-      rawX = Math.max(marginX, Math.min(app.renderer.width - marginX, rawX));
-      rawY = Math.max(marginTop, Math.min(app.renderer.height - marginBottom, rawY));
+      rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 0.9, rawX));
+      rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 0.9, rawY));
       sprite.x = rawX;
       sprite.y = rawY;
       updateQuickControllerPosition();
@@ -2743,14 +2801,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     clearOverlay();
     baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
     baseScale *= Math.max(0.1, Number(resolvedConfig.scale) || 1.0);
-    const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
-      ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
-      : null;
-    const configuredY = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_Y !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_Y !== null && runtimeLive2DConfig.LIVE2D_MODEL_Y !== ''
-      ? Number(runtimeLive2DConfig.LIVE2D_MODEL_Y)
-      : null;
-    if (Number.isFinite(configuredX)) sprite.x = configuredX;
-    if (Number.isFinite(configuredY)) sprite.y = configuredY;
+    const configuredPos = readConfiguredModelRelPosition();
+    if (configuredPos.x !== null) sprite.x = configuredPos.x * app.renderer.width;
+    if (configuredPos.y !== null) sprite.y = configuredPos.y * app.renderer.height;
     applyModelScale();
     updateTextChatBarPosition();
     refreshQuickControllerVisibility();
@@ -2835,15 +2888,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         const pos = e.data.global;
         let rawX = pos.x - dragOffset.x;
         let rawY = pos.y - dragOffset.y;
-        // Constrain drag so controls stay on-screen
-        // X/sides: 160px — room for controller + chat bar
-        // Top: 160px — controls anchored above model need headroom
-        // Bottom: 20px — model anchor is at bottom (0.5,1.0), allow near screen edge
-        const marginTop = 160;
-        const marginBottom = 20;
-        const marginX = 160;
-        rawX = Math.max(marginX, Math.min(app.renderer.width - marginX, rawX));
-        rawY = Math.max(marginTop, Math.min(app.renderer.height - marginBottom, rawY));
+        rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 0.9, rawX));
+        rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 0.9, rawY));
         model.x = rawX;
         model.y = rawY;
         updateQuickControllerPosition();
@@ -2862,14 +2908,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       clearOverlay();
       // 自动缩放示例：根据窗口尺寸调整基础缩放
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
-      const configuredX = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_X !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_X !== null && runtimeLive2DConfig.LIVE2D_MODEL_X !== ''
-        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_X)
-        : null;
-      const configuredY = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MODEL_Y !== undefined && runtimeLive2DConfig.LIVE2D_MODEL_Y !== null && runtimeLive2DConfig.LIVE2D_MODEL_Y !== ''
-        ? Number(runtimeLive2DConfig.LIVE2D_MODEL_Y)
-        : null;
-      if (Number.isFinite(configuredX)) model.x = configuredX;
-      if (Number.isFinite(configuredY)) model.y = configuredY;
+      const configuredPos = readConfiguredModelRelPosition();
+      if (configuredPos.x !== null) model.x = configuredPos.x * app.renderer.width;
+      if (configuredPos.y !== null) model.y = configuredPos.y * app.renderer.height;
       // apply user-selected scale factor
       applyModelScale();
       // keep reference for mouth sync
@@ -2878,8 +2919,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       updateTextChatBarPosition();
       refreshQuickControllerVisibility();
       if (modelPathInput) modelPathInput.value = path;
-      if (Number.isFinite(configuredX) && Number.isFinite(configuredY)) {
-        lastPersistedModelPosition = { x: Math.round(configuredX), y: Math.round(configuredY) };
+      if (configuredPos.x !== null && configuredPos.y !== null) {
+        lastPersistedModelPosition = { x: configuredPos.x, y: configuredPos.y };
       }
     }).catch(err => {
       if (String(err && err.message || '') === 'stale model load request') return;

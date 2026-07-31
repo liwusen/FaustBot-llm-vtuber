@@ -91,6 +91,9 @@ class FrontendBridge:
     def hil_approval(self, context: dict) -> None:
         self._push("HIL_APPROVAL", context)
 
+    def markdown_block(self, content: str) -> None:
+        self._push("MD_BLOCK", {"content": str(content or "")})
+
     async def pop_task(self) -> str:
         try:
             task = await asyncio.wait_for(self.queue.get(), timeout=0.01)

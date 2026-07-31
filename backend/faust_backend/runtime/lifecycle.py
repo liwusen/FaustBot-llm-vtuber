@@ -374,6 +374,12 @@ async def rebuild_runtime(
                 conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}"
             )
             log.info("重建目标 Agent: %s", state.AGENT_NAME)
+            # MD_BLOCK_ENABLED 在此判断并生效：后续 _create_agent_with_extensions
+            # 会经 get_tools_for_agent 按该开关决定是否注册 RenderMarkdownBlock
+            log.info(
+                "Markdown 内容块工具 (RenderMarkdownBlock): %s",
+                "启用" if conf.MD_BLOCK_ENABLED else "禁用",
+            )
 
             # ---Templates Makeup---
             import faust_backend.admin_runtime as admin_runtime

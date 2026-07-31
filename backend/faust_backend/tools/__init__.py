@@ -24,6 +24,7 @@ import faust_backend.tools.hil
 import faust_backend.tools.datetime
 import faust_backend.tools.system
 import faust_backend.tools.media
+import faust_backend.tools.markdown_block
 import faust_backend.tools.animation
 import faust_backend.tools.memory
 import faust_backend.tools.diary

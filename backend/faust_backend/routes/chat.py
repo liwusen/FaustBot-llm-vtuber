@@ -224,6 +224,96 @@ def _main_event_payload(event_type: str, **kwargs) -> dict:
     return payload
 
 
+# 活跃的 /faust/chat websocket 连接，供前台触发器流式推送复用
+_active_chat_websockets: set = set()
+
+
+async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
+    reply = ""
+    abort_evt = state.reset_abort_event()
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        results = pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
+        if results:
+            for r in results:
+                if r is not None and isinstance(r, str):
+                    text = r
+                    break
+    try:
+        current_history: list[dict] = []
+        async for event in stream_chat_agent_events(
+            state.agent,
+            {"messages": [{"role": "user", "content": text}]},
+            abort_event=abort_evt,
+        ):
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "reasoning_delta":
+                payload = _main_event_payload("reasoning_delta", content=event.get("content", ""))
+                if pm:
+                    results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                    if results:
+                        for r in results:
+                            if r == "__IGNORED__" or r == "__REMOVED__":
+                                log.debug("Agent event hook returned empty string, discarding payload")
+                                payload = None
+                                break
+                            if isinstance(r, dict):
+                                payload = r
+                if payload:
+                    current_history.append(payload)
+                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                continue
+            if event.get("type") == "delta":
+                delta_text = state.message_content_to_text(event.get("content"))
+                if not delta_text:
+                    continue
+                reply += delta_text
+                log.debug("聊天增量: %s", delta_text[:80])
+                payload = _main_event_payload("delta", content=delta_text)
+                if pm:
+                    results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                    if results:
+                        for r in results:
+                            if r is None:
+                                payload = None
+                                break
+                            if isinstance(r, dict):
+                                payload = r
+                if payload:
+                    current_history.append(payload)
+                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                continue
+            if event.get("type") in {"tool_start", "tool_result"}:
+                payload = dict(event)
+                payload["agent_id"] = "main"
+                if pm:
+                    results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                    if results:
+                        for r in results:
+                            if r is None:
+                                payload = None
+                                break
+                            if isinstance(r, dict):
+                                payload = r
+                if payload:
+                    current_history.append(payload)
+                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+        schedule_memory_record_sync(text, reply)
+        await websocket.send_text(json.dumps(_main_event_payload("done"), ensure_ascii=False))
+        log.debug("聊天流结束")
+    except asyncio.CancelledError:
+        await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
+        log.info("聊天流被用户中断")
+    return reply
+
+
 @router.post("/faust/chat")
 async def chat_post(payload: dict):
     text = None
@@ -263,6 +353,7 @@ async def chat_post(payload: dict):
 @router.websocket("/faust/chat")
 async def chat_websocket(websocket: WebSocket):
     await websocket.accept()
+    _active_chat_websockets.add(websocket)
     agent_task: asyncio.Task | None = None
 
     # ── WS 连接级别的 Subagent 事件转发 ──
@@ -313,91 +404,6 @@ async def chat_websocket(websocket: WebSocket):
                 pass
         _subagent_fwd_task = None
 
-    async def _run_agent_stream(text: str):
-        reply = ""
-        abort_evt = state.reset_abort_event()
-        pm = getattr(state, 'plugin_manager', None)
-        if pm:
-            results = pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
-            if results:
-                for r in results:
-                    if r is not None and isinstance(r, str):
-                        text = r
-                        break
-        try:
-            current_history: list[dict] = []
-            async for event in stream_chat_agent_events(
-                state.agent,
-                {"messages": [{"role": "user", "content": text}]},
-                abort_event=abort_evt,
-            ):
-                if not isinstance(event, dict):
-                    continue
-                if event.get("type") == "reasoning_delta":
-                    payload = _main_event_payload("reasoning_delta", content=event.get("content", ""))
-                    if pm:
-                        results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
-                        if results:
-                            for r in results:
-                                if r == "__IGNORED__" or r == "__REMOVED__":
-                                    log.debug("Agent event hook returned empty string, discarding payload")
-                                    payload = None
-                                    break
-                                if isinstance(r, dict):
-                                    payload = r
-                    if payload:
-                        current_history.append(payload)
-                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
-                    continue
-                if event.get("type") == "delta":
-                    delta_text = state.message_content_to_text(event.get("content"))
-                    if not delta_text:
-                        continue
-                    reply += delta_text
-                    log.debug("聊天增量: %s", delta_text[:80])
-                    payload = _main_event_payload("delta", content=delta_text)
-                    if pm:
-                        results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
-                        if results:
-                            for r in results:
-                                if r is None:
-                                    payload = None
-                                    break
-                                if isinstance(r, dict):
-                                    payload = r
-                    if payload:
-                        current_history.append(payload)
-                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
-                    continue
-                if event.get("type") in {"tool_start", "tool_result"}:
-                    payload = dict(event)
-                    payload["agent_id"] = "main"
-                    if pm:
-                        results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
-                        if results:
-                            for r in results:
-                                if r is None:
-                                    payload = None
-                                    break
-                                if isinstance(r, dict):
-                                    payload = r
-                    if payload:
-                        current_history.append(payload)
-                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
-            schedule_memory_record_sync(text, reply)
-            await websocket.send_text(json.dumps(_main_event_payload("done"), ensure_ascii=False))
-            log.debug("聊天流结束")
-        except asyncio.CancelledError:
-            await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
-            log.info("聊天流被用户中断")
-        return reply
-
     try:
         while True:
             raw = await websocket.receive_text()
@@ -447,7 +453,7 @@ async def chat_websocket(websocket: WebSocket):
                 events.ignore_trigger_event.set()
                 await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
-                agent_task = asyncio.create_task(_run_agent_stream(text))
+                agent_task = asyncio.create_task(_run_agent_stream(websocket, text))
                 agent_task.add_done_callback(lambda _: events.ignore_trigger_event.clear())
             except Exception as e:
                 events.ignore_trigger_event.clear()
@@ -456,6 +462,7 @@ async def chat_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
         log.info("Chat WebSocket 断开")
     finally:
+        _active_chat_websockets.discard(websocket)
         if agent_task is not None and not agent_task.done():
             agent_task.cancel()
             try:
@@ -517,12 +524,20 @@ async def command_websocket(websocket: WebSocket):
                         nimble.finalize_close(callback_id, reason="expired")
                         trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
                 log.info('触发器激活，正在调用 Agent: %s', trigger_text[:120])
-                resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
-                reply = state.message_content_to_text(resp["messages"][-1].content) # type:ignore
-                log.debug('触发器激活回复: %s', str(reply)[:120])
-                if "<NO_TTS_OUTPUT>" in reply:
-                    continue
-                await websocket.send_text(f"SAY {reply}")
+                run_background = bool(task.get("run_background")) if isinstance(task, dict) else False
+                chat_ws = next(iter(_active_chat_websockets), None)
+                if run_background or chat_ws is None:
+                    # 后台触发器（或无前端连接时降级）：仅执行，不推送前端
+                    await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+                    log.debug('后台触发器执行完成: %s', trigger_text[:80])
+                else:
+                    # 前台触发器：通过 chat websocket 流式推送
+                    try:
+                        await chat_ws.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
+                        await _run_agent_stream(chat_ws, trigger_text)
+                    except Exception as e:
+                        log.error("触发器流式推送失败，降级为后台执行: %s", e)
+                        await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
             if not state.forward_queue.empty():
                 command = await state.forward_queue.get()
                 log.debug("从队列转发命令: %s", command[:80])

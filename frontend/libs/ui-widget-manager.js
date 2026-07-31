@@ -68,18 +68,20 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
   function getWidgetAnchor(id) {
     const widget = widgets.get(String(id));
     if (!widget) return null;
+    const clampX = (v) => Math.min(Math.max(0, window.innerWidth - 16), Math.max(0, v));
+    const clampY = (v) => Math.min(Math.max(0, window.innerHeight - 16), Math.max(0, v));
     if (widget.bindingType === 'model') {
       const bounds = typeof getModelBounds === 'function' ? getModelBounds() : null;
       if (!bounds) return null;
       return {
-        x: bounds.left + bounds.width * widget.coord.x + widget.offset.x,
-        y: bounds.top + bounds.height * widget.coord.y + widget.offset.y,
+        x: clampX(bounds.left + bounds.width * widget.coord.x + widget.offset.x),
+        y: clampY(bounds.top + bounds.height * widget.coord.y + widget.offset.y),
         scale: widget.scale,
       };
     }
     return {
-      x: window.innerWidth * widget.coord.x + widget.offset.x,
-      y: window.innerHeight * widget.coord.y + widget.offset.y,
+      x: clampX(window.innerWidth * widget.coord.x + widget.offset.x),
+      y: clampY(window.innerHeight * widget.coord.y + widget.offset.y),
       scale: widget.scale,
     };
   }

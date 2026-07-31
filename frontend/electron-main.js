@@ -828,6 +828,7 @@ async function launchPySideConfiger(){
 
 function getTrayIconPath(){
   const candidates = [
+    path.join(__dirname, 'FaustBot.icon.tiny.png'),
     path.join(getFrontendResourceDir(), 'FaustBot.icon.tiny.png'),
     path.join(getFrontendResourceDir(), 'fake_neuro.ico'),
     path.join(getFrontendResourceDir(), 'dmx1.png'),

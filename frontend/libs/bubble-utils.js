@@ -27,6 +27,16 @@ export function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
+export function renderMarkdownHtml(text) {
+  const fm = (typeof window !== 'undefined') ? window.FaustMarkdown : null;
+  const raw = String(text || '');
+  if (!fm || !fm.marked || !fm.DOMPurify) {
+    return `<pre class="md-fallback">${escapeHtml(raw)}</pre>`;
+  }
+  const html = fm.marked.parse(raw, { async: false, gfm: true, breaks: true });
+  return fm.DOMPurify.sanitize(html);
+}
+
 function summarizeToolCall(toolName, args) {
   const name = String(toolName || '').trim();
   const payload = args && typeof args === 'object' ? args : {};
@@ -81,6 +91,10 @@ export function renderResultBubbleHtml(source, entries) {
       }
       continue;
     }
+    if (item.type === 'md') {
+      blocks.push(`<div class="result-bubble-main md-block">${renderMarkdownHtml(item.text || '')}</div>`);
+      continue;
+    }
     if (item.type !== 'tool') continue;
     const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
     const toolSummary = escapeHtml(summarizeToolCall(item.toolName, Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
@@ -117,6 +131,9 @@ export function cloneBubbleEntries(entries) {
     if (!item || typeof item !== 'object') return null;
     if (item.type === 'text') {
       return { type: 'text', text: String(item.text || '') };
+    }
+    if (item.type === 'md') {
+      return { type: 'md', text: String(item.text || '') };
     }
     if (item.type === 'reasoning') {
       return { type: 'reasoning', text: String(item.text || ''), expanded: !!item.expanded };

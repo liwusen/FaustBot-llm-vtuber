@@ -91,6 +91,7 @@ class BaseTrigger(BaseModel):
     type: str
     recall_description: Optional[str] = None
     lifespan: Optional[int] = None
+    run_background: bool = False
     created_at: float = Field(default_factory=time.time)
 
     model_config = {"extra": "forbid"}

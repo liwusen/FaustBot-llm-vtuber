@@ -11,8 +11,8 @@ var META = {
   MODEL_TYPE: { label: "模型类型", help: "选择 Live2D（2D）、VRM（3D）或 Images（图片）模型。" },
   LIVE2D_MODEL_PATH: { label: "Live2D 模型路径", help: "前端加载的 Live2D 模型文件路径。" },
   LIVE2D_MODEL_SCALE: { label: "模型缩放", help: "模型在前端画布中的整体缩放比例。" },
-  LIVE2D_MODEL_X: { label: "Live2D 横向位置", help: "模型 X 坐标；留空时由前端自动决定。" },
-  LIVE2D_MODEL_Y: { label: "Live2D 纵向位置", help: "模型 Y 坐标；留空时由前端自动决定。" },
+  LIVE2D_MODEL_X: { label: "Live2D 横向位置", help: "模型 X 相对坐标（0.1-0.9，屏幕宽度比例）；留空时由前端自动决定。" },
+  LIVE2D_MODEL_Y: { label: "Live2D 纵向位置", help: "模型 Y 相对坐标（0.1-0.9，屏幕高度比例）；留空时由前端自动决定。" },
   VRM_MODEL_PATH: { label: "VRM 模型路径", help: "前端加载的 VRM 模型文件路径" },
   IMAGE_MODEL_CONFIG: { label: "Images 模型配置", help: "图片模型的默认图、情绪图、点击图和嘴型图配置。" },
   TEXT_CHAT_BAR_Y_FACTOR: { label: "文字对话框 Y 轴绑定", help: "控制文字对话框绑定在模型高度上的位置，范围 0 到 1。" },
@@ -92,7 +92,7 @@ var ADVANCED_KEYS = new Set([
   "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET",
   "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG",
 ]);
-var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "THINKING_ENABLED", "THINKING_PRESET", "THINKING_INTENSITY"];
+var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "THINKING_ENABLED", "THINKING_PRESET", "THINKING_INTENSITY", "MD_BLOCK_ENABLED"];
 var AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
@@ -105,6 +105,7 @@ META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 E
 META.THINKING_ENABLED = { label: "启用思考", help: "开启后主 Agent 会在回复前进行推理思考，思考过程在前端折叠展示。" };
 META.THINKING_PRESET = { label: "思考预设", help: "选择与当前主模型 AI 提供商匹配的思考参数格式。" };
 META.THINKING_INTENSITY = { label: "思考强度", help: "低/中/高，对应不同推理努力程度。" };
+META.MD_BLOCK_ENABLED = { label: "启用 Markdown 内容块", help: "开启后主 Agent 可使用 RenderMarkdownBlock 工具向气泡推送 Markdown 内容块（支持 mermaid 图表），内容仅展示不朗读。保存后立即生效。" };
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY"];
 var MODULES = [
@@ -144,6 +145,8 @@ var GRAPH_EXPAND_DEPTH = 1;
 
 const SCALE_PRESETS = {
     LIVE2D_MODEL_SCALE: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "x" },
+    LIVE2D_MODEL_X: { type: "range", min: 0.1, max: 0.9, step: 0.01, unit: "" },
+    LIVE2D_MODEL_Y: { type: "range", min: 0.1, max: 0.9, step: 0.01, unit: "" },
     TEXT_CHAT_BAR_Y_FACTOR: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
     OPENAI_TTS_SPEED: { type: "range", min: 0.25, max: 4, step: 0.05, unit: "x" },
     DECAY_PER_MINUTE: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },

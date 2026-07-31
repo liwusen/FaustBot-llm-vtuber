@@ -5,7 +5,7 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
   const nimbleWindows = new Map(); // callback_id -> { shell, body, header, api, messageHandler, fullscreen }
   let nimbleDragState = null;
 
-  const DEFAULT_COORD = { x: 0.72, y: 0.15 };
+  const DEFAULT_COORD = { x: 0.7, y: 0.5 };
 
   function widgetId(callbackId) {
     return `nimble::${callbackId}`;
@@ -63,11 +63,12 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
   document.addEventListener('mousemove', (e) => {
     if (!nimbleDragState) return;
     const { callbackId, startX, startY, coord } = nimbleDragState;
+    const clamp01 = (v) => Math.min(1, Math.max(0, v));
     try {
       widgetManager.updateWidget(widgetId(callbackId), {
         coord: {
-          x: coord.x + (e.clientX - startX) / Math.max(1, window.innerWidth),
-          y: coord.y + (e.clientY - startY) / Math.max(1, window.innerHeight),
+          x: clamp01(coord.x + (e.clientX - startX) / Math.max(1, window.innerWidth)),
+          y: clamp01(coord.y + (e.clientY - startY) / Math.max(1, window.innerHeight)),
         },
       });
     } catch (_e) { nimbleDragState = null; return; }
@@ -104,6 +105,8 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
       resize(width, height) {
         shell.style.width = width;
         shell.style.height = height;
+        // 显式指定尺寸时解除 40vw 上限，避免棋盘等宽内容被 overflow:hidden 裁剪
+        shell.style.maxWidth = 'none';
       },
       setFullscreen(enabled) {
         const win = nimbleWindows.get(callbackId);
@@ -113,6 +116,7 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
             width: shell.style.width,
             height: shell.style.height,
             transform: shell.style.transform,
+            maxWidth: shell.style.maxWidth,
           };
           shell.style.top = '0';
           shell.style.left = '0';
@@ -131,7 +135,7 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
           const prev = shell._nimblePrev || {};
           shell.style.width = prev.width || '360px';
           shell.style.height = prev.height || '';
-          shell.style.maxWidth = '40vw';
+          shell.style.maxWidth = prev.maxWidth || '40vw';
           shell.style.maxHeight = '70vh';
           shell.style.borderRadius = '14px';
           shell.style.zIndex = '';

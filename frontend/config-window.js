@@ -251,6 +251,7 @@ async function saveConfig() {
   }
   setBusy(true);
   try {
+    const mdBlockChanged = state.dirty.public.has("MD_BLOCK_ENABLED");
     const payload = {
       public: Object.fromEntries(state.dirty.public.entries()),
       private: Object.fromEntries(state.dirty.private.entries()),
@@ -261,6 +262,9 @@ async function saveConfig() {
       await cfgApi("POST", "/faust/admin/live2d/apply", {
         public: Object.fromEntries([...state.dirty.public.entries()].filter(([k]) => LIVE2D_KEYS.includes(k))),
       });
+    }
+    if (mdBlockChanged) {
+      await cfgApi("POST", "/faust/admin/config/reload", { reset_dialog: false, no_initial_chat: true });
     }
     await loadConfig();
     await loadRuntimeSummary();

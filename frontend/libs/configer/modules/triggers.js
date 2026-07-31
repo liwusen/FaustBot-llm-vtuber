@@ -36,7 +36,7 @@ function renderTriggersModule() {
   const tableCard = el("article", "card full-span");
   tableCard.append(el("h3", "card-title", "触发器列表"));
   const list = el("table", "simple-table");
-  list.innerHTML = "<thead><tr><th>触发器 ID</th><th>类型</th><th>有效期</th><th>说明</th><th>操作</th></tr></thead>";
+  list.innerHTML = "<thead><tr><th>触发器 ID</th><th>类型</th><th>运行方式</th><th>有效期</th><th>说明</th><th>操作</th></tr></thead>";
   const tbody = el("tbody", "");
   for (const trig of state.triggers) {
     const tid = String(trig.id || "");
@@ -44,6 +44,7 @@ function renderTriggersModule() {
     row.append(
       el("td", "cell-primary", tid),
       el("td", "", trig.type || "-"),
+      el("td", "", trig.run_background ? "后台" : "前台"),
       el("td", "", trig.lifespan == null ? "未设置" : String(trig.lifespan)),
       el("td", "", trig.recall_description || "-"),
     );
@@ -81,7 +82,7 @@ function renderTriggersModule() {
   if (!state.triggers.length) {
     const row = el("tr", "");
     const empty = el("td", "table-empty", "当前没有 Trigger。 ");
-    empty.colSpan = 5;
+    empty.colSpan = 6;
     row.append(empty);
     tbody.append(row);
   }

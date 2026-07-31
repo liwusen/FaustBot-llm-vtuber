@@ -1365,3 +1365,24 @@ body {
   height: 10px;
   border-radius: 50%;
 }
+
+/* Trigger 编辑弹窗表单 */
+.trigger-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-bottom: 14px;
+}
+.trigger-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.trigger-field-label {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text, #1a2433);
+}
+.trigger-field .card-help {
+	margin: 0;
+}

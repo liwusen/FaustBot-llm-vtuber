@@ -223,6 +223,7 @@ def load_configs():
     global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS
     global THINKING_ENABLED, THINKING_PRESET, THINKING_INTENSITY
     global PLUGIN_MARKET_USE_GH_PROXY
+    global MD_BLOCK_ENABLED
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
@@ -289,6 +290,7 @@ def load_configs():
     THINKING_PRESET = str(config.get('THINKING_PRESET', 'none') or 'none').strip()
     THINKING_INTENSITY = str(config.get('THINKING_INTENSITY', 'medium') or 'medium').strip()
     PLUGIN_MARKET_USE_GH_PROXY = bool(config.get('PLUGIN_MARKET_USE_GH_PROXY', False))
+    MD_BLOCK_ENABLED = bool(config.get('MD_BLOCK_ENABLED', True))
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
 

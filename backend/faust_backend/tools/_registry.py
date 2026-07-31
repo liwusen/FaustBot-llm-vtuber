@@ -47,6 +47,10 @@ VRM_ONLY_TOOL_NAMES = {
     "setVRMLookAtTool",
 }
 
+MD_BLOCK_TOOL_NAMES = {
+    "RenderMarkdownBlock",
+}
+
 
 def register(func):
     toollist.append(func)
@@ -68,16 +72,17 @@ def get_tools_for_agent(agent_name: str | None = None):
     if target == "araya":
         return [tool_func for tool_func in toollist if _tool_func_name(tool_func) in ARAYA_ALLOWED_TOOL_NAMES]
     model_type = str(getattr(conf, 'MODEL_TYPE', 'live2d') or 'live2d').strip().lower()
+    md_block_excluded = set() if bool(getattr(conf, 'MD_BLOCK_ENABLED', True)) else set(MD_BLOCK_TOOL_NAMES)
     try:
         from faust_backend.live_mode import is_live_mode, get_excluded_tool_names
         if is_live_mode():
-            excluded = DEFAULT_EXCLUDED_TOOL_NAMES | get_excluded_tool_names()
+            excluded = DEFAULT_EXCLUDED_TOOL_NAMES | get_excluded_tool_names() | md_block_excluded
             if model_type != "vrm":
                 excluded |= VRM_ONLY_TOOL_NAMES
             return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in excluded]
     except ImportError:
         pass
-    base_excluded = set(DEFAULT_EXCLUDED_TOOL_NAMES)
+    base_excluded = set(DEFAULT_EXCLUDED_TOOL_NAMES) | md_block_excluded
     if model_type != "vrm":
         base_excluded |= VRM_ONLY_TOOL_NAMES
     return [tool_func for tool_func in toollist if _tool_func_name(tool_func) not in base_excluded]

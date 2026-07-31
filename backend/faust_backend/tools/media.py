@@ -14,7 +14,6 @@ def musicPlayTool(url: str) -> str:
     Description:
         播放指定URL的音乐。
         会同步口型。
-        请注意 如果使用这个工具，则请在正文中一字不差的输出 <NO_TTS_OUTPUT>
     Args:
         url (str): 音乐的URL地址,支持file://和http(s)://等协议。
     Returns:

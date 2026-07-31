@@ -29,7 +29,13 @@ def triggerListTool() -> str:
 def triggerAddTool(trigger_json: str) -> str:
     """
     Description:
-        添加一个新的触发器。
+        添加一个新的触发器（同 id 会覆盖旧触发器）。
+        通用字段: id, type, recall_description(可选), lifespan(可选,秒),
+        run_background(可选,默认 false)。
+        run_background=true 时触发器在后台运行，处理过程与结果不会推送给用户前端；
+        false 时结果会通过聊天窗口流式展示给用户。
+        类型专属字段: interval → interval_seconds; datetime → target("YYYY-MM-DD HH:MM:SS");
+        py-eval → eval_code。
     Args:
         trigger_json (str): 触发器的JSON字符串表示。
     Returns:

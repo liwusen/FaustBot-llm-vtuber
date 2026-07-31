@@ -285,7 +285,7 @@ export class VRMScene {
     return {
       positionX: this.vrm.scene.position.x,
       positionY: this._modelBaseY,
-      rotation: 0,
+      rotation: this.vrm.scene.rotation.y,
       scale: this.getScale(),
     };
   }
@@ -393,7 +393,8 @@ export class VRMScene {
     this._modelStart = this.vrm ? {
       x: this.vrm.scene.position.x,
       y: this._modelBaseY,
-    } : { x: 0, y: 0 };
+      rot: this.vrm.scene.rotation.y,
+    } : { x: 0, y: 0, rot: 0 };
   }
 
   orbitCamera(clientX, clientY) {
@@ -412,6 +413,12 @@ export class VRMScene {
     const sensitivity = 2.0;
     this.vrm.scene.position.x = this._modelStart.x - dx * sensitivity;
     this._modelBaseY = this._modelStart.y - dy * sensitivity;
+  }
+
+  rotateModel(clientX) {
+    if (!this._pointerDown || !this.vrm) return;
+    const dx = (clientX - this._pointerStart.x) * 0.01;
+    this.vrm.scene.rotation.y = this._modelStart.rot + dx;
   }
 
   pointerUp() {
