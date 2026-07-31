@@ -12,7 +12,6 @@ STARTUP_WAIT_SECONDS = 15
 TAIL_LOG_LINES = 120
 CREATE_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE
 _service_states: dict[str, str] = {}
-_service_start_times: dict[str, float] = {}
 
 def find_process_by_port(port):
     for conn in psutil.net_connections():
@@ -121,7 +120,6 @@ def start_service(service_key: str, wait: bool = False):
         raise FileNotFoundError(f"启动脚本不存在: {cmd}")
 
     _service_states[service_key] = "starting"
-    _service_start_times[service_key] = time.time()
 
     subprocess.Popen(
         ['cmd', '/c', str(cmd)],
@@ -189,20 +187,10 @@ def service_status(service_key: str, include_log: bool = True):
         # Auto-clear when process state matches expectation
         if state == "starting" and process_info:
             _service_states.pop(service_key, None)
-            _service_start_times.pop(service_key, None)
         elif state == "stopping" and not process_info:
             _service_states.pop(service_key, None)
-            _service_start_times.pop(service_key, None)
         else:
             result["status"] = state
-
-    # Auto-clear "starting" state after 40s timeout
-    if state == "starting" and not process_info:
-        start_time = _service_start_times.get(service_key)
-        if start_time and time.time() - start_time > 40:
-            _service_states.pop(service_key, None)
-            _service_start_times.pop(service_key, None)
-            # Consider it started even if port not found
 
     if include_log:
         result['log_tail'] = read_log_tail(resolve_service_path(service['log_file']))

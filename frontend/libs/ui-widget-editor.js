@@ -31,8 +31,9 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       if (!el) return;
       el.classList.toggle('ui-widget-editing-target', editMode);
       el.classList.toggle('ui-widget-hidden-preview', editMode && !!widget.hidden);
+      // 进入编辑态时，让被隐藏的组件恢复显示以便选中/拖动（清除内联 display:none，交回 CSS 默认）
       if (editMode && widget.hidden) {
-        el.style.display = el.id === 'textChatBar' ? 'flex' : (el.id === 'asrBubble' ? 'flex' : '');
+        el.style.display = '';
       }
     });
   }

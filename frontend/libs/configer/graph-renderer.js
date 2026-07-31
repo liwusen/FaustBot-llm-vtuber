@@ -359,6 +359,16 @@ GraphCanvas.prototype._hitTest = function (wx, wy) {
 
 GraphCanvas.prototype.setData = function (nodes, edges) {
   var self = this;
+  // 最多渲染 500 个实体，超限则丢弃多余实体及其相关边，避免卡顿
+  var MAX_RENDER_NODES = 500;
+  if (nodes && nodes.length > MAX_RENDER_NODES) {
+    nodes = nodes.slice(0, MAX_RENDER_NODES);
+    var keptIds = {};
+    for (var k = 0; k < nodes.length; k++) keptIds[nodes[k].id] = true;
+    edges = (edges || []).filter(function (e) {
+      return keptIds[e.source] && keptIds[e.target];
+    });
+  }
   // 将单向边转为双向（正反向各一条）
   var bidirEdges = edges.slice();
   for (var i = 0; i < edges.length; i++) {

@@ -1,4 +1,4 @@
-# GPT-Sovits(Local TTS)配置指南
+# GPT-SoVITS(gpt-sovits 本地 TTS)配置指南
 
 GPT-Sovits是基于Vits的语音克隆框架。
 
@@ -28,8 +28,8 @@ GPT-Sovits是基于Vits的语音克隆框架。
 
 多刷新几次,等待服务状态变为绿色`运行中`
 
-## 4. 切换TTS模式到local
+## 4. 切换TTS模式到gpt-sovits
 
-进入语音页面,把TTS模式改为`local`
+进入语音页面,把TTS模式改为`gpt-sovits`
 
 点击 保存 和 应用

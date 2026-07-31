@@ -16,7 +16,6 @@
     lrcIdx: -1,
     ui: null,
     active: false,
-    posRaf: null,
   };
 
   function communicate(payload) {
@@ -78,35 +77,12 @@
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: true,
       schema: { bindingType: 'screen', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
     });
-    if (state.posRaf) return;
-    const step = () => {
-      if (!state.ui) { state.posRaf = null; return; }
-      updatePlayerPosition();
-      state.posRaf = requestAnimationFrame(step);
-    };
-    state.posRaf = requestAnimationFrame(step);
-  }
-
-  function updatePlayerPosition() {
-    const bar = state.ui;
-    const widget = typeof api.getWidget === 'function' ? api.getWidget(WIDGET_ID) : null;
-    const editMode = typeof api.isWidgetEditMode === 'function' && api.isWidgetEditMode();
-    const coord = widget && widget.coord && Number.isFinite(widget.coord.x) ? widget.coord : DEFAULT_COORD;
-    const offset = widget && widget.offset ? widget.offset : { x: 0, y: 0 };
-    const scale = widget && widget.scale ? widget.scale : 1;
-    bar.style.display = (widget && widget.hidden && !editMode) ? 'none' : '';
-    bar.style.left = Math.round(window.innerWidth * coord.x + (offset.x || 0)) + 'px';
-    bar.style.top = Math.round(window.innerHeight * coord.y + (offset.y || 0)) + 'px';
-    bar.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
   }
 
   function removeUI() {
-    if (state.posRaf) {
-      cancelAnimationFrame(state.posRaf);
-      state.posRaf = null;
-    }
     if (state.ui) {
       try { state.ui.remove(); } catch (e) {}
       state.ui = null;

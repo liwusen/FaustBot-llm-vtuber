@@ -298,7 +298,7 @@ curl -X POST http://localhost:13900/faust/admin/plugins/package-zip \
 
 ### 前端集成
 
-1. **小组件**：使用 `registerWidget` 注册 UI 小组件
+1. **小组件**：使用 `registerWidget` 注册 UI 小组件（`managed` 缺省为 `true`，定位/显隐/缩放由小组件管理器统一处理，无需自写 rAF 布局循环；详见 plugin-api-reference.md）
 2. **通信**：通过 `communicate_handler` 处理前端请求
 3. **样式**：使用独立 CSS 文件，避免全局样式污染
 

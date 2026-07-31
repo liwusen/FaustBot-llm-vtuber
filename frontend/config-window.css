@@ -1386,3 +1386,71 @@ body {
 .trigger-field .card-help {
 	margin: 0;
 }
+
+/* 通用现代表单（MCP / Image 等编辑弹窗复用） */
+.form-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	margin-bottom: 14px;
+}
+.form-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 14px 16px;
+	border: 1px solid rgba(213, 222, 234, 0.82);
+	border-radius: 14px;
+	background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(250, 252, 255, 0.92));
+}
+.form-field-label {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text, #1a2433);
+}
+.form-hint {
+	margin: 0 0 2px;
+	color: var(--muted);
+	font-size: 12.5px;
+	line-height: 1.55;
+}
+.form-field-control {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+.form-field-control .input,
+.form-field-control .select,
+.form-field-control .number,
+.form-field-control .textarea {
+	flex: 1 1 auto;
+	min-width: 160px;
+}
+.form-segment {
+	display: inline-flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+.form-segment label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 7px 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: 10px;
+	font-size: 13px;
+	cursor: pointer;
+	background: rgba(255,255,255,0.7);
+	transition: border-color 0.15s, background 0.15s;
+}
+.form-segment label:hover {
+	border-color: #9db4e6;
+}
+.form-segment input:checked + span,
+.form-segment label:has(input:checked) {
+	border-color: #3f6be8;
+	background: rgba(63, 107, 232, 0.1);
+	color: #24418f;
+	font-weight: 600;
+}

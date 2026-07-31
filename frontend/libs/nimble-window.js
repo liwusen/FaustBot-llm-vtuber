@@ -57,8 +57,6 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     for (const callbackId of nimbleWindows.keys()) layoutWindow(callbackId);
   }
 
-  window.addEventListener('resize', () => layoutWindows(), { passive: true });
-
   // 非编辑模式下的标题栏拖拽：直接更新 widget coord
   document.addEventListener('mousemove', (e) => {
     if (!nimbleDragState) return;
@@ -289,6 +287,8 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: true,
+      onLayout: () => layoutWindow(callbackId),
       schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
     });
     const persisted = typeof getPersistedWidgetSettings === 'function' ? getPersistedWidgetSettings(widgetId(callbackId)) : null;

@@ -1,4 +1,4 @@
-"""Tests for component management (Phase 08).
+"""Tests for component management.
 
 Covers: GPU detection, component detection, ServiceGuard, API.
 """
@@ -270,11 +270,11 @@ class TestInstallApi:
 class TestConfigChangeTrigger:
     @pytest.mark.asyncio
     async def test_asr_mode_changed_to_local_triggers_start(self):
-        """ASR_MODE changes to local -> start_with_guard('asr') called."""
+        """ASR_MODE changes to a local engine (whisper) -> start_with_guard('asr') called."""
         from faust_backend.component_manager import check_and_manage_services
 
         old = {"ASR_MODE": "cloud"}
-        new = {"ASR_MODE": "local"}
+        new = {"ASR_MODE": "whisper"}
 
         with patch("faust_backend.component_manager.get_service_guard") as mock_guard:
             guard = AsyncMock()

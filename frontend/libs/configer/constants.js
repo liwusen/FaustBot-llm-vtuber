@@ -19,8 +19,11 @@ var META = {
   FRONTEND_QUICK_CONTROLLER_X_OFFSET: { label: "快捷控制栏 X 偏移", help: "控制快捷控制栏横向偏移，单位像素。" },
   FRONTEND_CLICK_THROUGH: { label: "前端点击穿透", help: "开启后桌宠窗口忽略鼠标点击。" },
   FRONTEND_DEFAULT_TTS_LANG: { label: "默认 TTS 语言", help: "前端发送 TTS 请求时默认使用的语言。" },
-  TTS_MODE: { label: "TTS 模式", help: "选择本地 TTS 或 OpenAI 兼容 TTS。" },
-  ASR_MODE: { label: "ASR 模式", help: "选择本地 ASR 或 OpenAI 兼容 ASR。" },
+  TTS_MODE: { label: "TTS 模式", help: "选择 GPT-SoVITS（本地）、OpenAI 兼容、FaustBot Cloud 或 Edge TTS。" },
+  ASR_MODE: { label: "ASR 模式", help: "选择 Whisper（本地，默认）、FunASR（本地）、OpenAI 兼容或 FaustBot Cloud。" },
+  WHISPER_MODEL: { label: "Whisper 模型", help: "本地 Whisper 使用的模型大小，越大越准但越慢（tiny/base/small/medium/large 等）。" },
+  WHISPER_LANGUAGE: { label: "Whisper 语言", help: "识别语言代码，如 zh、en、ja；留空则自动检测。" },
+  WHISPER_INITIAL_PROMPT: { label: "Whisper 初始提示词", help: "传给 Whisper 的 initial_prompt，用于引导识别风格/术语，对中文识别质量影响较大。" },
   FAUSTBOT_CLOUD_BASE_URL: { label: "FaustBot Cloud 地址", help: "FaustBot Cloud 推理服务的 HTTP Base URL。" },
   FAUSTBOT_CLOUD_TIMEOUT_SECONDS: { label: "FaustBot Cloud 超时秒数", help: "调用 FaustBot Cloud TTS/ASR 时的 HTTP 超时。" },
   OPENAI_TTS_BASE_URL: { label: "OpenAI TTS 接口地址", help: "OpenAI 兼容 TTS 服务的 API Base URL。" },
@@ -55,8 +58,10 @@ var META = {
 
 var FIELD_OPTIONS = {
   MODEL_TYPE: ["live2d", "vrm", "images"],
-  TTS_MODE: ["local", "openai", "faustbot-cloud", "edge-tts"],
-  ASR_MODE: ["local", "openai", "faustbot-cloud"],
+  TTS_MODE: ["gpt-sovits", "openai", "faustbot-cloud", "edge-tts"],
+  ASR_MODE: ["whisper", "funasr", "openai", "faustbot-cloud"],
+  WHISPER_MODEL: ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "turbo"],
+  WHISPER_LANGUAGE: ["zh", "en", "ja", "ko", "yue"],
   FRONTEND_DEFAULT_TTS_LANG: ["zh", "en", "ja", "ko", "yue"],
   OPENAI_TTS_VOICE: ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"],
   OPENAI_TTS_RESPONSE_FORMAT: ["mp3", "wav", "opus", "aac", "flac", "pcm"],
@@ -67,7 +72,7 @@ var FIELD_OPTIONS = {
 };
 
 var AGENT_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"];
-var TEXTAREA_KEYS = new Set(["OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_PROMPT", "TTS_PROMPT_TEXT"]);
+var TEXTAREA_KEYS = new Set(["OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_PROMPT", "TTS_PROMPT_TEXT", "WHISPER_INITIAL_PROMPT"]);
 var SECRET_KEYS = new Set(["CHAT_API_KEY", "SEARCH_API_KEY", "EMBED_API_KEY", "FAUSTBOT_CLOUD_SERVICE_KEY"]);
 
 var ADVANCED_KEYS = new Set([
@@ -95,7 +100,7 @@ var ADVANCED_KEYS = new Set([
 var AI_PUBLIC_KEYS = ["CHAT_MODEL", "CHAT_API_BASE", "EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "THINKING_ENABLED", "THINKING_PRESET", "THINKING_INTENSITY", "MD_BLOCK_ENABLED"];
 var AI_PRIVATE_KEYS = ["CHAT_API_KEY", "SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
-var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
+var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "WHISPER_MODEL", "WHISPER_LANGUAGE", "WHISPER_INITIAL_PROMPT", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
 
 
 META.EDGE_TTS_VOICE = { label: "Edge TTS 音色", help: "Microsoft Edge TTS 使用的 voice 名称，例如 en-US-AriaNeural 或 zh-CN-shaanxi-XiaoniNeural。" };

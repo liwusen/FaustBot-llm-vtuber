@@ -292,10 +292,10 @@ async def on_component_installed(component: str, details: dict | None = None) ->
     _ = details
 
     if component == "funasr":
-        if config.get("ASR_MODE", "").lower() == "local":
+        if config.get("ASR_MODE", "").lower() in {"whisper", "funasr"}:
             await guard.start_with_guard("asr")
     elif component == "tts":
-        if config.get("TTS_MODE", "").lower() == "local":
+        if config.get("TTS_MODE", "").lower() == "gpt-sovits":
             await guard.start_with_guard("tts")
 
 
@@ -308,27 +308,51 @@ def init_component_guard() -> None:
 
 
 async def check_and_manage_services(old_config: dict, new_config: dict) -> None:
-    """配置更新后检查是否需要启停服务。"""
+    """配置更新后检查是否需要启停服务。
+
+    对于 ASR / TTS：根据模式变化决定 启动 / 关闭 / 重启 本地服务。
+    - 从「非本地模式」切到「本地模式」：启动服务
+    - 从「本地模式」切到「非本地模式」：关闭服务
+    - 在两种「本地模式」之间切换（如 funasr → whisper）：重启服务以重新加载模型
+    """
     guard = get_service_guard()
 
-    # ASR_MODE
-    if old_config.get("ASR_MODE") != new_config.get("ASR_MODE"):
-        mode = (new_config.get("ASR_MODE") or "").lower()
-        if mode == "local":
-            log.info("Booting ASR service due to config change...")
+    # ASR_MODE：whisper / funasr 使用本地 ASR 服务（旧名 local 规范化为 funasr）
+    old_asr = (old_config.get("ASR_MODE") or "").lower()
+    new_asr = (new_config.get("ASR_MODE") or "").lower()
+    if old_asr == "local":
+        old_asr = "funasr"
+    if new_asr == "local":
+        new_asr = "funasr"
+    if old_asr != new_asr:
+        _asr_local = {"whisper", "funasr"}
+        old_local = old_asr in _asr_local
+        new_local = new_asr in _asr_local
+        if new_local and not old_local:
+            log.info("Booting ASR service due to config change (%s -> %s)...", old_asr, new_asr)
             await guard.start_with_guard("asr")
-        else:
-            log.info("Stopping ASR service due to config change...")
+        elif old_local and not new_local:
+            log.info("Stopping ASR service due to config change (%s -> %s)...", old_asr, new_asr)
             service_manager.stop_service("asr")
+        elif old_local and new_local:
+            log.info("Restarting ASR service due to mode change (%s -> %s)...", old_asr, new_asr)
+            service_manager.restart_service("asr")
 
-    # TTS_MODE
-    if old_config.get("TTS_MODE") != new_config.get("TTS_MODE"):
-        mode = (new_config.get("TTS_MODE") or "").lower()
-        if mode == "local":
-            log.info("Booting TTS service due to config change...")
+    # TTS_MODE：仅 gpt-sovits 使用本地 TTS 服务（旧名 local 规范化为 gpt-sovits）
+    old_tts = (old_config.get("TTS_MODE") or "").lower()
+    new_tts = (new_config.get("TTS_MODE") or "").lower()
+    if old_tts == "local":
+        old_tts = "gpt-sovits"
+    if new_tts == "local":
+        new_tts = "gpt-sovits"
+    if old_tts != new_tts:
+        old_local = old_tts == "gpt-sovits"
+        new_local = new_tts == "gpt-sovits"
+        if new_local and not old_local:
+            log.info("Booting TTS service due to config change (%s -> %s)...", old_tts, new_tts)
             await guard.start_with_guard("tts")
-        else:
-            log.info("Stopping TTS service due to config change...")
+        elif old_local and not new_local:
+            log.info("Stopping TTS service due to config change (%s -> %s)...", old_tts, new_tts)
             service_manager.stop_service("tts")
 
     # MC_BRIDGE_ENABLED

@@ -701,7 +701,7 @@ function renderMemoryGraph() {
   const depthSlider = document.createElement("input");
   depthSlider.type = "range";
   depthSlider.min = "1";
-  depthSlider.max = "10";
+  depthSlider.max = "3";
   depthSlider.value = "3";
   depthSlider.style.width = "180px";
   depthSlider.style.accentColor = "#4a90d9";
@@ -941,7 +941,7 @@ function renderMemoryGraph() {
         gc = new GraphCanvas(wrap);
       }
       gc.setData(nodes, edges);
-      statusText.textContent = "实体: " + nodes.length + " | 关系: " + edges.length;
+      statusText.textContent = "实体: " + Math.min(nodes.length, 500) + (nodes.length > 500 ? "/" + nodes.length + " (超500已截断)" : "") + " | 关系: " + edges.length;
 
       gc.onNodeClick(function (node) {
         gc._selectedNode = node;
@@ -991,7 +991,7 @@ function renderMemoryGraph() {
       gc.clearExpanded();
       gc.setData(allNodes, cleanEdges);
       gc.focusNode(centerId);
-      statusText.textContent = "实体: " + allNodes.length + " | 关系: " + cleanEdges.length + " (深度: " + depth + ")";
+      statusText.textContent = "实体: " + Math.min(allNodes.length, 500) + (allNodes.length > 500 ? "/" + allNodes.length + " (超500已截断)" : "") + " | 关系: " + cleanEdges.length + " (深度: " + depth + ")";
     } catch (_) { statusText.textContent = "BFS失败"; }
   }
 

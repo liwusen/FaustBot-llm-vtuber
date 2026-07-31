@@ -62,14 +62,15 @@ Embedding 模型同样有 Embedding 模型、Embedding 接口地址与 Embedding
 
 | 名称      | 解释 | 配置指南 |
 | --------- | ---- | -------- |
-| Local 模式 | 使用 FunASR 进行语音识别，需要占用 >3G 的内存，可选使用 GPU 推理，准确性好 | [FunASR 配置指南](funasr.md) |
+| Whisper（默认） | 使用 OpenAI Whisper 进行本地语音识别，可配置模型大小、语言与初始提示词，对中文识别友好 | [Whisper 配置指南](whisper.md) |
+| FunASR | 使用 FunASR 进行本地语音识别，需要占用 >3G 的内存，可选使用 GPU 推理，准确性好 | [FunASR 配置指南](funasr.md) |
 | OpenAI  | 使用 OpenAI API 进行语音识别，不建议使用 | 无 |
 
 ### 可用的语音生成模式
 
 | 名称       | 解释 | 配置指南 |
 | ---------- | ---- | -------- |
-| Local    | 使用经典的 GPT-Sovits 进行语音生成，**支持克隆声音**，但**必须要显存 >4G 的显卡** | [Local TTS 配置指南](tts.md) |
+| gpt-sovits    | 使用经典的 GPT-SoVITS 进行本地语音生成，**支持克隆声音**，但**必须要显存 >4G 的显卡** | [gpt-sovits TTS 配置指南](tts.md) |
 | OpenAI   | 使用 OpenAI API 进行语音生成，不建议使用 | 无 |
 | Edge-tts | 使用 Microsoft Edge API 进行语音生成，无需任何配置，默认选项 | 无（默认） |
 

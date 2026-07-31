@@ -217,6 +217,7 @@ def load_configs():
     global TTS_MODE, ASR_MODE, OPENAI_TTS_BASE_URL, OPENAI_TTS_MODEL, OPENAI_TTS_VOICE, OPENAI_TTS_RESPONSE_FORMAT, OPENAI_TTS_SPEED, OPENAI_TTS_INSTRUCTIONS
     global OPENAI_ASR_BASE_URL, OPENAI_ASR_MODEL, OPENAI_ASR_LANGUAGE, OPENAI_ASR_PROMPT, OPENAI_ASR_RESPONSE_FORMAT, OPENAI_ASR_TEMPERATURE, OPENAI_ASR_TIMESTAMP_GRANULARITIES
     global OPENAI_ASR_ENERGY_THRESHOLD, OPENAI_ASR_SILENCE_MS, OPENAI_ASR_MIN_SPEECH_MS, OPENAI_ASR_PREROLL_MS
+    global WHISPER_MODEL, WHISPER_LANGUAGE, WHISPER_INITIAL_PROMPT
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
@@ -257,8 +258,14 @@ def load_configs():
     MM_BRIDGE_KEEP_TURNS = int(config.get('MM_BRIDGE_KEEP_TURNS', 2) or 2)
     MCP_SERVERS = copy.deepcopy(config.get('mcp_servers', {}) or {})
     ARAYA_IDLE_MINUTES = float(config.get('ARAYA_IDLE_MINUTES', 30) or 30)
-    TTS_MODE = str(config.get('TTS_MODE', 'local') or 'local').strip().lower()
-    ASR_MODE = str(config.get('ASR_MODE', 'local') or 'local').strip().lower()
+    TTS_MODE = str(config.get('TTS_MODE', 'gpt-sovits') or 'gpt-sovits').strip().lower()
+    # 兼容旧配置：local TTS 已更名为 gpt-sovits
+    if TTS_MODE == 'local':
+        TTS_MODE = 'gpt-sovits'
+    ASR_MODE = str(config.get('ASR_MODE', 'whisper') or 'whisper').strip().lower()
+    # 兼容旧配置：local ASR 已更名为 funasr
+    if ASR_MODE == 'local':
+        ASR_MODE = 'funasr'
     OPENAI_TTS_BASE_URL = str(config.get('OPENAI_TTS_BASE_URL', 'https://api.openai.com/v1') or 'https://api.openai.com/v1').strip()
     OPENAI_TTS_MODEL = str(config.get('OPENAI_TTS_MODEL', 'gpt-4o-mini-tts') or 'gpt-4o-mini-tts').strip()
     OPENAI_TTS_VOICE = str(config.get('OPENAI_TTS_VOICE', 'alloy') or 'alloy').strip()
@@ -278,6 +285,10 @@ def load_configs():
     OPENAI_ASR_SILENCE_MS = int(config.get('OPENAI_ASR_SILENCE_MS', 700) or 700)
     OPENAI_ASR_MIN_SPEECH_MS = int(config.get('OPENAI_ASR_MIN_SPEECH_MS', 250) or 250)
     OPENAI_ASR_PREROLL_MS = int(config.get('OPENAI_ASR_PREROLL_MS', 250) or 250)
+    # 本地 Whisper ASR 配置
+    WHISPER_MODEL = str(config.get('WHISPER_MODEL', 'small') or 'small').strip()
+    WHISPER_LANGUAGE = str(config.get('WHISPER_LANGUAGE', 'zh') or 'zh').strip()
+    WHISPER_INITIAL_PROMPT = str(config.get('WHISPER_INITIAL_PROMPT', '以下是简体中文普通话的句子:') or '以下是简体中文普通话的句子:')
     # TTS 参考音频配置
     TTS_REFER_WAV_PATH = config.get('TTS_REFER_WAV_PATH', p_join(CONFIG_ROOT, 'voices', 'neuro.wav'))
     TTS_PROMPT_TEXT = config.get('TTS_PROMPT_TEXT', 'Hold on please, I\'m busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.')

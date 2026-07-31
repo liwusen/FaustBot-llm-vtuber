@@ -71,38 +71,56 @@ function openMcpEditorModal(existing, onSubmit) {
     headers: {},
   };
 
-  const wrap = el("div", "plugin-form");
-  const makeField = (labelText, input) => {
-    const field = el("div", "plugin-field");
-    field.append(el("label", "card-key", labelText), input);
-    wrap.append(field);
+  const wrap = el("div", "form-grid");
+  // 通用字段：标题 + 描述 + 控件
+  const makeField = (labelText, control, hintText) => {
+    const field = el("div", "form-field");
+    field.append(el("label", "form-field-label", labelText));
+    if (hintText) field.append(el("p", "form-hint", hintText));
+    field.append(control);
+    return field;
+  };
+  // 开关型字段：复选框与状态文案同排
+  const makeToggleField = (labelText, checkbox, hintText, onText, offText) => {
+    const field = el("div", "form-field");
+    field.append(el("label", "form-field-label", labelText));
+    if (hintText) field.append(el("p", "form-hint", hintText));
+    const row = el("label", "switch-row");
+    row.style.cursor = "pointer";
+    const stateText = el("span", "switch-text", checkbox.checked ? onText : offText);
+    checkbox.addEventListener("change", () => { stateText.textContent = checkbox.checked ? onText : offText; });
+    row.append(checkbox, stateText);
+    field.append(row);
     return field;
   };
 
   const idInput = el("input", "input");
   idInput.type = "text";
   idInput.value = body.server_id;
+  idInput.placeholder = "例如 filesystem";
   if (existing) idInput.disabled = true;
-  makeField("服务器标识", idInput);
+  wrap.append(makeField(
+    "服务器标识",
+    idInput,
+    existing ? "服务器的唯一 ID，创建后不可修改。" : "服务器的唯一 ID，用于区分不同 MCP 服务，创建后不可修改。建议使用小写字母与连字符。"
+  ));
 
   const enabledInput = document.createElement("input");
   enabledInput.type = "checkbox";
   enabledInput.checked = !!body.enabled;
-  makeField("启用", enabledInput);
+  wrap.append(makeToggleField("启用", enabledInput, "关闭后该服务器不会启动，其提供的工具对 Agent 不可见。", "已启用", "已停用"));
 
   const descInput = el("input", "input");
   descInput.type = "text";
   descInput.value = body.description;
-  makeField("描述", descInput);
+  descInput.placeholder = "简要说明该服务器提供的能力";
+  wrap.append(makeField("描述", descInput, "对该 MCP 服务的备注说明，仅用于在列表中辨识，不影响运行。"));
 
-  const transportWrap = el("div", "plugin-field");
-  transportWrap.append(el("label", "card-key", "传输模式"));
-  const transportRow = el("div", "toolbar compact");
   const stdioRadio = document.createElement("input");
   stdioRadio.type = "radio";
   stdioRadio.name = "mcpTransport";
   stdioRadio.value = "stdio";
-  stdioRadio.checked = body.transport !== "sse";
+  stdioRadio.checked = body.transport !== "sse" && body.transport !== "streamable-http";
   const sseRadio = document.createElement("input");
   sseRadio.type = "radio";
   sseRadio.name = "mcpTransport";
@@ -113,48 +131,59 @@ function openMcpEditorModal(existing, onSubmit) {
   streamableHttpRadio.name = "mcpTransport";
   streamableHttpRadio.value = "streamable-http";
   streamableHttpRadio.checked = body.transport === "streamable-http";
-  transportRow.append(
-    el("label", "", "stdio"), stdioRadio,
-    el("label", "", "sse"), sseRadio,
-    el("label", "", "streamable-http"), streamableHttpRadio
+  const segment = el("div", "form-segment");
+  const segOption = (radio, text) => {
+    const lbl = document.createElement("label");
+    lbl.append(radio, el("span", "", text));
+    return lbl;
+  };
+  segment.append(
+    segOption(stdioRadio, "stdio（本地进程）"),
+    segOption(sseRadio, "sse（远程）"),
+    segOption(streamableHttpRadio, "streamable-http（远程）")
   );
-  transportWrap.append(transportRow);
-  wrap.append(transportWrap);
+  wrap.append(makeField(
+    "传输模式",
+    segment,
+    "stdio 通过本地子进程通信；sse / streamable-http 连接远程 HTTP 服务。选择后下方字段会自动切换。"
+  ));
 
   const customInput = document.createElement("input");
   customInput.type = "checkbox";
   customInput.checked = !!body.custom;
 
-  const stdioFields = el("div", "plugin-form");
-  const customField = makeField("自定义 stdio server", customInput);
-  stdioFields.append(customField);
+  const stdioFields = el("div", "form-grid");
+  stdioFields.append(makeToggleField(
+    "自定义 stdio server",
+    customInput,
+    "开启后可自定义启动命令与参数；关闭时使用内置命令，命令字段将被锁定。",
+    "自定义命令",
+    "使用内置命令"
+  ));
 
   const commandInput = el("input", "input");
   commandInput.type = "text";
   commandInput.value = body.command;
-  const commandField = el("div", "plugin-field");
-  commandField.append(el("label", "card-key", "命令"), commandInput);
-  stdioFields.append(commandField);
+  commandInput.placeholder = "例如 node、python、npx";
+  stdioFields.append(makeField("命令", commandInput, "启动 MCP server 的可执行程序，需在系统 PATH 中或使用绝对路径。"));
 
   const argsInput = el("textarea", "textarea");
   argsInput.value = _mcpArgsToText(body.args);
-  const argsField = el("div", "plugin-field");
-  argsField.append(el("label", "card-key", "参数（每行一个）"), argsInput);
-  stdioFields.append(argsField);
+  argsInput.placeholder = "@modelcontextprotocol/server-filesystem\n/path/to/dir";
+  stdioFields.append(makeField("参数", argsInput, "传递给命令的启动参数，每行一个，按顺序拼接。"));
   wrap.append(stdioFields);
 
-  const sseFields = el("div", "plugin-form");
+  const sseFields = el("div", "form-grid");
   const urlInput = el("input", "input");
   urlInput.type = "text";
   urlInput.value = body.url;
-  const urlField = el("div", "plugin-field");
-  urlField.append(el("label", "card-key", "SSE URL"), urlInput);
+  urlInput.placeholder = "https://example.com/mcp";
+  const urlField = makeField("SSE URL", urlInput, "远程 MCP 服务的完整访问地址（含协议与路径）。");
   sseFields.append(urlField);
   const headersInput = el("textarea", "textarea");
   headersInput.value = _mcpHeadersToText(body.headers);
-  const headersField = el("div", "plugin-field");
-  headersField.append(el("label", "card-key", "HTTP Headers（每行 key: value）"), headersInput);
-  sseFields.append(headersField);
+  headersInput.placeholder = "Authorization: Bearer xxxxx";
+  sseFields.append(makeField("HTTP Headers", headersInput, "连接远程服务时附带的请求头，每行一条，格式为 key: value（如鉴权 Token）。"));
   wrap.append(sseFields);
 
   const syncUi = () => {
@@ -162,9 +191,8 @@ function openMcpEditorModal(existing, onSubmit) {
     const isHttpLike = transport !== "stdio";
     stdioFields.style.display = isHttpLike ? "none" : "";
     sseFields.style.display = isHttpLike ? "" : "none";
-    urlField.querySelector("label").textContent = transport === "sse" ? "SSE URL" : "Streamable HTTP URL";
+    urlField.querySelector(".form-field-label").textContent = transport === "sse" ? "SSE URL" : "Streamable HTTP URL";
     commandInput.disabled = isHttpLike || !customInput.checked;
-    argsInput.disabled = transport === "sse" ? false : false;
   };
   stdioRadio.addEventListener("change", syncUi);
   sseRadio.addEventListener("change", syncUi);

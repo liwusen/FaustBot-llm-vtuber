@@ -252,14 +252,15 @@ function pickModuleFields(moduleId) {
     const modeTts = String(state.config.public.TTS_MODE || "").toLowerCase();
     const modeAsr = String(state.config.public.ASR_MODE || "").toLowerCase();
     const isCloud = modeTts === "faustbot-cloud" || modeAsr === "faustbot-cloud";
-    const isLocalTts = modeTts === "local";
-    const isLocalAsr = modeAsr === "local";
+    const isLocalTts = modeTts === "gpt-sovits";
+    const isWhisperAsr = modeAsr === "whisper";
     const pub = SPEECH_PUBLIC_KEYS.filter((k) => publicKeys.includes(k));
     const pri = SPEECH_PRIVATE_KEYS.filter((k) => privateKeys.includes(k));
     return {
       publicKeys: pub.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k.startsWith("WHISPER_") && !isWhisperAsr) return false;
         if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
         if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
         if ((k === "TTS_REFER_WAV_PATH" || k === "TTS_PROMPT_TEXT" || k === "TTS_PROMPT_LANGUAGE") && !isLocalTts) return false;
@@ -273,7 +274,8 @@ function pickModuleFields(moduleId) {
       }),
     };
   }
-  const usedPublic = new Set([...AI_PUBLIC_KEYS, ...LIVE2D_KEYS, ...SPEECH_PUBLIC_KEYS]);
+  const moduleManagedPublic = new Set(["MC_OPERATOR_URL", "MC_EVENT_TRIGGER_ENABLED", "MC_BRIDGE_ENABLED", "mcp_servers"]);
+  const usedPublic = new Set([...AI_PUBLIC_KEYS, ...LIVE2D_KEYS, ...SPEECH_PUBLIC_KEYS, ...moduleManagedPublic]);
   const usedPrivate = new Set([...AI_PRIVATE_KEYS, ...SPEECH_PRIVATE_KEYS]);
   return {
     publicKeys: publicKeys.filter((k) => !usedPublic.has(k)),
@@ -385,9 +387,10 @@ function renderConfigModule(moduleId) {
       editorBar.append(makeButton("编辑 Images 模型", async () => {
         const clone = JSON.parse(JSON.stringify(state.config.public.IMAGE_MODEL_CONFIG || { baseImages: [], emotions: [], tapImages: [], mouthShapes: [], motionDurationMs: 3000, tapDurationMs: 700 }));
 
-        function buildListSection(title, getItems, setItems, isMouthShape = false) {
+        function buildListSection(title, getItems, setItems, isMouthShape = false, hintText = "") {
           const wrap = el("div", "card full-span");
           wrap.append(el("h3", "card-title", title));
+          if (hintText) wrap.append(el("p", "form-hint", hintText));
           const body = el("div");
           body.style.display = "flex";
           body.style.flexDirection = "column";
@@ -403,13 +406,14 @@ function renderConfigModule(moduleId) {
               if (isMouthShape) {
                 const pathInput = el("input", "input");
                 pathInput.value = item.path || "";
-                pathInput.placeholder = "图片路径";
+                pathInput.placeholder = "图片路径（支持任意磁盘位置的绝对路径）";
                 pathInput.addEventListener("input", () => { item.path = pathInput.value; });
                 const opennessInput = el("input", "number");
                 opennessInput.type = "number";
                 opennessInput.min = "0";
                 opennessInput.max = "1";
                 opennessInput.step = "0.05";
+                opennessInput.title = "嘴巴张开程度 0~1";
                 opennessInput.value = String(item.openness ?? 0);
                 opennessInput.addEventListener("input", () => { item.openness = Number(opennessInput.value || 0); });
                 const pickBtn = makeButton("选择图片", async () => {
@@ -422,7 +426,7 @@ function renderConfigModule(moduleId) {
               } else {
                 const input = el("input", "input");
                 input.value = String(item || "");
-                input.placeholder = "图片路径";
+                input.placeholder = "图片路径（支持任意磁盘位置的绝对路径）";
                 input.addEventListener("input", () => { items[idx] = input.value; setItems(items); });
                 const pickBtn = makeButton("选择图片", async () => {
                   const filePath = await window.api.configOpenFile({ title: "选择图片", filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }] });
@@ -454,12 +458,13 @@ function renderConfigModule(moduleId) {
           return wrap;
         }
 
-        const baseSection = buildListSection("默认图片", () => clone.baseImages || [], (next) => { clone.baseImages = next; });
-        const tapSection = buildListSection("Tap 图片", () => clone.tapImages || [], (next) => { clone.tapImages = next; });
-        const mouthSection = buildListSection("嘴型图片", () => clone.mouthShapes || [], (next) => { clone.mouthShapes = next; }, true);
+        const baseSection = buildListSection("默认图片", () => clone.baseImages || [], (next) => { clone.baseImages = next; }, false, "角色的常态/待机图片；若配置多张会随机或轮换显示，作为无特殊情绪时的默认立绘。");
+        const tapSection = buildListSection("Tap 图片", () => clone.tapImages || [], (next) => { clone.tapImages = next; }, false, "被点击（Tap）时短暂切换显示的图片，用于点击反馈；持续时间由下方“Tap 持续”控制。");
+        const mouthSection = buildListSection("嘴型图片", () => clone.mouthShapes || [], (next) => { clone.mouthShapes = next; }, true, "口型同步用图片，每张对应一个张嘴程度 openness（0=闭合，1=最大张开）；说话时按音量匹配显示。");
 
         const emotionsCard = el("article", "card full-span");
         emotionsCard.append(el("h3", "card-title", "情绪变体"));
+        emotionsCard.append(el("p", "form-hint", "按情绪分组配置的立绘。每组填写情绪名称（如 happy、angry）与对应图片；当 Agent 表达该情绪时会切换到本组图片，持续时间由下方“情绪持续”控制。"));
         const emotionBody = el("div");
         emotionBody.style.display = "flex";
         emotionBody.style.flexDirection = "column";
@@ -481,7 +486,7 @@ function renderConfigModule(moduleId) {
               renderEmotions();
             }, "btn btn-ghost"));
             box.append(nameRow);
-            const imagesSection = buildListSection("该情绪图片", () => emotion.images || [], (next) => { emotion.images = next; });
+            const imagesSection = buildListSection("该情绪图片", () => emotion.images || [], (next) => { emotion.images = next; }, false, "该情绪触发时显示的图片，可配置多张。");
             box.append(imagesSection);
             emotionBody.append(box);
           });
@@ -494,26 +499,40 @@ function renderConfigModule(moduleId) {
         }, "btn btn-secondary"), emotionBody);
         renderEmotions();
 
-        const settingsBar = el("div", "toolbar");
+        // 顶部通用设置：现代表单 + 逐项描述
+        const settingsCard = el("article", "card full-span");
+        settingsCard.append(el("h3", "card-title", "通用设置"));
+        const settingsGrid = el("div", "form-grid");
+        const makeSettingField = (labelText, control, hintText) => {
+          const field = el("div", "form-field");
+          field.append(el("label", "form-field-label", labelText));
+          if (hintText) field.append(el("p", "form-hint", hintText));
+          const ctrlWrap = el("div", "form-field-control");
+          ctrlWrap.append(control);
+          field.append(ctrlWrap);
+          return field;
+        };
         const scaleInput = el("input", "number");
         scaleInput.type = "number";
         scaleInput.step = "0.05";
         scaleInput.min = "0.1";
         scaleInput.max = "4";
         scaleInput.value = String(clone.scale || 1.0);
-        scaleInput.placeholder = "图片缩放";
         scaleInput.addEventListener("input", () => { clone.scale = Number(scaleInput.value || 1.0); });
         const motionInput = el("input", "number");
         motionInput.type = "number";
         motionInput.value = String(clone.motionDurationMs || 3000);
-        motionInput.placeholder = "情绪持续 ms";
         motionInput.addEventListener("input", () => { clone.motionDurationMs = Number(motionInput.value || 3000); });
         const tapInput = el("input", "number");
         tapInput.type = "number";
         tapInput.value = String(clone.tapDurationMs || 700);
-        tapInput.placeholder = "Tap 持续 ms";
         tapInput.addEventListener("input", () => { clone.tapDurationMs = Number(tapInput.value || 700); });
-        settingsBar.append(el("span", "card-help", "图片缩放"), scaleInput, el("span", "card-help", "情绪持续(ms)"), motionInput, el("span", "card-help", "Tap 持续(ms)"), tapInput);
+        settingsGrid.append(
+          makeSettingField("图片缩放", scaleInput, "整体显示缩放倍数（0.1~4），1 为原始尺寸，用于适配窗口大小。"),
+          makeSettingField("情绪持续 (ms)", motionInput, "切换到情绪立绘后保持的毫秒数，到时后回到默认图片。"),
+          makeSettingField("Tap 持续 (ms)", tapInput, "点击后显示 Tap 图片的毫秒数，到时后恢复。")
+        );
+        settingsCard.append(settingsGrid);
 
         const actions = el("div", "toolbar");
         actions.append(
@@ -526,7 +545,7 @@ function renderConfigModule(moduleId) {
           }, "btn btn-primary"),
           makeButton("关闭", closeModal)
         );
-        openModal("编辑 Images 模型", [settingsBar, baseSection, emotionsCard, tapSection, mouthSection, actions]);
+        openModal("编辑 Images 模型", [settingsCard, baseSection, emotionsCard, tapSection, mouthSection, actions]);
       }, "btn btn-primary"));
       list.append(summary, editorBar);
     } else {

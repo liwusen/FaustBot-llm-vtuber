@@ -27,19 +27,19 @@ def _split_csv_values(raw: str) -> list[str]:
 
 
 def current_tts_mode() -> str:
-    return str(conf.TTS_MODE or "local").strip().lower()
+    return str(conf.TTS_MODE or "gpt-sovits").strip().lower()
 
 
 def current_asr_mode() -> str:
-    return str(conf.ASR_MODE or "local").strip().lower()
+    return str(conf.ASR_MODE or "whisper").strip().lower()
 
 
 def should_start_local_tts() -> bool:
-    return current_tts_mode() == "local"
+    return current_tts_mode() == "gpt-sovits"
 
 
 def should_start_local_asr() -> bool:
-    return current_asr_mode() == "local"
+    return current_asr_mode() in {"whisper", "funasr"}
 
 
 def frontend_speech_config() -> dict[str, Any]:

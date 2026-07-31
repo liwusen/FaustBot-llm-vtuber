@@ -18,6 +18,7 @@
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: true,
       schema: {
         bindingType: 'screen',
         coord: 'point',
@@ -54,25 +55,6 @@
     });
   }
 
-  function updatePosition(){
-    if (!hasWidgetApi) return;
-    const widget = api.getWidget('desktop-weather');
-    if (!widget) return;
-    const editMode = typeof api.isWidgetEditMode === 'function' && api.isWidgetEditMode();
-    if (widget.hidden && !editMode) {
-      overlay.classList.add('desktop-overlay-hidden');
-      return;
-    }
-    overlay.classList.remove('desktop-overlay-hidden');
-    overlay.classList.toggle('ui-widget-hidden-preview', !!(widget.hidden && editMode));
-    const coord = widget.coord || { x: 0, y: 0 };
-    const offset = widget.offset || { x: 0, y: 0 };
-    const scale = widget.scale || 1;
-    overlay.style.left = Math.round(window.innerWidth * coord.x + offset.x) + 'px';
-    overlay.style.top = Math.round(window.innerHeight * coord.y + offset.y) + 'px';
-    overlay.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
-  }
-
   async function refresh(){
     try {
       const payload = await api.communicate('desktop-mood', { action: 'get_context' });
@@ -87,12 +69,6 @@
     }
   }
 
-  function loop(){
-    updatePosition();
-    requestAnimationFrame(loop);
-  }
-
   refresh();
-  if (hasWidgetApi) loop();
   setInterval(refresh, 15000);
 })();

@@ -715,6 +715,8 @@ TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-e
   offset: { x: 0, y: 0 },      // 偏移量（像素）
   scale: 1,                     // 缩放比例（最小 0.2）
   hidden: false,                // 是否隐藏
+  managed: true,                // 缺省 true，由小组件管理器统一负责显隐/定位/缩放
+  onLayout: (el, anchor, widget, ctx) => {},  // 可选，managed=true 时的自定义布局回调
   schema: {                     // 属性 schema（用于编辑器）
     bindingType: 'model',
     coord: 'point',
@@ -731,6 +733,24 @@ TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-e
   }
 }
 ```
+
+### managed 与统一布局
+
+`managed` 是小组件的核心属性，缺省为 `true`。
+
+- **`managed: true`（推荐，默认）**：小组件管理器接管该组件的通用逻辑——每帧统一驱动定位（根据 `bindingType` + `coord` + `offset` 计算锚点）、缩放、编辑模式显隐与预览。**插件无需再自己写 `requestAnimationFrame` 布局循环，也无需手动读取 `getModelBounds()`/`getWidget()` 计算像素坐标**。默认布局效果等价于：
+
+  ```javascript
+  el.style.left = anchor.x + 'px';
+  el.style.top = anchor.y + 'px';
+  el.style.transform = `translate(-50%, -50%) scale(${anchor.scale})`;
+  ```
+
+- **`onLayout(el, anchor, widget, ctx)`**：当默认的居中定位不满足需求（例如需要 `transform-origin: top left`、全屏态、或额外样式）时，提供此回调即可覆盖默认布局。管理器仍负责调用时机（每帧）与隐藏判定，回调内只需写定位逻辑。`ctx` 含 `{ editMode }`。
+
+- **`managed: false`**：管理器只记录状态、参与编辑器拖拽，但**不**自动定位/显隐。适用于自身用 CSS `position: fixed` + `top/left/right` 固定、或有独立显隐逻辑的面板（如 `subagent-panel`、`log-panel`、`vrm-config-panel`）。此时定位完全由插件/样式自理。
+
+> 迁移提示：旧插件若自带 `updatePosition()` + `loop()` 循环，改为 `managed: true` 后应删除该循环，交由管理器统一驱动，避免重复计算与抖动。
 
 ### bindingType 说明
 
@@ -753,7 +773,7 @@ TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-e
   badge.innerHTML = '<span>My Widget</span>';
   document.body.appendChild(badge);
 
-  // 注册小组件
+  // 注册小组件 —— managed 缺省为 true，定位/显隐/缩放全部交给管理器
   api.registerWidget({
     id: 'my-custom-badge',
     element: badge,
@@ -772,42 +792,17 @@ TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-e
     props: { showLabel: true },
   });
 
-  // 布局更新循环
-  function updatePosition() {
-    const widget = api.getWidget('my-custom-badge');
-    const bounds = api.getModelBounds();
-    const editMode = api.isWidgetEditMode();
-
-    if (!bounds || !widget) return;
-
-    // 编辑模式下显示隐藏的小组件
-    if (widget.hidden && !editMode) {
-      badge.style.display = 'none';
-      return;
-    }
-    badge.style.display = '';
-
-    // 计算位置
-    const coord = widget.coord || { x: 0.1, y: 0.1 };
-    const offset = widget.offset || { x: 0, y: 0 };
-    const scale = widget.scale || 1;
-
-    const anchorX = bounds.left + bounds.width * coord.x + offset.x;
-    const anchorY = bounds.top + bounds.height * coord.y + offset.y;
-
-    badge.style.left = Math.round(anchorX) + 'px';
-    badge.style.top = Math.round(anchorY) + 'px';
-    badge.style.transform = `translate(-50%, -50%) scale(${scale})`;
-  }
-
-  // 持续更新位置
-  function loop() {
-    updatePosition();
-    requestAnimationFrame(loop);
-  }
-  loop();
+  // 无需自己写 requestAnimationFrame 布局循环：
+  // 管理器每帧自动根据模型/窗口锚点定位并处理编辑模式显隐。
+  // 插件只需专注业务数据的刷新，例如：
+  setInterval(async () => {
+    const state = await api.communicate('my-plugin', { action: 'get_state' });
+    badge.querySelector('span').textContent = state.label || '';
+  }, 5000);
 })();
 ```
+
+> 若需要覆盖默认的居中布局，可在注册时传入 `onLayout(el, anchor, widget, ctx)` 回调，见上文「managed 与统一布局」。
 
 ### 编辑模式
 
@@ -870,6 +865,7 @@ api.registerWidget({
   offset: { x: 0, y: 0 },
   scale: 1,
   hidden: false,
+  managed: true,
   schema: {
     bindingType: 'model',
     coord: 'point',

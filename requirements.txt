@@ -59,6 +59,9 @@ edge_tts
 rank_bm25
 #
 funasr>=0.9.6
+# Whisper ASR 引擎 + 重采样
+openai-whisper
+librosa
 #
 pluggy
 mcp>=1.28,<2

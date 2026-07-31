@@ -19,14 +19,29 @@ function renderSkillsModule() {
         showBanner("error", "请先填写 Agent 名称。");
         return;
       }
-      const slug = window.prompt("输入 Skill slug");
-      if (!slug) return;
-      const overwrite = window.confirm("若已存在是否覆盖安装?");
-      await cfgApi("POST", "/faust/admin/skills/install", { slug: slug.trim(), agent_name: agentName, overwrite });
-      state.skillsAgent = agentName;
-      await ensureModuleData("skills");
-      showBanner("success", `Skill ${slug.trim()} 已安装。`);
-      refreshModule();
+      const slugInput = el("input", "input");
+      slugInput.placeholder = "输入 Skill slug";
+      const overwriteLabel = el("label", "");
+      overwriteLabel.style.cssText = "display:flex;align-items:center;gap:8px;font-size:13px";
+      const overwriteCheck = el("input", "");
+      overwriteCheck.type = "checkbox";
+      overwriteLabel.append(overwriteCheck, document.createTextNode("若已存在则覆盖安装"));
+      const actions = el("div", "toolbar");
+      actions.append(
+        makeButton("安装", async () => {
+          const slug = (slugInput.value || "").trim();
+          if (!slug) { showBanner("error", "请输入 Skill slug。"); return; }
+          closeModal();
+          await cfgApi("POST", "/faust/admin/skills/install", { slug, agent_name: agentName, overwrite: overwriteCheck.checked });
+          state.skillsAgent = agentName;
+          await ensureModuleData("skills");
+          showBanner("success", `Skill ${slug} 已安装。`);
+          refreshModule();
+        }, "btn btn-primary"),
+        makeButton("取消", () => closeModal())
+      );
+      openModal("安装 Skill (Slug)", [slugInput, overwriteLabel, actions]);
+      setTimeout(() => slugInput.focus(), 0);
     }, "btn btn-primary"),
     makeButton("从 ZIP 安装", async () => {
       const agentName = (agentInput.value || "").trim() || state.skillsAgent || state.runtime.current_agent || state.config.public.AGENT_NAME || "";
@@ -36,12 +51,24 @@ function renderSkillsModule() {
       }
       const zipPath = await window.api.configOpenFile({ title: "选择 Skill ZIP 文件", filters: [{ name: "ZIP", extensions: ["zip"] }] });
       if (!zipPath) return;
-      const overwrite = window.confirm("若已存在是否覆盖安装?");
-      await cfgApi("POST", "/faust/admin/skills/install-zip", { zip_path: zipPath, agent_name: agentName, overwrite });
-      state.skillsAgent = agentName;
-      await ensureModuleData("skills");
-      showBanner("success", "Skill ZIP 安装完成。" );
-      refreshModule();
+      const overwriteLabel = el("label", "");
+      overwriteLabel.style.cssText = "display:flex;align-items:center;gap:8px;font-size:13px";
+      const overwriteCheck = el("input", "");
+      overwriteCheck.type = "checkbox";
+      overwriteLabel.append(overwriteCheck, document.createTextNode("若已存在则覆盖安装"));
+      const actions = el("div", "toolbar");
+      actions.append(
+        makeButton("安装", async () => {
+          closeModal();
+          await cfgApi("POST", "/faust/admin/skills/install-zip", { zip_path: zipPath, agent_name: agentName, overwrite: overwriteCheck.checked });
+          state.skillsAgent = agentName;
+          await ensureModuleData("skills");
+          showBanner("success", "Skill ZIP 安装完成。");
+          refreshModule();
+        }, "btn btn-primary"),
+        makeButton("取消", () => closeModal())
+      );
+      openModal("从 ZIP 安装 Skill", [el("div", "card-help", zipPath), overwriteLabel, actions]);
     }),
     makeButton("打开目录", async () => {
       const agentName = (agentInput.value || "").trim() || state.skillsAgent;
@@ -136,14 +163,4 @@ function renderSkillsModule() {
 
   const fileRows = files.map((f) => [f, f.endsWith(".md") ? "文档" : "文件"]);
   appendToActiveModule(makeSimpleTableCard("Skill 文件清单", ["路径", "类型"], fileRows));
-  const skillDocBar = el("div", "toolbar");
-  skillDocBar.append(
-    makeButton("查看只读", () => {
-      const doc = el("textarea", "textarea code-area code-area-lg");
-      doc.readOnly = true;
-      doc.value = String(detail.skill_md || "");
-      openModal(`SKILL.md 预览 - ${String(detail.slug || "")}`, [doc]);
-    })
-  );
-  addSection("SKILL.md", [el("div", "card-help", "编辑请使用技能列表\"操作\"列中的\"编辑\"按钮。"), skillDocBar]);
 }

@@ -26,10 +26,11 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
   if (initialTrigger && initialTrigger.id) idInput.disabled = true;
 
   const typeSelect = el("select", "select");
+  const TYPE_LABELS = { interval: "间隔触发（每隔固定秒数）", datetime: "定时触发（指定时间点）", "py-eval": "表达式触发（条件满足时）" };
   for (const t of ["interval", "datetime", "py-eval"]) {
     const opt = document.createElement("option");
     opt.value = t;
-    opt.textContent = t;
+    opt.textContent = TYPE_LABELS[t] || t;
     if (String(source.type || "interval") === t) opt.selected = true;
     typeSelect.append(opt);
   }
@@ -75,11 +76,11 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
     dynamicWrap.innerHTML = "";
     const t = typeSelect.value;
     if (t === "interval") {
-      dynamicWrap.append(makeField("间隔秒数", intervalInput));
+      dynamicWrap.append(makeField("间隔秒数", intervalInput, "每隔多少秒触发一次，最小 1 秒。"));
     } else if (t === "datetime") {
-      dynamicWrap.append(makeField("触发时间", targetInput, "格式 YYYY-MM-DD HH:mm:ss"));
+      dynamicWrap.append(makeField("触发时间", targetInput, "在指定的单一时间点触发，格式 YYYY-MM-DD HH:mm:ss（24 小时制）。"));
     } else {
-      dynamicWrap.append(makeField("eval 表达式", evalArea, "返回真值时触发"));
+      dynamicWrap.append(makeField("eval 表达式", evalArea, "Python 表达式，由系统周期性求值，返回真值时触发；可访问运行时上下文变量。"));
     }
   };
 
@@ -117,11 +118,11 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
 
   const form = el("div", "trigger-form");
   form.append(
-    makeField("触发器 ID", idInput),
-    makeField("类型", typeSelect),
-    makeField("描述", recallInput),
-    makeField("有效期", lifespanInput),
-    makeField("运行方式", bgRow, "后台任务的处理过程与结果不会推送给前端"),
+    makeField("触发器 ID", idInput, initialTrigger && initialTrigger.id ? "触发器的唯一标识，创建后不可修改。" : "触发器的唯一标识，用于区分与管理不同触发器，创建后不可修改。"),
+    makeField("类型", typeSelect, "决定触发方式：间隔、指定时间点或表达式条件。切换后下方参数会自动变化。"),
+    makeField("描述", recallInput, "触发器的备注说明，触发时会作为提示回传给 Agent，便于其理解本次触发的意图。"),
+    makeField("有效期", lifespanInput, "触发器的存活秒数，超时后自动删除；留空表示长期有效。"),
+    makeField("运行方式", bgRow, "后台任务的处理过程与结果不会推送给前端界面，适合静默执行的定时作业。"),
     dynamicWrap,
   );
 

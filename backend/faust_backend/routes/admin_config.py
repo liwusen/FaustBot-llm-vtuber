@@ -14,10 +14,20 @@ async def admin_get_config():
 
 @router.post("/faust/admin/config")
 async def admin_save_config(payload: dict):
+    # 捕获旧配置用于服务变更检测（save_config 会重载全局 config）
+    from faust_backend.config_loader import config as old_config
+    old_config_copy = dict(old_config)
+
     result = admin_runtime.save_config(payload or {})
+
+    # 配置保存后检查 ASR / TTS 模式变化，按需启动/关闭/重启服务
+    from faust_backend.config_loader import config as new_config
+    from faust_backend.component_manager import check_and_manage_services
+    await check_and_manage_services(old_config_copy, dict(new_config))
+
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        pm._call_pluggy_hook('config_changed', key='all', old=None, new=payload, ctx=None)
+        pm._call_pluggy_hook('config_changed', key='all', old=old_config_copy, new=dict(new_config), ctx=None)
     return result
 
 

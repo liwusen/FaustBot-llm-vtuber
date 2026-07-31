@@ -1,6 +1,7 @@
 export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
   const widgets = new Map();
   let editMode = false;
+  let layoutRafId = null;
 
   function normalizeNumber(value, fallback = 0) {
     const parsed = Number(value);
@@ -25,6 +26,10 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
       },
       scale: Math.max(0.2, normalizeNumber(spec.scale, prev.scale || 1)),
       hidden: spec.hidden === undefined ? !!prev.hidden : !!spec.hidden,
+      // managed=true 时由管理器统一处理显隐/定位/拖动等通用逻辑，默认开启
+      managed: spec.managed === undefined ? (prev.managed === undefined ? true : prev.managed) : !!spec.managed,
+      // 可选钩子：特殊组件在通用显隐判定后自定义定位（VRM 分支/缩放/平滑等）
+      onLayout: spec.onLayout !== undefined ? spec.onLayout : (prev.onLayout || null),
       schema: spec.schema || prev.schema || {},
       props: { ...(prev.props || {}), ...(spec.props || {}) },
     };
@@ -91,6 +96,55 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
     return editMode;
   }
 
+  // 通用布局：对单个 managed 组件完成显隐判定 + 定位。
+  // - hidden && 非编辑态 → display:none 并返回
+  // - 否则切换编辑预览类；若提供 onLayout 钩子则委托其自定义定位，
+  //   否则套用统一定位（getWidgetAnchor + translate(-50%,-50%) scale）。
+  function applyWidgetLayout(widget) {
+    if (!widget || widget.managed === false) return;
+    const el = widget.element;
+    if (!el) return;
+    if (widget.hidden && !editMode) {
+      el.style.display = 'none';
+      return;
+    }
+    el.classList.toggle('ui-widget-hidden-preview', !!(widget.hidden && editMode));
+    const anchor = getWidgetAnchor(widget.id);
+    if (typeof widget.onLayout === 'function') {
+      widget.onLayout(el, anchor, widget, { editMode });
+      return;
+    }
+    if (!anchor) return;
+    el.style.display = '';
+    el.style.left = Math.round(anchor.x) + 'px';
+    el.style.top = Math.round(anchor.y) + 'px';
+    el.style.transform = 'translate(-50%, -50%) scale(' + (anchor.scale || 1) + ')';
+  }
+
+  function applyLayout(id) {
+    if (id !== undefined && id !== null) {
+      const widget = widgets.get(String(id));
+      if (widget) applyWidgetLayout(widget);
+      return;
+    }
+    widgets.forEach(applyWidgetLayout);
+  }
+
+  function startLayoutLoop() {
+    if (layoutRafId !== null) return;
+    const tick = () => {
+      applyLayout();
+      layoutRafId = requestAnimationFrame(tick);
+    };
+    layoutRafId = requestAnimationFrame(tick);
+  }
+
+  function stopLayoutLoop() {
+    if (layoutRafId === null) return;
+    cancelAnimationFrame(layoutRafId);
+    layoutRafId = null;
+  }
+
   function isEditMode() {
     return editMode;
   }
@@ -106,6 +160,9 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
     getWidget,
     listWidgets,
     getWidgetAnchor,
+    applyLayout,
+    startLayoutLoop,
+    stopLayoutLoop,
     setEditMode,
     isEditMode,
     getModelBounds: readModelBounds,

@@ -144,6 +144,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       offset: { x: quickControllerXOffset, y: 0 },
       scale: 1,
       hidden: false,
+      onLayout: () => updateQuickControllerPosition(),
       schema: { bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
     });
     uiWidgetManager.registerWidget({
@@ -154,6 +155,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      onLayout: () => updateTextChatBarPosition(),
       schema: { bindingType: 'model', coord: 'point', scale: 'number', hidden: 'boolean' },
     });
     uiWidgetManager.registerWidget({
@@ -164,6 +166,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       offset: { x: 0, y: -108 },
       scale: 1,
       hidden: false,
+      onLayout: () => updateAsrTextPosition(false),
       schema: { bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
     });
     uiWidgetManager.registerWidget({
@@ -174,6 +177,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: false,
       schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
     });
     uiWidgetManager.registerWidget({
@@ -184,6 +188,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: false,
       schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
     });
     uiWidgetManager.registerWidget({
@@ -194,6 +199,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: false,
       schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
     });
     Object.entries(persistedUiWidgetSettings || {}).forEach(([id, payload]) => {
@@ -983,8 +989,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   let useVAD = true;
   const VAD_WINDOW_SIZE = 512; // must match backend WINDOW_SIZE
   let speechRuntimeConfig = {
-    tts_mode: 'local',
-    asr_mode: 'local',
+    tts_mode: 'gpt-sovits',
+    asr_mode: 'whisper',
     asr_detection_mode: 'vad',
     vad_ws_path: DEFAULT_VAD_WS_PATH,
     frontend_default_tts_lang: 'zh',
@@ -2388,14 +2394,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
   initAutocomplete(textChatInput, sendTextChatMessage);
 
-  // update asrText position each frame if visible
-  function rafUpdate(){
-    if (asrBubbleEl && asrBubbleEl.style.display !== 'none') updateAsrTextPosition();
-    if (quickController && (currentModel || vrmScene)) updateQuickControllerPosition();
-    updateTextChatBarPosition();
-    requestAnimationFrame(rafUpdate);
-  }
-  requestAnimationFrame(rafUpdate);
+  // 每帧统一布局：由小组件管理器驱动所有 managed 组件的定位/显隐
+  // （内建 quick-controller/text-chat-bar/asr-bubble 通过各自 onLayout 钩子接入）
+  uiWidgetManager.startLayoutLoop();
 
   function showOverlay(msg){
     const o = document.getElementById('overlay');
@@ -3232,8 +3233,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   logPanelCtrl.init();
 
   function refreshUiWidgetLayout() {
-    updateQuickControllerPosition();
-    updateTextChatBarPosition();
+    uiWidgetManager.applyLayout();
     updateAsrTextPosition(true);
     refreshQuickControllerVisibility();
     nimbleWin.layoutWindows();

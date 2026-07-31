@@ -83,8 +83,8 @@ PUBLIC_CONFIG_DEFAULTS = {
     "FRONTEND_QUICK_CONTROLLER_X_OFFSET": -12,
     "FRONTEND_CLICK_THROUGH": True,
     "FRONTEND_DEFAULT_TTS_LANG": "zh",
-    "TTS_MODE": "local",
-    "ASR_MODE": "local",
+    "TTS_MODE": "gpt-sovits",
+    "ASR_MODE": "whisper",
     "OPENAI_TTS_BASE_URL": "https://api.openai.com/v1",
     "OPENAI_TTS_MODEL": "gpt-4o-mini-tts",
     "OPENAI_TTS_VOICE": "alloy",
@@ -96,6 +96,9 @@ PUBLIC_CONFIG_DEFAULTS = {
     "OPENAI_ASR_LANGUAGE": "",
     "OPENAI_ASR_PROMPT": "",
     "OPENAI_ASR_TIMESTAMP_GRANULARITIES": "",
+    "WHISPER_MODEL": "small",
+    "WHISPER_LANGUAGE": "zh",
+    "WHISPER_INITIAL_PROMPT": "以下是简体中文普通话的句子:",
     "FAUSTBOT_CLOUD_BASE_URL": "http://127.0.0.1:18980",
     "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
     # TTS 参考音频配置
@@ -156,6 +159,11 @@ def get_public_config() -> Dict[str, Any]:
     data = _read_json(PUBLIC_CONFIG_PATH, PUBLIC_CONFIG_DEFAULTS)
     for key in OBSOLETE_PUBLIC_CONFIG_KEYS:
         data.pop(key, None)
+    # 兼容旧配置：local 模式已更名，回填为新名称以匹配下拉选项
+    if str(data.get("TTS_MODE", "")).strip().lower() == "local":
+        data["TTS_MODE"] = "gpt-sovits"
+    if str(data.get("ASR_MODE", "")).strip().lower() == "local":
+        data["ASR_MODE"] = "funasr"
     return data
 
 

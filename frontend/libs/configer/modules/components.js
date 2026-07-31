@@ -6,7 +6,7 @@ function renderComponentsModule() {
   c.innerHTML = "";
   if (!state.componentStatus) return;
   renderGpuCard(c);
-  renderFunasrCard(c);
+  renderAsrCards(c);
   renderTtsCard(c);
   renderMinecraftCard(c);
   renderProgressArea(c);
@@ -87,6 +87,13 @@ function _serviceStatusText(svc) {
   if (svc?.status === "stopping") return "🟠 关闭中";
   if (svc?.is_running) return "🟢 运行中";
   return "🔴 已停止";
+}
+
+function _hint(text) {
+  const p = document.createElement("div");
+  p.style.cssText = "color:var(--muted);font-size:12.5px;line-height:1.55;margin-bottom:8px";
+  p.textContent = text;
+  return p;
 }
 // admin API 使用实际 service key，与组件状态显示 key 可能不同
 const _SERVICE_KEY_MAP = { minecraft: "mc_operator" };
@@ -193,26 +200,48 @@ function renderGpuCard(container) {
   container.append(card);
 }
 
-// ── FunASR 卡片 ──
+// ── ASR 卡片（服务 + FunASR/Torch 依赖，分开标注）──
 
-function renderFunasrCard(container) {
-  const data = state.componentStatus?.components?.funasr;
+function renderAsrCards(container) {
+  renderAsrServiceCard(container);
+  renderFunasrDepsCard(container);
+}
+
+// 本地 ASR 服务：Whisper 与 FunASR 两种模式共用
+function renderAsrServiceCard(container) {
   const svc = state.componentStatus?.services?.asr;
+  const svcStatus = _serviceStatusText(svc);
+  const svcPort = svc?.port ? `端口 ${svc.port}` : "";
+  const statusIcon = svc?.is_running ? "🟢" : "🔴";
+
+  const card = _card(`${statusIcon} ASR 服务`);
+  card.append(_hint("本地语音识别服务，Whisper 模式与 FunASR 模式共用。无论选择哪种 ASR 模式，都需要先启动此服务；切换模式无需重装，只需重启服务。"));
+  card.append(_row("服务", `${svcStatus} ${svcPort}`));
+
+  const actions = document.createElement("div");
+  actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
+  actions.append(_btn("▶ 启动服务", () => startService("asr"), { primary: true }));
+  actions.append(_btn("⏹ 停止服务", () => stopService("asr"), { danger: true }));
+  actions.append(_btn("📋 日志", () => _showServiceLog("asr")));
+  card.append(actions);
+  container.append(card);
+}
+
+// FunASR / Torch 依赖：仅 FunASR 模式需要下载安装
+function renderFunasrDepsCard(container) {
+  const data = state.componentStatus?.components?.funasr;
   if (!data) return;
 
   const installed = data.installed;
   const statusIcon = installed ? "✅" : "🔴";
   const statusText = installed ? `已安装 (funasr ${data.version || ""})` : "未安装";
   const torchInfo = data.torch_version ? `${data.torch_version} (${data.torch_variant || "?"})` : "未检测";
-  const svcStatus = _serviceStatusText(svc);
-  const svcPort = svc?.port ? `端口 ${svc.port}` : "";
 
-  const card = _card(`${statusIcon} FunASR (ASR)`);
-  card.append(_row("状态", statusText));
+  const card = _card(`${statusIcon} FunASR / Torch 依赖`);
+  card.append(_hint("仅「FunASR 模式」需要：下载安装 PyTorch 与 FunASR 模型（体积较大）。若使用「Whisper 模式」则无需安装此依赖，只需启动上方的 ASR 服务即可。"));
+  card.append(_row("安装状态", statusText));
   card.append(_row("PyTorch 环境", torchInfo));
-  card.append(_row("服务", `${svcStatus} ${svcPort}`));
 
-  // 操作区
   const actions = document.createElement("div");
   actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
 
@@ -231,9 +260,6 @@ function renderFunasrCard(container) {
   actions.append(mirrorToggle);
 
   actions.append(_btn("🔄 安装/重装", () => startComponentInstall("funasr"), { primary: true }));
-  actions.append(_btn("▶ 启动服务", () => startService("asr")));
-  actions.append(_btn("⏹ 停止服务", () => stopService("asr"), { danger: true }));
-  actions.append(_btn("📋 日志", () => _showServiceLog("asr")));
 
   card.append(actions);
   container.append(card);

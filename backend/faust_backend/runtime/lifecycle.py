@@ -100,10 +100,10 @@ def start_services():
             service_manager.get_service_keys(), desc="[main]Starting services"
         ):
             if service == "tts" and not speech_runtime.should_start_local_tts():
-                log.info("跳过本地 TTS 服务（TTS_MODE 不是 local）")
+                log.info("跳过本地 TTS 服务（TTS_MODE 不是 gpt-sovits）")
                 continue
             if service == "asr" and not speech_runtime.should_start_local_asr():
-                log.info("跳过本地 ASR 服务（ASR_MODE 不是 local）")
+                log.info("跳过本地 ASR 服务（ASR_MODE 不是 whisper/funasr）")
                 continue
             try:
                 service_manager.start_service(service, wait=False)

@@ -17,6 +17,7 @@
       offset: { x: 0, y: 0 },
       scale: 1,
       hidden: false,
+      managed: true,
       schema: {
         bindingType: 'model',
         coord: 'point',
@@ -26,31 +27,6 @@
       },
       props: { dynamicBackground: true },
     });
-  }
-
-  function updatePosition(){
-    if (!badge || typeof api.getWidget !== 'function' || typeof api.getModelBounds !== 'function') return;
-    const widget = api.getWidget('emotion-badge');
-    const bounds = api.getModelBounds();
-    const editMode = typeof api.isWidgetEditMode === 'function' && api.isWidgetEditMode();
-    if (!bounds || !Number.isFinite(bounds.left) || !Number.isFinite(bounds.top)) {
-      badge.classList.add('emotion-badge-hidden');
-      return;
-    }
-    if (widget && widget.hidden && !editMode) {
-      badge.classList.add('emotion-badge-hidden');
-      return;
-    }
-    if (editMode || loaded) badge.classList.remove('emotion-badge-hidden');
-    const coord = widget && widget.coord ? widget.coord : { x: 0.08, y: 0.1 };
-    const offset = widget && widget.offset ? widget.offset : { x: 0, y: 0 };
-    const scale = widget && widget.scale ? widget.scale : 1;
-    badge.classList.toggle('ui-widget-hidden-preview', !!(widget && widget.hidden && editMode));
-    const anchorX = bounds.left + bounds.width * coord.x + offset.x;
-    const anchorY = bounds.top + bounds.height * coord.y + offset.y;
-    badge.style.left = Math.round(anchorX) + 'px';
-    badge.style.top = Math.round(anchorY) + 'px';
-    badge.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
   }
 
   let loaded = false;
@@ -68,15 +44,9 @@
       badge.classList.remove('emotion-badge-hidden');
       badge.setAttribute('data-mode', dynamicBackground ? (dominant.key || 'curiosity') : 'static');
       loaded = true;
-      updatePosition();
     } catch (error) {
       if (!loaded) badge.classList.add('emotion-badge-hidden');
     }
-  }
-
-  function loop(){
-    updatePosition();
-    requestAnimationFrame(loop);
   }
 
   async function bootstrap(){
@@ -88,6 +58,5 @@
   }
 
   bootstrap();
-  loop();
   setInterval(refresh, 15000);
 })();

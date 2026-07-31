@@ -303,9 +303,9 @@ async function reloadFromDisk() {
 
 async function applyTtsReferToService() {
   try {
-    const mode = String(state.config.public.TTS_MODE || "local").toLowerCase();
-    if (mode !== "local") {
-      showBanner("info", "当前 TTS 模式不是 local，无法应用参考音频到本地 TTS 服务。" );
+    const mode = String(state.config.public.TTS_MODE || "gpt-sovits").toLowerCase();
+    if (mode !== "gpt-sovits") {
+      showBanner("info", "当前 TTS 模式不是 gpt-sovits，无法应用参考音频到本地 TTS 服务。" );
       return;
     }
     await apiLocal("POST", "http://127.0.0.1:5000/change_refer", {

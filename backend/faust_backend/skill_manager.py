@@ -80,10 +80,59 @@ def _skill_paths(agent_name: str | None = None) -> list[Path]:
     return [p for p in sorted(root.iterdir()) if p.is_dir() and not p.name.startswith("_")]
 
 
+def _parse_skill_frontmatter(skill_path: Path) -> dict[str, Any]:
+    """从 SKILL.md 的 YAML frontmatter 读取标准 SKILL 元数据。
+
+    标准 SKILL 格式在 SKILL.md 顶部以 `---` 分隔的 YAML 块声明 name/description 等字段。
+    返回与 _meta.json 相同结构的 dict（缺失字段留空由上层补默认）。
+    """
+    md_file = skill_path / "SKILL.md"
+    if not md_file.exists():
+        return {}
+    try:
+        text = md_file.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+
+    stripped = text.lstrip("\ufeff")
+    if not stripped.startswith("---"):
+        return {}
+    lines = stripped.splitlines()
+    # 第一行为 ---，寻找下一处 --- 作为 frontmatter 结束
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return {}
+    block = "\n".join(lines[1:end_idx])
+
+    data: dict[str, Any] = {}
+    try:
+        import yaml as _yaml
+        parsed = _yaml.safe_load(block)
+        if isinstance(parsed, dict):
+            data = parsed
+    except Exception:
+        # 退化解析：仅支持简单的 `key: value` 行
+        for line in block.splitlines():
+            if ":" not in line or line.lstrip().startswith("#"):
+                continue
+            key, _, val = line.partition(":")
+            data[key.strip()] = val.strip().strip('"').strip("'")
+
+    return {str(k): v for k, v in data.items()}
+
+
 def _read_skill_meta(skill_path: Path) -> dict[str, Any]:
     meta_file = skill_path / "_meta.json"
     if not meta_file.exists():
-        return {"slug": skill_path.name, "version": "0.0.0"}
+        # 无 _meta.json：尝试从 SKILL.md 的 YAML frontmatter 读取标准 SKILL 元数据
+        fm = _parse_skill_frontmatter(skill_path)
+        fm.setdefault("slug", skill_path.name)
+        fm.setdefault("version", "0.0.0")
+        return fm
     try:
         data = json.loads(meta_file.read_text(encoding="utf-8"))
         if isinstance(data, dict):
@@ -97,7 +146,10 @@ def _read_skill_meta(skill_path: Path) -> dict[str, Any]:
 def _find_skill_root(extract_dir: Path) -> Path:
     candidates = [p.parent for p in extract_dir.rglob("_meta.json") if p.is_file()]
     if not candidates:
-        raise SkillError("skill 包中未找到 _meta.json")
+        # 无 _meta.json：退化为以 SKILL.md 定位 skill 根目录（frontmatter 模式）
+        candidates = [p.parent for p in extract_dir.rglob("SKILL.md") if p.is_file()]
+    if not candidates:
+        raise SkillError("skill 包中未找到 _meta.json 或 SKILL.md")
     if len(candidates) == 1:
         return candidates[0]
     for c in candidates:
