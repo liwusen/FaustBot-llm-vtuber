@@ -127,6 +127,12 @@ class FrontendBridge:
                 parts.append('true' if auto_reset else 'false')
         self._push("VRM_GESTURE", " ".join(parts))
 
+    def trigger_vrm_pose(self, pose_name: str, transition: float | None = None) -> None:
+        parts = [str(pose_name)]
+        if transition is not None:
+            parts.append(str(transition))
+        self._push("VRM_POSE", " ".join(parts))
+
     def set_vrm_bone_rotation(self, bone_name: str, axis: str, angle_degrees: float) -> None:
         self._push("VRM_BONE_ROT", f"{bone_name} {axis} {angle_degrees}")
 

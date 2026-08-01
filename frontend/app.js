@@ -1353,6 +1353,26 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       } else if (cmd === 'VRM_RESET_POSE'){
         if (modelType !== 'vrm' || !vrmScene) return;
         vrmScene.resetPose();
+      } else if (cmd === 'VRM_POSE'){
+        if (modelType !== 'vrm' || !vrmScene) return;
+        const parts = arg.split(/\s+/);
+        const poseName = parts[0];
+        if (!poseName) return;
+        const transition = parts.length > 1 ? parseFloat(parts[1]) : undefined;
+        (async () => {
+          try {
+            const resp = await fetch('http://127.0.0.1:13900/faust/admin/vrm-poses');
+            const data = await resp.json();
+            const poses = (data && data.poses) || {};
+            const entry = poses[poseName];
+            if (!entry) { console.warn('VRM_POSE: preset not found', poseName); return; }
+            const pose = entry.pose || {};
+            const trans = Number.isFinite(transition) ? transition : (Number(pose.transition) >= 0 ? Number(pose.transition) : 600);
+            await vrmScene.applyPoseSnapshot(pose, trans);
+          } catch (e) {
+            console.warn('VRM_POSE failed:', e);
+          }
+        })();
       } else if (cmd === 'VRM_LOOKAT'){
         if (modelType !== 'vrm' || !vrmScene) return;
         const parts = arg.split(/\s+/);

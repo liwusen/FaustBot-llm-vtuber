@@ -93,6 +93,10 @@ def frontendTriggerVRMGesture(gesture_name: str, duration: float | None = None, 
     _bridge.trigger_vrm_gesture(gesture_name, duration, auto_reset)
 
 
+def frontendTriggerVRMPose(pose_name: str, transition: float | None = None) -> None:
+    _bridge.trigger_vrm_pose(pose_name, transition)
+
+
 def frontendSetVRMBoneRotation(bone_name: str, axis: str, angle_degrees: float) -> None:
     _bridge.set_vrm_bone_rotation(bone_name, axis, angle_degrees)
 

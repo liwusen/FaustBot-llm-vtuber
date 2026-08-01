@@ -6,6 +6,7 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 import faust_backend.config_loader as conf
 import faust_backend.backend2front as backend2frontend
+import faust_backend.vrm_pose_manager as vrm_pose_manager
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.tools.animation")
@@ -131,6 +132,53 @@ def listVRMGesturesTool() -> str:
             return json.dumps({"status": "error", "error": "当前不是 VRM 模式"}, ensure_ascii=False)
         names = ["nod", "shake_head", "bow", "tilt_head", "wave", "point", "thumbs_up", "peace"]
         return json.dumps({"status": "ok", "gesture_names": names, "count": len(names)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@register
+@tool
+def listVRMPosesTool() -> str:
+    """
+    Description:
+        获取 VRM 模型已保存的动作预设名称列表（仅在 VRM 模式下有效）。
+    Args:
+        None
+    Returns:
+        str(json): 包含 pose_names。
+    """
+    try:
+        if _get_model_type() != "vrm":
+            return json.dumps({"status": "error", "error": "当前不是 VRM 模式"}, ensure_ascii=False)
+        names = sorted(vrm_pose_manager.get_vrm_poses().keys())
+        return json.dumps({"status": "ok", "pose_names": names, "count": len(names)}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@register
+@tool
+def triggerVRMPoseTool(pose_name: str, transition: float | None = None) -> str:
+    """
+    Description:
+        应用 VRM 模型的某个动作预设（仅在 VRM 模式下有效）。预设由用户在编辑器中保存。
+    Args:
+        pose_name (str): 预设名称，从 listVRMPosesTool 获取，不含空格。
+        transition (float, optional): 过渡时长毫秒，默认用预设自带值；0 表示瞬间。
+    Returns:
+        str(json): 执行状态。
+    """
+    name = str(pose_name or "").strip()
+    if not name or vrm_pose_manager.validate_pose_name(name):
+        return json.dumps({"status": "error", "error": "pose_name 不能为空且不能含空格"}, ensure_ascii=False)
+    if _get_model_type() != "vrm":
+        return json.dumps({"status": "error", "error": "当前不是 VRM 模式"}, ensure_ascii=False)
+    if name not in vrm_pose_manager.get_vrm_poses():
+        return json.dumps({"status": "error", "error": f"预设不存在: {name}"}, ensure_ascii=False)
+    try:
+        trans = float(transition) if transition is not None else None
+        backend2frontend.frontendTriggerVRMPose(name, trans)
+        return json.dumps({"status": "ok", "command": "VRM_POSE", "pose": name, "transition": trans}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
