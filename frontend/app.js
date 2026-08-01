@@ -2480,7 +2480,16 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         };
         const onMove = (e) => {
           if (!dragging) return;
-          if (vrmDragButton === 1) {
+          const editMode = vrmScene.isEditMode ? vrmScene.isEditMode() : false;
+          const editDragMode = vrmScene.editDragMode || 'drag';
+          if (editMode && vrmDragButton !== 1 && !(e.ctrlKey || e.metaKey)) {
+            // 编辑模式下左键按面板模式路由；'drag' 由面板的 IK handler 处理
+            if (editDragMode === 'orbit') {
+              vrmScene.orbitCamera(e.clientX, e.clientY);
+            } else if (editDragMode === 'move') {
+              vrmScene.moveModel(e.clientX, e.clientY);
+            }
+          } else if (vrmDragButton === 1) {
             vrmScene.rotateModel(e.clientX);
           } else if (e.ctrlKey || e.metaKey) {
             vrmScene.orbitCamera(e.clientX, e.clientY);

@@ -1,8 +1,10 @@
-// VRM 配置面板 — 滑块 UI 调节模型姿态/手势参数
+// VRM 配置面板 — 滑块 UI 调节模型姿态/手势参数 + 交互式动作编辑模式
 // 用法: const vrmCfg = initVRMConfigPanel({ getVrmScene });
 
 export function initVRMConfigPanel({ getVrmScene }) {
   let configBuilt = false;
+  let dirty = false;
+  let editCleanup = null;
 
   const panel = document.getElementById('vrmConfigPanel');
   const panelBody = document.getElementById('vrmConfigPanelBody');
@@ -132,15 +134,255 @@ export function initVRMConfigPanel({ getVrmScene }) {
       secDiv.appendChild(bodyDiv);
       panelBody.appendChild(secDiv);
     }
+
+    // ── 动作编辑模式 ──
+    if (typeof vrmScene.getIkChains === 'function') {
+      buildEditSection(vrmScene);
+    }
     configBuilt = true;
+  }
+
+  function buildEditSection(vrmScene) {
+    // mode buttons
+    const editDiv = document.createElement('div');
+    editDiv.className = 'vrm-config-section';
+    const editHeader = document.createElement('div');
+    editHeader.className = 'vrm-config-section-header';
+    editHeader.textContent = '动作编辑（拖拽身体摆姿势）';
+    editDiv.appendChild(editHeader);
+    const editBody = document.createElement('div');
+    editBody.className = 'vrm-config-section-body';
+
+    const modeRow = document.createElement('div');
+    modeRow.className = 'vrm-config-row';
+    const modeLabel = document.createElement('label');
+    modeLabel.textContent = '拖拽模式';
+    const modeSelect = document.createElement('select');
+    modeSelect.innerHTML =
+      '<option value="drag">拖拽（摆姿势）</option>' +
+      '<option value="orbit">环绕（转视角）</option>' +
+      '<option value="move">移动（挪模型）</option>';
+    modeRow.appendChild(modeLabel);
+    modeRow.appendChild(modeSelect);
+    editBody.appendChild(modeRow);
+    modeSelect.addEventListener('change', () => {
+      vrmScene.editDragMode = modeSelect.value;
+    });
+    vrmScene.editDragMode = modeSelect.value;
+
+    // chain selector
+    const chainRow = document.createElement('div');
+    chainRow.className = 'vrm-config-row';
+    const chainLabel = document.createElement('label');
+    chainLabel.textContent = '拖动部位';
+    const chainSelect = document.createElement('select');
+    chainSelect.innerHTML = '<option value="">（选择拖动部位）</option>';
+    const chains = vrmScene.getIkChains();
+    for (const c of chains) {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = c.label;
+      chainSelect.appendChild(opt);
+    }
+    chainRow.appendChild(chainLabel);
+    chainRow.appendChild(chainSelect);
+    editBody.appendChild(chainRow);
+
+    // expression sliders
+    const expDiv = document.createElement('div');
+    expDiv.className = 'vrm-config-section';
+    const expHeader = document.createElement('div');
+    expHeader.className = 'vrm-config-section-header';
+    expHeader.textContent = '表情权重';
+    expDiv.appendChild(expHeader);
+    const expBody = document.createElement('div');
+    expBody.className = 'vrm-config-section-body';
+    expDiv.appendChild(expBody);
+
+    let expNames = [];
+    if (typeof vrmScene.getExpressionNames === 'function') {
+      expNames = vrmScene.getExpressionNames();
+    }
+    const weightSliders = [];
+    for (const ename of expNames) {
+      const row = document.createElement('div');
+      row.className = 'vrm-config-row';
+      row.appendChild(Object.assign(document.createElement('label'), { textContent: ename }));
+      const slider = document.createElement('input');
+      slider.type = 'range'; slider.min = 0; slider.max = 1; slider.step = 0.02; slider.value = 0;
+      const val = document.createElement('span');
+      val.className = 'vrm-config-val'; val.textContent = '0.00';
+      slider.addEventListener('input', () => {
+        const v = parseFloat(slider.value);
+        val.textContent = v.toFixed(2);
+        const sc = getScene();
+        if (sc && sc.setExpressionWeight) {
+          sc.setExpressionWeight(ename, v);
+          dirty = true;
+        }
+      });
+      row.appendChild(slider);
+      row.appendChild(val);
+      expBody.appendChild(row);
+      weightSliders.push({ name: ename, slider });
+    }
+
+    // preset save row
+    const saveRow = document.createElement('div');
+    saveRow.className = 'vrm-config-row';
+    const presetInput = document.createElement('input');
+    presetInput.type = 'text';
+    presetInput.placeholder = '预设名（不含空格）';
+    const snapshotBtn = Object.assign(document.createElement('button'), { textContent: '保存当前姿态' });
+    saveRow.appendChild(presetInput);
+    saveRow.appendChild(snapshotBtn);
+    editBody.appendChild(saveRow);
+
+    // preset list
+    const presetList = document.createElement('div');
+    presetList.className = 'vrm-config-preset-list';
+    editBody.appendChild(presetList);
+
+    editDiv.appendChild(editBody);
+    panelBody.appendChild(editDiv);
+    panelBody.appendChild(expDiv);
+
+    // drag wiring — IK drag handled here in 'drag' mode; app.js routes orbit/move
+    const vrmCanvas = vrmScene.getCanvas();
+    let poseDragging = false;
+    let dragChain = chainSelect.value;
+    chainSelect.addEventListener('change', () => { dragChain = chainSelect.value; });
+
+    const onPointerDown = (e) => {
+      if (modeSelect.value !== 'drag') return;
+      if (!dragChain) return;
+      if (vrmScene.beginPoseDrag(e.clientX, e.clientY, dragChain)) {
+        poseDragging = true;
+        dirty = true;
+      }
+    };
+    const onPointerMove = (e) => {
+      if (!poseDragging) return;
+      vrmScene.updatePoseDrag(e.clientX, e.clientY);
+    };
+    const onPointerUp = () => {
+      if (poseDragging) {
+        poseDragging = false;
+        vrmScene.endPoseDrag();
+      }
+    };
+    if (vrmCanvas) {
+      vrmCanvas.addEventListener('pointerdown', onPointerDown);
+      vrmCanvas.addEventListener('pointermove', onPointerMove);
+      vrmCanvas.addEventListener('pointerup', onPointerUp);
+      vrmCanvas.addEventListener('pointerupoutside', onPointerUp);
+    }
+
+    const refreshPresetList = async () => {
+      try {
+        const resp = await fetch('http://127.0.0.1:13900/faust/admin/vrm-poses');
+        const data = await resp.json();
+        const poses = (data && data.poses) || {};
+        presetList.innerHTML = '';
+        for (const pname of Object.keys(poses)) {
+          const row = document.createElement('div');
+          row.className = 'vrm-config-row';
+          row.appendChild(Object.assign(document.createElement('span'), { textContent: pname }));
+          const applyBtn = Object.assign(document.createElement('button'), { textContent: '应用' });
+          applyBtn.addEventListener('click', async () => {
+            const sc = getScene();
+            if (!sc || !sc.applyPoseSnapshot) return;
+            const entry = poses[pname] || {};
+            const pose = entry.pose || {};
+            const trans = Number(pose.transition) >= 0 ? Number(pose.transition) : 600;
+            await sc.applyPoseSnapshot(pose, trans);
+          });
+          const delBtn = Object.assign(document.createElement('button'), { textContent: '删除' });
+          delBtn.addEventListener('click', async () => {
+            if (!confirm(`删除预设 ${pname}？`)) return;
+            await fetch(`http://127.0.0.1:13900/faust/admin/vrm-poses/${encodeURIComponent(pname)}`, { method: 'DELETE' });
+            refreshPresetList();
+          });
+          row.appendChild(applyBtn);
+          row.appendChild(delBtn);
+          presetList.appendChild(row);
+        }
+      } catch (e) {
+        console.warn('Failed to load VRM presets:', e);
+      }
+    };
+
+    snapshotBtn.addEventListener('click', async () => {
+      const name = presetInput.value.trim();
+      if (!name || /\s/.test(name)) { alert('预设名不能为空且不能含空格'); return; }
+      const sc = getScene();
+      if (!sc || typeof sc.getPoseSnapshot !== 'function') return;
+      const snap = sc.getPoseSnapshot();
+      const pose = { ...snap, transition: 600 };
+      try {
+        const resp = await fetch('http://127.0.0.1:13900/faust/admin/vrm-poses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, pose }),
+        });
+        if (resp.ok) {
+          dirty = false;
+          refreshPresetList();
+        }
+      } catch (e) {
+        console.warn('Failed to save VRM preset:', e);
+      }
+    });
+
+    refreshPresetList();
+
+    editCleanup = () => {
+      if (vrmCanvas) {
+        vrmCanvas.removeEventListener('pointerdown', onPointerDown);
+        vrmCanvas.removeEventListener('pointermove', onPointerMove);
+        vrmCanvas.removeEventListener('pointerup', onPointerUp);
+        vrmCanvas.removeEventListener('pointerupoutside', onPointerUp);
+      }
+      editCleanup = null;
+    };
   }
 
   function open() {
     const vrmScene = getScene();
     if (!vrmScene || !panel) return;
+    if (editCleanup) editCleanup();
+    dirty = false;
     panel.style.display = 'flex';
     build();
-    if (vrmScene.enterConfigMode) vrmScene.enterConfigMode();
+    if (vrmScene.enterEditMode) vrmScene.enterEditMode();
+    else if (vrmScene.enterConfigMode) vrmScene.enterConfigMode();
+  }
+
+  function closePanel() {
+    const vrmScene = getScene();
+    if (dirty) {
+      const choice = confirm('姿态未保存，保存还是放弃？');
+      if (choice) {
+        const input = panelBody ? panelBody.querySelector('input[type="text"]') : null;
+        if (input) input.focus();
+        return;
+      }
+    }
+    if (editCleanup) editCleanup();
+    panel.style.display = 'none';
+    if (vrmScene && vrmScene.restoreEditStartPose) vrmScene.restoreEditStartPose();
+    if (vrmScene && vrmScene.exitEditMode) vrmScene.exitEditMode();
+    else if (vrmScene && vrmScene.exitConfigMode) vrmScene.exitConfigMode();
+    if (vrmScene && vrmScene.setModelTransform) {
+      try {
+        const t = vrmScene.getModelTransform();
+        fetch('http://127.0.0.1:13900/faust/admin/vrm-config/model-state', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(t),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+    dirty = false;
   }
 
   function init() {
@@ -150,17 +392,7 @@ export function initVRMConfigPanel({ getVrmScene }) {
         if (!vrmScene || !panel) return;
         const isOpen = panel.style.display !== 'none';
         if (isOpen) {
-          panel.style.display = 'none';
-          if (vrmScene.exitConfigMode) vrmScene.exitConfigMode();
-          if (vrmScene.setModelTransform) {
-            try {
-              const t = vrmScene.getModelTransform();
-              fetch('http://127.0.0.1:13900/faust/admin/vrm-config/model-state', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(t),
-              }).catch(() => {});
-            } catch (e) {}
-          }
+          closePanel();
         } else {
           open();
         }
@@ -168,9 +400,7 @@ export function initVRMConfigPanel({ getVrmScene }) {
     }
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
-        if (panel) panel.style.display = 'none';
-        const vrmScene = getScene();
-        if (vrmScene && vrmScene.exitConfigMode) vrmScene.exitConfigMode();
+        closePanel();
       });
     }
     if (saveBtn) {
@@ -188,7 +418,10 @@ export function initVRMConfigPanel({ getVrmScene }) {
           });
           if (resp.ok) {
             if (panel) panel.style.display = 'none';
-            if (vrmScene.exitConfigMode) vrmScene.exitConfigMode();
+            if (editCleanup) editCleanup();
+            if (vrmScene.exitEditMode) vrmScene.exitEditMode();
+            else if (vrmScene.exitConfigMode) vrmScene.exitConfigMode();
+            dirty = false;
           }
         } catch (e) {
           console.warn('Failed to save VRM config:', e);

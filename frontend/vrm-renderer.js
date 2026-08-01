@@ -164,6 +164,7 @@ export class VRMScene {
     this._configMode = false;
     this._poseFrozen = false;
     this._poseExpressionOverrides = {};
+    this.editDragMode = 'drag';
   }
 
   init(container) {
@@ -313,19 +314,33 @@ export class VRMScene {
     return this._configMode;
   }
 
+  isEditMode() {
+    return this._configMode && this._poseFrozen;
+  }
+
   enterEditMode() {
     this._configMode = true;
     this._poseFrozen = true;
+    this._editStartPose = this.getPoseSnapshot();
   }
 
   exitEditMode() {
     this._configMode = false;
     this._poseFrozen = false;
     this._poseExpressionOverrides = {};
+    this._editStartPose = null;
   }
 
   setPoseFrozen(frozen) {
     this._poseFrozen = !!frozen;
+  }
+
+  restoreEditStartPose() {
+    if (!this._editStartPose || !this.vrm || !this.vrm.humanoid) return;
+    this.vrm.humanoid.setPose(this._editStartPose.bones || {});
+    this.clearExpressions();
+    const exp = this._editStartPose.expressions || {};
+    for (const k in exp) this.setExpressionWeight(k, exp[k]);
   }
 
   _updateCameraPosition() {
