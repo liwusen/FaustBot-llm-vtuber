@@ -90,6 +90,7 @@ export class VRMScene {
     this._boneOverrides = {};
     this._savedBoneRotations = {};
     this._initialPoseSaved = false;
+    this._ikDrag = null;
 
     this._lookAtTargetObject = null;
 
@@ -461,6 +462,25 @@ export class VRMScene {
       ? Object.values(VRMHumanBoneName).filter(v => typeof v === 'string')
       : [];
     return names.length ? names : GESTURE_BONES;
+  }
+
+  getIkChains() {
+    if (!this.vrm || !this.vrm.humanoid) return [];
+    const defs = [
+      { name: 'rightArm', label: '右臂', root: 'rightUpperArm', mid: 'rightLowerArm', tip: 'rightHand' },
+      { name: 'leftArm', label: '左臂', root: 'leftUpperArm', mid: 'leftLowerArm', tip: 'leftHand' },
+      { name: 'rightLeg', label: '右腿', root: 'rightUpperLeg', mid: 'rightLowerLeg', tip: 'rightFoot' },
+      { name: 'leftLeg', label: '左腿', root: 'leftUpperLeg', mid: 'leftLowerLeg', tip: 'leftFoot' },
+      { name: 'head', label: '头部', root: 'neck', mid: null, tip: 'head' },
+    ];
+    const out = [];
+    for (const d of defs) {
+      const root = this.vrm.humanoid.getNormalizedBoneNode(d.root);
+      const mid = d.mid ? this.vrm.humanoid.getNormalizedBoneNode(d.mid) : null;
+      const tip = this.vrm.humanoid.getNormalizedBoneNode(d.tip);
+      if (root && tip) out.push({ ...d, root, mid, tip });
+    }
+    return out;
   }
 
   getCustomExpressionNames() {
@@ -939,6 +959,123 @@ export class VRMScene {
       return true;
     }
     return false;
+  }
+
+  _rayToWorld(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const nx = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(nx, ny), this.camera);
+    return raycaster;
+  }
+
+  _sphereIntersect(ray, center, radius) {
+    const oc = new THREE.Vector3().subVectors(ray.ray.origin, center);
+    const b = oc.dot(ray.ray.direction);
+    const c = oc.dot(oc) - radius * radius;
+    const disc = b * b - c;
+    if (disc < 0) return null;
+    const t = -b - Math.sqrt(disc);
+    return t > 0 ? ray.ray.origin.clone().addScaledVector(ray.ray.direction, t) : null;
+  }
+
+  beginPoseDrag(clientX, clientY, chainName) {
+    if (!this.vrm || !this.vrm.humanoid) return false;
+    const chain = this.getIkChains().find((c) => c.name === chainName);
+    if (!chain) return false;
+    if (!this._initialPoseSaved) this._saveInitialPose();
+
+    const tipWorld = new THREE.Vector3();
+    chain.tip.getWorldPosition(tipWorld);
+    const rootWorld = new THREE.Vector3();
+    chain.root.getWorldPosition(rootWorld);
+    const radius = tipWorld.distanceTo(rootWorld) || 1;
+
+    const ray = this._rayToWorld(clientX, clientY);
+    const target = this._sphereIntersect(ray, rootWorld, radius);
+    if (!target) return false;
+
+    this._ikDrag = { chain, startQuats: {}, target };
+    for (const n of [chain.root, chain.mid, chain.tip]) {
+      if (n) this._ikDrag.startQuats[n.uuid] = n.quaternion.clone();
+    }
+    this._solveTwoBone(target);
+    this.setPoseFrozen(true);
+    return true;
+  }
+
+  updatePoseDrag(clientX, clientY) {
+    if (!this._ikDrag) return;
+    const { chain, startQuats } = this._ikDrag;
+    const rootWorld = new THREE.Vector3();
+    chain.root.getWorldPosition(rootWorld);
+    const tipWorld = new THREE.Vector3();
+    chain.tip.getWorldPosition(tipWorld);
+    const radius = tipWorld.distanceTo(rootWorld) || 1;
+    const ray = this._rayToWorld(clientX, clientY);
+    const target = this._sphereIntersect(ray, rootWorld, radius);
+    if (!target) return;
+
+    // Restore per-drag-start quaternions before solving so rotations do not
+    // accumulate across frames (premultiply would drift otherwise).
+    for (const n of [chain.root, chain.mid, chain.tip]) {
+      if (n && startQuats[n.uuid]) n.quaternion.copy(startQuats[n.uuid]);
+    }
+    this._ikDrag.target = target;
+    this._solveTwoBone(target);
+  }
+
+  endPoseDrag() {
+    this._ikDrag = null;
+  }
+
+  getEditDragState() {
+    return { active: !!this._ikDrag, chain: this._ikDrag ? this._ikDrag.chain.name : null };
+  }
+
+  _solveTwoBone(targetWorld) {
+    const { chain } = this._ikDrag;
+    const A = new THREE.Vector3();
+    const B = new THREE.Vector3();
+    const C = new THREE.Vector3();
+    chain.root.getWorldPosition(A);
+    chain.mid.getWorldPosition(B);
+    chain.tip.getWorldPosition(C);
+
+    if (!chain.mid) {
+      // Single-bone chain (head): aim tip at target
+      chain.tip.lookAt(targetWorld);
+      return;
+    }
+
+    const L1 = A.distanceTo(B);
+    const L2 = B.distanceTo(C);
+    const D = Math.min(A.distanceTo(targetWorld), L1 + L2 - 1e-4);
+
+    // elbow bend angle via law of cosines
+    const cosElbow = THREE.MathUtils.clamp((L1 * L1 + L2 * L2 - D * D) / (2 * L1 * L2), -1, 1);
+    const bendAngle = Math.PI - Math.acos(cosElbow);
+
+    // bend axis: normal of the (A,B,C) plane, in world space at drag start
+    const uAB = new THREE.Vector3().subVectors(B, A).normalize();
+    const uCB = new THREE.Vector3().subVectors(C, B).normalize();
+    const bendAxis = new THREE.Vector3().crossVectors(uAB, uCB).normalize();
+    if (bendAxis.lengthSq() < 1e-6) bendAxis.set(0, 0, 1);
+
+    // root rotation: point upper-arm toward target
+    const u1 = new THREE.Vector3().subVectors(targetWorld, A).normalize();
+    const rootRot = new THREE.Quaternion().setFromUnitVectors(uAB, u1);
+
+    // rotate bend axis into the new frame, then bend forearm direction
+    const rotBendAxis = bendAxis.clone().applyQuaternion(rootRot);
+    const midDir = u1.clone().applyAxisAngle(rotBendAxis, -bendAngle);
+
+    // mid rotation: point forearm toward new direction
+    const midRot = new THREE.Quaternion().setFromUnitVectors(uCB, midDir);
+
+    chain.root.quaternion.premultiply(rootRot);
+    chain.mid.quaternion.premultiply(midRot);
   }
 
   async loadVRM(path) {
