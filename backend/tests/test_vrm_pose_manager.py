@@ -53,3 +53,49 @@ def test_validate_accepts_plain():
 def test_validate_rejects_non_string():
     assert vpm.validate_pose_name(123) is not None
     assert vpm.validate_pose_name(None) is not None
+
+
+@pytest.fixture
+def client():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from faust_backend.routes.admin_models import router
+
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as c:
+        yield c
+
+
+def test_routes_get_empty(_isolate, client):
+    resp = client.get("/faust/admin/vrm-poses")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "poses": {}}
+
+
+def test_routes_post_and_get(_isolate, client):
+    resp = client.post("/faust/admin/vrm-poses", json={"name": "wave_hi", "pose": {"transition": 500}})
+    assert resp.status_code == 200
+    assert resp.json()["pose"]["name"] == "wave_hi"
+
+    resp = client.get("/faust/admin/vrm-poses")
+    assert resp.json()["poses"]["wave_hi"]["pose"]["transition"] == 500
+
+
+def test_routes_post_rejects_whitespace_name(_isolate, client):
+    resp = client.post("/faust/admin/vrm-poses", json={"name": "bad name", "pose": {}})
+    assert resp.status_code == 400
+
+
+def test_routes_post_missing_name(_isolate, client):
+    resp = client.post("/faust/admin/vrm-poses", json={"pose": {}})
+    assert resp.status_code == 400
+
+
+def test_routes_delete(_isolate, client):
+    client.post("/faust/admin/vrm-poses", json={"name": "p", "pose": {}})
+    resp = client.delete("/faust/admin/vrm-poses/p")
+    assert resp.status_code == 200
+    resp = client.delete("/faust/admin/vrm-poses/p")
+    assert resp.status_code == 404

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import faust_backend.admin_runtime as admin_runtime
 import faust_backend.vrm_config_manager as vrm_config_manager
+import faust_backend.vrm_pose_manager as vrm_pose_manager
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-models"])
@@ -42,3 +43,26 @@ async def admin_save_vrm_model_state(payload: dict | None = None):
 async def admin_reset_vrm_config():
     defaults = vrm_config_manager.reset_vrm_config()
     return {"status": "ok", "config": defaults}
+
+
+@router.get("/faust/admin/vrm-poses")
+async def admin_get_vrm_poses():
+    return {"status": "ok", "poses": vrm_pose_manager.get_vrm_poses()}
+
+
+@router.post("/faust/admin/vrm-poses")
+async def admin_save_vrm_pose(payload: dict | None = None):
+    if not payload or "name" not in payload:
+        raise HTTPException(status_code=400, detail="missing name field")
+    err = vrm_pose_manager.validate_pose_name(payload["name"])
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    entry = vrm_pose_manager.save_vrm_pose(payload["name"], payload.get("pose") or {})
+    return {"status": "ok", "pose": entry}
+
+
+@router.delete("/faust/admin/vrm-poses/{name}")
+async def admin_delete_vrm_pose(name: str):
+    if not vrm_pose_manager.delete_vrm_pose(name):
+        raise HTTPException(status_code=404, detail="preset not found")
+    return {"status": "ok"}
