@@ -161,6 +161,8 @@ export class VRMScene {
     };
 
     this._configMode = false;
+    this._poseFrozen = false;
+    this._poseExpressionOverrides = {};
   }
 
   init(container) {
@@ -308,6 +310,21 @@ export class VRMScene {
 
   isConfigMode() {
     return this._configMode;
+  }
+
+  enterEditMode() {
+    this._configMode = true;
+    this._poseFrozen = true;
+  }
+
+  exitEditMode() {
+    this._configMode = false;
+    this._poseFrozen = false;
+    this._poseExpressionOverrides = {};
+  }
+
+  setPoseFrozen(frozen) {
+    this._poseFrozen = !!frozen;
   }
 
   _updateCameraPosition() {
@@ -467,6 +484,43 @@ export class VRMScene {
     return true;
   }
 
+  getCameraState() {
+    return { theta: this._camTheta, phi: this._camPhi, distance: this.cameraDistance };
+  }
+
+  getExpressionNames() {
+    return this.getCustomExpressionNames();
+  }
+
+  getExpressionWeights() {
+    const out = {};
+    if (!this.vrm || !this.vrm.expressionManager) return out;
+    const map = this.vrm.expressionManager.customExpressionMap || {};
+    for (const key in map) out[key] = map[key].weight;
+    const presetMap = this.vrm.expressionManager.presetExpressionMap || {};
+    for (const key in presetMap) {
+      if (Object.prototype.hasOwnProperty.call(presetMap, key) && !(key in out)) {
+        out[key] = presetMap[key].weight;
+      }
+    }
+    return out;
+  }
+
+  setExpressionWeight(name, weight) {
+    if (!this.vrm || !this.vrm.expressionManager) return false;
+    const clamped = Math.max(0, Math.min(1, Number(weight) || 0));
+    this.vrm.expressionManager.setValue(String(name), clamped);
+    this._poseExpressionOverrides[String(name)] = clamped;
+    return true;
+  }
+
+  clearExpressions() {
+    if (!this.vrm || !this.vrm.expressionManager) return;
+    const names = this.getExpressionNames();
+    for (const n of names) this.vrm.expressionManager.setValue(n, 0);
+    this._poseExpressionOverrides = {};
+  }
+
   _saveIdleBaseRotations() {
     if (!this.vrm || !this.vrm.humanoid) return;
     for (const name of ['spine', 'neck']) {
@@ -530,6 +584,81 @@ export class VRMScene {
     this._gestureReset = false;
   }
 
+  getPoseSnapshot() {
+    const bones = {};
+    if (this.vrm && this.vrm.humanoid) {
+      const pose = this.vrm.humanoid.getPose();
+      for (const boneName in pose) {
+        if (pose[boneName] && pose[boneName].rotation) {
+          bones[boneName] = { rotation: pose[boneName].rotation.slice(0, 4) };
+        }
+      }
+    }
+    return {
+      bones,
+      expressions: this.getExpressionWeights(),
+      modelState: this.getModelTransform(),
+      camera: this.getCameraState(),
+    };
+  }
+
+  applyPoseSnapshot(snapshot, transitionMs) {
+    const target = snapshot || {};
+    const dur = Math.max(0, Number(transitionMs) || 0);
+    if (dur === 0 || !this.vrm) {
+      if (this.vrm && this.vrm.humanoid) this.vrm.humanoid.setPose(target.bones || {});
+      const exp = target.expressions || {};
+      this.clearExpressions();
+      for (const k in exp) this.setExpressionWeight(k, exp[k]);
+      const ms = target.modelState;
+      if (ms) this.setModelTransform(ms);
+      this.setPoseFrozen(true);
+      return Promise.resolve();
+    }
+    const fromBones = this.vrm.humanoid.getPose();
+    const toBones = target.bones || {};
+    const start = performance.now();
+    return new Promise((resolve) => {
+      const tick = () => {
+        const t = Math.min(1, (performance.now() - start) / dur);
+        const eased = 1 - (1 - t) * (1 - t); // easeOutQuad
+        for (const name in toBones) {
+          const qTo = toBones[name].rotation;
+          if (!qTo) continue;
+          const qFrom = (fromBones[name] && fromBones[name].rotation) || [0, 0, 0, 1];
+          const q = new THREE.Quaternion(qFrom[0], qFrom[1], qFrom[2], qFrom[3]);
+          q.slerp(new THREE.Quaternion(qTo[0], qTo[1], qTo[2], qTo[3]), eased);
+          const node = this.vrm.humanoid.getNormalizedBoneNode(name);
+          if (node) node.quaternion.copy(q);
+        }
+        const exp = target.expressions || {};
+        for (const k in exp) {
+          const from = this._poseExpressionOverrides[k] || 0;
+          const w = from + (exp[k] - from) * eased;
+          this.vrm.expressionManager.setValue(k, w);
+          this._poseExpressionOverrides[k] = w;
+        }
+        const ms = target.modelState;
+        if (ms) {
+          const cur = this.getModelTransform();
+          this.setModelTransform({
+            positionX: cur.positionX + (ms.positionX - cur.positionX) * eased,
+            positionY: cur.positionY + (ms.positionY - cur.positionY) * eased,
+            rotation: cur.rotation + (ms.rotation - cur.rotation) * eased,
+            scale: cur.scale + (ms.scale - cur.scale) * eased,
+          });
+        }
+        if (t < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          this.setPoseFrozen(true);
+          resolve();
+        }
+      };
+      tick();
+    });
+  }
+
   executeGesture(name, duration, autoReset) {
     if (!this.vrm || !this.vrm.humanoid) return false;
     const def = GESTURES[name];
@@ -575,6 +704,33 @@ export class VRMScene {
   _idleUpdate(delta) {
     if (!this.vrm || !this.vrm.humanoid || !this._idleEnabled) return;
     if (!this.vrm.expressionManager) return;
+
+    // Frozen pose (edit mode / applied preset): keep blink + breath, drop bone sway,
+    // eye saccades and micro-expressions so the posed bones are not overwritten.
+    if (this._poseFrozen) {
+      this._blinkTimer -= delta;
+      if (this._blinkTimer <= 0 && !this._blinkPhase) {
+        this._blinkTimer = this._config.blink.minInterval + Math.random() * (this._config.blink.maxInterval - this._config.blink.minInterval);
+        this._blinkPhase = 'closing';
+        this._blinkProgress = 0;
+      }
+      if (this._blinkPhase === 'closing') {
+        this._blinkProgress += delta / this._config.blink.closeDuration;
+        this.vrm.expressionManager.setValue(VRMExpressionPresetName.Blink, Math.min(1, this._blinkProgress));
+        if (this._blinkProgress >= 1) {
+          this._blinkPhase = 'opening';
+          this._blinkProgress = 0;
+        }
+      } else if (this._blinkPhase === 'opening') {
+        this._blinkProgress += delta / this._config.blink.openDuration;
+        this.vrm.expressionManager.setValue(VRMExpressionPresetName.Blink, Math.max(0, 1 - this._blinkProgress));
+        if (this._blinkProgress >= 1) {
+          this._blinkPhase = null;
+          this.vrm.expressionManager.setValue(VRMExpressionPresetName.Blink, 0);
+        }
+      }
+      return;
+    }
 
     this._bodySwayTime += delta;
     const baseSpine = this._idleBaseRotations.spine || { x: 0, y: 0, z: 0 };
@@ -911,30 +1067,32 @@ export class VRMScene {
       this.vrm.scene.position.y = this._modelBaseY + breath;
 
       if (this.vrm.expressionManager) {
-        this.vrm.expressionManager.setValue(
-          VRMExpressionPresetName.Neutral,
-          this.currentExpression === 'neutral' ? 1 : 0,
-        );
-        this.vrm.expressionManager.setValue(
-          VRMExpressionPresetName.Happy,
-          this.currentExpression === 'happy' ? 1 : 0,
-        );
-        this.vrm.expressionManager.setValue(
-          VRMExpressionPresetName.Angry,
-          this.currentExpression === 'angry' ? 1 : 0,
-        );
-        this.vrm.expressionManager.setValue(
-          VRMExpressionPresetName.Sad,
-          this.currentExpression === 'sad' ? 1 : 0,
-        );
-        this.vrm.expressionManager.setValue(
-          VRMExpressionPresetName.Relaxed,
-          this.currentExpression === 'relaxed' ? 1 : 0,
-        );
-        this.vrm.expressionManager.setValue(
-          VRMExpressionPresetName.Surprised,
-          this.currentExpression === 'surprised' ? 1 : 0,
-        );
+        if (!Object.keys(this._poseExpressionOverrides).length) {
+          this.vrm.expressionManager.setValue(
+            VRMExpressionPresetName.Neutral,
+            this.currentExpression === 'neutral' ? 1 : 0,
+          );
+          this.vrm.expressionManager.setValue(
+            VRMExpressionPresetName.Happy,
+            this.currentExpression === 'happy' ? 1 : 0,
+          );
+          this.vrm.expressionManager.setValue(
+            VRMExpressionPresetName.Angry,
+            this.currentExpression === 'angry' ? 1 : 0,
+          );
+          this.vrm.expressionManager.setValue(
+            VRMExpressionPresetName.Sad,
+            this.currentExpression === 'sad' ? 1 : 0,
+          );
+          this.vrm.expressionManager.setValue(
+            VRMExpressionPresetName.Relaxed,
+            this.currentExpression === 'relaxed' ? 1 : 0,
+          );
+          this.vrm.expressionManager.setValue(
+            VRMExpressionPresetName.Surprised,
+            this.currentExpression === 'surprised' ? 1 : 0,
+          );
+        }
       }
 
       if (this._gestureActive) {
