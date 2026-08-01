@@ -2510,7 +2510,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
               vrmScene.moveModel(e.clientX, e.clientY);
             }
           } else if (vrmDragButton === 1) {
-            vrmScene.rotateModel(e.clientX);
+            vrmScene.rotateModel(e.clientX, e.clientY);
           } else if (e.ctrlKey || e.metaKey) {
             vrmScene.orbitCamera(e.clientX, e.clientY);
           } else {

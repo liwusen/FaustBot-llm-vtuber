@@ -284,12 +284,13 @@ export class VRMScene {
 
   getModelTransform() {
     if (!this.vrm) {
-      return { positionX: 0, positionY: 0, rotation: 0, scale: this.getScale() };
+      return { positionX: 0, positionY: 0, rotation: 0, pitch: 0, scale: this.getScale() };
     }
     return {
       positionX: this.vrm.scene.position.x,
       positionY: this._modelBaseY,
       rotation: this.vrm.scene.rotation.y,
+      pitch: this.vrm.scene.rotation.x,
       scale: this.getScale(),
     };
   }
@@ -299,6 +300,7 @@ export class VRMScene {
     if (t.positionX !== undefined) this.vrm.scene.position.x = t.positionX;
     if (t.positionY !== undefined) this._modelBaseY = t.positionY;
     if (t.rotation !== undefined) this.vrm.scene.rotation.y = t.rotation;
+    if (t.pitch !== undefined) this.vrm.scene.rotation.x = t.pitch;
     if (t.scale !== undefined) this.setScale(t.scale);
   }
 
@@ -427,7 +429,8 @@ export class VRMScene {
       x: this.vrm.scene.position.x,
       y: this._modelBaseY,
       rot: this.vrm.scene.rotation.y,
-    } : { x: 0, y: 0, rot: 0 };
+      pitch: this.vrm.scene.rotation.x,
+    } : { x: 0, y: 0, rot: 0, pitch: 0 };
   }
 
   orbitCamera(clientX, clientY) {
@@ -448,10 +451,13 @@ export class VRMScene {
     this._modelBaseY = this._modelStart.y - dy * sensitivity;
   }
 
-  rotateModel(clientX) {
+  rotateModel(clientX, clientY) {
     if (!this._pointerDown || !this.vrm) return;
     const dx = (clientX - this._pointerStart.x) * 0.01;
+    const dy = (clientY - this._pointerStart.y) * 0.01;
     this.vrm.scene.rotation.y = this._modelStart.rot + dx;
+    // 上下拖动调整俯仰，限制在 ±80° 防止模型翻转
+    this.vrm.scene.rotation.x = Math.max(-1.4, Math.min(1.4, this._modelStart.pitch + dy));
   }
 
   pointerUp() {
