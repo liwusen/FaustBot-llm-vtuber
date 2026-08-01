@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="./frontend/FaustBot.icon.tiny.png" alt="FaustBot" width="160" />
+    <img src="./docs/assets/FaustBot.icon.small.png" alt="FaustBot" width="160" />
 </p>
 
 <h1 align="center">FaustBot</h1>
@@ -12,6 +12,7 @@
 
 <a href="https://github.com/liwusen/FaustBot-llm-vtuber/releases">
     <img src="https://img.shields.io/github/v/release/liwusen/FaustBot-llm-vtuber" alt="latest version" /></a>
+<img src="https://github.com/liwusen/FaustBot-llm-vtuber/actions/workflows/release-package.yml/badge.svg" alt="Release Workflow Status">
 <a href="https://github.com/liwusen/FaustBot-llm-vtuber/graphs/contributors">
     <img src="https://img.shields.io/github/contributors/liwusen/FaustBot-llm-vtuber" alt="contributors" /></a>
 <a href="https://deepwiki.com/liwusen/FaustBot-llm-vtuber">

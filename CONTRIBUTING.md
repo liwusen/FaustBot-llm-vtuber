@@ -5,7 +5,7 @@
 - 项目地址：[liwusen/FaustBot-llm-vtuber](https://github.com/liwusen/FaustBot-llm-vtuber)
 - 完整开发环境搭建：[docs/devinstall.md](docs/devinstall.md)
 - 仓库核心规则：[AGENTS.md](AGENTS.md)
-- 文档站：[https://faustbot.readthedocs.io/](https://faustbot.readthedocs.io/)
+- 文档站：[https://faustbot.allenlee.xyz/](https://faustbot.allenlee.xyz/)
 
 ---
 

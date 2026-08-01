@@ -38,6 +38,7 @@ AI 驱动的虚拟主播 / 桌面宠物 —— 能对话、能操作电脑、能
 - [安装指南](installation.md)
 - [配置说明](configuration.md)
 - [Agent 基础](agent-basics.md)
+- [内置插件](plugins/index.md)
 - [MCP Server](mcp.md)
 - [开发者环境](devinstall.md)
 
