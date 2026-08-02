@@ -607,10 +607,19 @@ class ArayaRuntime:
         try:
             async_client = getattr(self._chat_model, 'async_client', None)
             if async_client is not None:
-                await async_client.aclose()
+                # async_client 是 openai 的 AsyncCompletions 资源对象，
+                # 底层真实客户端在 _client（AsyncOpenAI）上
+                openai_client = getattr(async_client, '_client', None)
+                if openai_client is not None and not openai_client.is_closed():
+                    await openai_client.close()
             client = getattr(self._chat_model, 'client', None)
             if client is not None:
-                client.close()
+                openai_sync = getattr(client, '_client', None)
+                if openai_sync is not None and not openai_sync.is_closed():
+                    openai_sync.close()
+            # 置 None 防止 GC 时 openai SDK 的 __del__ 对已关闭的 AsyncClient
+            # 再次 create_task(aclose())，导致 "Event loop is closed" 警告
+            self._chat_model = None
         except Exception:
             pass
 

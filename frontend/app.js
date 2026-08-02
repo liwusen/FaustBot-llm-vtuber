@@ -885,6 +885,26 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     resetStreamTtsState();
   }
 
+  // 等待后端确认打断完成（interrupt_ack）的 Promise 解析器；
+  // 由 handleChatWsMessage 的 interrupt_ack 分支触发。
+  let interruptAckResolver = null;
+  function interruptAgentAndWait(){
+    interruptAgent();
+    return new Promise((resolve)=>{
+      // 后端收到 interrupt 后会回 interrupt_ack；500ms 超时兜底，
+      // 避免后端异常时发送的消息被旧流干扰
+      const timer = setTimeout(()=>{
+        interruptAckResolver = null;
+        resolve();
+      }, 500);
+      interruptAckResolver = () => {
+        clearTimeout(timer);
+        interruptAckResolver = null;
+        resolve();
+      };
+    });
+  }
+
   function interruptAll(){
     interruptPlayback();
     interruptAgent();
@@ -1164,6 +1184,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   let chatWs = null;
   let chatWsReady = null;
   let currentChatRequest = null;
+  let passiveChatRequest = null;
   let streamTtsDrainPromise = null;
   let streamTtsSentenceId = 0;
   let streamTtsNextPlayId = 0;
@@ -1429,13 +1450,35 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     chatWsReady = new Promise((resolve, reject)=>{
       try{
         chatWs = new WebSocket(CHAT_ENDPOINT);
-        chatWs.onopen = ()=> resolve();
+        chatWs.onopen = ()=>{
+          if (chatStatusEl) chatStatusEl.textContent = '已连接';
+          resolve();
+        };
         chatWs.onerror = (e)=> reject(e);
         chatWs.onmessage = handleChatWsMessage;
-        chatWs.onclose = ()=>{ chatWs = null; chatWsReady = null; };
+        chatWs.onclose = ()=>{
+          chatWs = null;
+          chatWsReady = null;
+          if (chatStatusEl) chatStatusEl.textContent = chatWsPersistent ? '重连中...' : '聊天未连接';
+          // 常驻模式下断线自动重连（带退避），保证后端触发器/被动流始终有 WS 可推送
+          if (chatWsPersistent){
+            setTimeout(()=>{ ensureChatWsPersistent(); }, 2000);
+          }
+        };
       }catch(e){ reject(e); }
     });
     return chatWsReady;
+  }
+
+  let chatWsPersistent = false;
+  function ensureChatWsPersistent(){
+    // 保持 /faust/chat WS 常驻连接：后端触发器唤醒（Nimble 事件、Public API、
+    // 定时任务等）需要靠这个连接向前端推送 start/delta/done 流。
+    chatWsPersistent = true;
+    // 连接失败/断开由 onclose 统一调度重连（含退避），这里不重复调度
+    openChatWs().catch((e)=>{
+      console.warn('常驻 chat WS 连接失败（onclose 将重试）', e);
+    });
   }
 
   async function requestTtsBlob(text, lang){
@@ -1540,23 +1583,49 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       return;
     }
 
-    if (!currentChatRequest) return;
+    // 后端主动推送的流（触发器唤醒、Nimble 消息等）没有对应的主动请求。
+    // 此时为流式消息创建一个临时被动会话，复用同一套累积/气泡/TTS 逻辑，
+    // 否则 start/delta/done 会被直接丢弃，既不显示也不发声。
+    if (!currentChatRequest) {
+      if (msg.type === 'start' || msg.type === 'delta' || msg.type === 'reasoning_delta'
+          || msg.type === 'tool_start' || msg.type === 'tool_result' || msg.type === 'done'
+          || msg.type === 'interrupted') {
+        // 仅当被动会话不存在时才创建；流进行中 currentChatRequest 仍为 null，
+        // 若每次消息都重建会清空已累积的 replyText/pendingBuffer/entries，
+        // 导致气泡只显示当前单个 chunk 且不断变化
+        if (!passiveChatRequest) {
+          passiveChatRequest = {
+            passive: true,
+            replyText: '',
+            pendingBuffer: '',
+            motionTokenBuffer: '',
+            entries: [],
+          };
+        }
+      } else {
+        return;
+      }
+    }
+    const req = currentChatRequest || passiveChatRequest;
 
     if (msg.type === 'start'){
-      resetStreamTtsState();
-      currentChatRequest.replyText = '';
-      currentChatRequest.pendingBuffer = '';
-      currentChatRequest.motionTokenBuffer = '';
-      currentChatRequest.entries = [];
+      // 被动流（后端主动推送）不重置 TTS 会话，避免打断主动聊天的语音
+      if (!req.passive) resetStreamTtsState();
+      req.replyText = '';
+      req.pendingBuffer = '';
+      req.motionTokenBuffer = '';
+      req.entries = [];
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
-      agentIsProcessing = true;
+      // 被动流（后端主动推送）不代表用户在等待回复，不占用 processing 标志，
+      // 避免影响用户主动发消息时的自动中断逻辑
+      if (!req.passive) agentIsProcessing = true;
       return;
     }
 
     if (msg.type === 'tool_start'){
       const toolName = String(msg.tool_name || '未知工具');
-      if (!currentChatRequest.entries) currentChatRequest.entries = [];
-      currentChatRequest.entries.push({
+      if (!req.entries) req.entries = [];
+      req.entries.push({
         type: 'tool',
         callId: String(msg.call_id || ''),
         toolName,
@@ -1565,17 +1634,17 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         done: false,
         expanded: false,
       });
-      showResultBubble('ai', currentChatRequest.entries);
+      showResultBubble('ai', req.entries);
       return;
     }
 
     if (msg.type === 'tool_result'){
-      if (!currentChatRequest.entries) currentChatRequest.entries = [];
+      if (!req.entries) req.entries = [];
       const callId = String(msg.call_id || '');
       let target = null;
       if (callId) {
-        for (let i = currentChatRequest.entries.length - 1; i >= 0; i -= 1){
-          const item = currentChatRequest.entries[i];
+        for (let i = req.entries.length - 1; i >= 0; i -= 1){
+          const item = req.entries[i];
           if (item && item.type === 'tool' && String(item.callId || '') === callId) {
             target = item;
             break;
@@ -1583,8 +1652,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         }
       }
       if (!target) {
-        for (let i = currentChatRequest.entries.length - 1; i >= 0; i -= 1){
-          const item = currentChatRequest.entries[i];
+        for (let i = req.entries.length - 1; i >= 0; i -= 1){
+          const item = req.entries[i];
           if (item && item.type === 'tool' && String(item.toolName || '') === String(msg.tool_name || '') && !item.done) {
             target = item;
             break;
@@ -1601,52 +1670,52 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           done: false,
           expanded: false,
         };
-        currentChatRequest.entries.push(target);
+        req.entries.push(target);
       }
       target.output = String(msg.output || '');
       target.done = true;
-      showResultBubble('ai', currentChatRequest.entries);
+      showResultBubble('ai', req.entries);
       return;
     }
 
     if (msg.type === 'reasoning_delta'){
-      if (!currentChatRequest.entries) currentChatRequest.entries = [];
-      const lastEntry = currentChatRequest.entries[currentChatRequest.entries.length - 1];
+      if (!req.entries) req.entries = [];
+      const lastEntry = req.entries[req.entries.length - 1];
       if (lastEntry && lastEntry.type === 'reasoning') {
         lastEntry.text = String(lastEntry.text || '') + (msg.content || '');
         // Preserve expanded state from asrBubbleState
         if (Array.isArray(asrBubbleState.entries)) {
-          const idx = currentChatRequest.entries.indexOf(lastEntry);
+          const idx = req.entries.indexOf(lastEntry);
           if (idx >= 0 && asrBubbleState.entries[idx]) {
             lastEntry.expanded = !!asrBubbleState.entries[idx].expanded;
           }
         }
       } else {
-        currentChatRequest.entries.push({ type: 'reasoning', text: msg.content || '', expanded: false });
+        req.entries.push({ type: 'reasoning', text: msg.content || '', expanded: false });
       }
-      showResultBubble('ai', currentChatRequest.entries);
+      showResultBubble('ai', req.entries);
       return;
     }
 
     if (msg.type === 'delta'){
       const chunk = normalizeTtsText(msg.content || '');
-      const visibleChunk = consumeMotionTokens(currentChatRequest, chunk);
+      const visibleChunk = consumeMotionTokens(req, chunk);
       if (!visibleChunk) {
         return;
       }
-      currentChatRequest.replyText += visibleChunk;
-      currentChatRequest.pendingBuffer += visibleChunk;
-      if (!currentChatRequest.entries) currentChatRequest.entries = [];
-      const lastEntry = currentChatRequest.entries[currentChatRequest.entries.length - 1];
+      req.replyText += visibleChunk;
+      req.pendingBuffer += visibleChunk;
+      if (!req.entries) req.entries = [];
+      const lastEntry = req.entries[req.entries.length - 1];
       if (lastEntry && lastEntry.type === 'text') {
         lastEntry.text = String(lastEntry.text || '') + visibleChunk;
       } else {
-        currentChatRequest.entries.push({ type: 'text', text: visibleChunk });
+        req.entries.push({ type: 'text', text: visibleChunk });
       }
-      showResultBubble('ai', currentChatRequest.entries);
-      const split = extractCompletedSentences(currentChatRequest.pendingBuffer);
-      currentChatRequest.pendingBuffer = split.rest;
-      console.log("收到增量回复，当前累计文本：", currentChatRequest.replyText);
+      showResultBubble('ai', req.entries);
+      const split = extractCompletedSentences(req.pendingBuffer);
+      req.pendingBuffer = split.rest;
+      console.log("收到增量回复，当前累计文本：", req.replyText);
       for (const sentence of split.completed){
         enqueueStreamTtsSentence(sentence, getCurrentTtsLang());
       }
@@ -1654,10 +1723,10 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     }
 
     if (msg.type === 'done'){
-      const request = currentChatRequest;
-      let reply = stripMotionTokens(currentChatRequest.replyText || '');
-      currentChatRequest.replyText = reply;
-      currentChatRequest.motionTokenBuffer = '';
+      const request = currentChatRequest || passiveChatRequest;
+      let reply = stripMotionTokens(request.replyText || '');
+      request.replyText = reply;
+      request.motionTokenBuffer = '';
 
       // If there were no delta messages (entries empty), chunk the final reply
       // into sentences, display them and enqueue TTS for each chunk.
@@ -1684,22 +1753,29 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           }
         }catch(e){ console.warn('chunking done reply failed', e); }
       } else {
-        if (currentChatRequest.pendingBuffer && currentChatRequest.pendingBuffer.trim()){
-          await enqueueStreamTtsSentence(currentChatRequest.pendingBuffer.trim(), getCurrentTtsLang());
+        if (request.pendingBuffer && request.pendingBuffer.trim()){
+          await enqueueStreamTtsSentence(request.pendingBuffer.trim(), getCurrentTtsLang());
         }
       }
 
-      currentChatRequest.pendingBuffer = '';
-      agentIsProcessing = false;
-      if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
-      if (textChatStatus) textChatStatus.textContent = '文字已发送';
-      showResultBubble('ai', currentChatRequest.entries);
-      currentChatRequest = null;
-      request.resolve(reply);
-      if (request.resumeAfter){
-        waitForStreamTtsDrain()
-          .then(()=>{ resumeRecording(); })
-          .catch((e)=>{ console.warn('stream TTS drain failed', e); resumeRecording(); });
+      request.pendingBuffer = '';
+      if (!request.passive) agentIsProcessing = false;
+      showResultBubble('ai', request.entries);
+      if (request.passive){
+        // 后端主动推送的流（触发器/Nimble）：展示完成后仅清被动会话，
+        // 不触碰主动聊天的 currentChatRequest，也不 resolve。
+        if (chatStatusEl) chatStatusEl.textContent = '就绪';
+        passiveChatRequest = null;
+      } else {
+        if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
+        if (textChatStatus) textChatStatus.textContent = '文字已发送';
+        currentChatRequest = null;
+        request.resolve(reply);
+        if (request.resumeAfter){
+          waitForStreamTtsDrain()
+            .then(()=>{ resumeRecording(); })
+            .catch((e)=>{ console.warn('stream TTS drain failed', e); resumeRecording(); });
+        }
       }
       return;
     }
@@ -1707,18 +1783,25 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     if (msg.type === 'interrupted'){
       if (chatStatusEl) chatStatusEl.textContent = '已中断';
       if (textChatStatus) textChatStatus.textContent = '已中断';
-      showResultBubble('error', '(已中断)');
-      agentIsProcessing = false;
-      if (currentChatRequest.resumeAfter){
+      const reqI = currentChatRequest || passiveChatRequest;
+      if (reqI && !reqI.passive) agentIsProcessing = false;
+      if (reqI && reqI.resumeAfter){
         resumeRecording();
-        currentChatRequest.resumeAfter = false;
+        reqI.resumeAfter = false;
       }
-      currentChatRequest.reject(new Error('Stream interrupted'));
-      currentChatRequest = null;
+      if (reqI && reqI.passive){
+        passiveChatRequest = null;
+      } else if (currentChatRequest){
+        currentChatRequest.reject(new Error('Stream interrupted'));
+        currentChatRequest = null;
+      }
       return;
     }
 
     if (msg.type === 'interrupt_ack'){
+      if (interruptAckResolver){
+        interruptAckResolver();
+      }
       return;
     }
 
@@ -1726,11 +1809,16 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       if (chatStatusEl) chatStatusEl.textContent = '聊天错误';
       if (textChatStatus) textChatStatus.textContent = '聊天错误';
       showResultBubble('error', msg.error || '未知聊天错误');
-      if (currentChatRequest.resumeAfter){
+      const reqE = currentChatRequest || passiveChatRequest;
+      if (reqE && reqE.resumeAfter){
         resumeRecording();
       }
-      currentChatRequest.reject(new Error(msg.error || '未知聊天错误'));
-      currentChatRequest = null;
+      if (reqE && reqE.passive){
+        passiveChatRequest = null;
+      } else if (currentChatRequest){
+        currentChatRequest.reject(new Error(msg.error || '未知聊天错误'));
+        currentChatRequest = null;
+      }
     }
   }
 
@@ -1790,8 +1878,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     }
     // Auto-interrupt if agent is currently processing
     if (agentIsProcessing) {
-      interruptAgent();
-      await new Promise(r => setTimeout(r, 80));
+      await interruptAgentAndWait();
     }
     textChatSending = true;
     textChatSendBtn.disabled = true;
@@ -2348,6 +2435,11 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   async function startRecording(){
     paused = false;
     pausedStopped = false;
+    // 若 AI 正在流式输出，先自动打断并等待确认，再开始录音，
+    // 避免用户说话内容与 AI 回复在 TTS/流式输出上冲突
+    if (agentIsProcessing) {
+      await interruptAgentAndWait();
+    }
     await startMicAsr();
   }
 
@@ -3323,5 +3415,10 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   // ── 直播模式（已抽取到 libs/live-mode.js） ──
   const liveModeCtrl = initLiveMode();
   liveModeCtrl.start();
+
+  // ── 常驻聊天 WebSocket ──
+  // 保持 /faust/chat 连接，使后端触发器（Nimble / Public API / 定时任务等）
+  // 唤醒 Agent 的回复能实时推送到前端显示与 TTS。
+  ensureChatWsPersistent();
 
 })();

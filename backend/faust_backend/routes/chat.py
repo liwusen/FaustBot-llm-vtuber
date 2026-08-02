@@ -167,8 +167,10 @@ async def _replace_session_with_summary(summary: str) -> None:
         await state.subagent_manager.reset_persistent_state()
     reset_output_store(clear_persisted=True)
     checkpoint = empty_checkpoint()
+    state.makeup_init_prompt()#更新 PROMPT
     checkpoint["channel_values"]["messages"] = [
-        SystemMessage(content=f"你的压缩后的上下文:\n{summary}")
+        SystemMessage(content=state.PROMPT),
+        HumanMessage(content=f"你的压缩后的历史对话:\n{summary}")
     ]
     checkpoint["updated_channels"] = ["messages"]
     config = {

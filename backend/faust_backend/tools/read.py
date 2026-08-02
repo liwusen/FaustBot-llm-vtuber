@@ -46,7 +46,7 @@ IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", 
 
 @register
 @tool
-def read(uri: str, *, force_plain_text: bool = False) -> str:
+def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     """Read a file, directory, tool output, or memory document — the universal read tool.
 
     This is your PRIMARY tool for inspecting anything on disk or in memory.
@@ -112,10 +112,22 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
     - Use `force_plain_text=True` when: you only need the image metadata, or when
       you know the current model cannot process images and you want to save context.
 
+    **Showing line numbers:**
+    - `read("src/main.py:50-100", show_line_number=True)` → returns lines 50-100
+      with each line prefixed by its ABSOLUTE line number in the original file:
+      `50:def foo():`, `51:    return 1`.
+    - Line numbers are always absolute (line 1 = first line of the file), even
+      when the selector is a negative offset or the result is truncated.
+    - Use this when: you need to reference or edit exact lines later (e.g. with
+      the edit tool), or when a range's absolute position matters.
+
     Args:
         uri: Path or URI with optional :line-selector suffix.
         force_plain_text: If True, images and multimodal artifacts return only
                           text description (no base64 data). Defaults to False.
+        show_line_number: If True, prefix each output line with its absolute
+                          line number (e.g. "36:print(xxx)"). Only applies to
+                          line-ranged text output. Defaults to False.
 
     Returns:
         For files: structural summary (code) or first 300 lines; or specified range.
@@ -127,7 +139,7 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
         For skill://: skill files and directory listings.
         For img_source://: screenshot or camera images (multimodal).
     """
-    log.info("read INPUT uri=%s force_plain_text=%s", uri, force_plain_text)
+    log.info("read INPUT uri=%s force_plain_text=%s show_line_number=%s", uri, force_plain_text, show_line_number)
     parsed = parse(uri)
     log.debug(
         "read parsed: scheme=%s path=%r selector=%r force_plain_text=%r",
@@ -138,32 +150,32 @@ def read(uri: str, *, force_plain_text: bool = False) -> str:
     )
 
     if parsed.scheme == SCHEME_ARTIFACT:
-        result = _read_artifact(parsed, force_plain_text=force_plain_text)
+        result = _read_artifact(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_MEMORY:
-        result = _read_memory(parsed, force_plain_text=force_plain_text)
+        result = _read_memory(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_SKILL:
-        result = _read_skill(parsed, force_plain_text=force_plain_text)
+        result = _read_skill(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_FAUSTBOT:
-        result = _read_faustbot(parsed, force_plain_text=force_plain_text)
+        result = _read_faustbot(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_IMG_SOURCE:
-        result = _read_img_source(parsed, force_plain_text=force_plain_text)
+        result = _read_img_source(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     else:
-        result = _read_file(parsed, force_plain_text=force_plain_text)
+        result = _read_file(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
 
 
-def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:
+def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     store = get_output_store()
     output_id = parsed.path
     if not output_id:
@@ -179,7 +191,7 @@ def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:
         return f"[找不到 artifact: {output_id}]"
 
     if parsed.selector_lines:
-        return _apply_selector_to_text(art.content, parsed.selector_lines)
+        return _apply_selector_to_text(art.content, parsed.selector_lines, show_line_number=show_line_number)
 
     # Image/multimodal artifacts: return plain text if requested
     if force_plain_text and art.content_type in ("image", "multimodal"):
@@ -188,7 +200,7 @@ def _read_artifact(parsed, *, force_plain_text: bool = False) -> str:
     return art.get()
 
 
-def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
+def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -242,11 +254,11 @@ def _read_memory(parsed, *, force_plain_text: bool = False) -> str:
 
     content = result.get("content", "")
     if parsed.selector_lines:
-        return _apply_selector_to_text(content, parsed.selector_lines)
+        return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)
     return content
 
 
-def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
+def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     del force_plain_text
     from faust_backend.runtime import state
 
@@ -309,7 +321,7 @@ def _read_skill(parsed, *, force_plain_text: bool = False) -> str:
     return _read_file(parse(file_uri))
 
 
-def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
+def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     del force_plain_text
     raw_path = str(parsed.path or "").strip("/")
     vfs = get_faustbot_vfs(refresh=True)
@@ -343,10 +355,10 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False) -> str:
     content = run_coro_sync(vfs.read_text(normalized, default=""))
     if not content:
         return f"[未知 faustbot 资源: {raw_path}]"
-    return _apply_selector_to_text(content, parsed.selector_lines)
+    return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)
 
 
-def _read_img_source(parsed, *, force_plain_text: bool = False) -> str:
+def _read_img_source(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     path = str(parsed.path or "").strip("/")
 
     if not path or parsed.is_dir:
@@ -537,7 +549,10 @@ def _extract_markdown_section(content: str, section_title: str) -> str:
 
 
 def _apply_selector_to_text(
-    content: str, selector_lines: tuple[int, int] | None
+    content: str,
+    selector_lines: tuple[int, int] | None,
+    *,
+    show_line_number: bool = False,
 ) -> str:
     if not selector_lines:
         return content
@@ -557,10 +572,17 @@ def _apply_selector_to_text(
         resolved_start, resolved_end = resolved_end, resolved_start
     resolved_start = min(resolved_start, len(lines))
     resolved_end = min(resolved_end, len(lines))
-    return "\n".join(lines[resolved_start - 1 : resolved_end])
+    selected = lines[resolved_start - 1 : resolved_end]
+    if show_line_number:
+        # 行号始终为文件中的绝对行号（首行=1），与选择器写法无关
+        return "\n".join(
+            f"{resolved_start + i}:{line}"
+            for i, line in enumerate(selected)
+        )
+    return "\n".join(selected)
 
 
-def _read_file(parsed, *, force_plain_text: bool = False) -> str:
+def _read_file(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     path_str = parsed.path
 
     # Empty path → current directory
@@ -597,7 +619,7 @@ def _read_file(parsed, *, force_plain_text: bool = False) -> str:
         return f"读取文件出错: {e}"
 
     if parsed.selector_lines:
-        return _apply_selector_to_text(content, parsed.selector_lines)
+        return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)
 
     # For code files, return structural summary
     if file_path.suffix in (

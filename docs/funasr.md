@@ -4,9 +4,8 @@
 
 2. 打开组件页面
 
-   ![](assets/comp.png)
 
-3. 在 FunASR (ASR) 模块中，使用复选框选择使用哪种 PyTorch 推理框架
+3. 使用复选框选择使用哪种 PyTorch 推理框架
 
    包括 cpu, cu121, cu128, cu130
 

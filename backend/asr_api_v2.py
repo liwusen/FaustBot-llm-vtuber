@@ -10,12 +10,36 @@ import sys
 import re
 
 from datetime import datetime
-from faust_backend.logger import get_logger
 import faust_backend.config_loader as conf
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-log = get_logger("faust.asr")
+# ASR 服务是独立进程，使用标准 logging 写独立日志文件 faust_asr.log，
+# 避免与主进程共享 faust.log 导致 Windows 轮转时文件被占用（WinError 32）。
+import logging
+import logging.handlers
+from pathlib import Path
+
+_LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+log = logging.getLogger("faust_asr")
+log.setLevel(logging.INFO)
+if not log.handlers:
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)-7s] %(name)s: %(message)s")
+    _fh = logging.handlers.RotatingFileHandler(
+        str(_LOG_DIR / "faust_asr.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+        delay=True,
+    )
+    _fh.setLevel(logging.INFO)
+    _fh.setFormatter(_fmt)
+    _sh = logging.StreamHandler(sys.stdout)
+    _sh.setLevel(logging.INFO)
+    _sh.setFormatter(_fmt)
+    log.addHandler(_fh)
+    log.addHandler(_sh)
 
 # 启动时根据配置决定使用哪个 ASR 引擎：funasr 走 FunASR，其余（默认 whisper）走 OpenAI Whisper。
 ENGINE = "funasr" if str(conf.ASR_MODE or "whisper").strip().lower() == "funasr" else "whisper"

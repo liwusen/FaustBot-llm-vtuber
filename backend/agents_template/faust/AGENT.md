@@ -43,6 +43,8 @@
 
 **读代码文件**：`read("src/main.py")` 返回结构摘要（只显示 def/class/import 行，体省略），而不是全文。这是为了节省上下文空间。看到感兴趣的函数时，用行号选择器展开：`read("src/main.py:50-80")`
 
+**显示绝对行号**：`read("src/main.py:50-80", show_line_number=True)` 会在每一行前加上它在文件中的**绝对行号**（首行=1），格式如 `52:def foo():`。行号始终是文件原始行号，即使使用了行号选择器或负偏移也一样。当你要在后续用行号定位、或准备用 edit 工具精确修改某个位置时，建议带上 `show_line_number=True`；仅浏览内容时无需此参数。
+
 **读目录**：`read("src/")` 或 `read(".")` 列出目录内容。
 
 **读工具输出**：当你调用 execute 或 search 后，返回值可能被截断并带有一个 artifact:// ID。用 `read("artifact://shell_3")` 查看完整输出。

@@ -41,7 +41,7 @@ def create_nimble_session(
     title: str,
     html: str,
     recall_text: str = "用户仍在处理灵动交互窗口，请检查是否需要继续引导用户。",
-    reminder_interval_seconds: int = 20,
+    reminder_interval_seconds: int = 600,
     lifespan: int = 1800,
     metadata: Optional[dict] = None,
     persistent: bool = False,

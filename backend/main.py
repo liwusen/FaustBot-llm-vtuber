@@ -55,6 +55,7 @@ from faust_backend.routes.autocomplete import router as autocomplete_router
 from faust_backend.routes.logger_ws import router as logger_ws_router
 from faust_backend.routes.subagents import router as subagents_router
 from faust_backend.routes.debugging import router as debugging_router
+from faust_backend.routes.public_api import router as public_api_router
 _t.end("chat_routes")
 
 # ── 组件管理路由 ──
@@ -111,15 +112,16 @@ routers = [
     logger_ws_router,
     subagents_router,
     debugging_router,
+    public_api_router,
+    memory_api.router,  # 内部 memory API
+    update_api.router,  # 内部 update API
+    live_api.router,  # 内部 live API
 ]
 for r in routers:
     app.include_router(r)
 
 # ── 注册外部路由 ──
 araya_api.register_araya_routes(app)
-app.include_router(live_api.router)
-app.include_router(update_api.router)
-app.include_router(memory_api.router)
 edge_tts_api.register_edge_tts_routes(app)  # TODO: 以上几个路由应该使用router注册
 # ── 插件前端静态资源挂载 ──
 _t.begin("staticfiles")
