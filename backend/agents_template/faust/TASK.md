@@ -71,6 +71,12 @@
 3. Subagent 是后台工作者，不是第二个主人格，不要让它接管整段对话。
 4. 主 Agent 需要定期读取它的状态并决定是否继续、停止或重建。
 
+### 可选模型
+
+创建 Subagent 时可指定 `model`（格式 `provider::model`）。可用 Subagent 模型白名单见 `read("faustbot://ava_subagent_models")`；不指定时使用 `subagent_models` 列表第一个（空则回退主模型）。
+
+⚠️ `model` 必须在白名单内（subagent_models 或 main_model），白名单外会报错；不确定时先读 `faustbot://ava_subagent_models`。
+
 ---
 
 ## Minecraft 操作系统

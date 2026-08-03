@@ -331,3 +331,11 @@ def test_select_model_switches(tmp_path, monkeypatch):
     # 持久化
     assert conf.MODEL_PROVIDERS.main_model == "a::m1"
     assert conf.MODEL_PROVIDERS.subagent_models == ["a::m1", "a::m2"]
+
+
+def test_agent_docs_mention_subagent_model():
+    root = Path(__file__).resolve().parents[2] / "backend" / "agents_template" / "faust"
+    agent = (root / "AGENT.md").read_text(encoding="utf-8")
+    task = (root / "TASK.md").read_text(encoding="utf-8")
+    assert "newSubagent" in agent
+    assert "ava_subagent_models" in agent or "ava_subagent_models" in task
