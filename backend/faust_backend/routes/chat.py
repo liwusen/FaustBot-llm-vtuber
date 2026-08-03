@@ -110,7 +110,9 @@ async def _session_token_summary() -> str:
     messages = await _get_checkpoint_messages()
     if not messages:
         return "当前会话没有可统计的上下文。"
-    chat_model = _build_chat_model(model_name=conf.CHAT_MODEL)
+    from faust_backend.runtime import state as runtime_state
+    _providers = runtime_state.get_model_providers()
+    chat_model = await _build_chat_model(model_name=_providers.main_model)
     try:
         total = chat_model.get_num_tokens_from_messages(messages)
         return f"当前会话 messages={len(messages)}，估算 tokens={total}"
@@ -139,7 +141,9 @@ async def _compact_session_stream(websocket: WebSocket) -> str:
     if not messages:
         return "当前会话没有可压缩的上下文。"
     transcript = "\n\n".join(_message_to_plain_text(message) for message in messages)
-    llm = _build_chat_model(model_name=conf.CHAT_MODEL)
+    from faust_backend.runtime import state as runtime_state
+    _providers = runtime_state.get_model_providers()
+    llm = await _build_chat_model(model_name=_providers.main_model)
     chunks: list[str] = []
     payload = [
         SystemMessage(content=COMPACT_SYSTEM_PROMPT),

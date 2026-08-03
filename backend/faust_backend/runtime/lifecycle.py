@@ -350,10 +350,13 @@ async def rebuild_runtime(
     async with state.agent_lock:
         try:
             conf.reload_configs()
-            os.environ["DEEPSEEK_API_KEY"] = conf.CHAT_API_KEY
+            from faust_backend.runtime import state as runtime_state
+            from faust_backend.provider import get_main_credentials
+            _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
+            os.environ["DEEPSEEK_API_KEY"] = _api_key
             os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
-            os.environ["OPENAI_API_KEY"] = conf.CHAT_API_KEY
-            os.environ["OPENAI_BASE_URL"] = conf.CHAT_API_BASE
+            os.environ["OPENAI_API_KEY"] = _api_key
+            os.environ["OPENAI_BASE_URL"] = _api_base
             state.AGENT_NAME = conf.AGENT_NAME
             state.AGENT_ROOT = os.path.join(
                 conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}"

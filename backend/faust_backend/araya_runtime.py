@@ -588,14 +588,17 @@ class ArayaRuntime:
         ]
 
     def _init_agent(self) -> None:
+        from faust_backend.runtime import state as runtime_state
+        from faust_backend.provider import get_main_credentials
+        _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
         self._chat_model = ChatOpenAI(
-            model=conf.CHAT_MODEL,
-            api_key=conf.CHAT_API_KEY,
-            base_url=conf.CHAT_API_BASE,
+            model=_model_name,
+            api_key=_api_key,
+            base_url=_api_base,
             request_timeout=30,
             max_retries=1,
         )
-        log.info("Creating Araya agent with model: %s", conf.CHAT_MODEL)
+        log.info("Creating Araya agent with model: %s", _model_name)
         self._agent = create_agent(
             model=self._chat_model,
             tools=self._build_tools(),

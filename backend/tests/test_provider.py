@@ -47,8 +47,8 @@ def test_remove_model_from_provider():
 def test_loads_dumps_roundtrip(tmp_path):
     p = make_providers()
     path = tmp_path / "provider.private.json"
-    asyncio.run(dumps(p, str(path)))
-    loaded = asyncio.run(loads(str(path)))
+    dumps(p, str(path))
+    loaded = loads(str(path))
     assert loaded.main_model == "deepseek::deepseek-v4-pro"
     assert loaded.subagent_models == ["deepseek::deepseek-v4", "qwen::qwen-7b-chat"]
     assert loaded.providers[0].key == "sk-test"
@@ -58,7 +58,7 @@ def test_loads_dumps_roundtrip(tmp_path):
 def test_loads_empty_file(tmp_path):
     path = tmp_path / "provider.private.json"
     path.write_text("{}", encoding="utf-8")
-    loaded = asyncio.run(loads(str(path)))
+    loaded = loads(str(path))
     assert loaded.providers == []
     assert loaded.main_model is None
 
@@ -236,3 +236,27 @@ def test_subagent_model_validation():
     assert get_default_subagent_model(p) == "deepseek::deepseek-v4"
     p.subagent_models = []
     assert get_default_subagent_model(p) == "deepseek::deepseek-v4-pro"  # 回退 main_model
+
+
+def test_no_chat_global_references():
+    """全后端不应再引用 CHAT_MODEL/CHAT_API_BASE/CHAT_API_KEY 全局。"""
+    root = Path(__file__).resolve().parents[2] / "backend" / "faust_backend"
+    offenders = []
+    for py in root.rglob("*.py"):
+        if "__pycache__" in py.parts:
+            continue
+        text = py.read_text(encoding="utf-8", errors="replace")
+        for pat in ("conf.CHAT_MODEL", "conf.CHAT_API_BASE", "conf.CHAT_API_KEY",
+                    "CHAT_MODEL", "CHAT_API_BASE", "CHAT_API_KEY"):
+            if pat in text:
+                offenders.append((py.relative_to(root).as_posix(), pat))
+    # [R10] 豁免：admin_runtime 的 OBSOLETE 列表、config_loader 迁移逻辑、
+    # provider.py 注释、memory/eval 的 CLI 帮助文本
+    allowed = {
+        "admin_runtime.py",
+        "config_loader.py",
+        "provider.py",
+        "memory/eval/cli.py",
+    }
+    real = [o for o in offenders if o[0] not in allowed]
+    assert not real, f"CHAT_* still referenced: {real}"

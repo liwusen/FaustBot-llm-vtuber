@@ -89,113 +89,93 @@ class TestReasoningChatOpenAI:
 
 class TestBuildChatModel:
     """Verify that _build_chat_model() chooses the right class and passes
-    correct kwargs.
+    correct kwargs, driven by the ModelProviders instance (provider::model spec).
 
-    We patch ChatOpenAI/ReasoningChatOpenAI to capture usage counts
+    We patch build_ReasoningChatOpenAI_from_spec to capture usage counts
     and kwargs.
     """
 
-    @pytest.fixture(autouse=True)
-    def _setup_conf_mocks(self):
-        import faust_backend.config_loader as conf
-        self._conf = conf
-        self._saved = {}
-        for key in ("CHAT_API_KEY", "CHAT_API_BASE", "THINKING_ENABLED",
-                     "THINKING_PRESET", "THINKING_INTENSITY"):
-            self._saved[key] = getattr(conf, key, None)
-        conf.CHAT_API_KEY = "test-key"
-        conf.CHAT_API_BASE = "https://test.api/v1"
     def _call_and_capture(self, **overrides: Any) -> dict:
-        """Set conf overrides, call _build_chat_model, return call info."""
-        for k, v in overrides.items():
-            setattr(self._conf, k, v)
+        """Build a fake ModelProviders and call _build_chat_model."""
+        import asyncio
+        from unittest.mock import patch
 
+        from faust_backend.provider import ModelProviders, new_provider
         from faust_backend.runtime.lifecycle import _build_chat_model
 
-        orig_chat = MagicMock()
-        orig_reasoning = MagicMock()
+        providers = ModelProviders()
+        new_provider(providers, "test", "https://test.api/v1", "test-key")
+        providers.main_model = "test::gpt-4o"
 
-        with patch("faust_backend.runtime.lifecycle.ChatOpenAI", return_value=orig_chat) as mock_chat, \
-             patch("faust_backend.thinking.ReasoningChatOpenAI",
-                   return_value=orig_reasoning) as mock_reasoning:
-            result = _build_chat_model(model_name="gpt-4o")
+        captured: dict[str, Any] = {}
 
-            if mock_reasoning.called:
-                return {
-                    "class": "ReasoningChatOpenAI",
-                    "kwargs": mock_reasoning.call_args.kwargs,
-                    "instance": result,
-                }
-            if mock_chat.called:
-                return {
-                    "class": "ChatOpenAI",
-                    "kwargs": mock_chat.call_args.kwargs,
-                    "instance": result,
-                }
-            return {"class": None, "kwargs": {}, "instance": result}
+        async def fake_build(provs, spec="", intensity=None):
+            captured["spec"] = spec
+            captured["intensity"] = intensity
+            return {"spec": spec, "intensity": intensity}
 
-    def test_uses_chatopenai_when_disabled(self):
-        info = self._call_and_capture(THINKING_ENABLED=False, THINKING_PRESET="openai")
-        assert info["class"] == "ChatOpenAI"
+        with patch(
+            "faust_backend.provider.build_ReasoningChatOpenAI_from_spec",
+            side_effect=fake_build,
+        ) as mock_build, patch(
+            "faust_backend.runtime.state.get_model_providers",
+            return_value=providers,
+        ):
+            result = asyncio.run(_build_chat_model(model_name="test::gpt-4o"))
+            return {"mock_build": mock_build, "captured": captured, "result": result}
 
-    def test_uses_chatopenai_when_preset_none(self):
-        info = self._call_and_capture(THINKING_ENABLED=True, THINKING_PRESET="none")
-        assert info["class"] == "ChatOpenAI"
+    def test_thinking_enabled_by_default_provider(self):
+        info = self._call_and_capture()
+        assert info["captured"]["intensity"] == "medium"  # thinking_type != none
 
-    def test_uses_reasoning_when_enabled(self):
-        info = self._call_and_capture(THINKING_ENABLED=True, THINKING_PRESET="openai")
-        assert info["class"] == "ReasoningChatOpenAI"
+    def test_thinking_disabled_when_type_none(self):
+        from faust_backend.provider import ModelProviders, new_provider
+        from faust_backend.runtime.lifecycle import _build_chat_model
+        import asyncio
+        from unittest.mock import patch
 
-    def test_no_thinking_when_disabled(self):
-        info = self._call_and_capture(THINKING_ENABLED=False, THINKING_PRESET="openai")
-        kwargs = info["kwargs"]
-        assert "reasoning_effort" not in kwargs
-        assert "extra_body" not in kwargs
+        providers = ModelProviders()
+        new_provider(providers, "test", "https://test.api/v1", "test-key")
+        providers.providers[0].thinking_type = "none"
+        providers.main_model = "test::gpt-4o"
 
-    def test_no_thinking_when_preset_none(self):
-        info = self._call_and_capture(THINKING_ENABLED=True, THINKING_PRESET="none")
-        kwargs = info["kwargs"]
-        assert "reasoning_effort" not in kwargs
-        assert "extra_body" not in kwargs
+        captured: dict[str, Any] = {}
 
-    def test_openai_uses_reasoning_effort(self):
-        info = self._call_and_capture(THINKING_ENABLED=True, THINKING_PRESET="openai")
-        kwargs = info["kwargs"]
-        assert kwargs.get("reasoning_effort")!=None
+        async def fake_build(provs, spec="", intensity=None):
+            captured["intensity"] = intensity
+            return object()
 
-    def test_qwen_uses_extra_body(self):
-        info = self._call_and_capture(THINKING_ENABLED=True, THINKING_PRESET="qwen")
-        kwargs = info["kwargs"]
-        assert kwargs.get("extra_body")["enable_thinking"]==True
+        with patch(
+            "faust_backend.provider.build_ReasoningChatOpenAI_from_spec",
+            side_effect=fake_build,
+        ), patch(
+            "faust_backend.runtime.state.get_model_providers",
+            return_value=providers,
+        ):
+            asyncio.run(_build_chat_model(model_name="test::gpt-4o"))
+        assert captured["intensity"] is None  # thinking 关闭
 
-    def test_deepseek_uses_extra_body(self):
-        info = self._call_and_capture(THINKING_ENABLED=True, THINKING_PRESET="deepseek")
-        kwargs = info["kwargs"]
-        assert kwargs.get("extra_body").get("thinking").get("type") == "enabled"
+    def test_spec_passed_through(self):
+        info = self._call_and_capture()
+        assert info["captured"]["spec"] == "test::gpt-4o"
 
-    def test_intensity_low(self):
-        info = self._call_and_capture(
-            THINKING_ENABLED=True, THINKING_PRESET="openai",
-            THINKING_INTENSITY="low")
-        kwargs = info["kwargs"]
-        assert kwargs.get("reasoning_effort") == "low"
+    def test_missing_main_model_raises(self):
+        from faust_backend.provider import ModelProviders
+        from faust_backend.runtime.lifecycle import _build_chat_model
+        import asyncio
+        from unittest.mock import patch
 
-    def test_intensity_high(self):
-        info = self._call_and_capture(
-            THINKING_ENABLED=True, THINKING_PRESET="qwen",
-            THINKING_INTENSITY="high")
-        kwargs = info["kwargs"]
-        assert kwargs.get("extra_body") == {
-            "enable_thinking": True, "thinking_level": "high"}
+        providers = ModelProviders()
 
-    def test_base_kwargs_always_present(self):
-        info = self._call_and_capture(THINKING_ENABLED=False)
-        kwargs = info["kwargs"]
-        assert kwargs.get("model") == "gpt-4o"
-        assert kwargs.get("api_key") == "test-key"
-        assert kwargs.get("base_url") == "https://test.api/v1"
-        assert kwargs.get("request_timeout") == 60
-        assert kwargs.get("max_retries") == 1
+        with patch(
+            "faust_backend.runtime.state.get_model_providers",
+            return_value=providers,
+        ):
+            try:
+                asyncio.run(_build_chat_model(model_name=None))
+                assert False, "should raise"
+            except RuntimeError as e:
+                assert "main_model" in str(e)
 
 
 # ============================================================

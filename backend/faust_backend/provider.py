@@ -171,12 +171,12 @@ def remove_model_from_provider(ModelProviders: ModelProviders, provider_name: st
         return True
     return False
 
-async def loads(path:str) -> ModelProviders:
+def loads(path:str) -> ModelProviders:
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return ModelProviders.model_validate(data)
 
-async def dumps(providers: ModelProviders, path:str):
+def dumps(providers: ModelProviders, path:str):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(providers.model_dump(), f, ensure_ascii=False, indent=4)
 

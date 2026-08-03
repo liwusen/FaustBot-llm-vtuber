@@ -62,9 +62,12 @@ def transcribe_audio(filename: str, audio_bytes: bytes, content_type: str | None
             return {"status": "success", "text": str(data.get("text"))}
         raise SpeechRuntimeError(str(data.get("message") or data.get("error") or data))
 
-    api_key = str(conf.CHAT_API_KEY or "").strip()
+    from faust_backend.runtime import state as runtime_state
+    from faust_backend.provider import get_main_credentials
+    _, _speech_key, _ = get_main_credentials(runtime_state.get_model_providers())
+    api_key = str(_speech_key or "").strip()
     if not api_key:
-        raise SpeechRuntimeError("未配置 CHAT_API_KEY")
+        raise SpeechRuntimeError("未配置 provider API key（provider.private.json）")
 
     payload: dict[str, Any] = {
         "model": conf.OPENAI_ASR_MODEL,

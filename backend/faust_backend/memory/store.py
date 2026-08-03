@@ -1465,7 +1465,10 @@ class GraphStore:
 
     def _get_openai(self) -> AsyncOpenAI:
         if self._openai_client is None:
-            api_key = conf.EMBED_API_KEY or conf.CHAT_API_KEY
+            from faust_backend.runtime import state as runtime_state
+            from faust_backend.provider import get_main_credentials
+            _, _fallback_key, _ = get_main_credentials(runtime_state.get_model_providers())
+            api_key = conf.EMBED_API_KEY or _fallback_key
             base_url = conf.EMBED_API_BASE or "https://api.openai.com/v1"
             self._openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         return self._openai_client
@@ -2075,13 +2078,15 @@ class GraphStore:
             return items
         try:
             import httpx
-            api_key = conf.CHAT_API_KEY
+            from faust_backend.runtime import state as runtime_state
+            from faust_backend.provider import get_main_credentials
+            _rmodel, _rkey, _rbase = get_main_credentials(runtime_state.get_model_providers())
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    f"{conf.CHAT_API_BASE}/rerank",
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    f"{_rbase}/rerank",
+                    headers={"Authorization": f"Bearer {_rkey}"},
                     json={
-                        "model": conf.CHAT_MODEL,
+                        "model": _rmodel,
                         "documents": texts,
                         "top_n": min(top_k * 2, len(items)),
                     },

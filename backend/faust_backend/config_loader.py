@@ -334,8 +334,7 @@ def ensure_model_providers_loaded() -> 'ModelProviders':
     path = PROVIDER_CONFIG_PATH
     if os.path.exists(path):
         try:
-            import asyncio
-            MODEL_PROVIDERS = asyncio.run(loads(path))
+            MODEL_PROVIDERS = loads(path)
             return MODEL_PROVIDERS
         except Exception as exc:  # noqa: BLE001 - 损坏文件回退到空实例
             print(f"[config_loader] provider.private.json 解析失败，使用空实例: {exc}")
@@ -362,8 +361,7 @@ def ensure_model_providers_loaded() -> 'ModelProviders':
             json.dump(private_config, f, ensure_ascii=False, indent=4)
 
     # 自动创建文件（幂等）
-    import asyncio
-    asyncio.run(dumps(MODEL_PROVIDERS, path))
+    dumps(MODEL_PROVIDERS, path)
     return MODEL_PROVIDERS
 
 
@@ -377,8 +375,7 @@ def save_model_providers() -> None:
     if MODEL_PROVIDERS is None:
         return
     from faust_backend.provider import dumps
-    import asyncio
-    asyncio.run(dumps(MODEL_PROVIDERS, PROVIDER_CONFIG_PATH))
+    dumps(MODEL_PROVIDERS, PROVIDER_CONFIG_PATH)
 
 
 _ensure_faustbot_init()

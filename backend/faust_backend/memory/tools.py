@@ -164,9 +164,12 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         import httpx
         prompt_path = Path(__file__).parent / "extraction_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
-        api_key = conf.CHAT_API_KEY or None
-        api_base = (conf.CHAT_API_BASE or None).rstrip("/")
-        api_model = conf.CHAT_MODEL or None
+        from faust_backend.runtime import state as runtime_state
+        from faust_backend.provider import get_main_credentials
+        api_model, api_key, api_base_raw = get_main_credentials(runtime_state.get_model_providers())
+        api_base = (api_base_raw or None).rstrip("/") if api_base_raw else None
+        api_key = api_key or None
+        api_model = api_model or None
         if not api_key or not api_base or not api_model:
             log.critical("LLM extraction API not configured, skipping extraction")
             raise ValueError("LLM extraction API not configured")

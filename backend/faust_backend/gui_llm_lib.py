@@ -10,18 +10,35 @@ from io import BytesIO
 import base64
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import faust_backend.config_loader as conf
-# API 配置
-API_KEY = conf.CHAT_API_KEY
-API_URL = conf.CHAT_API_BASE
+# API 配置（惰性获取，基于 main_model 对应 provider）
+def _provider_credentials():
+    from faust_backend.runtime import state as runtime_state
+    from faust_backend.provider import get_main_credentials
+    providers = runtime_state.get_model_providers()
+    _, api_key, base_url = get_main_credentials(providers)
+    return api_key, base_url
+
+
+def API_URL():
+    _, base_url = _provider_credentials()
+    return base_url
+
+
+def API_KEY():
+    api_key, _ = _provider_credentials()
+    return api_key
+
+
+def HEADERS():
+    return {
+        "Authorization": f"{API_KEY()}",
+        "Content-Type": "application/json",
+    }
+
 
 # 图像处理参数（API请求和坐标映射必须保持一致）
 MAX_PIXELS = 1280 * 28 * 28  # 1003520
 MIN_PIXELS = 4 * 28 * 28     # 3136
-
-HEADERS = {
-    "Authorization": f"{API_KEY}",
-    "Content-Type": "application/json"
-}
 
 SYSTEM_PROMPT = """## 1. 核心角色 (Core Role)
 
@@ -192,8 +209,11 @@ def get_response(image_url: str, instruction: str) -> str:
     Returns:
         str: 模型返回的内容。
     """
+    from faust_backend.runtime import state as runtime_state
+    from faust_backend.provider import get_main_credentials
+    _model_name, _, _ = get_main_credentials(runtime_state.get_model_providers())
     data = {
-        "model": conf.CHAT_MODEL,
+        "model": _model_name,
         "messages": [
             {
                 "role": "system",
@@ -219,7 +239,7 @@ def get_response(image_url: str, instruction: str) -> str:
         ]
     }
 
-    response = requests.post(API_URL, headers=HEADERS, json=data)
+    response = requests.post(API_URL(), headers=HEADERS(), json=data)
     result = response.json()
     print("[gui_llm_lib]API返回完整结果：", result)
     content = result["choices"][0]["message"]["content"]

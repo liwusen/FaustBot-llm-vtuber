@@ -22,10 +22,20 @@ async def listdir(path):
         return os.listdir(path)
     except Exception as e:
         return f"Error: {str(e)}"
-checker_agent=ChatOpenAI(model=conf.CHAT_MODEL,
-                         base_url=conf.CHAT_API_BASE,
-                         api_key=conf.CHAT_API_KEY,
-                         )
+_checker_agent = None
+
+
+def _get_checker_agent():
+    """惰性构建安全审核 LLM（基于 main_model 对应 provider）。"""
+    global _checker_agent
+    if _checker_agent is None:
+        from faust_backend.runtime import state as runtime_state
+        from faust_backend.provider import get_main_credentials
+        _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
+        if not _model_name:
+            raise RuntimeError("main_model 未配置（provider.private.json），无法创建安全审核模型")
+        _checker_agent = ChatOpenAI(model=_model_name, base_url=_api_base, api_key=_api_key)
+    return _checker_agent
 def setSecurityLevel(level):
     """设置安全级别
 
@@ -181,7 +191,7 @@ async def extract_command_information(command:str):
     
     指令正文
     指令:"""+command
-    result = await checker_agent.ainvoke([
+    result = await _get_checker_agent().ainvoke([
         SystemMessage(content=prompt)
     ], config={"callbacks": []})
     raw_content = result.content if isinstance(result.content, str) else json.dumps(result.content, ensure_ascii=False)
