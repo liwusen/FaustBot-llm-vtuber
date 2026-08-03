@@ -22,7 +22,7 @@ FaustBot 使用 OpenAI 兼容的 API 接口 (即`Openai Chat Completions`)。你
 
 API Key 是你的身份凭证，类似"密码"。从 LLM 服务商获取后填入配置文件：
 
-在 FaustBot 的 **配置中心（Configer）→ AI 服务商 → 主对话密钥** 中填入即可。
+在 FaustBot 的 **配置中心（Configer）→ AI 服务商 → 添加 Provider → API Key** 中填入即可。
 
 格式基本上是`sk-{一大串随机字符}`
 
@@ -32,7 +32,7 @@ API Key 是你的身份凭证，类似"密码"。从 LLM 服务商获取后填�
 
 这一项应该是一个https://开头的**链接**
 
-在 Configer 的 **AI 服务商 → 主对话接口地址** 中填入。
+在 Configer 的 **AI 服务商 → 添加 Provider → Base URL** 中填入。
 
 常见服务商的 Base URL：
 

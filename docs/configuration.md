@@ -16,23 +16,51 @@ Configer 左侧边栏按功能分为 13 个模块，每个模块对应一组相�
 
 这是 **唯一必须配置的模块**——没有 API 凭证，AI功能无法运行。
 
-进入 **AI 服务商** 页面：
+进入 **AI 服务商** 页面。该页面以 **Provider（服务商）** 为单位管理模型：
 
-| 配置项     | 说明                                              |
-| ------- | ----------------------------------------------- |
-| 主对话模型   | 填写模型名称，如 `gpt-4o`、`deepseek-chat`               |
-| 主对话接口地址 | 填写 API Base URL，如 `https://api.deepseek.com/v1` |
-| 主对话密钥   | 填写 API Key，如 `sk-xxxx`                          |
+### 添加 Provider
+
+点击 **添加 Provider** 按钮，在弹出的窗口中填写：
+
+| 配置项 | 说明 |
+| ---- | ----------------------------------------------- |
+| 名称 | 自定义服务商名称，如 `deepseek`、`openai` |
+| Base URL | API 接口地址，如 `https://api.deepseek.com/v1` |
+| API Key | 如 `sk-xxxx` |
+
+保存 Provider 后，可以在窗口内的 **模型管理** 中手动添加模型名，也可以点击 **自动加载** 按钮从服务商的 `/models` 接口拉取可用模型列表。
+
+### 选择主模型与 Subagent 模型
+
+保存 Provider 后，页面下方的 **Models 列表** 会汇总所有 Provider 的模型，每一行包含：
+
+| 列 | 说明 |
+| --- | --- |
+| Provider | 模型所属服务商 |
+| 模型 | 模型名 |
+| 主模型 | 单选（radio），勾选后作为主 Agent 的对话模型 |
+| Subagent | 多选（checkbox），勾选后允许作为 Subagent（子任务代理）使用 |
+| 操作 | 编辑/删除模型 |
+
+> **注意**：模型以 `服务商名::模型名`（如 `deepseek::deepseek-v4-flash`）的形式被引用，主模型只能选择一个，Subagent 模型可以勾选多个。
+
+### 保存
+
+所有 Provider 与模型的选择修改都**不会单独保存**，修改完成后点击窗口顶部的 **保存** 按钮统一生效。服务商凭证（API Key）会保存在本地配置文件中，不会随公共配置上传。
+
+### 高级：思考模式
+
+Provider 可配置思考模式（thinking），部分服务商（如 DeepSeek）的模型支持思考（reasoning）。将思考模式设为"无"可关闭思考，加快响应速度。
 
 ### 常见服务商填写示例
 
-| 服务商        | 主对话接口地址                         | 模型名                       |
-| ---------- | ------------------------------- | ------------------------- |
-| OpenAI     | `https://api.openai.com/v1`     | `gpt-4o`                  |
-| DeepSeek   | `https://api.deepseek.com/v1`   | `deepseek-chat`           |
-| 硅基流动       | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
-| OpenRouter | `https://openrouter.ai/api/v1`  | `openai/gpt-4o`           |
-| 本地 Ollama  | `http://localhost:11434/v1`     | `qwen2.5:7b`              |
+| 服务商 | Base URL | 模型名（示例） |
+| ---- | ------------------------------- | ------------------------- |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4o` |
+| 本地 Ollama | `http://localhost:11434/v1` | `qwen2.5:7b` |
 
 ## 选填配置：Embedding 模型
 
