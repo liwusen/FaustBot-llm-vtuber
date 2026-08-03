@@ -95,6 +95,9 @@ function renderNav() {
 function resetDirty() {
   state.dirty.public.clear();
   state.dirty.private.clear();
+  state.dirty.providers = false;
+  state.dirty.mainModel = false;
+  state.dirty.subagentModels = false;
   refreshDirtyUI();
 }
 
@@ -244,7 +247,10 @@ async function reloadAll() {
 }
 
 async function saveConfig() {
-  const dirtyCount = state.dirty.public.size + state.dirty.private.size;
+  const dirtyCount = state.dirty.public.size + state.dirty.private.size
+    + (state.dirty.providers ? 1 : 0)
+    + (state.dirty.mainModel ? 1 : 0)
+    + (state.dirty.subagentModels ? 1 : 0);
   if (dirtyCount <= 0) {
     showBanner("info", "当前没有未保存更改。");
     return;
@@ -256,6 +262,12 @@ async function saveConfig() {
       public: Object.fromEntries(state.dirty.public.entries()),
       private: Object.fromEntries(state.dirty.private.entries()),
     };
+    // [统一保存] provider 配置随公共配置一起提交
+    if (state.dirty.providers || state.dirty.mainModel || state.dirty.subagentModels) {
+      payload.providers = state.providers;
+      payload.main_model = state.mainModel;
+      payload.subagent_models = state.subagentModels;
+    }
     await cfgApi("POST", "/faust/admin/config", payload);
     const hasLive2D = LIVE2D_KEYS.some((k) => state.dirty.public.has(k));
     if (hasLive2D) {
@@ -292,7 +304,10 @@ async function applyRuntime() {
 }
 
 async function reloadFromDisk() {
-  const dirtyCount = state.dirty.public.size + state.dirty.private.size;
+  const dirtyCount = state.dirty.public.size + state.dirty.private.size
+    + (state.dirty.providers ? 1 : 0)
+    + (state.dirty.mainModel ? 1 : 0)
+    + (state.dirty.subagentModels ? 1 : 0);
   if (dirtyCount > 0) {
     const ok = window.confirm("当前有未保存修改，继续重新加载会丢失这些修改。是否继续？");
     if (!ok) return;

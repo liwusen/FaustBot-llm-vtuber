@@ -63,7 +63,10 @@ function updateValue(scope, key, nextValue) {
 }
 
 function refreshDirtyUI() {
-  const count = state.dirty.public.size + state.dirty.private.size;
+  const count = state.dirty.public.size + state.dirty.private.size
+    + (state.dirty.providers ? 1 : 0)
+    + (state.dirty.mainModel ? 1 : 0)
+    + (state.dirty.subagentModels ? 1 : 0);
   if (count <= 0) {
     els.dirtyBadge.classList.add("hidden");
     els.dirtyBadge.textContent = "0 项配置已修改";
@@ -578,115 +581,314 @@ function renderConfigModule(moduleId) {
   }
 }
 
-// ── Provider 管理向导（AI 服务商模块顶部） ──
 
-function _providerModelOptions() {
-  // 返回所有 provider 的 provider::model 拼接选项
-  const opts = [];
+// ── Provider 管理向导（AI 服务商模块顶部） ──
+// 设计：Providers 列表 + Models 列表（主模型单选 / Subagent 多选列），
+// 添加/编辑 Provider 与模型均通过 Modal 完成；所有变更写入 state 的 dirty
+// 标志，随"保存"按钮统一提交（无单独保存按钮）。
+
+function _allModelEntries() {
+  // 返回 [{provider, model, spec}] 按 provider 顺序展平
+  const out = [];
   for (const p of state.providers || []) {
     for (const m of p.models || []) {
-      opts.push({ value: `${p.name}::${m}`, label: `${p.name}::${m}` });
+      out.push({ provider: p.name, model: m, spec: `${p.name}::${m}` });
     }
   }
-  return opts;
+  return out;
 }
 
-function _makeSelect(value, options, onchange) {
-  const sel = el("select", "form-control");
-  for (const opt of options) {
-    const o = el("option", "", opt.label);
-    o.value = opt.value;
-    sel.append(o);
-  }
-  if (value) sel.value = value;
-  if (onchange) sel.addEventListener("change", onchange);
-  return sel;
+function _markProvidersDirty() {
+  state.dirty.providers = true;
+  refreshDirtyUI();
 }
+
+function _markModelsDirty() {
+  state.dirty.mainModel = true;
+  state.dirty.subagentModels = true;
+  refreshDirtyUI();
+}
+
+function rerenderAiModule() {
+  // 本地重渲染 AI 模块：不重新拉取后端（保留未保存的 provider 改动）。
+  const container = getModuleContainer("ai");
+  container.innerHTML = "";
+  setActiveContainer(container);
+  renderConfigModule("ai");
+}
+
+function _findProvider(name) {
+  return (state.providers || []).find((p) => p.name === name) || null;
+}
+
+function _saveProvidersToState(providers) {
+  state.providers = providers;
+  _markProvidersDirty();
+}
+
+// ── Provider 添加/编辑 Modal ──
+
+function openProviderModal(existing) {
+  const isEdit = !!existing;
+  const nameInput = el("input", "input");
+  nameInput.placeholder = "名称（如 deepseek）";
+  nameInput.value = existing ? existing.name : "";
+  if (isEdit) nameInput.disabled = true;  // 名称不可改（作为标识）
+  const urlInput = el("input", "input");
+  urlInput.placeholder = "Base URL（如 https://api.deepseek.com/v1）";
+  urlInput.value = existing ? existing.base_url : "";
+  const keyInput = el("input", "input");
+  keyInput.placeholder = "API Key（留空表示不变）";
+  keyInput.type = "password";
+  keyInput.value = existing && existing.key ? "********" : "";
+
+  const field = (label, node) => {
+    const box = el("div", "form-field");
+    box.append(el("label", "form-field-label", label));
+    const ctl = el("div", "form-field-control");
+    ctl.append(node);
+    box.append(ctl);
+    return box;
+  };
+
+  // 手动添加模型（Modal 内）
+  const modelInput = el("input", "input");
+  modelInput.placeholder = "模型名（如 deepseek-chat）";
+  const addModelBtn = makeButton("添加模型", () => {
+    const m = String(modelInput.value || "").trim();
+    if (!m) { showBanner("请输入模型名", "error"); return; }
+    const providers = JSON.parse(JSON.stringify(state.providers || []));
+    const pname = (existing ? existing.name : String(nameInput.value || "").trim());
+    let target = providers.find((p) => p.name === pname);
+    if (!target) {
+      // 新增场景：表单里的 provider 尚未进入 state，先按表单值占位
+      const base = String(urlInput.value || "").trim();
+      if (!pname || !base) { showBanner("请先填写名称与 Base URL", "error"); return; }
+      target = {
+        name: pname,
+        base_url: base,
+        key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null,
+        models: [],
+      };
+      providers.push(target);
+      _saveProvidersToState(providers);
+    }
+    if (!target.models) target.models = [];
+    if (target.models.includes(m)) { showBanner("模型已存在", "error"); return; }
+    target.models.push(m);
+    _saveProvidersToState(providers);
+    modelInput.value = "";
+    showBanner("模型已加入（保存后生效）", "success");
+  }, "btn btn-ghost");
+  const modelRow = el("div", "toolbar");
+  modelRow.append(modelInput, addModelBtn);
+
+  // 自动加载模型（R2 修复后 502 已解决）
+  const loadBtn = makeButton("自动加载模型", async () => {
+    const name = isEdit ? existing.name : String(nameInput.value || "").trim();
+    const base = String(urlInput.value || "").trim();
+    if (!name || !base) { showBanner("请填写名称与 Base URL", "error"); return; }
+    const key = keyInput.value && keyInput.value !== "********" ? keyInput.value : (existing ? existing.key : null);
+    try {
+      const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(name)}/load-models`,
+        null, null);
+      // 后端已把模型写入 provider.private.json；同步到本地 state
+      const pr = await cfgApi("GET", "/faust/admin/providers");
+      state.providers = pr.providers || [];
+      state.mainModel = pr.main_model || "";
+      state.subagentModels = pr.subagent_models || [];
+      _markProvidersDirty();
+      showBanner("模型加载成功: " + (r.models || []).length + " 个（保存后生效）", "success");
+    } catch (e) {
+      showBanner("模型加载失败: " + (e && e.detail ? e.detail : String(e)), "error");
+    }
+  }, "btn btn-secondary");
+
+  const bar = el("div", "toolbar");
+  bar.append(
+    makeButton("保存 Provider", () => {
+      const name = String(nameInput.value || "").trim();
+      const base = String(urlInput.value || "").trim();
+      if (!name || !base) { showBanner("名称与 Base URL 必填", "error"); return; }
+      const providers = JSON.parse(JSON.stringify(state.providers || []));
+      if (isEdit) {
+        const target = providers.find((p) => p.name === name);
+        if (target) {
+          target.base_url = base;
+          if (keyInput.value && keyInput.value !== "********") target.key = keyInput.value;
+        }
+      } else {
+        if (providers.some((p) => p.name === name)) { showBanner("Provider 已存在", "error"); return; }
+        providers.push({ name, base_url: base, key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null, models: [] });
+      }
+      _saveProvidersToState(providers);
+      closeModal();
+      rerenderAiModule();
+      showBanner(isEdit ? "Provider 已更新（保存后生效）" : "Provider 已添加（保存后生效）", "success");
+    }, "btn btn-primary"),
+    makeButton("关闭", closeModal)
+  );
+
+  const tip = el("p", "card-help", "新增 Provider 后可在下方 Models 列表勾选主模型与 Subagent 模型；所有改动随顶部「保存」统一生效。");
+  openModal(isEdit ? `编辑 Provider - ${existing.name}` : "添加 AI Provider", [
+    field("名称", nameInput),
+    field("Base URL", urlInput),
+    field("API Key", keyInput),
+    loadBtn,
+    el("h4", "card-title", "模型管理"),
+    modelRow,
+    tip,
+    bar,
+  ]);
+}
+
+// ── 模型编辑 Modal ──
+
+function openModelModal(entry) {
+  const nameInput = el("input", "input");
+  nameInput.value = entry.model;
+  const bar = el("div", "toolbar");
+  bar.append(
+    makeButton("保存", () => {
+      const newName = String(nameInput.value || "").trim();
+      if (!newName) { showBanner("模型名不能为空", "error"); return; }
+      const providers = JSON.parse(JSON.stringify(state.providers || []));
+      const target = providers.find((p) => p.name === entry.provider);
+      if (!target) { closeModal(); return; }
+      const oldSpec = entry.spec;
+      target.models = (target.models || []).map((m) => (m === entry.model ? newName : m));
+      // 同步主/Subagent 选择里的 spec 引用
+      if (state.mainModel === oldSpec) state.mainModel = `${entry.provider}::${newName}`;
+      state.subagentModels = (state.subagentModels || []).map((s) => (s === oldSpec ? `${entry.provider}::${newName}` : s));
+      _saveProvidersToState(providers);
+      _markModelsDirty();
+      closeModal();
+      rerenderAiModule();
+      showBanner("模型已重命名（保存后生效）", "success");
+    }, "btn btn-primary"),
+    makeButton("删除模型", () => {
+      const providers = JSON.parse(JSON.stringify(state.providers || []));
+      const target = providers.find((p) => p.name === entry.provider);
+      if (target) {
+        target.models = (target.models || []).filter((m) => m !== entry.model);
+      }
+      if (state.mainModel === entry.spec) state.mainModel = "";
+      state.subagentModels = (state.subagentModels || []).filter((s) => s !== entry.spec);
+      _saveProvidersToState(providers);
+      _markModelsDirty();
+      closeModal();
+      rerenderAiModule();
+      showBanner("模型已删除（保存后生效）", "success");
+    }, "btn btn-ghost"),
+    makeButton("关闭", closeModal)
+  );
+  openModal(`编辑模型 - ${entry.spec}`, [nameInput, bar]);
+}
+
+// ── 模块渲染入口 ──
 
 function renderProviderWizard() {
-  // ── provider 列表 ──
-  const rows = (state.providers || []).map((p) => [
+  // ── Providers 列表 ──
+  const providerRows = (state.providers || []).map((p) => [
     p.name,
     p.base_url,
     String((p.models || []).length),
-    makeButton("删除", async () => {
-      await cfgApi("DELETE", `/faust/admin/providers/${encodeURIComponent(p.name)}`);
-      state.providers = (await cfgApi("GET", "/faust/admin/providers")).providers || [];
-      refreshModule();
-    }, "btn btn-ghost"),
+    (() => {
+      const wrap = el("div", "toolbar compact");
+      wrap.append(
+        makeButton("编辑", () => openProviderModal(p), "btn btn-ghost"),
+        makeButton("删除", () => {
+          const providers = JSON.parse(JSON.stringify(state.providers || []));
+          const next = providers.filter((x) => x.name !== p.name);
+          _saveProvidersToState(next);
+          if (state.mainModel && state.mainModel.startsWith(`${p.name}::`)) state.mainModel = "";
+          state.subagentModels = (state.subagentModels || []).filter((s) => !s.startsWith(`${p.name}::`));
+          _markModelsDirty();
+          rerenderAiModule();
+          showBanner("Provider 已删除（保存后生效）", "success");
+        }, "btn btn-ghost")
+      );
+      return wrap;
+    })(),
   ]);
-  const listCard = makeSimpleTableCard("AI Provider 列表", ["名称", "Base URL", "模型数", "操作"], rows);
+  const providersCard = makeSimpleTableCard("AI Providers", ["名称", "Base URL", "模型数", "操作"], providerRows);
 
-  // ── 添加向导（两段式：表单 → 自动加载模型） ──
-  const form = el("div", "toolbar");
-  const nameInput = el("input", "form-control");
-  nameInput.placeholder = "名称（如 deepseek）";
-  const urlInput = el("input", "form-control");
-  urlInput.placeholder = "Base URL（如 https://api.deepseek.com/v1）";
-  const keyInput = el("input", "form-control");
-  keyInput.placeholder = "API Key";
-  keyInput.type = "password";
-  const loadBtn = makeButton("自动加载模型", async () => {
-    // [R11] 两段式失败处理：创建成功但加载失败时回滚删除半创建 provider
-    const name = String(nameInput.value || "").trim();
-    if (!name || !urlInput.value) {
-      showBanner("请填写 Provider 名称与 Base URL", "error");
-      return;
-    }
-    try {
-      await cfgApi("POST", "/faust/admin/providers", {
-        name, base_url: urlInput.value, key: keyInput.value || null,
-      });
-    } catch (e) {
-      showBanner("创建 Provider 失败: " + (e && e.detail ? e.detail : String(e)), "error");
-      return;
-    }
-    try {
-      const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(name)}/load-models`);
-      state.providers = (await cfgApi("GET", "/faust/admin/providers")).providers || [];
-      refreshModule();
-      showBanner("模型加载成功: " + (r.models || []).length + " 个", "success");
-    } catch (e) {
-      // 加载失败 → 删除半创建的 provider，避免残留
-      try { await cfgApi("DELETE", `/faust/admin/providers/${encodeURIComponent(name)}`); } catch (_e2) { /* ignore */ }
-      state.providers = (await cfgApi("GET", "/faust/admin/providers")).providers || [];
-      refreshModule();
-      showBanner("模型加载失败，已回滚该 Provider: " + (e && e.detail ? e.detail : String(e)), "error");
-    }
-  }, "btn btn-primary");
-  form.append(nameInput, urlInput, keyInput, loadBtn);
-  addSection("添加 Provider（自动加载模型）", [form]);
+  // ── Models 列表（主模型单选 / Subagent 多选） ──
+  const modelEntries = _allModelEntries();
+  const mainSelected = state.mainModel || "";
+  const subSelected = new Set(state.subagentModels || []);
 
-  // ── 主/Subagent 模型选择 ──
-  const opts = _providerModelOptions();
-  const mainSel = _makeSelect(state.mainModel || "", opts);
-  const subWrap = el("div", "toolbar");
-  const subSel = _makeSelect(state.subagentModels[0] || "", opts);
-  const saveModelBtn = makeButton("保存模型选择", async () => {
-    const main = mainSel.value;
-    const sub = subSel.value ? [subSel.value] : [];
-    if (!main) {
-      showBanner("请选择主模型", "error");
-      return;
-    }
-    try {
-      await cfgApi("POST", "/faust/admin/model/select", { main_model: main, subagent_models: sub });
-      state.mainModel = main;
-      state.subagentModels = sub;
-      showBanner("模型已切换并重建运行时", "success");
-    } catch (e) {
-      showBanner("模型切换失败: " + (e && e.detail ? e.detail : String(e)), "error");
-    }
-  }, "btn btn-primary");
-  const selectCard = el("article", "card full-span");
-  selectCard.append(el("h3", "card-title", "模型选择"));
-  const mainRow = el("div", "form-row");
-  mainRow.append(el("label", "", "主 Agent 模型"), mainSel);
-  const subRow = el("div", "form-row");
-  subRow.append(el("label", "", "Subagent 默认模型"), subSel);
-  const tip = el("p", "field-help", "Subagent 可在创建时用 newSubagent(model='provider::model') 指定；白名单见 faustbot://ava_subagent_models。");
-  selectCard.append(mainRow, subRow, tip, saveModelBtn);
-  addSection("", [selectCard]);
+  const modelRows = modelEntries.map((entry) => {
+    // 主模型 radio（现代风格 switch 单选用 radio 行）
+    const radioWrap = el("div", "switch-row");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.className = "provider-pick";
+    radio.name = "provider-main-model";
+    radio.checked = mainSelected === entry.spec;
+    radio.addEventListener("change", () => {
+      state.mainModel = radio.checked ? entry.spec : "";
+      _markModelsDirty();
+      // 不整表重渲染：radio 原生单选视觉由浏览器维护，
+      // 整表重建会导致已勾选的其它行引用失效。
+    });
+    radioWrap.append(radio);
 
-  addSection("", [listCard]);
+    // Subagent checkbox
+    const subWrap = el("div", "switch-row");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "provider-pick";
+    cb.checked = subSelected.has(entry.spec);
+    cb.addEventListener("change", () => {
+      const next = new Set(state.subagentModels || []);
+      if (cb.checked) next.add(entry.spec);
+      else next.delete(entry.spec);
+      state.subagentModels = [...next];
+      _markModelsDirty();
+      // 同上：checkbox 原生状态已更新，无需整表重建。
+    });
+    subWrap.append(cb);
+
+    const ops = el("div", "toolbar compact");
+    ops.append(makeButton("编辑", () => openModelModal(entry), "btn btn-ghost"));
+
+    return [entry.provider, entry.model, radioWrap, subWrap, ops];
+  });
+  const modelsCard = makeSimpleTableCard("Models", ["Provider", "模型", "主模型", "Subagent", "操作"], modelRows);
+
+  // ── 添加 Provider 按钮 ──
+  const addBar = el("div", "toolbar");
+  addBar.append(
+    makeButton("添加 Provider", () => openProviderModal(null), "btn btn-primary"),
+    makeButton("自动加载模型", async () => {
+      // 对当前未加载模型的 provider 逐个拉取
+      const pending = (state.providers || []).filter((p) => !(p.models && p.models.length));
+      if (!pending.length) { showBanner("没有需要加载模型的 Provider", "info"); return; }
+      let ok = 0, fail = 0;
+      for (const p of pending) {
+        try {
+          const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(p.name)}/load-models`);
+          if ((r.models || []).length) ok++;
+          else fail++;
+        } catch (e) {
+          fail++;
+        }
+      }
+      const pr = await cfgApi("GET", "/faust/admin/providers");
+      state.providers = pr.providers || [];
+      state.mainModel = pr.main_model || "";
+      state.subagentModels = pr.subagent_models || [];
+      _markProvidersDirty();
+      rerenderAiModule();
+      showBanner(`模型加载完成: 成功 ${ok} 个, 失败 ${fail} 个（保存后生效）`, fail ? "error" : "success");
+    }, "btn btn-secondary")
+  );
+
+  addSection("", [addBar]);
+  addSection("", [providersCard]);
+  addSection("", [modelsCard]);
+  if (!modelEntries.length) {
+    addSection("提示", [el("div", "empty-state", "暂无模型。添加 Provider 后点击「自动加载模型」或手动添加。")]);
+  }
 }

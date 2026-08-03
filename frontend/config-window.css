@@ -1454,3 +1454,20 @@ body {
 	color: #24418f;
 	font-weight: 600;
 }
+
+/* ── Provider 模型选择（radio/checkbox 现代风格） ── */
+.provider-pick {
+	width: 20px;
+	height: 20px;
+	accent-color: #2563eb;
+	cursor: pointer;
+	margin: 0 auto;
+	display: block;
+}
+.provider-pick:focus-visible {
+	outline: 2px solid #2563eb;
+	outline-offset: 2px;
+}
+.simple-table td .toolbar.compact {
+	justify-content: flex-start;
+}

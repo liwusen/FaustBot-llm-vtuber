@@ -4,7 +4,7 @@ const state = {
   activeModule: "overview",
   config: { public: {}, private: {} },
   original: { public: {}, private: {} },
-  dirty: { public: new Map(), private: new Map() },
+  dirty: { public: new Map(), private: new Map(), providers: false, mainModel: false, subagentModels: false },
   runtime: {},
   live2dModels: [],
   agents: [],
