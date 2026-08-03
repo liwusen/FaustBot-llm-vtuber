@@ -154,6 +154,41 @@ def test_get_provider_models_parses_openai_shape(monkeypatch):
     assert res == ["m1", "m2"]
 
 
+def test_get_provider_models_keeps_path_prefix(monkeypatch):
+    """[502 回归] base_url 带路径前缀（/v1、/compatible-mode/v1）时，models URL 必须保留前缀。"""
+    import httpx
+    from faust_backend.provider import get_provider_models_by_api
+
+    captured_url = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "m1"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kw):
+            captured_url["url"] = url
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    p = make_providers().providers[0]
+    p.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    asyncio.run(get_provider_models_by_api(p))
+    assert captured_url["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+
+
 # ── Task 2: config_loader 集成 ──
 
 
@@ -331,6 +366,59 @@ def test_select_model_switches(tmp_path, monkeypatch):
     # 持久化
     assert conf.MODEL_PROVIDERS.main_model == "a::m1"
     assert conf.MODEL_PROVIDERS.subagent_models == ["a::m1", "a::m2"]
+
+
+def test_save_config_with_providers(tmp_path, monkeypatch):
+    """[统一保存] POST /faust/admin/config 携带 providers/main_model/subagent_models 时，
+    provider 配置与公共配置一起持久化，无需单独保存。"""
+    from fastapi.testclient import TestClient
+    import faust_backend.config_loader as conf
+    import faust_backend.runtime.state as state_mod
+    import faust_backend.routes.admin_config as admin_config_mod
+    import faust_backend.admin_runtime as admin_runtime
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "CONFIG_FILE_PATH", str(tmp_path / "faust.config.json"))
+    monkeypatch.setattr(conf, "CONFIG_FILE_P_PATH", str(tmp_path / "faust.config.private.json"))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    monkeypatch.setattr(admin_runtime, "PUBLIC_CONFIG_PATH", tmp_path / "faust.config.json")
+    monkeypatch.setattr(admin_runtime, "PRIVATE_CONFIG_PATH", tmp_path / "faust.config.private.json")
+
+    async def _noop_check(*a, **kw):
+        return None
+
+    monkeypatch.setattr(
+        "faust_backend.component_manager.check_and_manage_services",
+        _noop_check,
+    )
+
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(admin_config_mod.router)
+    client = TestClient(app)
+
+    # 公共配置 + provider 配置一起提交
+    r = client.post("/faust/admin/config", json={
+        "public": {"AGENT_NAME": "faust"},
+        "providers": [
+            {"name": "p1", "base_url": "http://p1/v1", "key": "k1", "models": ["m1", "m2"]}
+        ],
+        "main_model": "p1::m1",
+        "subagent_models": ["p1::m1", "p1::m2"],
+    })
+    assert r.status_code == 200
+
+    # provider 已持久化到 provider.private.json
+    saved = json.loads((tmp_path / "provider.private.json").read_text(encoding="utf-8"))
+    assert saved["main_model"] == "p1::m1"
+    assert saved["subagent_models"] == ["p1::m1", "p1::m2"]
+    assert saved["providers"][0]["name"] == "p1"
+    assert saved["providers"][0]["key"] == "k1"
+
+    # 公共配置也已保存
+    pub = json.loads((tmp_path / "faust.config.json").read_text(encoding="utf-8"))
+    assert pub.get("AGENT_NAME") == "faust"
 
 
 def test_agent_docs_mention_subagent_model():

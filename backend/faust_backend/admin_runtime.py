@@ -196,6 +196,22 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     public_in = payload.get("public") or {}
     private_in = payload.get("private") or {}
 
+    # ── Provider 配置（与公共配置一起保存，不单独保存） ──
+    if "providers" in payload or "main_model" in payload or "subagent_models" in payload:
+        import faust_backend.config_loader as conf
+        from faust_backend.provider import ModelProviders, dumps
+        mp = conf.ensure_model_providers_loaded()
+        if "providers" in payload:
+            try:
+                mp.providers = ModelProviders(providers=payload.get("providers") or []).providers
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"providers 字段格式错误: {exc}")
+        if "main_model" in payload:
+            mp.main_model = payload.get("main_model") or None
+        if "subagent_models" in payload:
+            mp.subagent_models = payload.get("subagent_models") or None
+        dumps(mp, conf.PROVIDER_CONFIG_PATH)
+
     public_cfg = get_public_config()
     private_cfg = _read_json(PRIVATE_CONFIG_PATH, PRIVATE_CONFIG_DEFAULTS)
 

@@ -1,7 +1,6 @@
 import json
 from pydantic import BaseModel
 from typing import List, Optional
-from urllib.parse import urljoin
 from langchain_openai import ChatOpenAI
 from faust_backend.thinking import (
             ReasoningChatOpenAI,
@@ -33,11 +32,11 @@ async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
     import httpx
     headers = {"Authorization": f"Bearer {provider.key}"} if provider.key else {}
     try:
+        # 注意：不能用 urljoin(base_url, "/models")——"/models" 是绝对路径会
+        # 丢弃 base_url 的路径前缀（如 /v1、/compatible-mode/v1），导致 404/502。
+        models_url = str(provider.base_url or "").rstrip("/") + "/models"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                urljoin(provider.base_url, "/models"),
-                headers=headers,
-            )
+            response = await client.get(models_url, headers=headers)
             response.raise_for_status()
             models_data = response.json()
     except httpx.HTTPError as exc:

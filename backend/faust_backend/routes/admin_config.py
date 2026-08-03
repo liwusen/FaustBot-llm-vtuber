@@ -18,7 +18,11 @@ async def admin_save_config(payload: dict):
     from faust_backend.config_loader import config as old_config
     old_config_copy = dict(old_config)
 
-    result = admin_runtime.save_config(payload or {})
+    try:
+        result = admin_runtime.save_config(payload or {})
+    except ValueError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # 配置保存后检查 ASR / TTS 模式变化，按需启动/关闭/重启服务
     from faust_backend.config_loader import config as new_config
