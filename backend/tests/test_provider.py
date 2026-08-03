@@ -152,3 +152,75 @@ def test_get_provider_models_parses_openai_shape(monkeypatch):
     p = make_providers().providers[0]
     res = asyncio.run(get_provider_models_by_api(p))
     assert res == ["m1", "m2"]
+
+
+# ── Task 2: config_loader 集成 ──
+
+
+def test_config_loader_creates_and_migrates(tmp_path, monkeypatch):
+    import faust_backend.config_loader as conf
+
+    # 模拟旧配置：有 CHAT_* 无 provider.private.json
+    public = {"CHAT_MODEL": "gpt-4o", "CHAT_API_BASE": "https://www.dmxapi.cn/v1"}
+    private = {"CHAT_API_KEY": "sk-old"}
+    (tmp_path / "faust.config.json").write_text(json.dumps(public), encoding="utf-8")
+    (tmp_path / "faust.config.private.json").write_text(json.dumps(private), encoding="utf-8")
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "CONFIG_FILE_PATH", str(tmp_path / "faust.config.json"))
+    monkeypatch.setattr(conf, "CONFIG_FILE_P_PATH", str(tmp_path / "faust.config.private.json"))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)  # 清除前序测试的缓存实例
+    # 迁移逻辑读模块级 config/private_config dict——指向临时配置
+    monkeypatch.setattr(conf, "config", dict(public))
+    monkeypatch.setattr(conf, "private_config", dict(private))
+
+    conf.ensure_model_providers_loaded()
+    mp = conf.MODEL_PROVIDERS
+    assert mp is not None
+    # 自动创建 ORIGIONAL provider
+    assert any(p.name == "ORIGIONAL" for p in mp.providers)
+    original = next(p for p in mp.providers if p.name == "ORIGIONAL")
+    assert original.base_url == "https://www.dmxapi.cn/v1"
+    assert original.key == "sk-old"
+    assert mp.main_model == "ORIGIONAL::gpt-4o"
+    # [R3] 旧模型必须已进入 provider.models，避免 build 时"模型不在列表"启动即崩
+    assert "gpt-4o" in original.models
+    # provider.private.json 已自动创建
+    assert (tmp_path / "provider.private.json").exists()
+    # 旧字段已从配置文件清除（写回）
+    saved_public = json.loads((tmp_path / "faust.config.json").read_text(encoding="utf-8"))
+    assert "CHAT_MODEL" not in saved_public
+    saved_private = json.loads((tmp_path / "faust.config.private.json").read_text(encoding="utf-8"))
+    assert "CHAT_API_KEY" not in saved_private
+
+
+def test_config_loader_loads_existing(tmp_path, monkeypatch):
+    import faust_backend.config_loader as conf
+
+    data = {
+        "providers": [{"name": "x", "base_url": "http://x/v1", "key": "k", "models": ["m1"]}],
+        "main_model": "x::m1",
+        "subagent_models": ["x::m1"],
+    }
+    (tmp_path / "provider.private.json").write_text(json.dumps(data), encoding="utf-8")
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)  # 清除前序测试的缓存实例
+
+    conf.ensure_model_providers_loaded()
+    mp = conf.MODEL_PROVIDERS
+    assert len(mp.providers) == 1
+    assert mp.main_model == "x::m1"
+    assert mp.subagent_models == ["x::m1"]
+
+
+def test_get_main_credentials():
+    from faust_backend.provider import get_main_credentials
+    p = make_providers()
+    assert get_main_credentials(p) == ("deepseek-v4-pro", "sk-test", "https://api.deepseek.com/v1")
+    p.main_model = None
+    assert get_main_credentials(p) == ("", "", "")  # R7: 空值不崩
+    p.main_model = "bad-spec"
+    assert get_main_credentials(p) == ("", "", "")  # R7: 非法 spec 不崩

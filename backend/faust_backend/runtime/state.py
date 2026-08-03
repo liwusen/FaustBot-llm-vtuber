@@ -100,6 +100,11 @@ def ensure_agent_runtime_ready() -> None:
         raise RuntimeError(runtime_not_ready_message())
 
 
+def get_model_providers():
+    """获取全局 ModelProviders 实例（懒加载）。"""
+    return conf.ensure_model_providers_loaded()
+
+
 # ── Prompt 加载 ──
 
 

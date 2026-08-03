@@ -19,6 +19,7 @@ CONFIG_ROOT = os.path.join(os.path.expanduser("~"), ".faustbot")
 WORKDIR_ROOT = CONFIG_ROOT
 SKILL_TEMPLATE_ROOT = p_join(PROJECT_ROOT, 'skill_template')
 CONFIG_FILE_P_PATH = p_join(CONFIG_ROOT, 'faust.config.private.json')
+PROVIDER_CONFIG_PATH = p_join(CONFIG_ROOT, 'provider.private.json')
 CONFIG_FILE_P_EXAMPLE = p_join(PROJECT_ROOT, 'faust.config.private.example.json')
 DATA_ROOT = p_join(CONFIG_ROOT, 'data')
 MODEL_ROOT = p_join(CONFIG_ROOT, 'models')
@@ -307,7 +308,77 @@ def load_configs():
 
 
 def reload_configs():
+    global MODEL_PROVIDERS
+    MODEL_PROVIDERS = None  # 配置重载后强制重新加载 provider
     return load_configs()
+
+
+# ── Model Providers 支持 ──
+
+MODEL_PROVIDERS = None  # 惰性加载的 ModelProviders 单例
+
+
+def ensure_model_providers_loaded() -> 'ModelProviders':
+    """加载（或首次自动创建）ModelProviders 单例，并执行旧配置迁移。
+
+    文件不存在时自动创建空实例；若旧 CHAT_MODEL/CHAT_API_BASE/CHAT_API_KEY
+    存在而 provider 文件不存在，则自动创建名为 ORIGIONAL 的 provider 并
+    设为 main_model，随后清除旧字段（迁移）。
+    """
+    global MODEL_PROVIDERS
+    if MODEL_PROVIDERS is not None:
+        return MODEL_PROVIDERS
+
+    from faust_backend.provider import ModelProviders, loads, dumps
+
+    path = PROVIDER_CONFIG_PATH
+    if os.path.exists(path):
+        try:
+            import asyncio
+            MODEL_PROVIDERS = asyncio.run(loads(path))
+            return MODEL_PROVIDERS
+        except Exception as exc:  # noqa: BLE001 - 损坏文件回退到空实例
+            print(f"[config_loader] provider.private.json 解析失败，使用空实例: {exc}")
+
+    MODEL_PROVIDERS = ModelProviders()
+
+    # ── 旧配置迁移：CHAT_* → ORIGIONAL provider ──
+    old_model = config.get("CHAT_MODEL", "")
+    old_base = config.get("CHAT_API_BASE", "")
+    old_key = private_config.get("CHAT_API_KEY", "")
+    if old_model and old_base:
+        from faust_backend.provider import new_provider
+        new_provider(MODEL_PROVIDERS, "ORIGIONAL", old_base, old_key or None)
+        # [R3] 把旧模型塞进 ORIGIONAL.models，保证 build_..._from_spec 校验通过
+        MODEL_PROVIDERS.providers[-1].models = [old_model]
+        MODEL_PROVIDERS.main_model = f"ORIGIONAL::{old_model}"
+        # 清除旧字段并写回文件（迁移完成，防止 reload 后复活）
+        config.pop("CHAT_MODEL", None)
+        config.pop("CHAT_API_BASE", None)
+        private_config.pop("CHAT_API_KEY", None)
+        with open(CONFIG_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+        with open(CONFIG_FILE_P_PATH, 'w', encoding='utf-8') as f:
+            json.dump(private_config, f, ensure_ascii=False, indent=4)
+
+    # 自动创建文件（幂等）
+    import asyncio
+    asyncio.run(dumps(MODEL_PROVIDERS, path))
+    return MODEL_PROVIDERS
+
+
+def get_model_providers() -> 'ModelProviders':
+    """返回 ModelProviders 单例，未加载则先加载。"""
+    return ensure_model_providers_loaded()
+
+
+def save_model_providers() -> None:
+    """把当前 MODEL_PROVIDERS 持久化到 provider.private.json。"""
+    if MODEL_PROVIDERS is None:
+        return
+    from faust_backend.provider import dumps
+    import asyncio
+    asyncio.run(dumps(MODEL_PROVIDERS, PROVIDER_CONFIG_PATH))
 
 
 _ensure_faustbot_init()
