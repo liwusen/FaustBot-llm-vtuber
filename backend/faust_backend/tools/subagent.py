@@ -34,7 +34,7 @@ def _resolve_system_prompt(raw_prompt: str) -> str:
 
 @register
 @tool
-async def newSubagent(name: str, toolset_names: list[str], sysPrompt: str) -> str:
+async def newSubagent(name: str, toolset_names: list[str], sysPrompt: str, model: str | None = None) -> str:
     """创建一个新的 Subagent。
 
     当你需要把一个较长、可并行、可独立观察的任务委托出去时，先创建 Subagent。
@@ -43,6 +43,9 @@ async def newSubagent(name: str, toolset_names: list[str], sysPrompt: str) -> st
         name: Subagent 名称。已存在同名 Subagent 时会报错。
         toolset_names: 工具组名称列表，例如 ["BASESET", "WRITESET"]。
         sysPrompt: 子代理提示词；若以 path: 开头，会读取对应路径内容作为提示词。
+        model: 可选，'provider::model' 格式的模型 spec；不传则用默认 Subagent 模型
+               （subagent_models 列表第一个，空则回退 main_model）。
+               可用模型列表见 read("faustbot://ava_subagent_models")。
     Returns:
         str: 创建结果与状态摘要。
     """
@@ -52,6 +55,7 @@ async def newSubagent(name: str, toolset_names: list[str], sysPrompt: str) -> st
         agent_name=str(name or "").strip(),
         toolsetsNames=list(toolset_names or []),
         systemPrompt=resolved_prompt,
+        model=str(model) if model else None,
     )
     return json.dumps(status, ensure_ascii=False)
 

@@ -289,7 +289,7 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
         except Exception as exc:
             log.warning("关闭旧 SubagentManager 失败: %s", exc)
     manager = SubagentManager(checkpointerPath=subagent_db_path)
-    manager.setChatModel(_build_chat_model(model_name=model_name))
+    manager.setChatModel(await _build_chat_model(model_name=model_name))
     _tools, middlewares = _compose_runtime_extensions()
     manager.setMiddlewares(middlewares)
     for name, toolset in _build_subagent_toolsets().items():
@@ -301,47 +301,32 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
     return manager
 
 
-def _build_chat_model(*, model_name: str):
-    """Build a ChatOpenAI instance for the main agent.
+async def _build_chat_model(*, model_name: str):
+    """Build a ChatOpenAI instance for the main agent from the ModelProviders.
 
-    When THINKING_ENABLED is True, uses ReasoningChatOpenAI subclass
-    (which preserves reasoning_content in additional_kwargs) and merges
-    provider-specific thinking parameters from thinking.
+    model_name 是 'provider::model' spec。thinking 参数由 provider 的
+    thinking_type 驱动：thinking_type == "none" 时不思考（返回 ChatOpenAI），
+    否则按 medium 强度（R5：与旧 THINKING_ENABLED 开关语义对齐）。
     """
-
-    kwargs: dict[str, Any] = dict(
-        model=model_name,
-        api_key=conf.CHAT_API_KEY,
-        base_url=conf.CHAT_API_BASE,
-        request_timeout=60,
-        max_retries=1,
+    from faust_backend.provider import build_ReasoningChatOpenAI_from_spec
+    from faust_backend.runtime import state as runtime_state
+    providers = runtime_state.get_model_providers()
+    spec = model_name or providers.main_model
+    if not spec:
+        raise RuntimeError("main_model is not configured (provider.private.json)")
+    # 找到 spec 对应的 provider，取其 thinking_type 决定是否启用思考
+    provider_name, _ = spec.split("::", 1)
+    provider = next((p for p in providers.providers if p.name == provider_name), None)
+    thinking = "medium" if provider and provider.thinking_type != "none" else None
+    return await build_ReasoningChatOpenAI_from_spec(
+        providers, spec=spec, intensity=thinking
     )
-    if conf.THINKING_ENABLED and conf.THINKING_PRESET != "none":
-        from faust_backend.thinking import (
-            ReasoningChatOpenAI,
-            get_thinking_params,
-        )
-
-        intensity = getattr(conf, "THINKING_INTENSITY", "medium")
-        thinking_params = get_thinking_params(conf.THINKING_PRESET, intensity)
-        if "reasoning_effort" in thinking_params:
-            kwargs["reasoning_effort"] = thinking_params.pop("reasoning_effort")
-        model_kw = thinking_params.pop("model_kwargs", {})
-        extra = {
-            **thinking_params.pop("extra_body", {}),
-            **kwargs.get("extra_body", {}),
-        }
-        if extra:
-            kwargs["extra_body"] = extra
-        kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}
-        return ReasoningChatOpenAI(**kwargs)
-    return ChatOpenAI(**kwargs)
 
 
-def _create_agent_with_extensions(*, model_name: str, checkpointer):
+async def _create_agent_with_extensions(*, model_name: str, checkpointer):
     tools, mgmt_middlewares = _compose_runtime_extensions()
     tools = middleware.wrap_tools(tools)
-    chat_model = _build_chat_model(model_name=model_name)
+    chat_model = await _build_chat_model(model_name=model_name)
     kwargs = {
         "model": chat_model,
         "checkpointer": checkpointer,
@@ -430,11 +415,18 @@ async def rebuild_runtime(
             else:
                 state.checkpointer = InMemorySaver()
             log.info("Checkpoint 已为重建就绪")
-            state.agent = _create_agent_with_extensions(
-                model_name=conf.CHAT_MODEL,
+            from faust_backend.runtime import state as runtime_state
+            from faust_backend.provider import get_default_subagent_model
+            _providers = runtime_state.get_model_providers()
+            state.agent = await _create_agent_with_extensions(
+                model_name=_providers.main_model,
                 checkpointer=state.checkpointer,
             )
-            await _rebuild_subagent_manager(model_name=conf.CHAT_MODEL)
+            try:
+                _sub_model = get_default_subagent_model(_providers)
+            except ValueError:
+                _sub_model = _providers.main_model
+            await _rebuild_subagent_manager(model_name=_sub_model)
             log.debug("Agent 已为重建重新创建")
             checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(
                 state.AGENT_ROOT

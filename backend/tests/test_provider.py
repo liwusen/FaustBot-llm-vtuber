@@ -224,3 +224,15 @@ def test_get_main_credentials():
     assert get_main_credentials(p) == ("", "", "")  # R7: 空值不崩
     p.main_model = "bad-spec"
     assert get_main_credentials(p) == ("", "", "")  # R7: 非法 spec 不崩
+
+
+def test_subagent_model_validation():
+    from faust_backend.provider import is_subagent_model_allowed, get_default_subagent_model
+    p = make_providers()
+    assert is_subagent_model_allowed(p, "deepseek::deepseek-v4") is True
+    assert is_subagent_model_allowed(p, "qwen::qwen-7b-chat") is True
+    assert is_subagent_model_allowed(p, "deepseek::deepseek-v4-pro") is True  # 等于 main_model
+    assert is_subagent_model_allowed(p, "nope::x") is False
+    assert get_default_subagent_model(p) == "deepseek::deepseek-v4"
+    p.subagent_models = []
+    assert get_default_subagent_model(p) == "deepseek::deepseek-v4-pro"  # 回退 main_model

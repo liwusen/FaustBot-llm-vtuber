@@ -457,6 +457,28 @@ def _avatoolset_doc() -> str:
     return '# Available Toolsets For Subagents\n\n' + manager.format_available_toolsets()
 
 
+def _ava_subagent_models_doc() -> str:
+    # [R8] provider 未加载/文件损坏时返回友好提示，不让 VFS 读取崩溃
+    try:
+        from faust_backend.runtime import state
+        providers = state.get_model_providers()
+    except Exception as exc:  # noqa: BLE001
+        return f"# Available Subagent Models\n\n(provider 配置不可用: {exc})"
+    lines = ["# Available Subagent Models", ""]
+    if not providers.subagent_models:
+        lines.append("(未配置 Subagent 专用模型，默认使用 main_model)")
+        lines.append(f"main_model: {providers.main_model or '(未配置)'}")
+        return "\n".join(lines)
+    lines.append("subagent_models（白名单，第一个为默认）:")
+    for spec in providers.subagent_models:
+        lines.append(f"- {spec}")
+    lines.append("")
+    lines.append("main_model: " + (providers.main_model or "(未配置)"))
+    lines.append("")
+    lines.append("创建 Subagent 时用 newSubagent(..., model='provider::model') 指定模型。")
+    return "\n".join(lines)
+
+
 def _pc_info_doc() -> str:
     return '\n'.join([
         '# pc_info',
@@ -486,6 +508,7 @@ async def _ensure_core_structure(vfs: AsyncVirtualFileSystem) -> None:
     await vfs.write_symbolic('/mc.md', lambda _path: _read_task_section('## Minecraft 操作系统说明'))
     await vfs.write_symbolic('/subagenting.md', lambda _path: _subagenting_doc())
     await vfs.write_symbolic('/avatoolset', lambda _path: _avatoolset_doc())
+    await vfs.write_symbolic('/ava_subagent_models', lambda _path: _ava_subagent_models_doc())
     await vfs.write_symbolic('/pc_info', lambda _path: _pc_info_doc())
 
     async def index_doc(_path: str) -> str:

@@ -148,9 +148,10 @@ class SubagentManager:
                                 tools: list[StructuredTool],
                                 systemPrompt: str,
                                 middlewares: list[AgentMiddleware],
-                                checkpointer: AsyncSqliteSaver):
+                                checkpointer: AsyncSqliteSaver,
+                                model: Any | None = None):
         kwargs: dict[str, Any] = {
-            "model": self.chatModel,
+            "model": model if model is not None else self.chatModel,
             "tools": tools,
             "checkpointer": checkpointer,
             "system_prompt": systemPrompt,
@@ -410,14 +411,34 @@ class SubagentManager:
     async def newSubagent(self,agent_name:str="Unnamed Agent",
                           toolsetsNames:list[str] | None=None,
                           systemPrompt:str="You are a helpful assistant.",
-                          middlewares:list[AgentMiddleware] | None=None):
-        """创建一个新的 Subagent。重复名称会报错。"""
+                          middlewares:list[AgentMiddleware] | None=None,
+                          model:str | None=None):
+        """创建一个新的 Subagent。model 为 'provider::model' spec；None 用默认 Subagent 模型。
+        重复名称会报错。"""
         if self.chatModel is None:
             raise RuntimeError("Chat model is not configured")
         if agent_name in self.subagents:
             raise ValueError(f"Subagent already exists: {agent_name}")
 
         checkpointer = await self._ensure_checkpointer()
+        # model 可选：None 用默认 Subagent 模型；传入则校验白名单并构建对应模型
+        chat_model = self.chatModel
+        if model is not None:
+            from faust_backend.runtime import state as runtime_state
+            from faust_backend.provider import (
+                build_ReasoningChatOpenAI_from_spec,
+                is_subagent_model_allowed,
+            )
+            providers = runtime_state.get_model_providers()
+            if not is_subagent_model_allowed(providers, model):
+                raise ValueError(f"Model '{model}' not in subagent_models whitelist.")
+            # [R5] thinking 开关与主 Agent 一致：由目标 provider 的 thinking_type 决定
+            _pname, _ = model.split("::", 1)
+            _prov = next((p for p in providers.providers if p.name == _pname), None)
+            _thinking = "medium" if _prov and _prov.thinking_type != "none" else None
+            chat_model = await build_ReasoningChatOpenAI_from_spec(
+                providers, spec=model, intensity=_thinking
+            )
         requested_toolsets = list(toolsetsNames or [])
         active_middlewares = list(middlewares if middlewares is not None else self.middlewares)
         
@@ -437,6 +458,7 @@ class SubagentManager:
             systemPrompt=final_prompt,
             middlewares=active_middlewares,
             checkpointer=checkpointer,
+            model=chat_model,
         )
 
         subagentInstance=Subagent(systemPrompt=final_prompt,
