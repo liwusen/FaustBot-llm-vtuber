@@ -260,3 +260,74 @@ def test_no_chat_global_references():
     }
     real = [o for o in offenders if o[0] not in allowed]
     assert not real, f"CHAT_* still referenced: {real}"
+
+
+# ── Task 5: admin_providers 路由 ──
+
+
+def _make_provider_app():
+    from fastapi import FastAPI
+    from faust_backend.routes.admin_providers import router
+    app = FastAPI()
+    app.include_router(router)
+    return app
+
+
+def test_providers_crud_roundtrip(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import faust_backend.config_loader as conf
+    import faust_backend.runtime.state as state_mod
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    monkeypatch.setattr(state_mod, "get_model_providers", conf.ensure_model_providers_loaded)
+
+    client = TestClient(_make_provider_app())
+    # 添加 provider
+    r = client.post("/faust/admin/providers", json={
+        "name": "test", "base_url": "http://test/v1", "key": "k1"
+    })
+    assert r.status_code == 200
+    # 列表
+    r = client.get("/faust/admin/providers")
+    assert r.status_code == 200
+    names = [p["name"] for p in r.json()["providers"]]
+    assert "test" in names
+    # 删除
+    r = client.delete("/faust/admin/providers/test")
+    assert r.status_code == 200
+    r = client.delete("/faust/admin/providers/test")
+    assert r.status_code == 404
+
+
+def test_select_model_switches(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import faust_backend.config_loader as conf
+    import faust_backend.runtime.state as state_mod
+    from faust_backend.provider import new_provider
+
+    async def _noop_rebuild(**kw):
+        return {"status": "ok"}
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    mp = conf.ensure_model_providers_loaded()
+    new_provider(mp, "a", "http://a/v1", "k")
+    mp.providers[0].models = ["m1", "m2"]
+    conf.save_model_providers()
+    monkeypatch.setattr(
+        "faust_backend.routes.admin_providers._rebuild_after_change",
+        _noop_rebuild,
+    )
+
+    client = TestClient(_make_provider_app())
+    r = client.post("/faust/admin/model/select", json={
+        "main_model": "a::m1",
+        "subagent_models": ["a::m1", "a::m2"],
+    })
+    assert r.status_code == 200
+    # 持久化
+    assert conf.MODEL_PROVIDERS.main_model == "a::m1"
+    assert conf.MODEL_PROVIDERS.subagent_models == ["a::m1", "a::m2"]
