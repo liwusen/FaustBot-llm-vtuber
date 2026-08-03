@@ -2,7 +2,7 @@
 Unit tests for Plan 07 — LLM thinking/reasoning support.
 
 Covers:
-- thinking_presets.py preset dictionary and get_thinking_params()
+- thinking.py preset dictionary and get_thinking_params()
 - ReasoningChatOpenAI subclass — reasoning_content preservation
 - lifecycle.py _build_chat_model() thinking param merging + class selection
 - lifecycle.py stream_chat_agent_events() reasoning_delta extraction
@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.thinking_presets import (
+from faust_backend.thinking import (
     THINKING_PRESETS,
     ReasoningChatOpenAI,
     get_thinking_params,
@@ -116,7 +116,7 @@ class TestBuildChatModel:
         orig_reasoning = MagicMock()
 
         with patch("faust_backend.runtime.lifecycle.ChatOpenAI", return_value=orig_chat) as mock_chat, \
-             patch("faust_backend.thinking_presets.ReasoningChatOpenAI",
+             patch("faust_backend.thinking.ReasoningChatOpenAI",
                    return_value=orig_reasoning) as mock_reasoning:
             result = _build_chat_model(model_name="gpt-4o")
 

@@ -1,0 +1,8 @@
+{
+  "slug": "minecraft",
+  "name": "Minecraft 操作指南",
+  "version": "1.0.0",
+  "description": "Minecraft 操作系统完整操作手册：连接、状态、移动、战斗、采集、合成、容器、事件响应",
+  "usage": "当用户要求在 Minecraft 中陪玩/操作/观察时，先 read(skill://minecraft/SKILL.md) 再行动",
+  "builtin": true
+}

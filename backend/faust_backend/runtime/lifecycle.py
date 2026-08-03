@@ -306,7 +306,7 @@ def _build_chat_model(*, model_name: str):
 
     When THINKING_ENABLED is True, uses ReasoningChatOpenAI subclass
     (which preserves reasoning_content in additional_kwargs) and merges
-    provider-specific thinking parameters from thinking_presets.
+    provider-specific thinking parameters from thinking.
     """
 
     kwargs: dict[str, Any] = dict(
@@ -317,7 +317,7 @@ def _build_chat_model(*, model_name: str):
         max_retries=1,
     )
     if conf.THINKING_ENABLED and conf.THINKING_PRESET != "none":
-        from faust_backend.thinking_presets import (
+        from faust_backend.thinking import (
             ReasoningChatOpenAI,
             get_thinking_params,
         )
