@@ -19,6 +19,12 @@ async function ensureModuleData(moduleId) {
     const m = await cfgApi("GET", "/faust/admin/live2d/models");
     state.live2dModels = m.items || [];
   }
+  if (moduleId === "ai") {
+    const pr = await cfgApi("GET", "/faust/admin/providers");
+    state.providers = pr.providers || [];
+    state.mainModel = pr.main_model || "";
+    state.subagentModels = pr.subagent_models || [];
+  }
   if (moduleId === "agent") {
     const a = await cfgApi("GET", "/faust/admin/agents");
     state.agents = a.items || [];

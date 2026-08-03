@@ -284,8 +284,12 @@ function pickModuleFields(moduleId) {
 }
 
 function renderConfigModule(moduleId) {
+  if (moduleId === "ai") {
+    renderProviderWizard();  // 替代原 CHAT_* 字段（EMBED/KB 等保留在下方）
+  }
   const fields = pickModuleFields(moduleId);
   if (!fields.publicKeys.length && !fields.privateKeys.length) {
+    if (moduleId === "ai") return;  // 向导已渲染，无剩余字段
     addSection("提示", [el("div", "empty-state", "当前模块暂无可编辑字段。")]);
     return;
   }
@@ -572,4 +576,117 @@ function renderConfigModule(moduleId) {
     appendToActiveModule(m);
     appendToActiveModule(m2);
   }
+}
+
+// ── Provider 管理向导（AI 服务商模块顶部） ──
+
+function _providerModelOptions() {
+  // 返回所有 provider 的 provider::model 拼接选项
+  const opts = [];
+  for (const p of state.providers || []) {
+    for (const m of p.models || []) {
+      opts.push({ value: `${p.name}::${m}`, label: `${p.name}::${m}` });
+    }
+  }
+  return opts;
+}
+
+function _makeSelect(value, options, onchange) {
+  const sel = el("select", "form-control");
+  for (const opt of options) {
+    const o = el("option", "", opt.label);
+    o.value = opt.value;
+    sel.append(o);
+  }
+  if (value) sel.value = value;
+  if (onchange) sel.addEventListener("change", onchange);
+  return sel;
+}
+
+function renderProviderWizard() {
+  // ── provider 列表 ──
+  const rows = (state.providers || []).map((p) => [
+    p.name,
+    p.base_url,
+    String((p.models || []).length),
+    makeButton("删除", async () => {
+      await cfgApi("DELETE", `/faust/admin/providers/${encodeURIComponent(p.name)}`);
+      state.providers = (await cfgApi("GET", "/faust/admin/providers")).providers || [];
+      refreshModule();
+    }, "btn btn-ghost"),
+  ]);
+  const listCard = makeSimpleTableCard("AI Provider 列表", ["名称", "Base URL", "模型数", "操作"], rows);
+
+  // ── 添加向导（两段式：表单 → 自动加载模型） ──
+  const form = el("div", "toolbar");
+  const nameInput = el("input", "form-control");
+  nameInput.placeholder = "名称（如 deepseek）";
+  const urlInput = el("input", "form-control");
+  urlInput.placeholder = "Base URL（如 https://api.deepseek.com/v1）";
+  const keyInput = el("input", "form-control");
+  keyInput.placeholder = "API Key";
+  keyInput.type = "password";
+  const loadBtn = makeButton("自动加载模型", async () => {
+    // [R11] 两段式失败处理：创建成功但加载失败时回滚删除半创建 provider
+    const name = String(nameInput.value || "").trim();
+    if (!name || !urlInput.value) {
+      showBanner("请填写 Provider 名称与 Base URL", "error");
+      return;
+    }
+    try {
+      await cfgApi("POST", "/faust/admin/providers", {
+        name, base_url: urlInput.value, key: keyInput.value || null,
+      });
+    } catch (e) {
+      showBanner("创建 Provider 失败: " + (e && e.detail ? e.detail : String(e)), "error");
+      return;
+    }
+    try {
+      const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(name)}/load-models`);
+      state.providers = (await cfgApi("GET", "/faust/admin/providers")).providers || [];
+      refreshModule();
+      showBanner("模型加载成功: " + (r.models || []).length + " 个", "success");
+    } catch (e) {
+      // 加载失败 → 删除半创建的 provider，避免残留
+      try { await cfgApi("DELETE", `/faust/admin/providers/${encodeURIComponent(name)}`); } catch (_e2) { /* ignore */ }
+      state.providers = (await cfgApi("GET", "/faust/admin/providers")).providers || [];
+      refreshModule();
+      showBanner("模型加载失败，已回滚该 Provider: " + (e && e.detail ? e.detail : String(e)), "error");
+    }
+  }, "btn btn-primary");
+  form.append(nameInput, urlInput, keyInput, loadBtn);
+  addSection("添加 Provider（自动加载模型）", [form]);
+
+  // ── 主/Subagent 模型选择 ──
+  const opts = _providerModelOptions();
+  const mainSel = _makeSelect(state.mainModel || "", opts);
+  const subWrap = el("div", "toolbar");
+  const subSel = _makeSelect(state.subagentModels[0] || "", opts);
+  const saveModelBtn = makeButton("保存模型选择", async () => {
+    const main = mainSel.value;
+    const sub = subSel.value ? [subSel.value] : [];
+    if (!main) {
+      showBanner("请选择主模型", "error");
+      return;
+    }
+    try {
+      await cfgApi("POST", "/faust/admin/model/select", { main_model: main, subagent_models: sub });
+      state.mainModel = main;
+      state.subagentModels = sub;
+      showBanner("模型已切换并重建运行时", "success");
+    } catch (e) {
+      showBanner("模型切换失败: " + (e && e.detail ? e.detail : String(e)), "error");
+    }
+  }, "btn btn-primary");
+  const selectCard = el("article", "card full-span");
+  selectCard.append(el("h3", "card-title", "模型选择"));
+  const mainRow = el("div", "form-row");
+  mainRow.append(el("label", "", "主 Agent 模型"), mainSel);
+  const subRow = el("div", "form-row");
+  subRow.append(el("label", "", "Subagent 默认模型"), subSel);
+  const tip = el("p", "field-help", "Subagent 可在创建时用 newSubagent(model='provider::model') 指定；白名单见 faustbot://ava_subagent_models。");
+  selectCard.append(mainRow, subRow, tip, saveModelBtn);
+  addSection("", [selectCard]);
+
+  addSection("", [listCard]);
 }

@@ -37,8 +37,6 @@ AGENT_EDITABLE_FILES: list[str] = []
 AGENT_CORE_FILES = AGENT_TEMPLATE_FILES + AGENT_EDITABLE_FILES
 AGENT_SYNC_FILES = AGENT_CORE_FILES
 PUBLIC_CONFIG_DEFAULTS = {
-    "CHAT_MODEL": "gpt-4o",
-    "CHAT_API_BASE": "https://www.dmxapi.cn/v1",
     "EMBED_API_BASE": "https://www.dmxapi.cn/v1",
     "EMBED_MODEL": "text-embedding-3-small",
     "AGENT_NAME": "faust",
@@ -110,7 +108,6 @@ PUBLIC_CONFIG_DEFAULTS = {
     "THINKING_INTENSITY": "medium",
 }
 PRIVATE_CONFIG_DEFAULTS = {
-    "CHAT_API_KEY": "",
     "SEARCH_API_KEY": "",
     "EMBED_API_KEY": "",
     "FAUSTBOT_CLOUD_SERVICE_KEY": "",
