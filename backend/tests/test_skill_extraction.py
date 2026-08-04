@@ -58,3 +58,27 @@ def test_agent_md_explains_memory_system():
     assert "长期记忆" in text
     assert "用户偏好" in text
     assert "memory://user" in text
+
+
+def test_faustbot_using_guide_skill_exists_and_has_meta():
+    """faustbot-using-guide 内置 Skill：含架构/目录/文档站点链接。"""
+    skill_dir = SKILL_TEMPLATE / "faustbot-using-guide"
+    assert (skill_dir / "SKILL.md").exists()
+    meta = json.loads((skill_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["slug"] == "faustbot-using-guide"
+    assert meta["builtin"] is True
+    assert meta["description"].strip()
+    assert meta["usage"].strip()
+
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    # 架构介绍
+    assert "FastAPI" in text
+    assert "LangGraph" in text
+    assert "13900" in text
+    # ~/.faustbot 目录说明
+    assert "~/.faustbot" in text
+    assert "provider.private.json" in text
+    assert "agents/faust" in text
+    assert "faust.config.json" in text
+    # 文档站点链接
+    assert "faustbot.allenlee.xyz" in text

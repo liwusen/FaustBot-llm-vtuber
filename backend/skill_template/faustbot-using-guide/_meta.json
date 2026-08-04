@@ -1,0 +1,8 @@
+{
+  "slug": "faustbot-using-guide",
+  "name": "FaustBot 使用指南",
+  "version": "1.0.0",
+  "description": "FaustBot 架构介绍、~/.faustbot 用户数据目录文件/目录说明、官方文档站点 faustbot.allenlee.xyz 入口",
+  "usage": "当用户询问 FaustBot 架构、配置/数据存放位置、~/.faustbot 目录结构，或想查阅完整文档时，先 read(skill://faustbot-using-guide/SKILL.md) 再回答",
+  "builtin": true
+}
