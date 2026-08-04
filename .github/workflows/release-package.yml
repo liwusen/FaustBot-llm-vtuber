@@ -21,6 +21,15 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Cache backend runtime (.runtime)
+        id: cache-runtime
+        uses: actions/cache@v4
+        with:
+          path: .runtime
+          key: runtime-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            runtime-
+
       - name: Install cloud runtime and dependencies
         shell: cmd
         run: setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes --install-bundle-node yes
