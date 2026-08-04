@@ -223,7 +223,7 @@ def load_configs():
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS
-    global THINKING_ENABLED, THINKING_PRESET, THINKING_INTENSITY
+    global REASONING_CONFIG
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
     _ensure_private_config_exists()
@@ -234,8 +234,8 @@ def load_configs():
 
     # —— Main LLM (all text/chat/speech/vision tasks) ——
     CHAT_API_KEY = private_config.get('CHAT_API_KEY', '')
-    if not CHAT_API_KEY:
-        print("[config_loader] Critical: CHAT_API_KEY is not set in the private config. Some features may not work properly.")
+    # if not CHAT_API_KEY:
+    #     print("[config_loader] Critical: CHAT_API_KEY is not set in the private config. Some features may not work properly.")
     CHAT_MODEL = config.get('CHAT_MODEL', 'gpt-4o')
     CHAT_API_BASE = config.get('CHAT_API_BASE', 'https://www.dmxapi.cn/v1')
 
@@ -298,9 +298,16 @@ def load_configs():
     EDGE_TTS_RATE = str(config.get('EDGE_TTS_RATE', '0%') or '0%').strip()
     EDGE_TTS_PITCH = str(config.get('EDGE_TTS_PITCH', '0%') or '0%').strip()
     EDGE_TTS_TIMEOUT_SECONDS = int(config.get('EDGE_TTS_TIMEOUT_SECONDS', 120) or 120)
-    THINKING_ENABLED = bool(config.get('THINKING_ENABLED', False))
-    THINKING_PRESET = str(config.get('THINKING_PRESET', 'none') or 'none').strip()
-    THINKING_INTENSITY = str(config.get('THINKING_INTENSITY', 'medium') or 'medium').strip()
+    # 全局思考配置：off / low / medium / high（off = 关闭思考，其余为强度）。
+    # 兼容迁移：旧 THINKING_ENABLED=False → "off"；否则沿用旧 THINKING_INTENSITY。
+    if 'REASONING_CONFIG' in config and str(config.get('REASONING_CONFIG') or '').strip():
+        REASONING_CONFIG = str(config.get('REASONING_CONFIG')).strip()
+    elif not config.get('THINKING_ENABLED', True):
+        REASONING_CONFIG = 'off'
+    else:
+        REASONING_CONFIG = str(config.get('THINKING_INTENSITY', 'medium') or 'medium').strip()
+    if REASONING_CONFIG not in {'off', 'low', 'medium', 'high'}:
+        REASONING_CONFIG = 'medium'
     PLUGIN_MARKET_USE_GH_PROXY = bool(config.get('PLUGIN_MARKET_USE_GH_PROXY', False))
     MD_BLOCK_ENABLED = bool(config.get('MD_BLOCK_ENABLED', True))
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)

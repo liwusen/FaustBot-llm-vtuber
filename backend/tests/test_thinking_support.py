@@ -125,14 +125,30 @@ class TestBuildChatModel:
             return {"mock_build": mock_build, "captured": captured, "result": result}
 
     def test_thinking_enabled_by_default_provider(self):
-        info = self._call_and_capture()
-        assert info["captured"]["intensity"] == "medium"  # thinking_type != none
+        import faust_backend.config_loader as conf
+        with patch.object(conf, "REASONING_CONFIG", "medium"):
+            info = self._call_and_capture()
+        assert info["captured"]["intensity"] == "medium"  # 全局 medium 且 thinking_type != none
+
+    def test_thinking_uses_global_reasoning_config(self):
+        import faust_backend.config_loader as conf
+        with patch.object(conf, "REASONING_CONFIG", "high"):
+            info = self._call_and_capture()
+        assert info["captured"]["intensity"] == "high"
+
+    def test_thinking_off_when_global_off(self):
+        import faust_backend.config_loader as conf
+        from unittest.mock import patch
+        with patch.object(conf, "REASONING_CONFIG", "off"):
+            info = self._call_and_capture()
+        assert info["captured"]["intensity"] is None  # 全局 off → 不思考
 
     def test_thinking_disabled_when_type_none(self):
         from faust_backend.provider import ModelProviders, new_provider
         from faust_backend.runtime.lifecycle import _build_chat_model
         import asyncio
         from unittest.mock import patch
+        import faust_backend.config_loader as conf
 
         providers = ModelProviders()
         new_provider(providers, "test", "https://test.api/v1", "test-key")
@@ -151,7 +167,7 @@ class TestBuildChatModel:
         ), patch(
             "faust_backend.runtime.state.get_model_providers",
             return_value=providers,
-        ):
+        ), patch.object(conf, "REASONING_CONFIG", "high"):
             asyncio.run(_build_chat_model(model_name="test::gpt-4o"))
         assert captured["intensity"] is None  # thinking 关闭
 

@@ -87,7 +87,7 @@ async def _collect_status_summary() -> str:
     mcp_items = get_mcp_manager().list_server_statuses(include_log=False)
     lines = [
         f"Agent: {state.AGENT_NAME}",
-        f"Thinking: {'on' if conf.THINKING_ENABLED else 'off'}",
+        f"Reasoning: {getattr(conf, 'REASONING_CONFIG', 'medium')}",
         f"Skills({len(skills)}): " + (", ".join(item.get("slug") or "" for item in skills) if skills else "none"),
         f"Plugins({len(enabled_plugins)}): " + (", ".join(item.get("id") or "" for item in enabled_plugins) if enabled_plugins else "none"),
         "Services:",
@@ -101,9 +101,23 @@ async def _collect_status_summary() -> str:
 
 
 async def _set_thinking_enabled(enabled: bool) -> str:
-    admin_runtime.save_config({"public": {"THINKING_ENABLED": bool(enabled)}})
+    # 全局思考由 REASONING_CONFIG 驱动：off 关闭，on 恢复 medium。
+    current = str(getattr(conf, "REASONING_CONFIG", "medium") or "medium")
+    next_value = "medium" if enabled and current == "off" else current
+    if not enabled:
+        next_value = "off"
+    admin_runtime.save_config({"public": {"REASONING_CONFIG": next_value}})
     await rebuild_runtime(reset_dialog=False, no_initial_chat=True)
-    return f"Thinking 已{'开启' if enabled else '关闭'}"
+    return f"Thinking 已{'开启' if enabled else '关闭'} (REASONING_CONFIG={next_value})"
+
+
+async def _set_reasoning_effort(level: str) -> str:
+    level = str(level or "").strip().lower()
+    if level not in {"off", "low", "medium", "high"}:
+        return "用法: /effort off|low|medium|high"
+    admin_runtime.save_config({"public": {"REASONING_CONFIG": level}})
+    await rebuild_runtime(reset_dialog=False, no_initial_chat=True)
+    return f"Reasoning effort 已设置为 {level}"
 
 
 async def _session_token_summary() -> str:
@@ -203,6 +217,8 @@ async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -
         if lowered not in {"on", "off"}:
             return True, "用法: /thinking on 或 /thinking off"
         return True, await _set_thinking_enabled(lowered == "on")
+    if name == "effort":
+        return True, await _set_reasoning_effort(arg)
     if name == "status":
         return True, await _collect_status_summary()
     if name == "session":

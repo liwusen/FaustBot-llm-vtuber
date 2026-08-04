@@ -3,14 +3,16 @@
 async function ensureModuleData(moduleId) {
   if (moduleId === "overview") {
     try {
-      const [pl, sv, err] = await Promise.all([
+      const [pl, sv, err, pr] = await Promise.all([
         cfgApi("GET", "/faust/admin/plugins"),
         cfgApi("GET", "/faust/admin/services"),
         cfgApi("GET", "/faust/admin/log/recent-errors"),
+        cfgApi("GET", "/faust/admin/providers"),
       ]);
       state.plugins = pl.items || [];
       state.services = sv.items || [];
       state.recentErrors = err.errors || [];
+      state.mainModel = (pr && pr.main_model) || "";
     } catch (e) {
       console.warn("overview data fetch error", e);
     }

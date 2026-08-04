@@ -427,3 +427,73 @@ def test_agent_docs_mention_subagent_model():
     task = (root / "TASK.md").read_text(encoding="utf-8")
     assert "newSubagent" in agent
     assert "ava_subagent_models" in agent or "ava_subagent_models" in task
+
+
+def test_reasoning_config_migrates_old_thinking(tmp_path, monkeypatch):
+    """旧 THINKING_ENABLED/THINKING_INTENSITY 迁移为单一 REASONING_CONFIG。"""
+    import faust_backend.config_loader as conf
+
+    def write_config(data):
+        (tmp_path / "faust.config.json").write_text(json.dumps(data), encoding="utf-8")
+        monkeypatch.setattr(conf, "config", dict(data))
+
+    # 旧配置：THINKING_ENABLED=True + INTENSITY=high → REASONING_CONFIG=high
+    public = {"THINKING_ENABLED": True, "THINKING_INTENSITY": "high"}
+    write_config(public)
+    (tmp_path / "faust.config.private.json").write_text(json.dumps({}), encoding="utf-8")
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "CONFIG_FILE_PATH", str(tmp_path / "faust.config.json"))
+    monkeypatch.setattr(conf, "CONFIG_FILE_P_PATH", str(tmp_path / "faust.config.private.json"))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    monkeypatch.setattr(conf, "private_config", {})
+
+    conf.load_configs()
+    assert conf.REASONING_CONFIG == "high"
+
+    # THINKING_ENABLED=False → off
+    write_config({"THINKING_ENABLED": False})
+    conf.load_configs()
+    assert conf.REASONING_CONFIG == "off"
+
+    # 新字段直接生效
+    write_config({"REASONING_CONFIG": "low"})
+    conf.load_configs()
+    assert conf.REASONING_CONFIG == "low"
+
+    # 非法值回退 medium
+    write_config({"REASONING_CONFIG": "ultra"})
+    conf.load_configs()
+    assert conf.REASONING_CONFIG == "medium"
+
+
+def test_set_reasoning_effort_validates_level(monkeypatch):
+    """/effort 命令：非法 level 拒绝，合法 level 写 REASONING_CONFIG 并 rebuild。"""
+    from faust_backend.routes import chat as chat_route
+    import faust_backend.config_loader as conf
+
+    saved = {}
+    monkeypatch.setattr(conf, "REASONING_CONFIG", "medium")
+    monkeypatch.setattr(
+        chat_route.admin_runtime,
+        "save_config",
+        lambda payload: saved.update(payload.get("public") or {}),
+    )
+    rebuilt = []
+    async def fake_rebuild(**kw):
+        rebuilt.append(kw)
+    monkeypatch.setattr(chat_route, "rebuild_runtime", fake_rebuild)
+
+    import asyncio
+    assert asyncio.run(chat_route._set_reasoning_effort("bogus")).startswith("用法")
+    assert not saved
+
+    resp = asyncio.run(chat_route._set_reasoning_effort("high"))
+    assert "high" in resp
+    assert saved.get("REASONING_CONFIG") == "high"
+    assert rebuilt
+
+    resp = asyncio.run(chat_route._set_reasoning_effort("off"))
+    assert "off" in resp
+    assert saved.get("REASONING_CONFIG") == "off"

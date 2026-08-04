@@ -616,6 +616,18 @@ body {
 	color: var(--muted);
 }
 
+.info-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 12px 24px;
+}
+
+.stat-grid {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 12px;
+}
+
 .info-value {
 	font-size: 15px;
 	line-height: 1.6;
@@ -1470,4 +1482,20 @@ body {
 }
 .simple-table td .toolbar.compact {
 	justify-content: flex-start;
+}
+
+/* ── 列表卡片：搜索框 + 分页条 ── */
+.card .table-search {
+	width: min(320px, 100%);
+	margin-bottom: 12px;
+}
+.table-pager {
+	margin-top: 12px;
+	justify-content: flex-end;
+	gap: 10px;
+}
+.table-pager .card-help {
+	min-width: 150px;
+	text-align: center;
+	color: #5b708f;
 }

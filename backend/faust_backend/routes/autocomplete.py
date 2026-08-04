@@ -51,6 +51,26 @@ BASE_COMMANDS = [
         "detail": "查看所有可用技能，选择后输入 skill 名称过滤",
         "insert_text": "/skill:",
     },
+    {
+        "label":"effort off",
+        "detail":"关闭思考模式。",
+        "insert_text":"/effort off",
+    },
+    {
+        "label":"effort low",
+        "detail":"设置思考模式为低。",
+        "insert_text":"/effort low",
+    },
+    {
+        "label":"effort medium",
+        "detail":"设置思考模式为中。",
+        "insert_text":"/effort medium",
+    },
+    {
+        "label":"effort high",
+        "detail":"设置思考模式为高。",
+        "insert_text":"/effort high",
+    },
 ]
 
 

@@ -2009,7 +2009,15 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     renderSubagentSummary();
     if (selectedSubagentName) {
       const next = subagentStatuses.find((item)=> String(item.name || '') === selectedSubagentName);
-      if (next) renderSubagentPanel(next);
+      if (next) {
+        // WS 推送的 subagents_summary 是轻量状态（不含 recent_events），
+        // 直接用 next 渲染会把事件列表清空为"暂无事件"。
+        // 优先合并事件缓存，保留已显示的流式事件。
+        renderSubagentPanel({
+          ...next,
+          recent_events: subagentEventCache[selectedSubagentName] || next.recent_events || [],
+        });
+      }
     }
   }
 
@@ -2046,9 +2054,14 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
   function renderSubagentPanelFromCache(name){
     const status = subagentStatuses.find(s => String(s.name || '') === name);
-    if (!status) return;
     const events = subagentEventCache[name] || [];
-    renderSubagentPanel({ ...status, recent_events: events });
+    if (status) {
+      renderSubagentPanel({ ...status, recent_events: events });
+    } else {
+      // subagent 已不在状态列表（如已移除/尚未推送 summary），
+      // 仍用缓存事件渲染，避免事件被静默丢弃。
+      renderSubagentPanel({ name, status: 'unknown', recent_events: events });
+    }
   }
 
   function normalizeSubagentPanelEvents(events){

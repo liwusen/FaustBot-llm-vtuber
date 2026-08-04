@@ -31,6 +31,9 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
     "MEMORY_IMAGE_VLM_MODEL",
     "KB_ASYNC_INDEX_ON_WRITE",
     "FAUSTBOT_CLOUD_DEFAULT_REFER_HASH",
+    "THINKING_ENABLED",
+    "THINKING_PRESET",
+    "THINKING_INTENSITY",
 }
 AGENT_TEMPLATE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]
 AGENT_EDITABLE_FILES: list[str] = []
@@ -103,9 +106,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "TTS_REFER_WAV_PATH": str(Path(conf.PROJECT_ROOT) / "voices" / "neuro.wav"),
     "TTS_PROMPT_TEXT": "Hold on please, I'm busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.",
     "TTS_PROMPT_LANGUAGE": "en",
-    "THINKING_ENABLED": False,
-    "THINKING_PRESET": "none",
-    "THINKING_INTENSITY": "medium",
+    "REASONING_CONFIG": "medium",  # 全局思考配置: off/low/medium/high
 }
 PRIVATE_CONFIG_DEFAULTS = {
     "SEARCH_API_KEY": "",

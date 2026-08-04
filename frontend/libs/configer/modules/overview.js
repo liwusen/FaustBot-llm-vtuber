@@ -9,7 +9,8 @@ function renderSimpleJsonModule(title, data) {
 
 function renderOverviewModule() {
   const agent = state.runtime.current_agent || state.config.public.AGENT_NAME || "-";
-  const model = state.config.public.CHAT_MODEL || "-";
+  // 主模型来自 provider 配置（state.mainModel，格式 provider::model）；旧 CHAT_MODEL 兼容回退
+  const model = state.mainModel || state.config.public.CHAT_MODEL || "-";
   const tts = state.config.public.TTS_MODE || "-";
   const asr = state.config.public.ASR_MODE || "-";
   const modelType = String(state.config.public.MODEL_TYPE || "live2d").toLowerCase();
@@ -53,7 +54,7 @@ function renderOverviewModule() {
     { label: modelType === "vrm" ? "VRM" : "Live2D", icon: modelType === "vrm" ? "\u{1F9CA}" : "\u{1F5BC}", value: modelPath === "-" ? "未配置" : modelPath.split("/").pop(), desc: "当前模型" },
     { label: "Agent", icon: "\u{1F916}", value: agent, desc: "当前角色" },
   ];
-  const statGrid = el("div", "info-grid");
+  const statGrid = el("div", "stat-grid");
   for (const s of statData) {
     const card = el("article", "card");
     card.style.textAlign = "center";

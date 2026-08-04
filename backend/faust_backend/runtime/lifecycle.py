@@ -304,12 +304,13 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
 async def _build_chat_model(*, model_name: str):
     """Build a ChatOpenAI instance for the main agent from the ModelProviders.
 
-    model_name 是 'provider::model' spec。thinking 参数由 provider 的
-    thinking_type 驱动：thinking_type == "none" 时不思考（返回 ChatOpenAI），
-    否则按 medium 强度（R5：与旧 THINKING_ENABLED 开关语义对齐）。
+    model_name 是 'provider::model' spec。thinking 参数由全局 REASONING_CONFIG
+    驱动（off/low/medium/high）：REASONING_CONFIG == "off" 或 provider 的
+    thinking_type == "none" 时不思考（返回 ChatOpenAI），否则按全局强度。
     """
     from faust_backend.provider import build_ReasoningChatOpenAI_from_spec
     from faust_backend.runtime import state as runtime_state
+    import faust_backend.config_loader as conf
     providers = runtime_state.get_model_providers()
     spec = model_name or providers.main_model
     if not spec:
@@ -317,7 +318,12 @@ async def _build_chat_model(*, model_name: str):
     # 找到 spec 对应的 provider，取其 thinking_type 决定是否启用思考
     provider_name, _ = spec.split("::", 1)
     provider = next((p for p in providers.providers if p.name == provider_name), None)
-    thinking = "medium" if provider and provider.thinking_type != "none" else None
+    reasoning = getattr(conf, "REASONING_CONFIG", "medium")
+    thinking = (
+        reasoning
+        if reasoning != "off" and provider and provider.thinking_type != "none"
+        else None
+    )
     return await build_ReasoningChatOpenAI_from_spec(
         providers, spec=spec, intensity=thinking
     )

@@ -140,9 +140,18 @@ function makeTagListCard(title, tags) {
   return card;
 }
 
-function makeSimpleTableCard(title, columns, rows) {
+// 分页/搜索的 UI 状态缓存（key = 卡片标题），组件重渲染（如 rerenderAiModule）后保留页码与搜索词
+const _tableUIState = {};
+
+// opts: { pageSize: 每页项数（>0 启用分页）, searchKey: 以该列索引为主键做简单搜索（>=0 启用） }
+function makeSimpleTableCard(title, columns, rows, opts = {}) {
+  const pageSize = Number(opts.pageSize) > 0 ? Number(opts.pageSize) : 0;
+  const searchKey = (opts.searchKey !== undefined && opts.searchKey !== null && Number(opts.searchKey) >= 0)
+    ? Number(opts.searchKey) : -1;
+  const uiKey = String(title || "table");
+  const ui = _tableUIState[uiKey] || (_tableUIState[uiKey] = { page: 1, query: "" });
+
   const card = el("article", "card full-span");
-  card.append(el("h3", "card-title", humanizeLabel(title)));
   const table = el("table", "simple-table");
   const thead = el("thead", "");
   const htr = el("tr", "");
@@ -150,24 +159,84 @@ function makeSimpleTableCard(title, columns, rows) {
   thead.append(htr);
   table.append(thead);
   const tbody = el("tbody", "");
-  if (!rows.length) {
-    const tr = el("tr", "");
-    const td = el("td", "table-empty", "无数据");
-    td.colSpan = columns.length;
-    tr.append(td);
-    tbody.append(tr);
+  table.append(tbody);
+
+  // 搜索框（列表标题栏上方）
+  let searchBox = null;
+  if (searchKey >= 0) {
+    searchBox = el("input", "input table-search");
+    searchBox.placeholder = `搜索${humanizeLabel(columns[searchKey])}...`;
+    searchBox.value = ui.query;
+    searchBox.addEventListener("input", () => {
+      ui.query = String(searchBox.value || "").trim().toLowerCase();
+      ui.page = 1;
+      render();
+    });
+    card.append(searchBox);
+  }
+  card.append(el("h3", "card-title", humanizeLabel(title)));
+
+  // 分页控件（表格下方）
+  let prevBtn = null;
+  let pageInfo = null;
+  let nextBtn = null;
+  if (pageSize > 0) {
+    prevBtn = makeButton("上一页", () => {
+      if (ui.page > 1) { ui.page--; render(); }
+    });
+    pageInfo = el("span", "card-help", "");
+    nextBtn = makeButton("下一页", () => {
+      ui.page++; render();
+    });
+    const pager = el("div", "toolbar table-pager");
+    pager.append(prevBtn, pageInfo, nextBtn);
+    card.append(table, pager);
   } else {
-    for (const row of rows) {
+    card.append(table);
+  }
+
+  function filteredRows() {
+    if (!ui.query) return rows;
+    return rows.filter((row) => {
+      const cell = row[searchKey];
+      const text = cell instanceof HTMLElement ? (cell.textContent || "") : String(cell == null ? "" : cell);
+      return text.toLowerCase().includes(ui.query);
+    });
+  }
+
+  function render() {
+    const list = filteredRows();
+    const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(list.length / pageSize)) : 1;
+    if (ui.page > totalPages) ui.page = totalPages;
+    if (ui.page < 1) ui.page = 1;
+    const start = pageSize > 0 ? (ui.page - 1) * pageSize : 0;
+    const pageRows = pageSize > 0 ? list.slice(start, start + pageSize) : list;
+
+    tbody.innerHTML = "";
+    if (!pageRows.length) {
       const tr = el("tr", "");
-      row.forEach((c, index) => {
-        const colLabel = Array.isArray(columns) ? columns[index] : "";
-        const cellValue = c instanceof HTMLElement ? c : formatScalar(c, colLabel);
-        tr.append(createTableCell(cellValue, index === 0 ? "cell-primary" : ""));
-      });
+      const td = el("td", "table-empty", ui.query ? "无匹配结果" : "无数据");
+      td.colSpan = columns.length;
+      tr.append(td);
       tbody.append(tr);
+    } else {
+      for (const row of pageRows) {
+        const tr = el("tr", "");
+        row.forEach((c, index) => {
+          const colLabel = Array.isArray(columns) ? columns[index] : "";
+          const cellValue = c instanceof HTMLElement ? c : formatScalar(c, colLabel);
+          tr.append(createTableCell(cellValue, index === 0 ? "cell-primary" : ""));
+        });
+        tbody.append(tr);
+      }
+    }
+    if (prevBtn) {
+      prevBtn.disabled = ui.page <= 1;
+      nextBtn.disabled = ui.page >= totalPages;
+      pageInfo.textContent = `第 ${ui.page} / ${totalPages} 页 · 共 ${list.length} 项`;
     }
   }
-  table.append(tbody);
-  card.append(table);
+
+  render();
   return card;
 }

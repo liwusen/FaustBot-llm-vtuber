@@ -1,6 +1,6 @@
 {
   "name": "faust-frontend",
-  "version": "2.6.1",
+  "version": "2.7.0",
   "private": true,
   "main": "electron-main.js",
   "license": "MIT",
@@ -59,10 +59,11 @@
       "live-window.html",
       "live-window.css",
       "live-window.js",
-      "FaustBot.icon.tiny.png"
+      "FaustBot.icon.tiny.png",
+      "icon.ico"
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "icon.ico",
       "target": [
         {
           "target": "dir",

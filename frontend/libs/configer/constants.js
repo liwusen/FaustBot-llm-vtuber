@@ -47,6 +47,7 @@ var META = {
   RERANK_ENABLED: { label: "启用 Reranker", help: "开启后对搜索结果进行重排序以提升相关性。" },
   RERANK_TOP_K: { label: "Rerank 保留数", help: "重排序后保留的 top-k 结果数量。" },
   BM25_ONLY: { label: "BM25 Only 模式", help: "开启后仅使用 BM25 关键词检索，不调用外部 Embedding API 和 Reranker。适用于离线/无 API Key 场景。" },
+  REASONING_CONFIG: { label: "思考强度", help: "全局思考配置：off 关闭思考，low/medium/high 为思考强度。每个 Provider 的思考格式（Thinking 类型）在下方 Provider 编辑中单独指定。" },
   MM_BRIDGE_MAX_SCAN: { label: "多模态桥接扫描条数", help: "每轮对话从最近 ToolMessage 中扫描图片输出的最大条数。" },
   MM_BRIDGE_REMOVE_SOURCE: { label: "桥接后删除源消息", help: "开启后，转换完成的源 ToolMessage 会从上下文中移除。" },
   MM_BRIDGE_KEEP_TURNS: { label: "图片消息保留轮数", help: "生成的图片多模态消息在几轮对话后自动删除；0 表示用完即删。" },
@@ -63,8 +64,8 @@ var FIELD_OPTIONS = {
   OPENAI_TTS_VOICE: ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"],
   OPENAI_TTS_RESPONSE_FORMAT: ["mp3", "wav", "opus", "aac", "flac", "pcm"],
   OPENAI_ASR_RESPONSE_FORMAT: ["json", "text", "srt", "verbose_json", "vtt"],
-  THINKING_PRESET: ["none", "openai", "qwen", "deepseek"],
-  THINKING_INTENSITY: ["low", "medium", "high"],
+  REASONING_CONFIG: ["off", "low", "medium", "high"],
+  THINKING_TYPE: ["none", "openai", "qwen", "deepseek"],
   TTS_PROMPT_LANGUAGE: ["zh", "en", "ja", "ko", "yue", "中文", "英文", "日文", "韩文", "粤语"],
 };
 
@@ -94,7 +95,7 @@ var ADVANCED_KEYS = new Set([
   "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET",
   "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG",
 ]);
-var AI_PUBLIC_KEYS = ["EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "MD_BLOCK_ENABLED"];
+var AI_PUBLIC_KEYS = ["EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "MD_BLOCK_ENABLED", "REASONING_CONFIG"];
 var AI_PRIVATE_KEYS = ["SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "WHISPER_MODEL", "WHISPER_LANGUAGE", "WHISPER_INITIAL_PROMPT", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
