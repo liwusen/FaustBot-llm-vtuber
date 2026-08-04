@@ -433,6 +433,8 @@ class UpdateManager:
             lines += [
                 "echo [DRY-RUN] No files were modified.",
             ]
+            
+        lines+=["pause"]
 
         log.debug(f"Generated update script for tag={tag}:\n" + "\n".join(lines))
         bat_path.write_text(
