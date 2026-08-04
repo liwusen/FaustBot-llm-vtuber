@@ -180,3 +180,30 @@ jobs:
           files: |
             ${{ steps.prepare_archive.outputs.full_archive }}
             ${{ steps.prepare_archive.outputs.lite_archive }}
+
+      - name: Authenticate with ModelScope
+        shell: cmd
+        run: .runtime\Scripts\modelscope.exe login --token %MODELSCOPE_TOKEN%
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+
+      - name: Ensure ModelScope repository exists
+        shell: pwsh
+        run: |
+          .\.runtime\Scripts\modelscope.exe create --repo-type dataset --exist-ok `
+            --description "FaustBot release archives (latest only)" `
+            allenlee18/FaustBotCore
+
+      - name: Upload release archives to ModelScope (latest only)
+        shell: pwsh
+        run: |
+          $full = "${{ steps.prepare_archive.outputs.full_archive }}"
+          $lite = "${{ steps.prepare_archive.outputs.lite_archive }}"
+          $verFile = Join-Path $env:GITHUB_WORKSPACE 'backend\version.json'
+          $ms = '.\.runtime\Scripts\modelscope.exe'
+          & $ms upload --repo-type dataset --sync --commit-message "Release ${{ github.ref_name }}" `
+            allenlee18/FaustBotCore $full
+          & $ms upload --repo-type dataset --sync --commit-message "Release ${{ github.ref_name }} (lite)" `
+            allenlee18/FaustBotCore $lite
+          & $ms upload --repo-type dataset --sync --commit-message "Release ${{ github.ref_name }} (version)" `
+            allenlee18/FaustBotCore $verFile version.json
