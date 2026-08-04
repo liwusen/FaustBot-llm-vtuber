@@ -160,11 +160,14 @@ jobs:
             $zip.Dispose()
           }
 
-          # Lite archive: copy stage, remove .runtime, then compress
+          # Lite archive: copy stage, remove .runtime/.nodejs (preserved by
+          # update's robocopy /XD), then compress
           Copy-Item -LiteralPath $stageDir -Destination $liteDir -Recurse -Force
-          $runtimeDir = Join-Path $liteDir '.runtime'
-          if (Test-Path $runtimeDir) {
-            Remove-Item -LiteralPath $runtimeDir -Recurse -Force
+          foreach ($preserved in @('.runtime', '.nodejs')) {
+            $dir = Join-Path $liteDir $preserved
+            if (Test-Path $dir) {
+              Remove-Item -LiteralPath $dir -Recurse -Force
+            }
           }
           Compress-Archive -Path (Join-Path $liteDir '*') -DestinationPath $liteArchive -CompressionLevel Optimal
 
