@@ -189,9 +189,16 @@ jobs:
         run: .runtime\Scripts\modelscope.exe login --token %MODELSCOPE_TOKEN%
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          # Windows runner 默认 cp1252 代码页，modelscope CLI 输出含 →
+          # （U+2192）会抛 UnicodeEncodeError；强制 UTF-8 输出。
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
 
       - name: Ensure ModelScope repository exists
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           .\.runtime\Scripts\modelscope.exe create --repo-type dataset --exist-ok `
             --description "FaustBot release archives (latest only)" `
@@ -199,6 +206,9 @@ jobs:
 
       - name: Upload release archives to ModelScope (latest only)
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           $full = "${{ steps.prepare_archive.outputs.full_archive }}"
           $lite = "${{ steps.prepare_archive.outputs.lite_archive }}"
