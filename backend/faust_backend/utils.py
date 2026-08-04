@@ -170,7 +170,7 @@ class DownloadTask:
         self.num_threads = num_threads
         self.total_bytes: int = 0
         self.downloaded_bytes: int = 0
-        self._lock = threading.Lock()
+        self.a = threading.Lock()
         self._start_time: float = 0.0
         self._done = False
         self._error: str | None = None
@@ -242,12 +242,16 @@ class DownloadTask:
             try:
                 r = requests.get(self.url, headers=h, stream=True, timeout=120)
                 r.raise_for_status()
+                # 本 chunk 实际写入的字节数，只在成功后一次性累加，
+                # 避免重试时 downloaded_bytes 重复计数（进度虚增到 100%）
+                written = 0
                 with open(part, "wb") as f:
                     for data in r.iter_content(DOWNLOAD_CHUNK_SIZE):
                         if data:
                             f.write(data)
-                            with self._lock:
-                                self.downloaded_bytes += len(data)
+                            written += len(data)
+                with self._lock:
+                    self.downloaded_bytes += written
                 return part
             except Exception as e:
                 last_exc = e
@@ -292,18 +296,27 @@ class DownloadTask:
             import concurrent.futures
             import shutil
 
-            with concurrent.futures.ThreadPoolExecutor(
+            pool = concurrent.futures.ThreadPoolExecutor(
                 max_workers=self.num_threads
-            ) as pool:
-                fut_map = {
-                    pool.submit(self._dl_chunk_with_retry, s, e, i): i
-                    for s, e, i in ranges
-                }
+            )
+            fut_map = {
+                pool.submit(self._dl_chunk_with_retry, s, e, i): i
+                for s, e, i in ranges
+            }
+            # 注意：不能用 with 块——异常时 __exit__ 会 shutdown(wait=True)
+            # 等待所有线程（含慢速重试的 chunk）结束，导致进度已满但
+            # _done 迟迟不置位、前端卡在 100%。改为失败立即 shutdown(wait=False)。
+            try:
                 for fut in concurrent.futures.as_completed(fut_map):
                     exc = fut.exception()
                     if exc:
                         raise exc
                     part_paths.append(fut.result())
+            except BaseException:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
+            finally:
+                pool.shutdown(wait=True)
 
             part_paths.sort(key=lambda p: int(p.suffix.replace(".part", "")))
             with open(self.dest_path, "wb") as out:

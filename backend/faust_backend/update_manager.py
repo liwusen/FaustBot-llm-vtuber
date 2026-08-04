@@ -367,11 +367,17 @@ class UpdateManager:
             ps1_lines = [
                 "# Wait for Faust to exit",
                 "Write-Host 'Waiting for Faust processes to exit...'",
+                "$waited = 0",
                 "do {",
                 "    $procs = Get-Process -Name 'electron','python','faust*' -ErrorAction SilentlyContinue",
                 "    if (-not $procs) { break }",
                 "    Write-Host '  Waiting...'",
                 "    Start-Sleep -Seconds 2",
+                "    $waited += 2",
+                "    if ($waited -ge 120) {",
+                "        Write-Host '  Timeout after 120s, continuing anyway.'",
+                "        break",
+                "    }",
                 "} while ($true)",
                 "Write-Host 'All FaustBot processes exited.'",
                 "",
@@ -390,6 +396,14 @@ class UpdateManager:
                 ") else (",
                 "  echo [WARN] PowerShell wait script not found, skipping.",
                 ")",
+                "",
+                # 兜底清理：等待超时或残留进程未退出时强制结束，
+                # 避免 robocopy 因文件被占用而失败。
+                # 注意 python.exe 不带 /T：本 bat 由后端 python 启动，
+                # 杀进程树会连带终止当前 cmd/bat 执行链。
+                "echo Killing remaining FaustLive2DFrontend.exe and python.exe...",
+                "taskkill /F /IM FaustLive2DFrontend.exe >nul 2>&1",
+                "taskkill /F /IM python.exe >nul 2>&1",
                 "",
             ]
 
