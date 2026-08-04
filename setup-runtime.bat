@@ -46,6 +46,11 @@ goto after_parse
 
 :parse_args_loop
 if "%~1"=="" goto after_parse
+if /i "%~1"=="--skip-admin-check" (
+  set "SKIP_ADMIN_CHECK=1"
+  shift
+  goto parse_args_loop
+)
 if /i "%~1"=="--help" (
   set "SHOW_HELP=1"
   shift

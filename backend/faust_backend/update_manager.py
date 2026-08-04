@@ -423,7 +423,7 @@ class UpdateManager:
                 "echo Step 2: Running setup-runtime.bat --torch cpu --tts no...",
                 'set "SETUP_SCRIPT=%INSTALL_ROOT%\\setup-runtime.bat"',
                 'if exist "%SETUP_SCRIPT%" (',
-                '  call "%SETUP_SCRIPT%" --torch cpu --tts no --install-python no --install-node yes --source cn',
+                '  call "%SETUP_SCRIPT%" --torch cpu --tts no --install-python no --install-node yes --source cn --skip-admin-check',
                 ") else (",
                 "  echo [WARN] setup-runtime.bat not found, skipped.",
                 ")",
