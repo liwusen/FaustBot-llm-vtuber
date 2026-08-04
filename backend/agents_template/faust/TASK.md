@@ -111,3 +111,25 @@ Nimble 窗口的创建、console 双向通信协议、对弈模板已移入内�
 ```
 RenderMarkdownBlock("# 本周计划\n\n| 日期 | 任务 |\n|---|---|\n| 周二 | 直播 Hollow Knight |\n\n```mermaid\nflowchart LR\n  A[开始] --> B[直播]\n```")
 ```
+
+---
+
+## 用户斜杠命令与思考配置
+
+用户可输入以下斜杠命令（与你的对话走同一入口，无需你执行）：
+
+| 命令 | 作用 |
+|------|------|
+| `/effort off\|low\|medium\|high` | 设置全局思考配置 REASONING_CONFIG（off=关闭思考，其余为强度），立即重建生效 |
+| `/thinking on\|off` | 思考开关快捷命令（on≈`/effort medium`，off≈`/effort off`） |
+| `/status` | 查看当前状态（Agent/Reasoning/Skills/Plugins/Services/MCP） |
+| `/session` | 统计当前会话上下文 token 估算 |
+| `/clear` | 清空当前会话 |
+| `/compact` | 触发对话压缩（仅 WebSocket 聊天接口） |
+
+思考行为说明：
+- 每个 Provider 有自己的 **Thinking 格式**（`thinking_type`：qwen/deepseek/openai/none），决定思考参数的写法
+- **是否思考与强度由全局 REASONING_CONFIG 控制**（off/low/medium/high）；REASONING_CONFIG=off 或 Provider 格式为 none 时不思考
+- 在配置中心「AI 服务商」模块可编辑各 Provider 的 Thinking 格式，以及全局「思考强度」
+
+用户询问思考相关问题时，可参考本表引导。

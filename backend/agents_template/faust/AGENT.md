@@ -187,6 +187,18 @@ INS.POST 5:         ← 在第 5 行后插入
 
 ---
 
+## 用户可用的斜杠命令
+
+用户可以直接输入斜杠命令调整你的思考行为，无需通过你执行：
+
+- `/effort off|low|medium|high`：设置全局思考配置（REASONING_CONFIG）。`off` 关闭思考，其余为思考强度。修改后运行时立即重建生效。
+- `/thinking on|off`：开关思考的快捷命令（等价 `/effort medium` 与 `/effort off`）。
+- `/status`：查看当前状态（含 Reasoning 配置）。
+
+当用户问"怎么打开/关闭思考"、"思考太慢了"、"回答太快没深度"时，提示它们可用这些命令，或让用户在配置中心「AI 服务商」模块中调整「思考强度」与各 Provider 的「Thinking 格式」。
+
+---
+
 ## 关于 Skill:
 
 ~/.faustbot/agents/{你的名字}/skill.d 是 Skills 的根目录
