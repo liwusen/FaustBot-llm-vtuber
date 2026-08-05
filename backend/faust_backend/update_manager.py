@@ -40,6 +40,7 @@ PRESERVE_PATTERNS = [
     "logs/",
     "*.private.json",
     "*.log",
+    "*.pyc",
 ]
 
 
@@ -408,59 +409,6 @@ class UpdateManager:
             "",
         ]
 
-        if dry_run:
-            lines += [
-                "echo [DRY-RUN] Mode enabled - no files will be modified.",
-                "",
-            ]
-        else:
-            # Write a small PowerShell script that waits for Faust processes to exit,
-            # then call it from the generated .bat. This restores the original
-            # PowerShell waiting logic the user requested.
-            ps1_path = bat_path.with_suffix(".ps1")
-            ps1_lines = [
-                "# Wait for Faust to exit",
-                "Write-Host 'Waiting for Faust processes to exit...'",
-                "$waited = 0",
-                "do {",
-                "    $procs = Get-Process -Name 'electron','python','faust*' -ErrorAction SilentlyContinue",
-                "    if (-not $procs) { break }",
-                "    Write-Host '  Waiting...'",
-                "    Start-Sleep -Seconds 2",
-                "    $waited += 2",
-                "    if ($waited -ge 120) {",
-                "        Write-Host '  Timeout after 120s, continuing anyway.'",
-                "        break",
-                "    }",
-                "} while ($true)",
-                "Write-Host 'All FaustBot processes exited.'",
-                "",
-            ]
-            try:
-                ps1_path.write_text("\r\n".join(ps1_lines) + "\r\n", encoding="utf-8")
-                log.debug(f"Wrote PowerShell wait script: {ps1_path}")
-            except Exception as e:
-                log.warning(f"Failed to write PowerShell wait script: {e}")
-
-            lines += [
-                "echo Invoking PowerShell wait script to ensure Faust has exited...",
-                f'set "POWERSHELL_SCRIPT={ps1_path}"',
-                'if exist "%POWERSHELL_SCRIPT%" (',
-                '  powershell -NoProfile -ExecutionPolicy Bypass -File "%POWERSHELL_SCRIPT%"',
-                ") else (",
-                "  echo [WARN] PowerShell wait script not found, skipping.",
-                ")",
-                "",
-                # 兜底清理：等待超时或残留进程未退出时强制结束，
-                # 避免 robocopy 因文件被占用而失败。
-                # 注意 python.exe 不带 /T：本 bat 由后端 python 启动，
-                # 杀进程树会连带终止当前 cmd/bat 执行链。
-                "echo Killing remaining FaustLive2DFrontend.exe and python.exe...",
-                "taskkill /F /IM FaustLive2DFrontend.exe >nul 2>&1",
-                "taskkill /F /IM python.exe >nul 2>&1",
-                "",
-            ]
-
         robocopy_cmd = [
             'robocopy "%EXTRACTED%" "%INSTALL_ROOT%" /MIR /R:2 /W:1 /NFL /NDL /NP /MT:16'
         ]
@@ -472,6 +420,13 @@ class UpdateManager:
         if excluded_files:
             robocopy_cmd.append("/XF")
             robocopy_cmd.extend(f'"{item}"' for item in excluded_files)
+
+        lines += [
+            "echo Step 0: Kill FaustBot Process if running...",
+            "taskkill /F /IM FaustLive2DFrontend.exe >nul 2>&1",#不能使用/T参数
+            "taskkill /F /IM python.exe >nul 2>&1",
+            "taskkill /F /IM node.exe >nul 2>&1",#mc-operator和MCP
+        ]#FIXME: 其实直接杀掉所有python并不是一个好的做法
 
         lines += [
             "echo Step 1: Syncing update files with robocopy...",
@@ -486,12 +441,13 @@ class UpdateManager:
             "",
         ]
 
+
         if not dry_run:
             lines += [
-                "echo Step 2: Running setup-runtime.bat --torch cpu --tts no...",
+                "echo Step 2: Running setup-runtime.bat to fix Python requirements...",
                 'set "SETUP_SCRIPT=%INSTALL_ROOT%\\setup-runtime.bat"',
                 'if exist "%SETUP_SCRIPT%" (',
-                '  call "%SETUP_SCRIPT%" --torch cpu --tts no --install-python no --install-node yes --source cn --skip-admin-check',
+                '  call "%SETUP_SCRIPT%" --fix-py-requirements --source cn --skip-admin-check',
                 ") else (",
                 "  echo [WARN] setup-runtime.bat not found, skipped.",
                 ")",
@@ -501,8 +457,14 @@ class UpdateManager:
             lines += [
                 "echo [DRY-RUN] No files were modified.",
             ]
-            
+
+        lines += [
+            "echo Congratulations! FaustBot has successfully updated to %TAG%.",
+        ]
+        
         lines+=["pause"]
+
+        
 
         log.debug(f"Generated update script for tag={tag}:\n" + "\n".join(lines))
         bat_path.write_text(
@@ -537,3 +499,4 @@ class UpdateManager:
                     d.unlink()
             except Exception:
                 pass
+

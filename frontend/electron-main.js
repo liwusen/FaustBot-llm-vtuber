@@ -830,10 +830,6 @@ function getTrayIconPath(){
   const candidates = [
     path.join(__dirname, 'FaustBot.icon.tiny.png'),
     path.join(getFrontendResourceDir(), 'FaustBot.icon.tiny.png'),
-    path.join(getFrontendResourceDir(), 'fake_neuro.ico'),
-    path.join(getFrontendResourceDir(), 'dmx1.png'),
-    path.join(__dirname, '..', '..', 'live-2d', 'fake_neuro.ico'),
-    path.join(__dirname, '..', '..', 'image', 'dmx1.png'),
   ];
   return candidates.find((candidate)=> fs.existsSync(candidate)) || null;
 }
@@ -961,7 +957,7 @@ function startBackendInPowerShell(){
   console.log('后端已在启动，等待就绪…');
 }
 
-function waitForBackend(maxAttempts = 40, interval = 3000) {
+function waitForBackend(maxAttempts = 200, interval = 1000) {
   return new Promise((resolve) => {
     let attempts = 0;
     const poll = () => {
@@ -991,7 +987,7 @@ app.whenReady().then(async () => {
     });
     open = await waitForBackend();
     if (!open) {
-      dialog.showErrorBox('启动超时', 'CRITICAL:后端服务启动超时 (120s)');
+      dialog.showErrorBox('启动超时', 'CRITICAL:后端服务启动超时 (200s)');
       app.quit();
       return;
     }

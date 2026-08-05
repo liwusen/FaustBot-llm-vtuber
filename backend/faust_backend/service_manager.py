@@ -49,7 +49,7 @@ SERVICES: List[Dict[str, Any]] = [
         'description': '语音识别后端',
         'port': 1000,
         'script': 'ASR.bat',
-        'log_file': 'log_asr.log'
+        'log_file': '../logs/faust_asr.log'
     },
     {
         'key': 'mc_operator',

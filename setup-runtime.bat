@@ -46,6 +46,11 @@ goto after_parse
 
 :parse_args_loop
 if "%~1"=="" goto after_parse
+if /i "%~1"=="--fix-py-requirements" (
+  set "INSTALL_FIX_PY_REQ=1"
+  shift
+  goto parse_args_loop
+)
 if /i "%~1"=="--skip-admin-check" (
   set "SKIP_ADMIN_CHECK=1"
   shift
@@ -192,17 +197,20 @@ exit /b 1
 
 :after_parse
 if "%SHOW_HELP%"=="1" goto show_help
-if "%INSTALL_TORCH%"=="0" (
-  echo 参数错误：必须提供 --torch cu128^|cu121^|cu130^|cpu
-  echo.
-  goto show_help_with_error
-)
 if "%INSTALL_PY_REQ%"=="" set "INSTALL_PY_REQ=0"
 if "%INSTALL_PYTHON%"=="" set "INSTALL_PYTHON=0"
 if "%INSTALL_SYS_NODE%"=="" set "INSTALL_SYS_NODE=0"
 if "%INSTALL_BUNDLE_NODE%"=="" set "INSTALL_BUNDLE_NODE=0"
 if "%INSTALL_TTS%"=="" set "INSTALL_TTS=0"
 if "%INSTALL_TORCH%"=="1" if "%INSTALL_PY_REQ%"=="0" set "INSTALL_PY_REQ=1"
+if "%INSTALL_FIX_PY_REQ%"=="1" (
+  set "INSTALL_TORCH=0"
+  set "INSTALL_PY_REQ=1"
+  set "INSTALL_PYTHON=0"
+  set "INSTALL_SYS_NODE=0"
+  set "INSTALL_BUNDLE_NODE=0"
+  set "INSTALL_TTS=0"
+)
 
 if "%SKIP_ADMIN_CHECK%"=="0" (
   net session >nul 2>&1
@@ -442,14 +450,9 @@ echo.
 echo 安装完成。
 exit /b 0
 
-:show_help_with_error
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$lines = @('用法：setup-runtime.bat --torch cu128^|cu121^|cu130^|cpu [--tts yes^|no] [--source cn^|official] [--install-python yes^|no] [--install-node yes^|no] [--install-bundle-node yes^|no] [--tts-variant standard^|nvidia50]','', '参数说明：','参数 --torch: PyTorch 版本。cu128=GPU CUDA 12.8，cu121=GPU CUDA 12.1，cu130=GPU CUDA 13.0，cpu=CPU 版。','参数 --tts: 是否下载 TTS 模型。yes=下载，no=不下载。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --install-bundle-node: 是否安装 .nodejs 便携版 Node.js 与 MCP server 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','', '示例：','setup-runtime.bat --torch cu128 --tts yes --source cn --install-python yes --install-node yes --install-bundle-node yes --tts-variant nvidia50','setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes --install-bundle-node yes','', '提示：TTS 下载后可通过前端组件页面管理启停。'); $lines -join [Environment]::NewLine"
-exit /b 1
-
 :show_help
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$lines = @('用法：setup-runtime.bat --torch cu128^|cu121^|cu130^|cpu [--tts yes^|no] [--source cn^|official] [--install-python yes^|no] [--install-node yes^|no] [--install-bundle-node yes^|no] [--tts-variant standard^|nvidia50]','', '参数说明：','参数 --torch: PyTorch 版本。cu128=GPU CUDA 12.8，cu121=GPU CUDA 12.1，cu130=GPU CUDA 13.0，cpu=CPU 版。','参数 --tts: 是否下载 TTS 模型。yes=下载，no=不下载。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --install-bundle-node: 是否安装 .nodejs 便携版 Node.js 与 MCP server 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','', '示例：','setup-runtime.bat --torch cu128 --tts yes --source cn --install-python yes --install-node yes --install-bundle-node yes --tts-variant nvidia50','setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes --install-bundle-node yes','', '提示：TTS 下载后可通过前端组件页面管理启停。'); $lines -join [Environment]::NewLine"
+  "$lines = @('用法：setup-runtime.bat --torch cu128^|cu121^|cu130^|cpu [--tts yes^|no] [--source cn^|official] [--install-python yes^|no] [--install-node yes^|no] [--install-bundle-node yes^|no] [--tts-variant standard^|nvidia50]','', '参数说明：','参数 --torch: PyTorch 版本。cu128=GPU CUDA 12.8，cu121=GPU CUDA 12.1，cu130=GPU CUDA 13.0，cpu=CPU 版；省略此参数则不安装 PyTorch。','参数 --tts: 是否下载 TTS 模型。yes=下载，no=不下载。','参数 --source: 依赖源。cn=国内镜像，official=官方源。','参数 --install-python: 是否安装 Python + pip + wheel 等基础环境。','参数 --install-node: 是否安装 frontend 和 mc-operator 的 Node.js 依赖。','参数 --install-bundle-node: 是否安装 .nodejs 便携版 Node.js 与 MCP server 依赖。','参数 --tts-variant: TTS 包类型。standard=普通显卡，nvidia50=50 系显卡。','参数 --fix-py-requirements: 仅安装 Python 依赖（requirements.txt），不安装 PyTorch 等其它组件。','', '示例：','setup-runtime.bat --torch cu128 --tts yes --source cn --install-python yes --install-node yes --install-bundle-node yes --tts-variant nvidia50','setup-runtime.bat --torch cpu --tts no --source official --install-python yes --install-node yes --install-bundle-node yes','', '提示：TTS 下载后可通过前端组件页面管理启停。'); $lines -join [Environment]::NewLine"
 exit /b 0
 
 :fail
