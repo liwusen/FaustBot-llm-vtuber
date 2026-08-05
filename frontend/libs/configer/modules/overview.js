@@ -208,6 +208,66 @@ function renderOverviewModule() {
     checkBtn.textContent = "检查更新";
   });
 
+  // ── 手动选择更新包（下载不稳定时从 ModelScope 下载后手动选择）──
+  const manualBtn = makeButton("手动选择更新包", async () => {
+    const filePath = await window.api.configOpenFile({
+      title: "选择 Faust 更新包 (.zip)",
+      filters: [{ name: "Zip 更新包", extensions: ["zip"] }],
+    });
+    if (!filePath) return;
+
+    manualBtn.disabled = true;
+    manualBtn.textContent = "校验中...";
+    updateResult.innerHTML = "";
+    progressContainer.style.display = "none";
+    try {
+      const resp = await window.api.configRequest("POST", "/faust/update/manual", {
+        file_path: filePath,
+      });
+      const data = resp || {};
+      if (data.status !== "ok") {
+        showBanner("error", data.error || "手动更新包校验失败");
+        return;
+      }
+      updateResult.innerHTML = `
+        <div style="color:var(--accent);font-weight:600;margin-bottom:6px">
+          手动更新包已就绪: ${data.tag} (${data.version})
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+          已跳过下载，将直接使用所选更新包进行更新。
+        </div>
+      `;
+      const btnRow = el("div", "toolbar");
+      const applyBtn = makeButton("开始更新", async () => {
+        applyBtn.disabled = true;
+        applyBtn.textContent = "准备中...";
+        try {
+          const ar = await window.api.configRequest("POST", "/faust/update/apply", {
+            tag: data.tag,
+            asset_name: data.asset_name,
+          });
+          if (ar.status === "update_prepared") {
+            updateResult.innerHTML = `<div style="color:var(--accent);font-weight:600">
+              更新已准备就绪。请关闭所有窗口后重新启动 Faust 以完成更新。
+            </div>`;
+          } else {
+            showBanner("error", `更新失败: ${ar.error || "未知错误"}`);
+          }
+        } catch (e) {
+          showBanner("error", `更新异常: ${e}`);
+        }
+        applyBtn.disabled = false;
+        applyBtn.textContent = "开始更新";
+      });
+      btnRow.append(applyBtn);
+      updateResult.append(btnRow);
+    } catch (e) {
+      showBanner("error", `手动更新包校验异常: ${e}`);
+    }
+    manualBtn.disabled = false;
+    manualBtn.textContent = "手动选择更新包";
+  });
+
   // ── 镜像切换 ──
   const proxyRow = el("div");
   proxyRow.style.cssText = "margin-top:8px;display:flex;align-items:center;gap:8px";
@@ -220,7 +280,7 @@ function renderOverviewModule() {
   proxyRow.append(proxyChk, proxyLbl);
   updateCard.append(proxyRow);
 
-  updateCard.append(updateInfo, checkBtn, updateResult);
+  updateCard.append(updateInfo, checkBtn, manualBtn, updateResult);
   addSection("版本更新", [updateCard]);
 
   // ── 数据目录 ──

@@ -104,6 +104,60 @@ def _gh_download_url(tag: str, asset_name: str, use_proxy: bool) -> str:
     return raw
 
 
+# ─── manual package (select local zip) ─────────────────────
+
+
+# 与 release-package.yml 的发布包命名一致：faust-<tag>-without-runtime.zip
+MANUAL_PACKAGE_RE = re.compile(
+    r"^faust[-_]?([Vv]\d+\.\d+\.\d+.*?)-without-runtime\.zip$",
+    re.IGNORECASE,
+)
+
+
+def validate_manual_package(file_path: str | Path) -> dict[str, str]:
+    """校验并暂存手动选择的更新包，返回 {tag, version, asset_name}。
+
+    校验规则：
+      1. 文件存在且是 .zip
+      2. 文件名匹配发布包命名（含 without-runtime，可解析出版本号）
+      3. zip 结构完整（zipfile.is_zipfile）
+      4. 版本号高于当前本地版本
+    通过后复制到 tempdir/faust_update_{tag}/ 下，供现有更新链路复用。
+    """
+    src = Path(file_path).expanduser()
+    if not src.is_file():
+        raise ValueError("文件不存在，请重新选择")
+
+    name = src.name
+    m = MANUAL_PACKAGE_RE.match(name)
+    if not m:
+        raise ValueError(
+            f"文件名不符合更新包规范（应为 faust-Vx.y.z-without-runtime.zip）：{name}"
+        )
+    tag = m.group(1)
+
+    if not zipfile.is_zipfile(src):
+        raise ValueError("更新包已损坏（不是有效的 zip 文件），请重新下载")
+
+    current = _current_tag(Path(__file__).resolve().parents[2])
+    if not is_newer_version(tag, current):
+        raise ValueError(f"更新包版本 {tag} 不高于当前版本 {current}，无需更新")
+
+    # 复制到更新链路约定的位置：tempdir/faust_update_{tag}/{asset_name}
+    tmp = Path(tempfile.gettempdir()) / f"faust_update_{tag}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    dest = tmp / name
+    shutil.copy2(src, dest)
+
+    # 若存在旧解压结果，删除强制重新解压，确保用的是刚复制的包
+    extracted = tmp / "extracted"
+    if extracted.exists():
+        shutil.rmtree(extracted)
+
+    log.info(f"Manual update package staged: {name} -> {dest}")
+    return {"tag": tag, "version": _normalize_tag(tag), "asset_name": name}
+
+
 # ─── download progress store ────────────────────────────────
 
 

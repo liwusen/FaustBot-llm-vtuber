@@ -36,6 +36,7 @@ AI 驱动的虚拟主播 / 桌面宠物 —— 能对话、能操作电脑、能
 
 - [项目介绍](getting-started.md)
 - [安装指南](installation.md)
+- [手动更新指南](manual-update.md)
 - [配置说明](configuration.md)
 - [Agent 基础](agent-basics.md)
 - [内置插件](plugins/index.md)

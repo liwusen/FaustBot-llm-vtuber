@@ -11,6 +11,7 @@ from faust_backend.update_manager import (
     create_download_task,
     get_download_task,
     cleanup_download_task,
+    validate_manual_package,
 )
 
 log = logging.getLogger("faust.update")
@@ -64,6 +65,41 @@ async def check_update():
         published_at=result.get("published_at"),
         release_body=result.get("body"),
     )
+
+
+# ─── manual package (select local zip) ─────────────────────
+
+
+class ManualPackageResponse(BaseModel):
+    status: str
+    tag: str | None = None
+    version: str | None = None
+    asset_name: str | None = None
+    error: str | None = None
+    message: str | None = None
+
+
+@router.post("/manual", response_model=ManualPackageResponse)
+async def manual_package(payload: dict | None = None):
+    body = payload or {}
+    file_path = str(body.get("file_path") or "").strip()
+    if not file_path:
+        return ManualPackageResponse(status="error", error="未提供更新包路径")
+
+    try:
+        info = await asyncio.to_thread(validate_manual_package, file_path)
+        return ManualPackageResponse(
+            status="ok",
+            tag=info["tag"],
+            version=info["version"],
+            asset_name=info["asset_name"],
+            message=f"手动更新包 {info['tag']} 已就绪",
+        )
+    except ValueError as e:
+        return ManualPackageResponse(status="error", error=str(e))
+    except Exception as e:
+        log.exception("Manual package validation failed")
+        return ManualPackageResponse(status="error", error=f"校验失败: {e}")
 
 
 # ─── start download ────────────────────────────────────────
