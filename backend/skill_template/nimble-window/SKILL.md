@@ -95,9 +95,10 @@ write("faustbot://nimble/{callback_id}/console", '{"type":"move","pos":[1,1]}')
 
 脚本以 `new Function('nimble', code)` 执行，`nimble` 对象为每窗口独立注入：
 
-- `nimble.sendMessage(createEventTrigger, payload)` — 发消息给你（Promise）
+- `nimble.sendMessage(createEventTrigger:bool, payload)` — 发消息给你（Promise）,createEventTrigger代表是否使用EventTrigger唤醒你
 - `nimble.setMessageHandler(func)` — 接收你写入 console 的消息（保留命令除外）
 - `nimble.resize(width, height)` / `nimble.setFullscreen(enabled)` / `nimble.getConfig()`
 - 元素加 `class="nimble-pass-through"` 可在点击穿透模式下不阻挡桌面操作
+- 可以读取两个模板来学习API使用方法
 
 注意：模板内使用了固定的元素 id，同一游戏模板同时只开一个窗口。

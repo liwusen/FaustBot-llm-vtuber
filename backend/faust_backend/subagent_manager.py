@@ -96,6 +96,9 @@ class SubagentManager:
             tools: list[StructuredTool] = []
             for toolset_name in toolset_names:
                 tools.extend(list(self.subagentPublicToolSets.get(toolset_name) or []))
+            # 与 newSubagent 保持一致：finalResultTool 是运行时单独注入的，
+            # 不属于任何 toolset，恢复时必须补回，否则二次运行无法写入 finalResult
+            tools.append(self._build_final_result_tool(name))
             status = str(item.get("status") or "idle")
             if status in {"running", "pending", "stopping"}:
                 status = "stopped"
@@ -738,3 +741,16 @@ class SubagentManager:
                     "call_id": str(event.get("run_id") or ""),
                 }
                 continue
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        manager = SubagentManager(checkpointerPath="subagents.db")
+        manager.setChatModel(BaseChatModel())  # Replace with actual model
+        manager.newToolset("Example Toolset", tools=[])  # Add actual tools
+        await manager.newSubagent(agent_name="TestAgent", toolsetsNames=["Example Toolset"])
+        status = manager.get_status("TestAgent")
+        print(status)
+
+    asyncio.run(main())

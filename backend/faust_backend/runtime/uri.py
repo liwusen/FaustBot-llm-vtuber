@@ -16,7 +16,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-SELECTOR_RE = re.compile(r"^:-?\d+(?:\+\d+|--?\d+)?(:raw)?$")
+# 支持的形式：
+#   :N / :-N                         单行（负数 = 从末尾倒数）
+#   :A-B / :-A--B / :-A-B / :A--B   范围（任一端可为负数，从末尾倒数）
+#   :-A:-B                           双冒号负范围（-20:-10 = 倒数第20行~倒数第10行）
+#   :A+C / :-A+C                     C 行从 A 起
+#   以上均可追加 :raw
+SELECTOR_RE = re.compile(r"^:-?\d+(?:(?::|-)-?\d+|\+-?\d+)?(:raw)?$")
 SCHEME_ARTIFACT = "artifact"
 SCHEME_MEMORY = "memory"
 SCHEME_SKILL = "skill"
@@ -41,6 +47,13 @@ class ParsedURI:
         raw = s.endswith(":raw")
         if raw:
             s = s[:-4]
+        # 双冒号负范围：:-20:-10 → 倒数第20行 ~ 倒数第10行
+        if ":" in s and not s.startswith("+") and not s.startswith(":"):
+            a, b = s.split(":", 1)
+            try:
+                return (int(a), int(b))
+            except ValueError:
+                pass
         if "+" in s and not s.startswith("-"):
             offset, length = s.split("+", 1)
             start = int(offset)
@@ -63,13 +76,21 @@ def _extract_selector(rest: str) -> str | None:
     Starts with the entire rest after the first colon, then progressively
     shrinks from the left until a match is found or no colons remain.
     This handles selectors with embedded colons like ':50-100:raw'.
+
+    Negative ranges use an extra colon to separate the two endpoints
+    (e.g. ':-20:-10' = lines 20 from end through 10 from end), so the
+    longest matching candidate wins — otherwise ':-10' would be picked
+    and ':-20' would leak back into the path.
     """
     colon_positions = [i for i, ch in enumerate(rest) if ch == ":"]
+    best = None
     for pos in reversed(colon_positions):
         candidate = rest[pos:]
         if SELECTOR_RE.match(candidate):
-            return candidate
-    return None
+            # Prefer the longest match so ':-20:-10' keeps both endpoints
+            if best is None or len(candidate) > len(best):
+                best = candidate
+    return best
 
 
 def parse(uri: str) -> ParsedURI:

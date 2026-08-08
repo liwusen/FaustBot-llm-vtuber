@@ -24,7 +24,7 @@ class EventTriggerPushRequest(BaseModel):
 
 class GenericTriggerPushRequest(BaseModel):
     """通用触发器提交请求体（对齐 trigger_manager.append_trigger 的 dict 格式）。"""
-    trigger: dict[str, Any] = Field(..., description="trigger dict，需含 type/id；支持 datetime/interval/py-eval/event/nimble-reminder/nimble-expire")
+    trigger: dict[str, Any] = Field(..., description="trigger dict，需含 type/id；支持 datetime/interval/py-eval/event/nimble-expire")
 
 
 @router.post("/public-api/event-trigger-push")

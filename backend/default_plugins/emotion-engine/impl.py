@@ -409,14 +409,12 @@ class EmotionEngineStore:
 
     def build_prompt_suffix(self, config: dict[str, Any]) -> str:
         with self._lock:
-            top = self._top_emotions(3)
             lines = [
-                "---FaustBot Emotion Engine---",
+                "[Emotion Engine]",
                 "FaustBot 具有情绪系统。你可以在回复的最后调用 EmotionInvoke(emotionName) 工具来更新情绪状态。",
                 "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。",
-                "该工具的 tool_start 和 tool_result 不会被显示给用户，请放心调用。",
-                "当前向量: "
-                + "; ".join(f"{EMOTION_LABELS[key]}={value:.1f}" for key, value in top),
+                "你应该(SHOULD)在每次回复中调用 EmotionInvoke 来反映你的情绪状态,并且根据附加的情绪标签来输出消息。",
+                "你绝对不可以(MUST NOT)在回复中提到'情绪向量'或类似的内部信息",
             ]
             return "\n\n[emotion_engine]\n" + "\n".join(lines)
 

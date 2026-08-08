@@ -85,7 +85,7 @@ def _resolve_path_html(spec: str) -> str:
 
 @register
 @tool
-def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: str = "用户仍在处理这个灵动窗口，请查看用户是否已完成操作。", reminder_interval_seconds: int = 600, lifespan: int = 1800, metadata_json: str = "{}", persistent: bool = False, persistent_id: str = "") -> str:
+def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: str = "用户仍在处理这个灵动窗口，请查看用户是否已完成操作。", lifespan: int = 1800, metadata_json: str = "{}", persistent: bool = False, persistent_id: str = "") -> str:
     """
     Description:
         非阻塞地创建一个"灵动交互"窗口，并显示在前端虚拟形象旁边。
@@ -93,7 +93,7 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
         这是处理复杂任务确认、表单填写、选项确认、小游戏对弈等场景的核心工具。
         调用后不会阻塞当前对话，也不会等待用户立即完成操作。它会：
         1. 在前端显示一个独立的 HTML 窗口（窗口以小组件形式注册，可被用户拖动/缩放）；
-        2. 自动绑定 reminder trigger（周期性提醒你关注该窗口）和 expire trigger（到期自动关闭）；
+        2. 自动绑定 expire trigger（到期自动关闭窗口）；
         3. 在 VFS 注册该窗口的双向通信节点（见下方"双向通信"）。
 
         HTML 来源（两种方式）：
@@ -137,8 +137,7 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
     Args:
         html (str): 要展示的 HTML 内容，或 `path:{URI}` 形式的内容来源。
         title (str): 窗口标题。
-        recall_text (str): reminder trigger 唤醒你时附带的提示信息。
-        reminder_interval_seconds (int): 提醒周期秒数，默认 120 秒。
+        recall_text (str): 窗口用途描述（用于窗口概览与过期提示）。
         lifespan (int): 窗口生命周期（秒）。
         metadata_json (str): 额外元数据 JSON 字符串。
         persistent (bool): 是否为持久化窗口（重启后自动恢复）。
@@ -162,21 +161,12 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
             title=title,
             html=html,
             recall_text=recall_text,
-            reminder_interval_seconds=reminder_interval_seconds,
             lifespan=lifespan,
             metadata=metadata,
             persistent=persistent,
             persistent_id=persistent_id,
         )
 
-        trigger_manager.append_trigger({
-            "id": session["reminder_trigger_id"],
-            "type": "nimble-reminder",
-            "callback_id": callback_id,
-            "interval_seconds": reminder_interval_seconds,
-            "recall_description": recall_text,
-            "lifespan": lifespan,
-        })
         if not persistent:
             trigger_manager.append_trigger({
                 "id": session["expire_trigger_id"],

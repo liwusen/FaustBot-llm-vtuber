@@ -232,13 +232,14 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       const dx = event.clientX - dragState.startX;
       const dy = event.clientY - dragState.startY;
       const clamp01 = (v) => Math.min(1, Math.max(0, v));
+      const clampModelCoord = (v) => Math.min(2.0, Math.max(-1.0, v));
       if (widget.bindingType === 'model') {
         const bounds = manager.getModelBounds();
         if (!bounds || !bounds.width || !bounds.height) return;
         manager.updateWidget(widget.id, {
           coord: {
-            x: clamp01(dragState.coord.x + dx / bounds.width),
-            y: clamp01(dragState.coord.y + dy / bounds.height),
+            x: clampModelCoord(dragState.coord.x + dx / bounds.width),
+            y: clampModelCoord(dragState.coord.y + dy / bounds.height),
           },
         });
       } else {

@@ -24,3 +24,5 @@ frontend/models/
 
 *bundle*js
 *.db
+
+subagents.json

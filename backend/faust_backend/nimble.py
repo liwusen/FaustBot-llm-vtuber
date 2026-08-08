@@ -41,7 +41,6 @@ def create_nimble_session(
     title: str,
     html: str,
     recall_text: str = "用户仍在处理灵动交互窗口，请检查是否需要继续引导用户。",
-    reminder_interval_seconds: int = 600,
     lifespan: int = 1800,
     metadata: Optional[dict] = None,
     persistent: bool = False,
@@ -71,8 +70,6 @@ def create_nimble_session(
         "closed": False,
         "status": "open",
         "recall_text": recall_text,
-        "reminder_interval_seconds": int(max(3, reminder_interval_seconds)),
-        "reminder_trigger_id": f"nimble_reminder::{callback_id}",
         "expire_trigger_id": f"nimble_expire::{callback_id}",
         "persistent": persistent,
         "persistent_id": persistent_id,
@@ -251,7 +248,6 @@ def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[st
     session = close_nimble_session(callback_id, reason=reason)
     if not session:
         return None
-    trigger_manager.delete_trigger(session["reminder_trigger_id"])
     trigger_manager.delete_trigger(session["expire_trigger_id"])
     trigger_manager.delete_trigger(message_trigger_id(callback_id))
     backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": reason})
@@ -314,7 +310,6 @@ def save_persistent_session(session: dict) -> None:
         "title": session["title"],
         "html": session["html"],
         "recall_text": session.get("recall_text", ""),
-        "reminder_interval_seconds": session.get("reminder_interval_seconds", 120),
         "lifespan": session.get("lifespan", 1800),
         "metadata": session.get("metadata", {}),
         "console": list(session.get("console") or []),
@@ -367,7 +362,6 @@ async def restore_persistent_sessions():
                 title=entry.get("title", "灵动交互"),
                 html=entry.get("html", ""),
                 recall_text=entry.get("recall_text", ""),
-                reminder_interval_seconds=entry.get("reminder_interval_seconds", 120),
                 lifespan=entry.get("lifespan", 31536000),
                 metadata=entry.get("metadata", {}),
                 persistent=True,
@@ -376,14 +370,6 @@ async def restore_persistent_sessions():
             session["console"] = list(entry.get("console") or [])
             if entry.get("summary_text"):
                 session["summary_text"] = entry["summary_text"]
-            trigger_manager.append_trigger({
-                "id": session["reminder_trigger_id"],
-                "type": "nimble-reminder",
-                "callback_id": callback_id,
-                "interval_seconds": entry.get("reminder_interval_seconds", 120),
-                "recall_description": entry.get("recall_text", ""),
-                "lifespan": session["lifespan"],
-            })
             await register_session_vfs_nodes(callback_id)
             backend2frontend.FrontEndShowNimbleWindow(export_window_payload(callback_id))
             restored += 1

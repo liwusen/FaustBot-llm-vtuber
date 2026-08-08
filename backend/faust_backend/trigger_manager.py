@@ -130,20 +130,13 @@ class EventTrigger(BaseTrigger):
     payload: Optional[dict] = None
 
 
-class NimbleRemindTrigger(BaseTrigger):
-    type: Literal["nimble-reminder"]
-    callback_id: str
-    interval_seconds: int = Field(..., ge=1)
-    last_triggered: float = Field(default_factory=time.time)
-
-
 class NimbleExpireTrigger(BaseTrigger):
     type: Literal["nimble-expire"]
     callback_id: str
     target: datetime.datetime
 
 
-Trigger = Union[DateTimeTrigger, IntervalTrigger, PyEvalTrigger, EventTrigger, NimbleRemindTrigger, NimbleExpireTrigger]
+Trigger = Union[DateTimeTrigger, IntervalTrigger, PyEvalTrigger, EventTrigger, NimbleExpireTrigger]
 
 
 class TriggerStore(BaseModel):
@@ -176,8 +169,6 @@ class TriggerStore(BaseModel):
                     items.append(PyEvalTrigger.model_validate(t))
                 elif ttype == "event":
                     items.append(EventTrigger.model_validate(t))
-                elif ttype == "nimble-reminder":
-                    items.append(NimbleRemindTrigger.model_validate(t))
                 elif ttype == "nimble-expire":
                     items.append(NimbleExpireTrigger.model_validate(t))
                 else:
@@ -246,18 +237,6 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                         _emit_trigger(trig.model_dump())
                         ensure_store.watchdog.remove(trig)
                         ensure_store.save()
-                    elif trig.type == "nimble-reminder":
-                        if not nimble.is_nimble_session_alive(trig.callback_id):
-                            try:
-                                ensure_store.watchdog.remove(trig)
-                                ensure_store.save()
-                            except Exception:
-                                pass
-                            continue
-                        if time.time() - trig.last_triggered >= trig.interval_seconds:
-                            _emit_trigger(trig.model_dump())
-                            trig.last_triggered = time.time()
-                            ensure_store.save()
                     elif trig.type == "nimble-expire":
                         if now >= trig.target:
                             _emit_trigger(trig.model_dump())
@@ -292,7 +271,7 @@ def get_next_trigger(timeout: Optional[float] = None):
 def append_trigger(trigger: dict | str):
     """Append a new trigger to the store.
 
-    Supported trigger types are 'datetime', 'interval', 'py-eval', 'event', 'nimble-reminder', and 'nimble-expire'.
+    Supported trigger types are 'datetime', 'interval', 'py-eval', 'event', and 'nimble-expire'.
 
     TRIGGER EXAMPLES:
     {
@@ -351,8 +330,6 @@ def append_trigger(trigger: dict | str):
             t = PyEvalTrigger.model_validate(trigger)
         elif ttype == "event":
             t = EventTrigger.model_validate(trigger)
-        elif ttype == "nimble-reminder":
-            t = NimbleRemindTrigger.model_validate(trigger)
         elif ttype == "nimble-expire":
             t = NimbleExpireTrigger.model_validate(trigger)
         else:

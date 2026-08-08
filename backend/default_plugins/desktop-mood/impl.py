@@ -289,8 +289,8 @@ class Plugin(FaustPlugin):
     def register_prompt_suffix(self) -> list[str]:
         return [
             "\n[Desktop Mood 情景感知]\n"
-            "桌面环境实时快照在 faustbot://plugins/desktop-context.json，使用指南在 faustbot://plugins/desktop-mood.md。"
-            "在需要关心用户环境、主动提醒或理解 event-trigger 时，请优先读取这些内容。\n"
+            "桌面环境实时快照在 faustbot://plugins/desktop-context.json( 包含天气,播放的媒体 等有用信息)，使用指南在 faustbot://plugins/desktop-mood.md。"
+            "在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
         ]
 
     def _maybe_refresh_weather(self) -> None:
@@ -397,7 +397,6 @@ class Plugin(FaustPlugin):
             title=title,
             html=html,
             recall_text='桌面情景便签，无需回应。',
-            reminder_interval_seconds=lifespan,
             lifespan=lifespan,
             metadata={'source': 'desktop-mood'},
         )

@@ -88,7 +88,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   let asrTextPinnedToBottom = true;
   let currentLipSyncParamIds = ['ParamMouthOpenY'];
   let activeModelLoadRequestId = 0;
-  const motionTriggerCooldownMs = 2000;
+  const motionTriggerCooldownMs = 100;
   const recentMotionTriggers = new Map();
   let textChatBarYFactor = 0.53;
   let quickControllerXOffset = -12;
@@ -495,9 +495,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     }
   }
 
-  // 模型位置统一使用相对坐标(0-1)，限制在 0.1-0.9
+  // 模型位置统一使用相对坐标(0-1)，限制在 0.1-1.0
   function clampModelRelCoord(v){
-    return Math.min(0.9, Math.max(0.1, Number(v) || 0));
+    return Math.min(1.0, Math.max(0.1, Number(v) || 0));
   }
 
   function readConfiguredModelRelPosition(){
@@ -832,6 +832,11 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   }
 
   function consumeMotionTokens(request, chunk){
+    // 累积未决文本 + 新 chunk，在完整拼接文本上匹配 <{...}> 表情 token。
+    // 支持跨 delta 分片送达的 token（如 '<' 与 '{Flick}>' 分两次到达）：
+    //  - 匹配到完整 <{xxx}> 即触发并删除（不进入可见文本）
+    //  - 未闭合的 '<{' 前缀保留到下一个 chunk
+    //  - 尾部孤立 '<' 也保留（可能是下一个 chunk 中 '<{' 的开头）
     const combined = String(request.motionTokenBuffer || '') + String(chunk || '');
     let visible = '';
     let cursor = 0;
@@ -839,20 +844,29 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     while (cursor < combined.length) {
       const start = combined.indexOf('<{', cursor);
       if (start === -1) {
-        visible += combined.slice(cursor);
-        request.motionTokenBuffer = '';
+        // 没有 <{：若文本以孤立 '<' 结尾，可能是下一个 chunk 中 '<{' 的开头，保留它
+        const lastLt = combined.lastIndexOf('<', combined.length - 1);
+        if (lastLt >= cursor && lastLt === combined.length - 1) {
+          visible += combined.slice(cursor, lastLt);
+          request.motionTokenBuffer = '<';
+        } else {
+          visible += combined.slice(cursor);
+          request.motionTokenBuffer = '';
+        }
         return visible;
       }
 
       visible += combined.slice(cursor, start);
       const end = combined.indexOf('}>', start + 2);
       if (end === -1) {
+        // <{ 已出现但未闭合：保留从 <{ 起的未决文本，等待后续 chunk
         request.motionTokenBuffer = combined.slice(start);
         return visible;
       }
 
       const motionName = combined.slice(start + 2, end).trim();
       if (motionName && !/\s/.test(motionName)) {
+        console.log('触发模型动作 token:', motionName);
         triggerModelMotion(motionName);
       }
       cursor = end + 2;
@@ -1306,7 +1320,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       } else if (cmd === 'SET_TEXT_CHAT_Y_FACTOR'){
         const next = Number(arg);
         if (!Number.isFinite(next)) return;
-        textChatBarYFactor = Math.max(0, Math.min(1, next));
+        textChatBarYFactor = Math.min(2.0, Math.max(-1.0, next));
         try { uiWidgetManager.updateWidget('text-chat-bar', { coord: { x: 0.5, y: textChatBarYFactor } }); } catch (e) {}
         updateTextChatBarPosition();
       } else if (cmd === 'SET_QUICK_CONTROLLER_X_OFFSET'){
@@ -1609,8 +1623,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     const req = currentChatRequest || passiveChatRequest;
 
     if (msg.type === 'start'){
-      // 被动流（后端主动推送）不重置 TTS 会话，避免打断主动聊天的语音
-      if (!req.passive) resetStreamTtsState();
+      // 收到新消息：立刻停止上一条消息的 TTS（清空待播队列并停掉正在播放的音频）
+      interruptPlayback();
       req.replyText = '';
       req.pendingBuffer = '';
       req.motionTokenBuffer = '';
@@ -1715,7 +1729,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       showResultBubble('ai', req.entries);
       const split = extractCompletedSentences(req.pendingBuffer);
       req.pendingBuffer = split.rest;
-      console.log("收到增量回复，当前累计文本：", req.replyText);
+//      console.log("收到增量回复，当前累计文本：", req.replyText);
       for (const sentence of split.completed){
         enqueueStreamTtsSentence(sentence, getCurrentTtsLang());
       }
@@ -2790,8 +2804,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         const pos = e.data.global;
         let rawX = pos.x - dragOffset.x;
         let rawY = pos.y - dragOffset.y;
-        rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 0.9, rawX));
-        rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 0.9, rawY));
+        rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 1.0, rawX));
+        rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 1.0, rawY));
         sprite.x = rawX;
         sprite.y = rawY;
         updateQuickControllerPosition();
@@ -2925,8 +2939,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       const pos = e.data.global;
       let rawX = pos.x - dragOffset.x;
       let rawY = pos.y - dragOffset.y;
-      rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 0.9, rawX));
-      rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 0.9, rawY));
+      rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 1.0, rawX));
+      rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 1.0, rawY));
       sprite.x = rawX;
       sprite.y = rawY;
       updateQuickControllerPosition();
@@ -3023,8 +3037,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         const pos = e.data.global;
         let rawX = pos.x - dragOffset.x;
         let rawY = pos.y - dragOffset.y;
-        rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 0.9, rawX));
-        rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 0.9, rawY));
+        rawX = Math.max(app.renderer.width * 0.1, Math.min(app.renderer.width * 1.0, rawX));
+        rawY = Math.max(app.renderer.height * 0.1, Math.min(app.renderer.height * 1.0, rawY));
         model.x = rawX;
         model.y = rawY;
         updateQuickControllerPosition();
@@ -3101,7 +3115,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       if (modelScaleValue) modelScaleValue.textContent = scaleFactor.toFixed(2) + 'x';
     }
     if (Number.isFinite(configuredTextChatYFactor)) {
-      textChatBarYFactor = Math.max(0, Math.min(1, configuredTextChatYFactor));
+      textChatBarYFactor = Math.min(2.0, Math.max(-1.0, configuredTextChatYFactor));
       try { uiWidgetManager.updateWidget('text-chat-bar', { coord: { x: 0.5, y: textChatBarYFactor } }); } catch (e) {}
     }
     if (Number.isFinite(configuredQuickControllerXOffset)) {

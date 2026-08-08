@@ -242,7 +242,7 @@ if "%SKIP_ADMIN_CHECK%"=="0" (
     exit /b 0
   )
 ) else (
-  echo 检测到 GitHub Actions，跳过管理员权限检查。
+  echo 跳过管理员权限检查。
 )
 
 if "%INSTALL_PYTHON%"=="1" (
@@ -326,12 +326,12 @@ if "%INSTALL_TORCH%"=="1" (
     goto fail
   )
   if "%SOURCE_MODE%"=="cn" (
-    set "TORCH_INDEX_FLAG=-f https://mirrors.aliyun.com/pytorch-wheels/%TORCH_VARIANT%/ -i %PIP_INDEX_URL%"
+    set "TORCH_INDEX_FLAG=-f https://mirrors.aliyun.com/pytorch-wheels/%TORCH_VARIANT%/"
   ) else (
     set "TORCH_INDEX_FLAG=--index-url https://download.pytorch.org/whl/%TORCH_VARIANT%"
   )
   echo 安装 PyTorch %TORCH_VARIANT% 版（%SOURCE_MODE% 源）...
-  %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG!
+  %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --no-index
   if errorlevel 1 goto fail
 )
 

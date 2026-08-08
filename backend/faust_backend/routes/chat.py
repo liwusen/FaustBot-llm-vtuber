@@ -537,11 +537,6 @@ async def command_websocket(websocket: WebSocket):
                             f"事件详情={json.dumps(payload, ensure_ascii=False)}。"
                             "请结合当前游戏状态，决定是否调用 Minecraft 工具继续操作。"
                         )
-                    elif ttype == "nimble-reminder" and callback_id:
-                        session = nimble.get_nimble_session(callback_id)
-                        if not session:
-                            continue
-                        trigger_text = f"<Trigger>灵动交互窗口仍在等待用户操作。callback_id={callback_id}，标题={session.get('title')}，提醒说明={task.get('recall_description') or session.get('recall_text')}。请判断是否需要继续引导用户。"
                     elif ttype == "nimble-expire" and callback_id:
                         nimble.finalize_close(callback_id, reason="expired")
                         trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"

@@ -61,6 +61,38 @@ class TestURIParse:
         assert p.selector == ":50-100:raw"
         assert p.selector_lines == (50, 100)
 
+    def test_file_path_negative_range_colon(self):
+        p = parse("src/main.py:-20:-10")
+        assert p.scheme == SCHEME_FILE
+        assert p.path == "src/main.py"
+        assert p.selector == ":-20:-10"
+        assert p.selector_lines == (-20, -10)
+
+    def test_file_path_negative_range_colon_raw(self):
+        p = parse("src/main.py:-20:-10:raw")
+        assert p.path == "src/main.py"
+        assert p.selector == ":-20:-10:raw"
+        assert p.selector_lines == (-20, -10)
+
+    def test_file_path_negative_range_double_dash(self):
+        # 旧语法兼容：:-20--10 与 :-20:-10 等价
+        p = parse("src/main.py:-20--10")
+        assert p.path == "src/main.py"
+        assert p.selector_lines == (-20, -10)
+
+    def test_file_path_negative_single_line(self):
+        p = parse("src/main.py:-20")
+        assert p.path == "src/main.py"
+        assert p.selector_lines == (-20, -20)
+
+    def test_file_path_negative_start_positive_end(self):
+        p = parse("src/main.py:-20-10")
+        assert p.selector_lines == (-20, 10)
+
+    def test_file_path_positive_start_negative_end(self):
+        p = parse("src/main.py:20--10")
+        assert p.selector_lines == (20, -10)
+
     def test_file_path_directory(self):
         p = parse("src/")
         assert p.scheme == SCHEME_FILE
@@ -991,3 +1023,51 @@ class TestMiddlewareMultimodal:
         assert art is not None
         assert art.content_type == "multimodal"
         assert original_text in art.content
+
+
+# ============================================================
+# Negative line selectors — application layer (absolute line numbers)
+# ============================================================
+
+class TestNegativeSelectorApplication:
+    def test_negative_range_absolute_line_numbers(self):
+        """show_line_number=True 时输出绝对行号，不随负数选择器变化。"""
+        from faust_backend.tools.read import _apply_selector_to_text
+
+        content = "\n".join(f"line{i:03d}" for i in range(1, 41))
+        out = _apply_selector_to_text(content, (-20, -10), show_line_number=True)
+        lines = out.split("\n")
+        assert lines[0] == "21:line021"  # 绝对行号 21（首行=1）
+        assert lines[-1] == "31:line031"
+        assert len(lines) == 11
+
+    def test_negative_range_without_numbers(self):
+        from faust_backend.tools.read import _apply_selector_to_text
+
+        content = "\n".join(f"line{i:03d}" for i in range(1, 41))
+        out = _apply_selector_to_text(content, (-20, -10))
+        assert out.split("\n")[0] == "line021"
+        assert out.split("\n")[-1] == "line031"
+
+    def test_negative_single_line(self):
+        from faust_backend.tools.read import _apply_selector_to_text
+
+        content = "\n".join(f"line{i:03d}" for i in range(1, 41))
+        out = _apply_selector_to_text(content, (-1, -1), show_line_number=True)
+        assert out == "40:line040"
+
+    def test_negative_out_of_bounds_clamps(self):
+        from faust_backend.tools.read import _apply_selector_to_text
+
+        content = "\n".join(f"line{i:03d}" for i in range(1, 41))
+        # 越界负范围 clamp 到文件开头
+        out = _apply_selector_to_text(content, (-50, -40), show_line_number=True)
+        assert out.split("\n")[0] == "1:line001"
+
+    def test_positive_range_still_works(self):
+        from faust_backend.tools.read import _apply_selector_to_text
+
+        content = "\n".join(f"line{i:03d}" for i in range(1, 41))
+        out = _apply_selector_to_text(content, (5, 10), show_line_number=True)
+        assert out.split("\n")[0] == "5:line005"
+        assert out.split("\n")[-1] == "10:line010"
