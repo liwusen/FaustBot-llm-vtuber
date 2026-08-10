@@ -264,3 +264,7 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 角色设定来源于游戏《Limbus Company》，引用自[边狱公司中文维基](https://limbuscompany.huijiwiki.com/wiki/%E6%B5%AE%E5%A3%AB%E5%BE%B7)。
 
 ---
+## 关于内置插件
+
+
+
