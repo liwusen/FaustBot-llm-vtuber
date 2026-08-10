@@ -77,7 +77,10 @@ def _save_state(agent_name: str | None, state: dict[str, Any]) -> None:
 
 def _skill_paths(agent_name: str | None = None) -> list[Path]:
     root = _skill_dir(agent_name)
-    return [p for p in sorted(root.iterdir()) if p.is_dir() and not p.name.startswith("_")]+[Path("~/.agents/skills").expanduser()]
+    return [
+        p for p in sorted(root.iterdir())
+        if p.is_dir() and not p.name.startswith(("_", "."))
+    ]
 
 
 def _parse_skill_frontmatter(skill_path: Path) -> dict[str, Any]:

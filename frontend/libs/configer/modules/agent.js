@@ -149,8 +149,14 @@ async function ensureModuleData(moduleId) {
       state.skillDetail = null;
       // Load skill detail if one is selected
       if (state.selectedSkillSlug) {
-        const sd = await cfgApi("GET", `/faust/admin/skills/${encodeURIComponent(state.selectedSkillSlug)}`, null, params);
-        state.skillDetail = sd.detail || null;
+        try {
+          const sd = await cfgApi("GET", `/faust/admin/skills/${encodeURIComponent(state.selectedSkillSlug)}`, null, params);
+          state.skillDetail = sd.detail || null;
+        } catch (e) {
+          // 单个技能详情失败（如缺失/已删除）不应清空技能列表
+          console.warn("skill detail fetch error", e);
+          state.skillDetail = null;
+        }
       }
     } catch (e) {
       console.warn("skills data fetch error", e);
