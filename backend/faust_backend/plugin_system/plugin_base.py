@@ -88,6 +88,26 @@ class FaustPlugin:
     def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
         return None
 
+    # ── LLM ──
+
+    @hookimpl
+    def llm_request_pre(self, messages: list, ctx: PluginContext) -> list | None:
+        return None
+
+    # ── TTS ──
+
+    @hookimpl
+    def tts_text(self, text: str, ctx: PluginContext) -> str | None:
+        return None
+
+    @hookimpl
+    def tts_start(self, text: str, ctx: PluginContext) -> None:
+        pass
+
+    @hookimpl
+    def tts_end(self, text: str, ctx: PluginContext) -> None:
+        pass
+
     # ── Memory ──
 
     @hookimpl

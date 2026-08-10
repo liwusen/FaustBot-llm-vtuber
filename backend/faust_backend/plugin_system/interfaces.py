@@ -188,6 +188,20 @@ class PluginProtocol(Protocol):
     def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
         ...
 
+    # ── LLM ──
+    def llm_request_pre(self, messages: list, ctx: PluginContext) -> list | None:
+        ...
+
+    # ── TTS ──
+    def tts_text(self, text: str, ctx: PluginContext) -> str | None:
+        ...
+
+    def tts_start(self, text: str, ctx: PluginContext) -> None:
+        ...
+
+    def tts_end(self, text: str, ctx: PluginContext) -> None:
+        ...
+
     # ── Memory ──
     def memory_read_pre(self, query: str, filters: dict | None, ctx: PluginContext) -> str | None:
         ...

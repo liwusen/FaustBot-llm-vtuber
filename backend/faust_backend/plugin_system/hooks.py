@@ -88,6 +88,32 @@ class CoreHooks:
         Return a modified event dict, or None to suppress the event.
         current_history is the list of events already sent in this turn."""
 
+    # ── LLM ──
+
+    @hookspec
+    def llm_request_pre(self, messages: list, ctx: Any) -> list | None:
+        """Called right before each agent LLM invocation (ainvoke / astream_events).
+        Return a modified messages list to replace the payload, or None to pass through.
+        Use for prompt injection, message rewriting, or observing the exact
+        system/user/assistant/tool messages sent to the model."""
+
+    # ── TTS ──
+
+    @hookspec(firstresult=True)
+    def tts_text(self, text: str, ctx: Any) -> str | None:
+        """Rewrite the text before TTS synthesis. First non-None result wins.
+        Only affects synthesized speech, not the subtitle."""
+
+    @hookspec
+    def tts_start(self, text: str, ctx: Any) -> None:
+        """Called when a TTS segment finishes synthesis and is about to be
+        delivered to the frontend for playback."""
+
+    @hookspec
+    def tts_end(self, text: str, ctx: Any) -> None:
+        """Called when TTS playback ends (requires a frontend playback-report
+        channel; currently defined for API completeness)."""
+
     # ── Memory ──
 
     @hookspec

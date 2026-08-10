@@ -416,6 +416,62 @@ def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContex
 
 ---
 
+### LLM 请求
+
+#### `llm_request_pre(messages: list, ctx: PluginContext) -> list | None`
+
+每次 Agent 调用 LLM（`ainvoke` / `astream_events`）之前调用，可改写发送给模型的 messages 列表（system/user/assistant/tool 全量可见）。返回改写后的列表则替换 payload；返回 `None` 则透传。首个返回非空列表的插件生效。
+
+用途：动态注入环境/状态文本、改写用户消息、LLM 请求观测（抓包）。
+
+```python
+@hookimpl
+def llm_request_pre(self, messages: list, ctx: PluginContext) -> list | None:
+    # 往 system 消息追加一段动态协议
+    sys_msg = next((m for m in messages if m.get("role") == "system"), None)
+    if sys_msg:
+        sys_msg = {**sys_msg, "content": sys_msg.get("content", "") + "\n\n当前时间: 下午3点"}
+        return [sys_msg] + [m for m in messages if m.get("role") != "system"]
+    return None
+```
+
+调用点：`backend/faust_backend/runtime/lifecycle.py` 的 `invoke_agent_locked` 与 `stream_chat_agent_events`（`_apply_llm_request_pre`）。
+
+---
+
+### TTS
+
+#### `tts_text(text: str, ctx: PluginContext) -> str | None`
+
+TTS 合成前改写送入语音合成的文本（**只影响语音，不影响字幕**）。`firstresult` 语义：首个非 `None` 结果生效。
+
+```python
+@hookimpl
+def tts_text(self, text: str, ctx: PluginContext) -> str | None:
+    # 同声传译：把语音替换为译文，字幕保持原文
+    return translate(text, target="en")
+```
+
+调用点：`backend/faust_backend/speech/tts/synthesize.py` 的 `synthesize_tts`（`_apply_tts_text_hook`）。
+
+#### `tts_start(text: str, ctx: PluginContext) -> None`
+
+一段语音合成完成、即将交付前端播放时调用。用于同步动画、状态标记等。
+
+```python
+@hookimpl
+def tts_start(self, text: str, ctx: PluginContext) -> None:
+    self.state.mark_tts_playing()
+```
+
+调用点：`synthesize_tts` 成功返回前（`_fire_tts_start`）。
+
+#### `tts_end(text: str, ctx: PluginContext) -> None`
+
+语音播放结束。当前后端无法感知前端播放完成，此 hook 为 API 预留；接入前端播放上报通道后启用。
+
+---
+
 ### 记忆
 
 #### `memory_read_pre(query: str, filters: dict | None, ctx: PluginContext) -> str | None`
