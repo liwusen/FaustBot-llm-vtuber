@@ -310,7 +310,7 @@ def test_trigger_dream_tool(plugin, monkeypatch):
     spec = next(t for t in tools if t.name == "trigger_dream")
     assert spec.tool is not None
 
-    result = json.loads(spec.tool("想看看今晚的梦"))
+    result = json.loads(spec.tool.invoke({"reason": "想看看今晚的梦"}))
     assert result["status"] == "dreaming"
     assert result["reason"] == "想看看今晚的梦"
 
@@ -318,5 +318,5 @@ def test_trigger_dream_tool(plugin, monkeypatch):
 def test_trigger_dream_blocked_while_busy(plugin):
     plugin._dreaming = True
     spec = next(t for t in plugin.register_tools(plugin.ctx) if t.name == "trigger_dream")
-    result = json.loads(spec.tool("再来一次"))
+    result = json.loads(spec.tool.invoke({"reason": "再来一次"}))
     assert result["status"] == "error"

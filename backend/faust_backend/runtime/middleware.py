@@ -101,8 +101,21 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
 
 
 def wrap_tools(tools: list[BaseTool]) -> list[BaseTool]:
-    """Apply output wrapping to a list of tools."""
-    return [wrap_tool_output(t) for t in tools]
+    """Apply output wrapping to a list of tools.
+
+    Non-BaseTool entries (bare callables leaked by plugins) are skipped with a
+    warning instead of crashing on `tool.name` access downstream.
+    """
+    out: list[BaseTool] = []
+    for t in tools:
+        if not isinstance(t, BaseTool):
+            log.warning(
+                "跳过非 LangChain 工具（插件需用 @tool 包装）: %s",
+                getattr(t, "__name__", repr(t)),
+            )
+            continue
+        out.append(wrap_tool_output(t))
+    return out
 
 
 def _store_and_summarize(store, tool_name: str, result: Any,

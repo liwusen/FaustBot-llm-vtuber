@@ -9,6 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    from langchain.tools import tool
+except Exception:
+    def tool(func):
+        return func
+
 from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
 from faust_backend.logger import get_logger
@@ -424,6 +430,7 @@ class Plugin(FaustPlugin):
     def register_tools(self, ctx: PluginContext) -> list:
         plugin = self
 
+        @tool
         def trigger_dream(reason: str = "") -> str:
             """手动触发一次梦境生成（无视时间窗与冷却）。reason 为可选的入梦理由，返回 JSON 状态。"""
             return plugin._manual_dream(reason)
