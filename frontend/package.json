@@ -3,7 +3,7 @@
   "version": "2.9.2",
   "private": true,
   "main": "electron-main.js",
-  "license": "MIT",
+  "license": "GPL-3.0",
   "author": "allenlee",
   "description": "FaustBot frontend application",
   "scripts": {

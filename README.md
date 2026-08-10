@@ -17,7 +17,7 @@
     <img src="https://img.shields.io/github/contributors/liwusen/FaustBot-llm-vtuber" alt="contributors" /></a>
 <a href="https://deepwiki.com/liwusen/FaustBot-llm-vtuber">
     <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
-<img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" />
+<img src="https://img.shields.io/badge/license-GPLv3-blue" alt="GPL V3 License" />
 
 </div>
 
