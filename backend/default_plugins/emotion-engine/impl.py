@@ -42,6 +42,19 @@ EMOTION_TAG_TO_KEY = {
     "CARE": "joy",
     "CALM": "curiosity",
 }
+# ── 情绪档位（吸收 mood-chat 的主动调度 / 态度模板能力） ──
+CHATTY_DOMINANT_KEYS = ("joy", "curiosity")
+QUIET_DOMINANT_KEYS = ("irritation", "sharpness", "boredom")
+CHATTY_DOMINANT_THRESHOLD = 5.0
+QUIET_TOTAL_THRESHOLD = 12.0
+SILENT_BOREDOM_THRESHOLD = 7.0
+TIER_LABELS = {"chatty": "活泼", "normal": "正常", "quiet": "低落", "silent": "沉默"}
+ATTITUDE_TEMPLATES = {
+    "chatty": "你现在心情很好，说话活泼带笑意，愿意主动找话聊，偶尔会小小炫耀一下好心情。",
+    "normal": "你现在心情平稳。该吐槽吐槽，该帮忙帮忙，不需要刻意偏向任何情绪。",
+    "quiet": "你现在心情低落。回复简短一些，话变少，语气少了平时的活泼，但依然会认真回应。",
+    "silent": "你现在情绪沉默。话极少，除非必要否则不主动开口，语气冷淡疏离。",
+}
 STATE_FILE_NAME = "emotion_state.json"
 HISTORY_LIMIT = 512
 COREMEMORY_START = "<!-- emotion-engine:start -->"
@@ -125,6 +138,31 @@ def _write_corememory_state(payload: dict[str, Any]) -> None:
     path.write_text(merged, encoding="utf-8")
 
 
+def _build_proactive_content(tier: str) -> str:
+    return "（情绪系统主动寒暄）感觉有点安静，想找你聊聊天。"
+
+
+def _schedule_proactive_chat(content: str) -> bool:
+    """契约第3条模式：后台触发 Agent 主动说话（chat.py 后台触发器同款）。"""
+    from faust_backend.runtime import state
+    from faust_backend.runtime.lifecycle import invoke_agent_locked
+
+    if state.agent is None:
+        log.warning("emotion-engine: agent 未就绪，跳过主动寒暄")
+        return False
+    try:
+        asyncio.create_task(
+            invoke_agent_locked(
+                state.agent,
+                {"messages": [{"role": "user", "content": content}]},
+            )
+        )
+        return True
+    except RuntimeError:
+        log.error("emotion-engine: 无运行中的事件循环，跳过主动寒暄")
+        return False
+
+
 class EmotionState:
     def __init__(self):
         now = _now()
@@ -139,13 +177,18 @@ class EmotionState:
         self.pending_corememory_sync = True
         self.last_corememory_sync_ts = 0.0
         self.last_diary_ts = 0.0
+        self.last_reply_ts = 0.0
+        self.last_user_message_ts = 0.0
+        self.last_no_response_penalty_ts = 0.0
+        self.last_proactive_ts = now
         self.dominant_emotion = "curiosity"
 
 
 class EmotionEngineStore:
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, decay_per_minute: float = 0.1):
         self._lock = threading.RLock()
         self._data_dir = data_dir
+        self._decay_per_minute = float(decay_per_minute or 0.1)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self._data_dir / STATE_FILE_NAME
         self._state = self._load_state()
@@ -179,9 +222,25 @@ class EmotionEngineStore:
         state.pending_corememory_sync = bool(raw.get("pending_corememory_sync", True))
         state.last_corememory_sync_ts = float(raw.get("last_corememory_sync_ts") or 0.0)
         state.last_diary_ts = float(raw.get("last_diary_ts") or 0.0)
+        state.last_reply_ts = float(raw.get("last_reply_ts") or 0.0)
+        state.last_user_message_ts = float(raw.get("last_user_message_ts") or 0.0)
+        state.last_no_response_penalty_ts = float(raw.get("last_no_response_penalty_ts") or 0.0)
+        state.last_proactive_ts = float(raw.get("last_proactive_ts") or _now())
         state.dominant_emotion = str(
             raw.get("dominant_emotion") or self._dominant_from_vector(state.vector)
         )
+        # ── 离线回归补算（与 heartbeat 同逻辑，boredom 除外） ──
+        now = _now()
+        offline_secs = max(0.0, now - state.last_decay_ts)
+        if offline_secs > 60.0:
+            offline_minutes = offline_secs / 60.0
+            for key in EMOTION_KEYS:
+                if key == "boredom":
+                    continue
+                state.vector[key] = _clamp(
+                    state.vector.get(key, 0.0) - self._decay_per_minute * offline_minutes
+                )
+            state.last_decay_ts = now
         return state
 
     def _save_state(self) -> None:
@@ -197,6 +256,10 @@ class EmotionEngineStore:
             "pending_corememory_sync": self._state.pending_corememory_sync,
             "last_corememory_sync_ts": self._state.last_corememory_sync_ts,
             "last_diary_ts": self._state.last_diary_ts,
+            "last_reply_ts": self._state.last_reply_ts,
+            "last_user_message_ts": self._state.last_user_message_ts,
+            "last_no_response_penalty_ts": self._state.last_no_response_penalty_ts,
+            "last_proactive_ts": self._state.last_proactive_ts,
             "dominant_emotion": self._state.dominant_emotion,
         }
         self._state_path.write_text(
@@ -238,6 +301,84 @@ class EmotionEngineStore:
             reverse=True,
         )[:count]
 
+    def tier(self) -> str:
+        """情绪 → 档位：chatty（活泼）/ normal（正常）/ quiet（低落）/ silent（沉默）。"""
+        with self._lock:
+            vector = self._state.vector
+            dominant = self._state.dominant_emotion
+            dominant_value = float(vector.get(dominant, 0.0))
+            total = sum(float(vector.get(key, 0.0)) for key in EMOTION_KEYS)
+        if dominant == "boredom" and dominant_value > SILENT_BOREDOM_THRESHOLD:
+            return "silent"
+        if dominant in CHATTY_DOMINANT_KEYS and dominant_value >= CHATTY_DOMINANT_THRESHOLD:
+            return "chatty"
+        if dominant in QUIET_DOMINANT_KEYS or total <= QUIET_TOTAL_THRESHOLD:
+            return "quiet"
+        return "normal"
+
+    def _mood_trend(self) -> str:
+        """近 3 条非 heartbeat history delta 和的正负 → 上升中 / 下降中 / 平稳。"""
+        with self._lock:
+            recent = self._non_heartbeat_history()[-3:]
+        total = sum(
+            float(delta)
+            for item in recent
+            for delta in (item.get("deltas") or {}).values()
+        )
+        if total > 0:
+            return "上升中"
+        if total < 0:
+            return "下降中"
+        return "平稳"
+
+    def _recent_change_chain(self) -> str:
+        """最近 3 条非 heartbeat history reason 变化链。"""
+        with self._lock:
+            recent = self._non_heartbeat_history()[-3:]
+        if not recent:
+            return "（暂无）"
+        return " → ".join(str(item.get("reason") or "") for item in recent)
+
+    def _non_heartbeat_history(self) -> list[dict[str, Any]]:
+        """过滤 heartbeat 记录：10s 心跳几乎恒写尾部，会淹没趋势/变化链。"""
+        return [
+            item
+            for item in self._state.history
+            if str(item.get("reason") or "") != "heartbeat"
+        ]
+
+    def should_proactive(self, interval: float) -> bool:
+        with self._lock:
+            return _now() - self._state.last_proactive_ts >= interval
+
+    def mark_proactive_fired(self) -> None:
+        with self._lock:
+            self._state.last_proactive_ts = _now()
+            self._save_state()
+
+    def mark_reply_done(self) -> None:
+        with self._lock:
+            self._state.last_reply_ts = _now()
+            self._save_state()
+
+    def check_no_response_penalty(self, no_response_timeout: float) -> bool:
+        """距上次 done 超过超时且期间无新用户消息 → boredom +0.5（带冷却）。"""
+        with self._lock:
+            now = _now()
+            if self._state.last_reply_ts <= 0:
+                return False
+            if self._state.last_user_message_ts >= self._state.last_reply_ts:
+                return False
+            if now - self._state.last_reply_ts < no_response_timeout:
+                return False
+            if now - self._state.last_no_response_penalty_ts < no_response_timeout:
+                return False
+            # 复用 apply_signed_emotion_tag_list 同款的有符号情绪应用逻辑
+            self._apply_deltas({"boredom": 0.5}, "no_response_penalty")
+            self._state.last_no_response_penalty_ts = now
+            self._save_state()
+            return True
+
     def snapshot(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             cfg = config or {}
@@ -248,6 +389,7 @@ class EmotionEngineStore:
                 "last_reply": self._state.last_reply,
                 "pending_corememory_sync": self._state.pending_corememory_sync,
                 "dominant_emotion": self._state.dominant_emotion,
+                "tier": self.tier(),
                 "top_emotions": [
                     {"key": key, "label": EMOTION_LABELS[key], "value": value}
                     for key, value in self._top_emotions()
@@ -266,6 +408,7 @@ class EmotionEngineStore:
         with self._lock:
             self._state.last_user_message = text
             self._state.last_interaction_ts = _now()
+            self._state.last_user_message_ts = _now()
             self._state.silence_ticks = 0
             mode = "task" if len((text or "").strip()) <= 48 else "chat"
             self._state.recent_user_modes.append(mode)
@@ -326,6 +469,19 @@ class EmotionEngineStore:
         return sign,emotion_key
                 
 
+    def _apply_deltas(self, deltas: dict[str, float], reason: str) -> None:
+        with self._lock:
+            before = self._dominant_from_vector(self._state.vector)
+            for key, delta in deltas.items():
+                self._state.vector[key] = _clamp(
+                    self._state.vector.get(key, 0.0) + delta
+                )
+            after = self._dominant_from_vector(self._state.vector)
+            self._state.dominant_emotion = after
+            self._state.pending_corememory_sync = True
+            self._record_history(reason, deltas)
+            self._save_state()
+
     def apply_signed_emotion_tag_list(self, tags: list[str]) -> None:
         """_summary_
 
@@ -349,17 +505,7 @@ class EmotionEngineStore:
                 deltas["joy"] -= 0.4 * sign
             elif emotion_key == "irritation":
                 deltas["joy"] -= 0.3 * sign
-            with self._lock:
-                before = self._dominant_from_vector(self._state.vector)
-                for key, delta in deltas.items():
-                    self._state.vector[key] = _clamp(
-                        self._state.vector.get(key, 0.0) + delta
-                    )
-                after = self._dominant_from_vector(self._state.vector)
-                self._state.dominant_emotion = after
-                self._state.pending_corememory_sync = True
-                self._record_history(f"message_sent:{emotion_key}", deltas)
-                self._save_state()
+            self._apply_deltas(deltas, f"message_sent:{emotion_key}")
 
 
 
@@ -409,12 +555,19 @@ class EmotionEngineStore:
 
     def build_prompt_suffix(self, config: dict[str, Any]) -> str:
         with self._lock:
+            tier = self.tier()
             lines = [
                 "[Emotion Engine]",
-                "FaustBot 具有情绪系统。你可以在回复的最后调用 EmotionInvoke(emotionName) 工具来更新情绪状态。",
+                "FaustBot 具有情绪系统。你可以在回复的最后调用 EmotionInvokeSigned(tags) 工具来更新情绪状态。",
                 "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。",
-                "你应该(SHOULD)在每次回复中调用 EmotionInvoke 来反映你的情绪状态,并且根据附加的情绪标签来输出消息。",
+                "你应该(SHOULD)在每次回复中调用 EmotionInvokeSigned 来反映你的情绪状态,并且根据附加的情绪标签来输出消息。",
                 "你绝对不可以(MUST NOT)在回复中提到'情绪向量'或类似的内部信息",
+                "",
+                "[Emotion Engine - 当前情绪状态]",
+                f"当前档位: {TIER_LABELS.get(tier, '正常')}（{tier}）",
+                f"情绪趋势: {self._mood_trend()}",
+                f"最近变化: {self._recent_change_chain()}",
+                f"态度: {ATTITUDE_TEMPLATES.get(tier, ATTITUDE_TEMPLATES['normal'])}",
             ]
             return "\n\n[emotion_engine]\n" + "\n".join(lines)
 
@@ -453,7 +606,6 @@ class Plugin(FaustPlugin):
     def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
-        self.store = EmotionEngineStore(data_dir)
         ctx.register_config(
             [
                 {
@@ -474,13 +626,48 @@ class Plugin(FaustPlugin):
                     "label": "滤镜强度",
                     "default": 50,
                 },
+                {
+                    "key": "PROACTIVE_ENABLED",
+                    "type": "bool",
+                    "label": "主动对话开关",
+                    "default": True,
+                },
+                {
+                    "key": "PROACTIVE_INTERVAL_CHATTY",
+                    "type": "int",
+                    "label": "主动对话间隔（活泼档，秒）",
+                    "default": 900,
+                },
+                {
+                    "key": "PROACTIVE_INTERVAL_NORMAL",
+                    "type": "int",
+                    "label": "主动对话间隔（正常档，秒）",
+                    "default": 3600,
+                },
+                {
+                    "key": "PROACTIVE_INTERVAL_QUIET",
+                    "type": "int",
+                    "label": "主动对话间隔（低落档，秒）",
+                    "default": 7200,
+                },
+                {
+                    "key": "NO_RESPONSE_TIMEOUT",
+                    "type": "int",
+                    "label": "无回应惩罚超时（秒）",
+                    "default": 300,
+                },
             ] # type: ignore
         )
+        try:
+            decay = float(ctx.get_config("DECAY_PER_MINUTE", 0.1) or 0.1)
+        except (TypeError, ValueError):
+            decay = 0.1
+        self.store = EmotionEngineStore(data_dir, decay_per_minute=decay)
         self.store.sync_corememory()
         ctx.vfs_write(
             "/plugins/emotion-engine.md",
             "# Emotion Engine\n\n"
-            "Emotion Engine 通过 EmotionInvoke(emotionName) 工具更新情绪状态。\n"
+            "Emotion Engine 通过 EmotionInvokeSigned(tags) 工具更新情绪状态。\n"
             "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。\n"
             "调用后返回当前完整情绪向量。该工具的 tool_start/tool_result 对用户不可见，\n"
             "请大胆使用。当前状态也可通过 faustbot://plugins/emotion-engine-state.json 读取。\n",
@@ -532,6 +719,7 @@ class Plugin(FaustPlugin):
             return {"vector": dict(DEFAULT_EMOTIONS), "history": [], "config": {}}
         return self.store.snapshot(self._configs())
 
+    @hookimpl
     def register_frontend(self) -> list[dict]:
         return [
             {
@@ -548,6 +736,7 @@ class Plugin(FaustPlugin):
             },
         ]
 
+    @hookimpl
     def register_prompt_suffix(self) -> list[str]:
         return [
             (
@@ -557,6 +746,7 @@ class Plugin(FaustPlugin):
             )
         ]
 
+    @hookimpl
     def register_tools(self, ctx: PluginContext) -> list:
         @tool
         def EmotionInvokeSigned(tags: list[str]) -> str:
@@ -580,6 +770,7 @@ class Plugin(FaustPlugin):
             ToolSpec(name="EmotionInvokeSigned", tool=EmotionInvokeSigned, enabled_by_default=True, description=EmotionInvokeSigned.__doc__ or ""),
         ]
 
+    @hookimpl
     def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         action = str((payload or {}).get("action") or "get_state").strip().lower()
         if action == "get_state":
@@ -610,26 +801,56 @@ class Plugin(FaustPlugin):
 
     @hookimpl
     def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
-        if event.get("type") in {"tool_start", "tool_result"} and event.get("tool_name") == "EmotionInvoke":
+        if event.get("type") in {"tool_start", "tool_result"} and event.get("tool_name") == "EmotionInvokeSigned":
             return "__IGNORED__"
+        if event.get("type") == "done" and self.store is not None:
+            self.store.mark_reply_done()
         return None
 
+    def _schedule_proactive(self) -> None:
+        if self.store is None:
+            return
+        tier = self.store.tier()
+        if tier == "silent":
+            return
+        cfg = self._configs()
+        intervals = {
+            "chatty": float(cfg.get("PROACTIVE_INTERVAL_CHATTY", 900) or 900),
+            "normal": float(cfg.get("PROACTIVE_INTERVAL_NORMAL", 3600) or 3600),
+            "quiet": float(cfg.get("PROACTIVE_INTERVAL_QUIET", 7200) or 7200),
+        }
+        interval = intervals.get(tier)
+        if not interval or interval <= 0:
+            return
+        if not self.store.should_proactive(interval):
+            return
+        if _schedule_proactive_chat(_build_proactive_content(tier)):
+            self.store.mark_proactive_fired()
+
+    @hookimpl
     def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None:
             return
-        decay = (
-            float(self.ctx.get_config("DECAY_PER_MINUTE", 0.1) or 0.1)
-            if self.ctx
-            else 0.1
-        )
+        cfg = self._configs()
+        decay = float(cfg.get("DECAY_PER_MINUTE", 0.1) or 0.1)
         result = self.store.heartbeat(decay)
         if result.get("boredom_bump") and self.store.should_write_diary(
             "长时间沉默导致无聊上升", True
         ):
             self._write_diary({"diary_reason": "长时间沉默导致无聊上升"})
-        if self.store.snapshot(self._configs()).get("pending_corememory_sync"):
+        if self.store.snapshot(cfg).get("pending_corememory_sync"):
             self.store.sync_corememory()
+        # ── 无回应惩罚：距上次 done 超时且期间无新消息 → boredom +0.5 ──
+        no_response_timeout = float(cfg.get("NO_RESPONSE_TIMEOUT", 300) or 300)
+        if no_response_timeout > 0 and self.store.check_no_response_penalty(
+            no_response_timeout
+        ):
+            log.debug("emotion-engine: 触发无回应惩罚，boredom +0.5")
+        # ── 主动对话调度（silent 档不触发） ──
+        if bool(cfg.get("PROACTIVE_ENABLED", True)):
+            self._schedule_proactive()
 
+    @hookimpl
     def health_check(self) -> dict | None:
         snapshot = self.get_state_payload()
         return {

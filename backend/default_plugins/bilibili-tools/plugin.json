@@ -1,0 +1,18 @@
+{
+  "id": "bilibili_tools",
+  "name": "Bilibili Tools",
+  "version": "1.0.0",
+  "description": "B 站搜索 / 视频信息 / 三连互动（点赞投币收藏）。互动需要配置 SESSDATA cookie。",
+  "author": "爱熬夜的人形兔（my-neuro 原版）｜FaustBot 重写",
+  "source": "https://github.com/A-night-owl-Rabbit/my-neuro-bilibili-mcp",
+  "homepage": "",
+  "enabled": true,
+  "entry": "impl.py",
+  "permissions": [
+    "tool:bilibili-search",
+    "tool:bilibili-video-info",
+    "tool:bilibili-three-actions"
+  ],
+  "priority": 240,
+  "faustbot.internal.mark.builtin": true
+}

@@ -1,0 +1,11 @@
+{
+  "id": "agent_dream",
+  "name": "梦系统 Agent Dream",
+  "version": "1.0.0",
+  "description": "深夜仿生梦境：深夜时间窗内检索记忆涟漪，独立 LLM 生成第一人称意识流梦境叙事并保存到 VFS",
+  "author": "爱熬夜的人形兔（my-neuro 原版）｜FaustBot 重写",
+  "source": "https://github.com/A-night-owl-Rabbit/my-neuro-plugin-agent-dream",
+  "enabled": true,
+  "entry": "impl.py",
+  "priority": 300
+}
