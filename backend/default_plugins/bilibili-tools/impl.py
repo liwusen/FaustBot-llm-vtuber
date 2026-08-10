@@ -137,7 +137,7 @@ class Plugin(FaustPlugin):
                 {
                     "key": "SESSDATA",
                     "type": "str",
-                    "label": "B 站 SESSDATA cookie（可粘贴完整 cookie 字符串，留空则互动功能不可用）",
+                    "label": "B 站 cookie（粘贴完整 cookie 字符串：SESSDATA=...; bili_jct=...；bili_jct 是点赞/投币/收藏必需的 CSRF token，留空则搜索/信息可用、三连不可用）",
                     "default": "",
                 },
                 {
@@ -314,6 +314,13 @@ class Plugin(FaustPlugin):
         cookies, csrf, err = self._require_cookie()
         if err:
             return err
+        if not csrf:
+            return (
+                "三连失败：缺少 bili_jct（CSRF token）。"
+                "点赞/投币/收藏是写操作，需要 bili_jct 做 csrf 校验。"
+                "请在插件配置 SESSDATA 中粘贴完整 cookie：SESSDATA=你的值; bili_jct=你的值"
+                "（浏览器登录 bilibili.com 后 F12 → Application → Cookies 可找到这两个值）。"
+            )
         results: list[str] = []
         if like:
             results.append(self._do_like(bvid, cookies, csrf))

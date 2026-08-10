@@ -298,7 +298,7 @@ def test_three_actions_posts_with_cookie(monkeypatch, tmp_path):
 
 
 def test_three_actions_partial_flags(monkeypatch, tmp_path):
-    plugin = _plugin_with_cookie(tmp_path, "abc")
+    plugin = _plugin_with_cookie(tmp_path, "SESSDATA=abc; bili_jct=xyz")
     posts = []
 
     def fake_post(url, data=None, cookies=None, headers=None, timeout=None):
@@ -321,7 +321,7 @@ def test_three_actions_partial_flags(monkeypatch, tmp_path):
 
 
 def test_three_actions_mutation_error_contains_code(monkeypatch, tmp_path):
-    plugin = _plugin_with_cookie(tmp_path, "abc")
+    plugin = _plugin_with_cookie(tmp_path, "SESSDATA=abc; bili_jct=xyz")
 
     def fake_post(url, data=None, cookies=None, headers=None, timeout=None):
         return _FakeResp({"code": -111, "message": "csrf 校验失败"})
@@ -333,6 +333,19 @@ def test_three_actions_mutation_error_contains_code(monkeypatch, tmp_path):
     assert "点赞失败" in out
     assert "-111" in out
     assert "cookie" in out  # 附带 cookie 过期提示
+
+
+def test_three_actions_missing_bili_jct_hint(monkeypatch, tmp_path):
+    # 仅配置 SESSDATA（无 bili_jct）时，三连应返回明确的 csrf 提示而非 -111
+    plugin = _plugin_with_cookie(tmp_path, "SESSDATA=abc")
+
+    def fake_post(url, data=None, cookies=None, headers=None, timeout=None):
+        raise AssertionError("不应发起任何请求")
+
+    monkeypatch.setattr(impl.requests, "post", fake_post)
+    out = plugin.three_actions("BV1xx411c7mD")
+    assert "bili_jct" in out
+    assert "三连失败" in out
 
 
 # ── cookie 解析 ──
