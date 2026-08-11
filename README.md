@@ -37,11 +37,11 @@ FaustBot 是一个 AI 驱动的 Vtuber / 桌面伙伴。她会用自己的声音
   尺寸：建议宽 1000px 左右，16:9 或接近
   画面：桌面上的 Faust 形象 + 一条正在对话的字幕气泡，整体氛围要好看，用于定调
   要点：这是访客看到的第一眼，选最有代表性、最出片的一帧
--->
 
 <p align="center">
     <img src="./docs/assets/hero.png" alt="FaustBot 桌面演示" width="900" />
 </p>
+-->
 
 ---
 
@@ -56,11 +56,11 @@ FaustBot 是一个 AI 驱动的 Vtuber / 桌面伙伴。她会用自己的声音
   文件名：docs/assets/song-studio.png（或 .gif）
   画面：歌台界面正在点歌 / 转换进度 / 形象唱歌状态
   要点：突出"用她的声音唱"这件事，若能录 GIF 展示进度→播放最好
--->
 
 <p align="center">
     <img src="./docs/assets/song-studio.png" alt="AI 翻唱 - 歌台" width="800" />
 </p>
+-->
 
 ### 🪟 她会现写一个小窗口和你玩（灵动窗口 Nimble Window）
 
@@ -71,12 +71,12 @@ FaustBot 可以在形象旁边弹出一个可拖动、可缩放的 HTML 小窗�
   文件名：docs/assets/nimble-window.png（或 .gif）
   画面：让 AI 即兴生成一个"带炸弹的五子棋"（或其他明显非内置的自定义玩法）小窗，和虚拟形象同框
   要点：用一个古怪、显然没人会预置的玩法，一眼体现"这是 AI 现场动态生成的 HTML"；GIF 展示下棋 + 触雷过程更佳
--->
+
 
 <p align="center">
     <img src="./docs/assets/nimble-window.png" alt="灵动窗口 - AI 弹窗互动" width="800" />
 </p>
-
+-->
 ### 👀 她知道你在干嘛，然后主动找你（Desktop Mood）
 
 FaustBot 会在后台留意你的桌面情景 —— 通过 Windows SMTC 读取 **你正在听的歌**、你的前台窗口、是否熬到深夜、电量是否告急……然后主动做出反应：做个动作、开口和你聊两句、弹个便签提醒你。发现你在听歌时，她不会照本宣科念台词，而是把歌曲信息交给 AI 自由发挥。所有反应规则都可自定义。
@@ -86,11 +86,11 @@ FaustBot 会在后台留意你的桌面情景 —— 通过 Windows SMTC 读取 
   文件名：docs/assets/desktop-mood.png（或 .gif）
   画面：因为"检测到你在听歌 / 深夜 / 低电量"而主动说话的对话气泡瞬间
   要点：体现"她注意到了现实里发生的事并主动开口"，这是区别于普通聊天 Agent 的关键
--->
 
 <p align="center">
     <img src="./docs/assets/desktop-mood.png" alt="Desktop Mood - 感知桌面情景主动互动" width="800" />
 </p>
+-->
 
 ### 🧠 她会记住你，而且会自己整理记忆（长期记忆 + Araya 自动维护）
 
@@ -106,12 +106,12 @@ FaustBot 拥有一套基于图和生成树存储的三合一混合记忆系统 �
   文件名：docs/assets/memory.png（或 .gif）
   画面：记忆库/知识图谱可视化，或控制面板里的"记忆"与"Araya 记忆库自动维护"页面
   要点：体现"记忆有结构、会自动整理"，若能展示知识图谱节点关系或 Araya 维护日志更佳
--->
+
 
 <p align="center">
     <img src="./docs/assets/memory.png" alt="长期记忆与 Araya 自动维护" width="800" />
 </p>
-
+-->
 ### 📺 让她替你上 B 站直播
 
 FaustBot 内置 B 站直播接入，连上直播间即可接收弹幕并以直播模式实时回应，支持弹幕 / TTS 黑名单过滤。让她成为你自己的虚拟主播。
@@ -121,12 +121,12 @@ FaustBot 内置 B 站直播接入，连上直播间即可接收弹幕并以直�
   文件名：docs/assets/live.png（或 .gif）
   画面：直播窗口 + 弹幕滚动 + 形象回应弹幕
   要点：展示"接弹幕 → 回应"的互动闭环
--->
+
 
 <p align="center">
     <img src="./docs/assets/live.png" alt="B 站直播互动" width="800" />
 </p>
-
+-->
 ### 🤖 一个能干活的真正 Agent，而不只是聊天机器人
 
 FaustBot 的底层是基于 Langgraph 构建的代理,架构设计与主流Coding Agent接近：
@@ -156,12 +156,12 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
   文件名：docs/assets/comp.png（已存在）或 Image 模式的立绘配置页截图
   画面：控制面板 / Image 模式形象配置界面
   要点：体现"高度可配置"，如果能补一张 Image 模式配图会更贴合上面第一条
--->
+
 
 <p align="center">
     <img src="./docs/assets/comp.png" alt="控制面板 - 高度自定义" width="800" />
 </p>
-
+-->
 ---
 
 ## 📋 完整功能清单
@@ -264,7 +264,4 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 角色设定来源于游戏《Limbus Company》，引用自[边狱公司中文维基](https://limbuscompany.huijiwiki.com/wiki/%E6%B5%AE%E5%A3%AB%E5%BE%B7)。
 
 ---
-## 关于内置插件
-
-
 
