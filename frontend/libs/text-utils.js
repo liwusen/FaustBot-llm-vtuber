@@ -28,8 +28,12 @@ export function extractCompletedSentences(buffer) {
   for (let i = 0; i < buffer.length; i++) {
     const ch = buffer[i];
     if ('。！？!?；;\n'.includes(ch)) {
-      const sentence = buffer.slice(start, i + 1).trim();
-      if (sentence) results.push(sentence);
+      const raw = buffer.slice(start, i + 1);
+      const leading = raw.length - raw.trimStart().length;
+      const sentence = raw.trim();
+      // 记录句子在输入 buffer 中的 [start, end) 偏移（trim 后），
+      // 供调用方把 emotion token 按位置分配到对应句子
+      if (sentence) results.push({ text: sentence, start: start + leading, end: i + 1 });
       start = i + 1;
     }
   }

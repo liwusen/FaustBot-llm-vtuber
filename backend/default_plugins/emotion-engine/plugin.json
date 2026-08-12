@@ -4,7 +4,6 @@
   "version": "0.3.0",
   "description": "FaustBot 情绪插件：6 维情绪向量、主动对话调度、态度模板注入、无回应惩罚、离线回归；提供情绪状态、前端面板和主窗口表情浮层。",
   "author": "allenlee（FaustBot）",
-  "source": "升级参考 https://github.com/A-night-owl-Rabbit/my-neuro-plugin-mood-chat（my-neuro mood-chat）",
   "enabled": false,
   "entry": "impl.py",
   "priority": 320,

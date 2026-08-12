@@ -834,12 +834,15 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
   function consumeMotionTokens(request, chunk){
     // 累积未决文本 + 新 chunk，在完整拼接文本上匹配 <{...}> 表情 token。
     // 支持跨 delta 分片送达的 token（如 '<' 与 '{Flick}>' 分两次到达）：
-    //  - 匹配到完整 <{xxx}> 即触发并删除（不进入可见文本）
+    //  - 匹配到完整 <{xxx}> 即收集到 request.pendingMotions（不立即触发，
+    //    等 TTS 播到对应句子时再触发，保证动作穿插在语音中）
     //  - 未闭合的 '<{' 前缀保留到下一个 chunk
     //  - 尾部孤立 '<' 也保留（可能是下一个 chunk 中 '<{' 的开头）
     const combined = String(request.motionTokenBuffer || '') + String(chunk || '');
     let visible = '';
     let cursor = 0;
+    const baseLen = request.visibleLen || 0;
+    if (!Array.isArray(request.pendingMotions)) request.pendingMotions = [];
 
     while (cursor < combined.length) {
       const start = combined.indexOf('<{', cursor);
@@ -853,6 +856,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           visible += combined.slice(cursor);
           request.motionTokenBuffer = '';
         }
+        request.visibleLen = baseLen + visible.length;
         return visible;
       }
 
@@ -861,19 +865,47 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       if (end === -1) {
         // <{ 已出现但未闭合：保留从 <{ 起的未决文本，等待后续 chunk
         request.motionTokenBuffer = combined.slice(start);
+        request.visibleLen = baseLen + visible.length;
         return visible;
       }
 
       const motionName = combined.slice(start + 2, end).trim();
       if (motionName && !/\s/.test(motionName)) {
-        console.log('触发模型动作 token:', motionName);
-        triggerModelMotion(motionName);
+        // pos = token 在完整可见文本流中的偏移（用于按句子分配触发时机）
+        request.pendingMotions.push({ motion: motionName, pos: baseLen + visible.length });
       }
       cursor = end + 2;
     }
 
     request.motionTokenBuffer = '';
+    request.visibleLen = baseLen + visible.length;
     return visible;
+  }
+
+  // 取出落在 [globalStart, globalEnd) 区间内的待触发动作（属于该句子的 token）
+  function takeMotionsForSentence(request, globalStart, globalEnd){
+    const pending = Array.isArray(request.pendingMotions) ? request.pendingMotions : [];
+    const taken = [];
+    const keep = [];
+    for (const item of pending){
+      if (item.pos >= globalStart && item.pos < globalEnd) taken.push(item.motion);
+      else keep.push(item);
+    }
+    request.pendingMotions = keep;
+    return taken;
+  }
+
+  // 取出偏移 >= minPos 的全部待触发动作（用于回复尾部无标点句子的兜底分配）
+  function takeMotionsFrom(request, minPos){
+    const pending = Array.isArray(request.pendingMotions) ? request.pendingMotions : [];
+    const taken = [];
+    const keep = [];
+    for (const item of pending){
+      if (item.pos >= minPos) taken.push(item.motion);
+      else keep.push(item);
+    }
+    request.pendingMotions = keep;
+    return taken;
   }
 
   function stripMotionTokens(text){
@@ -1518,6 +1550,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         if (item.status === 'pending') break;
         streamTtsPending.delete(streamTtsNextPlayId);
         if (item.status === 'ready' && item.blob){
+          // 动作穿插在 TTS 中：播到这一句时触发该句挂载的情绪动作
+          for (const m of (item.motions || [])) triggerModelMotion(m);
           await audio.playOrdered(item.blob);
         }
         streamTtsNextPlayId += 1;
@@ -1530,27 +1564,27 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     }
   }
 
-  async function enqueueStreamTtsSentence(sentence, lang){
+  async function enqueueStreamTtsSentence(sentence, lang, motions){
     sentence = normalizeTtsText(sentence).trim();
     if (!sentence) return;
     const sessionId = streamTtsSessionId;
     const id = streamTtsSentenceId++;
-    streamTtsPending.set(id, { status: 'pending', text: sentence, blob: null });
+    streamTtsPending.set(id, { status: 'pending', text: sentence, blob: null, motions: motions || [] });
     void flushStreamTtsQueue();
     try{
       const blob = await requestTtsBlob(sentence, lang);
       if (sessionId !== streamTtsSessionId) return;
       if (!blob){
-        streamTtsPending.set(id, { status: 'failed', text: sentence, blob: null });
+        streamTtsPending.set(id, { status: 'failed', text: sentence, blob: null, motions: motions || [] });
         await flushStreamTtsQueue();
         return;
       }
-      streamTtsPending.set(id, { status: 'ready', blob, text: sentence });
+      streamTtsPending.set(id, { status: 'ready', blob, text: sentence, motions: motions || [] });
       await flushStreamTtsQueue();
     }catch(e){
       if (sessionId !== streamTtsSessionId) return;
       console.warn('stream TTS sentence failed', sentence, e);
-      streamTtsPending.set(id, { status: 'failed', text: sentence, blob: null });
+      streamTtsPending.set(id, { status: 'failed', text: sentence, blob: null, motions: motions || [] });
       await flushStreamTtsQueue();
     }
   }
@@ -1613,6 +1647,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
             replyText: '',
             pendingBuffer: '',
             motionTokenBuffer: '',
+            pendingMotions: [],
+            visibleLen: 0,
             entries: [],
           };
         }
@@ -1628,6 +1664,8 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       req.replyText = '';
       req.pendingBuffer = '';
       req.motionTokenBuffer = '';
+      req.pendingMotions = [];
+      req.visibleLen = 0;
       req.entries = [];
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
       // 被动流（后端主动推送）不代表用户在等待回复，不占用 processing 标志，
@@ -1727,11 +1765,15 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         req.entries.push({ type: 'text', text: visibleChunk });
       }
       showResultBubble('ai', req.entries);
+      const beforeSplitLen = req.pendingBuffer.length;
       const split = extractCompletedSentences(req.pendingBuffer);
       req.pendingBuffer = split.rest;
 //      console.log("收到增量回复，当前累计文本：", req.replyText);
+      // pendingBuffer 起点的全局可见文本偏移：已处理总长 - 本次切分前残余长度
+      const baseOffset = (req.visibleLen || 0) - beforeSplitLen;
       for (const sentence of split.completed){
-        enqueueStreamTtsSentence(sentence, getCurrentTtsLang());
+        const motions = takeMotionsForSentence(req, baseOffset + sentence.start, baseOffset + sentence.end);
+        enqueueStreamTtsSentence(sentence.text, getCurrentTtsLang(), motions);
       }
       return;
     }
@@ -1749,29 +1791,34 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           const split = extractCompletedSentences(reply);
           request.entries = [];
           for (const sentence of split.completed){
-            const visible = stripMotionTokens(sentence);
+            const visible = stripMotionTokens(sentence.text);
             if (!visible) continue;
             request.entries.push({ type: 'text', text: visible });
             // show bubble immediately
             showResultBubble('ai', request.entries);
             // fire-and-forget TTS so UI updates are immediate
-            enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
+            enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsForSentence(request, sentence.start, sentence.end)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
           }
           if (split.rest && split.rest.trim()){
             const visible = stripMotionTokens(split.rest);
             if (visible){
               request.entries.push({ type: 'text', text: visible });
               showResultBubble('ai', request.entries);
-              enqueueStreamTtsSentence(visible, getCurrentTtsLang()).catch((e)=>{ console.warn('enqueue TTS failed', e); });
+              enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsFrom(request, split.completed.length ? split.completed[split.completed.length - 1].end : 0)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
             }
           }
         }catch(e){ console.warn('chunking done reply failed', e); }
       } else {
         if (request.pendingBuffer && request.pendingBuffer.trim()){
-          await enqueueStreamTtsSentence(request.pendingBuffer.trim(), getCurrentTtsLang());
+          // 尾部句子无标点结束：分配偏移在 pendingBuffer 起点之后的所有剩余动作
+          const baseOffset = (request.visibleLen || 0) - request.pendingBuffer.length;
+          await enqueueStreamTtsSentence(request.pendingBuffer.trim(), getCurrentTtsLang(), takeMotionsFrom(request, baseOffset));
         }
       }
 
+      // 兜底：回复末尾仍未分配的动作（无对应句子的 token）立即触发
+      for (const item of (request.pendingMotions || [])) triggerModelMotion(item.motion);
+      request.pendingMotions = [];
       request.pendingBuffer = '';
       if (!request.passive) agentIsProcessing = false;
       showResultBubble('ai', request.entries);
@@ -1857,6 +1904,9 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           text,
           replyText: '',
           pendingBuffer: '',
+          motionTokenBuffer: '',
+          pendingMotions: [],
+          visibleLen: 0,
           resumeAfter,
         };
         chatWs.send(JSON.stringify({ text }));
