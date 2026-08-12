@@ -957,6 +957,43 @@ function startBackendInPowerShell(){
   console.log('后端已在启动，等待就绪…');
 }
 
+// 打包产物是 electron-builder --win dir（无 NSIS 安装器），安装时不会生成
+// 开始菜单快捷方式；应用启动时自行创建（用户级 Start Menu，无需管理员权限）。
+function registerStartMenuShortcut(){
+  if (!app.isPackaged) {
+    console.log('[start-menu] dev 模式跳过开始菜单注册');
+    return;
+  }
+  try {
+    const exePath = process.execPath;
+    const exeDir = path.dirname(exePath);
+    const startMenuDir = path.join(
+      app.getPath('appData'),
+      'Microsoft', 'Windows', 'Start Menu', 'Programs'
+    );
+    const lnkPath = path.join(startMenuDir, 'FaustBot.lnk');
+
+    // 通过 PowerShell WScript.Shell COM 创建 .lnk（Windows 唯一标准途径）
+    const psCmd =
+      "$ws = New-Object -ComObject WScript.Shell;" +
+      "$sc = $ws.CreateShortcut('" + lnkPath.replace(/'/g, "''") + "');" +
+      "$sc.TargetPath = '" + exePath.replace(/'/g, "''") + "';" +
+      "$sc.WorkingDirectory = '" + exeDir.replace(/'/g, "''") + "';" +
+      "$sc.IconLocation = '" + exePath.replace(/'/g, "''") + ",0';" +
+      "$sc.Description = 'FaustBot AI 桌宠';" +
+      "$sc.Save()";
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+      windowsHide: true,
+    });
+    child.on('error', (e) => console.error('[start-menu] 注册失败', e));
+    child.on('exit', (code) => {
+      console.log(`[start-menu] 快捷方式注册完成: ${lnkPath} (exit=${code})`);
+    });
+  } catch (e) {
+    console.error('[start-menu] 注册异常（不影响启动）', e);
+  }
+}
+
 function waitForBackend(maxAttempts = 200, interval = 1000) {
   return new Promise((resolve) => {
     let attempts = 0;
@@ -975,6 +1012,7 @@ function waitForBackend(maxAttempts = 200, interval = 1000) {
 app.whenReady().then(async () => {
   registerStaticProtocol();
   registerFaustProtocolClient();
+  registerStartMenuShortcut();
 
   let open = await checkPort(BACKEND_PORT_TO_CHECK);
   if (!open) {
