@@ -167,7 +167,26 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       scale: 1,
       hidden: false,
       onLayout: () => updateAsrTextPosition(false),
-      schema: { bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean' },
+      schema: {
+        bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean',
+        props: {
+          fontSize: { type: 'number', label: '字体大小' },
+          textColor: { type: 'color', label: '文字颜色' },
+          whiteBackground: { type: 'boolean', label: '白色背景' },
+          showReasoning: { type: 'boolean', label: '显示推理内容' },
+          showTools: { type: 'boolean', label: '显示工具调用' },
+          showSubagents: { type: 'boolean', label: '显示 Subagents' },
+        },
+      },
+      props: {
+        fontSize: 20,
+        textColor: '#000000',
+        whiteBackground: true,
+        aspectRatio: '',
+        showReasoning: true,
+        showTools: true,
+        showSubagents: true,
+      },
     });
     uiWidgetManager.registerWidget({
       id: 'vrm-config-panel',
@@ -2013,6 +2032,41 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
     asrBubbleInitialized = false;
   }
 
+  // AsrBubble 用户可调属性（布景台可编辑，持久化到 /faust/ui-setting）
+  function getAsrBubbleProps(){
+    const widget = uiWidgetManager.getWidget('asr-bubble');
+    const p = (widget && widget.props) || {};
+    return {
+      fontSize: Number(p.fontSize) > 0 ? Number(p.fontSize) : 20,
+      textColor: String(p.textColor || '#000000'),
+      whiteBackground: p.whiteBackground !== false,
+      aspectRatio: String(p.aspectRatio || '').trim(),
+      showReasoning: p.showReasoning !== false,
+      showTools: p.showTools !== false,
+      showSubagents: p.showSubagents !== false,
+    };
+  }
+
+  // 把 AsrBubble 属性应用到元素（字体大小 / 白色背景 / 长宽比）
+  function applyAsrBubbleProps(){
+    if (!asrBubbleEl || !asrTextEl) return;
+    const props = getAsrBubbleProps();
+    asrTextEl.style.fontSize = props.fontSize + 'px';
+    asrTextEl.style.color = props.textColor;
+    asrBubbleEl.classList.toggle('asr-bubble-no-bg', !props.whiteBackground);
+    // 长宽比：CSS aspect-ratio 对由内容撑开的 flex 容器不生效，
+    // 改为按固定宽度(350px)显式计算高度
+    const parts = String(props.aspectRatio || '').split('/').map((s) => parseFloat(s.trim()));
+    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
+      const w = asrBubbleEl.offsetWidth || 350;
+      asrBubbleEl.style.height = Math.round(w * parts[1] / parts[0]) + 'px';
+      asrBubbleEl.style.aspectRatio = 'auto';
+    } else {
+      asrBubbleEl.style.height = '';
+      asrBubbleEl.style.aspectRatio = '';
+    }
+  }
+
   function showResultBubble(source, entries){
     if (!asrTextEl || !asrBubbleEl) return;
     const widget = uiWidgetManager.getWidget('asr-bubble');
@@ -2026,12 +2080,22 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       source: asrBubbleSource,
       entries: cloneBubbleEntries(normalizedEntries),
     };
-    const html = renderResultBubbleHtml(asrBubbleSource, asrBubbleState.entries);
+    // 按用户属性过滤渲染内容（推理 / 工具调用）
+    const props = getAsrBubbleProps();
+    let renderEntries = asrBubbleState.entries;
+    if (props.showReasoning === false) renderEntries = renderEntries.filter((e) => e.type !== 'reasoning');
+    if (props.showTools === false) renderEntries = renderEntries.filter((e) => e.type !== 'tool');
+    const html = renderResultBubbleHtml(asrBubbleSource, renderEntries);
     rememberAsrScrollIntent();
     asrBubbleEl.style.display = html ? 'flex' : 'none';
     asrTextEl.innerHTML = html;
     if (html) {
-      hydrateMermaidBlocks(asrTextEl);
+      try {
+        hydrateMermaidBlocks(asrTextEl);
+      } catch (e) {
+        console.warn('[md-block] hydrate failed（不影响显示）', e);
+      }
+      applyAsrBubbleProps();
       updateAsrTextPosition(true);
       scrollAsrTextToBottom(true);
     }
@@ -2039,6 +2103,20 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
   let mermaidInitialized = false;
   let mermaidSeq = 0;
+
+  // 把备份的 <pre><code> 元素重新插回 DOM（mermaid 渲染失败/节点脱离时恢复原文）
+  function restoreMermaidCodeBlock(holder, backupHtml){
+    if (!holder || !backupHtml) return;
+    try {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = backupHtml;
+      const restored = tmp.firstElementChild;
+      if (restored) holder.replaceWith(restored);
+    } catch (e) {
+      console.warn('[md-block] restore code block failed', e);
+    }
+  }
+
   function hydrateMermaidBlocks(root){
     const fm = window.FaustMarkdown;
     if (!root || !fm || !fm.mermaid) return;
@@ -2049,18 +2127,33 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       mermaidInitialized = true;
     }
     const nodes = [];
+    const backups = [];
     for (const code of codes) {
       const holder = document.createElement('div');
       holder.className = 'mermaid';
       holder.id = `md-mermaid-${++mermaidSeq}`;
       holder.textContent = code.textContent || '';
       const pre = code.closest('pre') || code;
+      const backupHtml = pre.outerHTML;
       pre.replaceWith(holder);
       nodes.push(holder);
+      backups.push({ holder, backupHtml });
     }
-    fm.mermaid.run({ nodes }).catch((err) => {
-      console.warn('[md-block] mermaid render failed:', err);
-    });
+    fm.mermaid.run({ nodes })
+      .then(() => {
+        // 渲染完成：若节点已脱离文档（气泡被后续消息覆盖），SVG 不可见，
+        // 把原代码块恢复回当前 DOM，保证内容可见
+        for (const { holder, backupHtml } of backups) {
+          if (!holder.isConnected) restoreMermaidCodeBlock(holder, backupHtml);
+        }
+      })
+      .catch((err) => {
+        console.warn('[md-block] mermaid render failed:', err);
+        // 渲染失败：恢复所有占位节点为原代码块（内容不丢失）
+        for (const { holder, backupHtml } of backups) {
+          if (holder.isConnected) restoreMermaidCodeBlock(holder, backupHtml);
+        }
+      });
   }
 
   function formatSubagentEventSummary(item){
@@ -2087,6 +2180,12 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
   function renderSubagentSummary(){
     if (!subagentSummaryEl) return;
+    // 用户可在布景台关闭 Subagents Summary 组件
+    if (getAsrBubbleProps().showSubagents === false) {
+      subagentSummaryEl.style.display = 'none';
+      subagentSummaryEl.innerHTML = '';
+      return;
+    }
     const STATUS_CN= {
       idle: '空闲', pending: '排队中', running: '运行中',
       stopping: '停止中', stopped: '已停止', error: '错误',
@@ -2276,6 +2375,7 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 
   function updateAsrTextPosition(forceSnap = false){
     if (!asrBubbleEl || !asrTextEl) return;
+    applyAsrBubbleProps();
     const widget = uiWidgetManager.getWidget('asr-bubble') || { coord: { x: 0.5, y: 0 }, offset: { x: 0, y: -108 }, scale: 1 };
     const editMode = uiWidgetManager.isEditMode();
     asrBubbleEl.classList.toggle('ui-widget-hidden-preview', !!(editMode && widget.hidden));
@@ -2303,7 +2403,6 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
         asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
         asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
         asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
-        asrTextEl.style.fontSize = '20px';
         hil.updatePosition();
       }catch(e){/*ignore*/}
       return;
@@ -2330,7 +2429,6 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
       asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
       asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
-      asrTextEl.style.fontSize = '20px';
       hil.updatePosition();
     }catch(e){/*ignore*/}
   }
@@ -3445,6 +3543,13 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       layoutSidePanel.setVisible(enabled);
     },
     refreshLayout: refreshUiWidgetLayout,
+    onPropChange: () => {
+      // 编辑模式属性面板修改 AsrBubble props 后：样式已由 refreshLayout 应用，
+      // 这里补 HTML 过滤（推理/工具）与 Subagents 摘要重渲染
+      applyAsrBubbleProps();
+      showResultBubble(asrBubbleSource, asrBubbleState.entries);
+      renderSubagentSummary();
+    },
   });
 
   if (window.faustAppUI) {
@@ -3461,7 +3566,6 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       ['asr-bubble', 'ASR 气泡'],
       ['log-panel', '日志面板'],
       ['subagent-panel', '子代理面板'],
-      ['vrm-config-panel', 'VRM 配置面板'],
     ];
     for (const [widgetId, label] of items) {
       const widget = uiWidgetManager.getWidget(widgetId);
@@ -3486,8 +3590,58 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
       switchWrap.append(input, slider);
       row.append(text, switchWrap);
       container.appendChild(row);
+      if (widgetId === 'asr-bubble') {
+        container.appendChild(buildAsrBubblePropPanel());
+      }
     }
   });
+
+  // AsrBubble 属性编辑面板：字体大小 / 白色背景 / 长宽比 / 推理 / 工具 / Subagents
+  function buildAsrBubblePropPanel(){
+    const panel = document.createElement('div');
+    panel.className = 'lsp-props';
+    panel.innerHTML =
+      '<div class="lsp-prop-row"><span>字体大小</span>' +
+        '<input type="number" min="10" max="48" step="1" data-k="fontSize"></div>' +
+      '<div class="lsp-prop-row"><span>文字颜色</span>' +
+        '<input type="color" data-k="textColor" style="width:44px;height:26px;padding:0;border:none;background:none;cursor:pointer"></div>' +
+      '<div class="lsp-prop-row"><span>白色背景</span>' +
+        '<label class="lsp-switch"><input type="checkbox" data-k="whiteBackground"><span class="lsp-switch-slider"></span></label></div>' +
+      '<div class="lsp-prop-row"><span>长宽比</span>' +
+        '<select data-k="aspectRatio">' +
+          '<option value="">默认</option><option value="4 / 3">4:3</option>' +
+          '<option value="3 / 4">3:4</option><option value="1 / 1">1:1</option>' +
+          '<option value="16 / 9">16:9</option></select></div>' +
+      '<div class="lsp-prop-row"><span>显示推理内容</span>' +
+        '<label class="lsp-switch"><input type="checkbox" data-k="showReasoning"><span class="lsp-switch-slider"></span></label></div>' +
+      '<div class="lsp-prop-row"><span>显示工具调用</span>' +
+        '<label class="lsp-switch"><input type="checkbox" data-k="showTools"><span class="lsp-switch-slider"></span></label></div>' +
+      '<div class="lsp-prop-row"><span>显示 Subagents</span>' +
+        '<label class="lsp-switch"><input type="checkbox" data-k="showSubagents"><span class="lsp-switch-slider"></span></label></div>';
+    const props = getAsrBubbleProps();
+    panel.querySelectorAll('[data-k]').forEach((el) => {
+      const k = el.dataset.k;
+      if (el.type === 'checkbox') el.checked = !!props[k];
+      else el.value = props[k] === undefined || props[k] === null ? '' : String(props[k]);
+    });
+    panel.querySelectorAll('input,select').forEach((el) => {
+      el.addEventListener('change', () => {
+        const k = el.dataset.k;
+        const widget = uiWidgetManager.getWidget('asr-bubble') || {};
+        const next = { ...(widget.props || {}) };
+        if (el.type === 'checkbox') next[k] = el.checked;
+        else if (el.type === 'number') next[k] = Number(el.value) > 0 ? Number(el.value) : 20;
+        else next[k] = el.value;
+        uiWidgetManager.updateWidget('asr-bubble', { props: next });
+        applyAsrBubbleProps();
+        showResultBubble(asrBubbleSource, asrBubbleState.entries);
+        renderSubagentSummary();
+        refreshUiWidgetLayout();
+        saveUiWidgetSettings();
+      });
+    });
+    return panel;
+  }
 
   // ── 直播模式（已抽取到 libs/live-mode.js） ──
   const liveModeCtrl = initLiveMode();

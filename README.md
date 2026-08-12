@@ -265,3 +265,6 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 
 ---
 
+## 提示
+
+live2d Cubsim Core的协议**并不**是GPLv3,它们是专有软件(Non-free Software)

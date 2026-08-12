@@ -1,4 +1,4 @@
-export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEditModeChange }) {
+export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEditModeChange, onPropChange }) {
   let selectedId = '';
   let dragState = null;
   let scaleState = null;
@@ -135,11 +135,17 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
 
     const propFields = [];
     const propSchema = widget.schema && widget.schema.props ? widget.schema.props : {};
-    Object.entries(propSchema).forEach(([propKey, propType]) => {
+    Object.entries(propSchema).forEach(([propKey, propDef]) => {
+      // 支持两种定义：'boolean'/'number' 字符串，或 {type, label} 对象
+      const propType = typeof propDef === 'string' ? propDef : ((propDef && propDef.type) || 'boolean');
+      const propLabel = (typeof propDef === 'object' && propDef.label) ? propDef.label : propKey;
+      const notifyPropChange = () => {
+        if (typeof onPropChange === 'function') onPropChange();
+      };
       if (propType === 'boolean') {
         const row = document.createElement('label');
         row.className = 'switch-row';
-        row.innerHTML = `<span class="switch-text">${propKey}</span>`;
+        row.innerHTML = `<span class="switch-text">${propLabel}</span>`;
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = !!(widget.props && widget.props[propKey]);
@@ -147,14 +153,34 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
           manager.updateWidget(widget.id, { props: { ...(widget.props || {}), [propKey]: input.checked } });
           if (typeof refreshLayout === 'function') refreshLayout();
           persist();
+          notifyPropChange();
         });
         row.append(input);
         propFields.push(row);
+      } else if (propType === 'color') {
+        const wrap = document.createElement('label');
+        wrap.className = 'field-wrap';
+        const text = document.createElement('span');
+        text.className = 'card-key';
+        text.textContent = propLabel;
+        const input = document.createElement('input');
+        input.className = 'input';
+        input.type = 'color';
+        input.value = (widget.props && widget.props[propKey]) || '#000000';
+        input.addEventListener('change', () => {
+          manager.updateWidget(widget.id, { props: { ...(widget.props || {}), [propKey]: input.value } });
+          if (typeof refreshLayout === 'function') refreshLayout();
+          persist();
+          notifyPropChange();
+        });
+        wrap.append(text, input);
+        propFields.push(wrap);
       } else {
-        const field = makeNumberField(propKey, widget.props && widget.props[propKey] != null ? widget.props[propKey] : 0, (value) => {
+        const field = makeNumberField(propLabel, widget.props && widget.props[propKey] != null ? widget.props[propKey] : 0, (value) => {
           manager.updateWidget(widget.id, { props: { ...(widget.props || {}), [propKey]: value } });
           if (typeof refreshLayout === 'function') refreshLayout();
           persist();
+          notifyPropChange();
         });
         propFields.push(field);
       }

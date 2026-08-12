@@ -33,8 +33,14 @@ export function renderMarkdownHtml(text) {
   if (!fm || !fm.marked || !fm.DOMPurify) {
     return `<pre class="md-fallback">${escapeHtml(raw)}</pre>`;
   }
-  const html = fm.marked.parse(raw, { async: false, gfm: true, breaks: true });
-  return fm.DOMPurify.sanitize(html);
+  try {
+    const html = fm.marked.parse(raw, { async: false, gfm: true, breaks: true });
+    return fm.DOMPurify.sanitize(html);
+  } catch (e) {
+    // 渲染异常不向上传播（否则整个气泡停止更新），退回原文显示
+    console.warn('[md-block] markdown render failed, fallback to raw:', e);
+    return `<pre class="md-fallback">${escapeHtml(raw)}</pre>`;
+  }
 }
 
 function summarizeToolCall(toolName, args) {

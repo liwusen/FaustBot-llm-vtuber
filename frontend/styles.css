@@ -816,6 +816,17 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   color: #fff5f5;
 }
 
+/* 布景台可配置：关闭白色背景后气泡透明化（无背景/边框/阴影） */
+#asrBubble.asr-bubble-no-bg,
+#asrBubble.asr-bubble-no-bg[data-source="ai"],
+#asrBubble.asr-bubble-no-bg[data-source="user"],
+#asrBubble.asr-bubble-no-bg[data-source="error"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
 #hil-approval-host {
   position: fixed;
   left: 0;

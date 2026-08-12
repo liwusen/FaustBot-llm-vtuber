@@ -204,3 +204,28 @@ body.layout-side-panel-open #nimble-host {
 .lsp-switch input:checked + .lsp-switch-slider::before {
   transform: translateX(18px);
 }
+
+/* ── 布景台：ASR 气泡属性编辑面板 ── */
+.lsp-props {
+  padding: 4px 12px 10px;
+  border-bottom: 1px solid var(--faust-line);
+}
+.lsp-prop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--faust-text);
+}
+.lsp-prop-row input[type="number"],
+.lsp-prop-row select {
+  background: #fff;
+  color: var(--faust-text);
+  border: 1px solid var(--faust-line);
+  border-radius: 4px;
+  padding: 2px 6px;
+  width: 84px;
+  font-size: 12px;
+}
