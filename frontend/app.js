@@ -1,6 +1,6 @@
 import { resampleFloat32, concatFloat32Arrays, floatTo16BitPCM, writeString, encodeWAV, interleaveAndEncodeWav } from './libs/audio-utils.js';
 import { normalizeTtsText, decodeWsPayload, extractCompletedSentences } from './libs/text-utils.js';
-import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries } from './libs/bubble-utils.js';
+import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries, entryKey, entryHash, renderBubbleEntryHtml } from './libs/bubble-utils.js';
 import { initLogPanel } from './libs/log-panel.js';
 import { initLiveMode } from './libs/live-mode.js';
 import { initNimbleWindows } from './libs/nimble-window.js';
@@ -2081,6 +2081,56 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
   }
 
+  // 按 entry key/hash 对齐更新气泡子元素；仅 append 新 entry / replace 变化 entry / 移除多余节点
+  function applyBubbleEntriesDiff(source, entries) {
+    const keys = entries.map((e, i) => entryKey(source, e, i));
+    const hashes = entries.map((e) => entryHash(e));
+    const children = Array.from(asrTextEl.children);
+    let changed = false;
+
+    for (let i = 0; i < keys.length; i++) {
+      const el = children[i];
+      const key = keys[i];
+      const hash = hashes[i];
+      if (!el) {
+        const node = document.createElement('div');
+        node.dataset.entryKey = key;
+        node.dataset.entryHash = hash;
+        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i);
+        asrTextEl.appendChild(node);
+        hydrateNewBubbleNode(node);
+        changed = true;
+        continue;
+      }
+      if (el.dataset.entryKey !== key || el.dataset.entryHash !== hash) {
+        const node = document.createElement('div');
+        node.dataset.entryKey = key;
+        node.dataset.entryHash = hash;
+        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i);
+        el.replaceWith(node);
+        hydrateNewBubbleNode(node);
+        changed = true;
+      }
+    }
+    for (let i = keys.length; i < children.length; i++) {
+      children[i].remove();
+      changed = true;
+    }
+    if (changed) updateAsrTextPosition(true);
+    return changed;
+  }
+
+  // 只 hydrate 新插入/更新的 md-block（局部），不再全量
+  function hydrateNewBubbleNode(node) {
+    const blocks = node.querySelectorAll('.md-block');
+    if (!blocks.length) return;
+    try {
+      hydrateMermaidBlocks(node);
+    } catch (e) {
+      console.warn('[md-block] hydrate failed（不影响显示）', e);
+    }
+  }
+
   function showResultBubble(source, entries){
     if (!asrTextEl || !asrBubbleEl) return;
     const widget = uiWidgetManager.getWidget('asr-bubble');
@@ -2099,17 +2149,17 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     let renderEntries = asrBubbleState.entries;
     if (props.showReasoning === false) renderEntries = renderEntries.filter((e) => e.type !== 'reasoning');
     if (props.showTools === false) renderEntries = renderEntries.filter((e) => e.type !== 'tool');
+    // 增量渲染：按 entry key/hash 对齐更新，避免每次全量 innerHTML + markdown 重解析
     const html = renderResultBubbleHtml(asrBubbleSource, renderEntries);
     rememberAsrScrollIntent();
     asrBubbleEl.style.display = html ? 'flex' : 'none';
-    asrTextEl.innerHTML = html;
+    if (html) {
+      applyBubbleEntriesDiff(asrBubbleSource, renderEntries);
+    } else {
+      asrTextEl.innerHTML = '';
+    }
     markLayoutDirty('widget');
     if (html) {
-      try {
-        hydrateMermaidBlocks(asrTextEl);
-      } catch (e) {
-        console.warn('[md-block] hydrate failed（不影响显示）', e);
-      }
       applyAsrBubbleProps();
       updateAsrTextPosition(true);
       scrollAsrTextToBottom(true);
