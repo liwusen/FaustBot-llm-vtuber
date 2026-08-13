@@ -64,69 +64,118 @@ function summarizeToolCall(toolName, args) {
   return `工具调用:${name}:${values.join(', ')}`;
 }
 
-export function renderResultBubbleHtml(source, entries) {
-  const blocks = [];
-  const items = Array.isArray(entries) ? entries : [];
-  let reasoningIdx = 0;
-  for (const item of items) {
-    if (!item || typeof item !== 'object') continue;
-    if (item.type === 'reasoning') {
-      const reasoningText = escapeHtml(item.text || '');
-      const expandedAttr = item.expanded ? ' open' : '';
-      blocks.push(
-        '<section class="thinking-card">' +
-          '<details class="thinking-details" data-r="' + reasoningIdx + '"' + expandedAttr + '>' +
-            '<summary class="thinking-summary">' +
-              '<span class="thinking-arrow">&#9654;</span>' +
-              '<span class="thinking-divider"></span>' +
-              '<span class="thinking-word-count">思考:' + reasoningText.length + '字</span>' +
-            '</summary>' +
-            '<div class="thinking-body">' +
-              '<div class="thinking-content">' + reasoningText + '</div>' +
-            '</div>' +
-          '</details>' +
-        '</section>'
-      );
-      reasoningIdx++;
-      continue;
+// ── 增量渲染支持：entry key/hash + markdown 缓存 ──
+const MARKDOWN_CACHE_LIMIT = 50;
+const markdownCache = new Map();
+
+export function entryKey(source, entry, index) {
+  if (entry && entry.type === 'tool') {
+    return 'tool:' + String(entry.callId || ('u' + index));
+  }
+  return String((entry && entry.type) || 'text') + ':' + String(index);
+}
+
+export function entryHash(entry) {
+  if (!entry || typeof entry !== 'object') return 'null';
+  try {
+    const pick = [];
+    if (entry.type === 'text') pick.push(entry.text || '');
+    else if (entry.type === 'md') pick.push('md:' + (entry.text || ''));
+    else if (entry.type === 'reasoning') pick.push('r:' + (entry.text || '') + ':' + (entry.expanded ? '1' : '0'));
+    else if (entry.type === 'tool') {
+      pick.push('t:' + (entry.callId || '') + ':' + String(entry.done ? '1' : '0') + ':' + (entry.expanded ? '1' : '0'));
+      pick.push(String(entry.toolName || ''));
+      pick.push(JSON.stringify(entry.args ?? null));
+      pick.push(JSON.stringify(entry.output ?? null));
     }
-    if (item.type === 'text') {
-      const formatted = formatResultBubbleText(source, item.text || '');
-      if (formatted) {
-        blocks.push(`<div class="result-bubble-main">${escapeHtml(formatted)}</div>`);
-      }
-      continue;
-    }
-    if (item.type === 'md') {
-      blocks.push(`<div class="result-bubble-main md-block">${renderMarkdownHtml(item.text || '')}</div>`);
-      continue;
-    }
-    if (item.type !== 'tool') continue;
-    const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
-    const toolSummary = escapeHtml(summarizeToolCall(item.toolName, Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
-    const argsText = escapeHtml(formatToolBubbleValue(Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
-    const outputText = escapeHtml(formatToolBubbleValue(item.output ? item.output : ''));
+    return pick.join('\u0001');
+  } catch (e) {
+    return String(Math.random());
+  }
+}
+
+function getMarkdownCached(text) {
+  return markdownCache.get(String(text || ''));
+}
+function setMarkdownCached(text, html) {
+  const key = String(text || '');
+  markdownCache.delete(key);
+  markdownCache.set(key, html);
+  if (markdownCache.size > MARKDOWN_CACHE_LIMIT) {
+    const oldest = markdownCache.keys().next().value;
+    markdownCache.delete(oldest);
+  }
+}
+
+export function renderBubbleEntryHtml(source, entry, index) {
+  const item = entry;
+  if (!item || typeof item !== 'object') return '';
+  if (item.type === 'reasoning') {
+    const reasoningText = escapeHtml(item.text || '');
     const expandedAttr = item.expanded ? ' open' : '';
-    const stateText = item.done ? '完成' : '运行中';
-    const callIdAttr = escapeHtml(item.callId || `${toolName}-${blocks.length}`);
-    blocks.push(
+    return (
       '<section class="thinking-card">' +
-        '<details class="thinking-details" data-call-id="' + callIdAttr + '"' + expandedAttr + '>' +
+        '<details class="thinking-details" data-r="' + index + '"' + expandedAttr + '>' +
           '<summary class="thinking-summary">' +
             '<span class="thinking-arrow">&#9654;</span>' +
             '<span class="thinking-divider"></span>' +
-            '<span class="thinking-label">' + toolSummary + '</span>' +
-            '<span class="thinking-status">' + stateText + '</span>' +
+            '<span class="thinking-word-count">思考:' + reasoningText.length + '字</span>' +
           '</summary>' +
           '<div class="thinking-body">' +
-            '<div class="thinking-section-label">参数</div>' +
-            '<pre class="thinking-pre">' + (argsText || '(空)') + '</pre>' +
-            '<div class="thinking-section-label">返回值</div>' +
-            '<pre class="thinking-pre">' + (outputText || (item.done ? '(空)' : '等待...')) + '</pre>' +
+            '<div class="thinking-content">' + reasoningText + '</div>' +
           '</div>' +
         '</details>' +
       '</section>'
     );
+  }
+  if (item.type === 'text') {
+    const formatted = formatResultBubbleText(source, item.text || '');
+    if (!formatted) return '';
+    return `<div class="result-bubble-main">${escapeHtml(formatted)}</div>`;
+  }
+  if (item.type === 'md') {
+    const raw = item.text || '';
+    let html = getMarkdownCached(raw);
+    if (html === undefined) {
+      html = renderMarkdownHtml(raw);
+      setMarkdownCached(raw, html);
+    }
+    return `<div class="result-bubble-main md-block">${html}</div>`;
+  }
+  if (item.type !== 'tool') return '';
+  const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
+  const toolSummary = escapeHtml(summarizeToolCall(item.toolName, Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
+  const argsText = escapeHtml(formatToolBubbleValue(Object.prototype.hasOwnProperty.call(item, 'args') ? item.args : {}));
+  const outputText = escapeHtml(formatToolBubbleValue(item.output ? item.output : ''));
+  const expandedAttr = item.expanded ? ' open' : '';
+  const stateText = item.done ? '完成' : '运行中';
+  const callIdAttr = escapeHtml(item.callId || `tool-${index}`);
+  return (
+    '<section class="thinking-card">' +
+      '<details class="thinking-details" data-call-id="' + callIdAttr + '"' + expandedAttr + '>' +
+        '<summary class="thinking-summary">' +
+          '<span class="thinking-arrow">&#9654;</span>' +
+          '<span class="thinking-divider"></span>' +
+          '<span class="thinking-label">' + toolSummary + '</span>' +
+          '<span class="thinking-status">' + stateText + '</span>' +
+        '</summary>' +
+        '<div class="thinking-body">' +
+          '<div class="thinking-section-label">参数</div>' +
+          '<pre class="thinking-pre">' + (argsText || '(空)') + '</pre>' +
+          '<div class="thinking-section-label">返回值</div>' +
+          '<pre class="thinking-pre">' + (outputText || (item.done ? '(空)' : '等待...')) + '</pre>' +
+        '</div>' +
+      '</details>' +
+    '</section>'
+  );
+}
+
+export function renderResultBubbleHtml(source, entries) {
+  const blocks = [];
+  const items = Array.isArray(entries) ? entries : [];
+  for (let i = 0; i < items.length; i++) {
+    const html = renderBubbleEntryHtml(source, items[i], i);
+    if (html) blocks.push(html);
   }
   return blocks.join('');
 }
