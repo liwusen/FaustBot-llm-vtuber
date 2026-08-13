@@ -21,12 +21,40 @@ function initOnboarding(options = {}) {
   let dismissBtn = null;
   let nextBtn = null;
   let tryBtn = null;
+  let repositionTimer = null;
 
   let steps = [];
   let index = -1;
   let active = false;
 
+  function buildStyles() {
+    if (document.getElementById('onboarding-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'onboarding-styles';
+    style.textContent =
+      '.onboarding-root{position:fixed;inset:0;z-index:100000}' +
+      '.onboarding-overlay{position:absolute;inset:0;background:rgba(10,14,24,.55);cursor:pointer}' +
+      '.onboarding-overlay.passive{pointer-events:none}' +
+      '.onboarding-highlight{position:fixed;border:2px solid #4fc3f7;border-radius:12px;box-shadow:0 0 0 4px rgba(79,195,247,.25),0 0 24px rgba(79,195,247,.6);pointer-events:none;z-index:100001}' +
+      '.onboarding-bubble{position:fixed;width:340px;min-height:120px;background:#fff;color:#1c2333;border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.35);padding:14px 16px;z-index:100002;font-size:14px;line-height:1.5}' +
+      '.onboarding-bubble-title{font-size:16px;font-weight:700;margin-bottom:6px}' +
+      '.onboarding-bubble-body{margin-bottom:12px;white-space:pre-line}' +
+      '.onboarding-bubble-try{margin-bottom:10px}' +
+      '.onboarding-bubble-try button{border:none;border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;background:#ffe082;color:#5d4300;font-weight:600}' +
+      '.onboarding-bubble-actions{display:flex;align-items:center;gap:8px}' +
+      '.onboarding-bubble-actions button{border:none;border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer}' +
+      '.onboarding-btn-skip{background:transparent;color:#8a93a6}' +
+      '.onboarding-btn-dismiss{background:transparent;color:#8a93a6;border:1px solid #d5dbe6!important}' +
+      '.onboarding-btn-next{background:#4fc3f7;color:#10202e;font-weight:600;margin-left:auto}' +
+      '.onboarding-bubble-dots{display:inline-flex;gap:5px;margin:0 8px}' +
+      '.onboarding-dot{width:7px;height:7px;border-radius:50%;background:#c9d2e0}' +
+      '.onboarding-dot.active{background:#4fc3f7}' +
+      '.onboarding-progress{font-size:12px;color:#8a93a6}';
+    document.head.appendChild(style);
+  }
+
   function buildDom() {
+    buildStyles();
     root = document.createElement('div');
     root.className = 'onboarding-root';
     root.style.display = 'none';
@@ -154,22 +182,13 @@ function initOnboarding(options = {}) {
     nextBtn.textContent = index >= steps.length - 1 ? '完成' : '下一步';
 
     const target = step.target ? document.querySelector(step.target) : null;
-    positionHighlight(target);
-    positionBubble(target);
+    positionOnTarget(target);
   }
 
-  function positionHighlight(target) {
-    if (!target) { highlight.style.display = 'none'; return; }
-    const rect = target.getBoundingClientRect();
-    highlight.style.display = 'block';
-    highlight.style.left = rect.left + 'px';
-    highlight.style.top = rect.top + 'px';
-    highlight.style.width = rect.width + 'px';
-    highlight.style.height = rect.height + 'px';
-  }
-
-  function positionBubble(target) {
+  // 定位高亮框与气泡；目标在视口外时平滑滚动过去后重新定位
+  function positionOnTarget(target) {
     if (!target) {
+      highlight.style.display = 'none';
       bubble.classList.remove('with-target');
       bubble.style.left = '50%';
       bubble.style.top = '38%';
@@ -179,6 +198,21 @@ function initOnboarding(options = {}) {
     const rect = target.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    const offscreen = rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw;
+    if (offscreen) {
+      target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      clearTimeout(repositionTimer);
+      repositionTimer = setTimeout(() => {
+        if (!active) return;
+        positionOnTarget(target);
+      }, 360);
+      return;
+    }
+    highlight.style.display = 'block';
+    highlight.style.left = rect.left + 'px';
+    highlight.style.top = rect.top + 'px';
+    highlight.style.width = rect.width + 'px';
+    highlight.style.height = rect.height + 'px';
     const p = computeBubblePlacement(rect, vw, vh);
     bubble.classList.remove('with-target');
     bubble.classList.add('with-target', 'side-' + p.side);
