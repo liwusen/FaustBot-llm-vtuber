@@ -3432,7 +3432,16 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         return false;
       }
 
-      function onGlobalMouseMove(e){
+      let mouseRafId = null;
+      let mouseX = 0;
+      let mouseY = 0;
+      // 调试/验证计数器：每帧完整检测处理次数
+      window.__mouseProcessCount = 0;
+
+      function processMouse(){
+        mouseRafId = null;
+        window.__mouseProcessCount++;
+        const e = { clientX: mouseX, clientY: mouseY };
         detectDevToolsLikelyOpen();
         hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);
         hoverModel = isPointerOnModel(e.clientX, e.clientY);
@@ -3464,10 +3473,18 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         refreshQuickControllerVisibility();
       }
 
+      function scheduleMouseProcess(e){
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+        if (mouseRafId === null) {
+          mouseRafId = requestAnimationFrame(processMouse);
+        }
+      }
+
       function ensureListeners(){
         if (listenersAttached) return;
         listenersAttached = true;
-        window.addEventListener('mousemove', onGlobalMouseMove, { passive: true });
+        window.addEventListener('mousemove', scheduleMouseProcess, { passive: true });
         window.addEventListener('resize', detectDevToolsLikelyOpen, { passive: true });
       }
 
