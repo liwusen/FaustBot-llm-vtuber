@@ -53,3 +53,26 @@ def test_ui_setting_routes_roundtrip(tmp_path, monkeypatch):
     get_result = asyncio.run(get_ui_setting())
     assert get_result["status"] == "ok"
     assert get_result["settings"] == payload
+
+
+def test_ui_settings_onboarding_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    saved = ui_settings.save_ui_settings({"widgets": {}, "onboarding": {"done": True}})
+    assert saved["onboarding"] == {"done": True}
+    assert ui_settings.load_ui_settings()["onboarding"] == {"done": True}
+
+
+def test_ui_settings_onboarding_preserved_when_payload_lacks_key(tmp_path, monkeypatch):
+    """config 窗口只 POST widgets 时，onboarding 必须从磁盘合并保留"""
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    ui_settings.save_ui_settings({"widgets": {}, "onboarding": {"done": True}})
+    saved = ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": False}}})
+    assert saved["onboarding"] == {"done": True}
+    assert ui_settings.load_ui_settings()["onboarding"] == {"done": True}
+
+
+def test_ui_settings_onboarding_explicitly_cleared(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    ui_settings.save_ui_settings({"widgets": {}, "onboarding": {"done": True}})
+    saved = ui_settings.save_ui_settings({"widgets": {}, "onboarding": {}})
+    assert saved["onboarding"] == {}
