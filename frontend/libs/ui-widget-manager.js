@@ -7,7 +7,7 @@ function readWidgetSize(el) {
   return { width: width > 0 ? width : 0, height: height > 0 ? height : 0 };
 }
 
-export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
+export function createUiWidgetManager({ getModelBounds, onWidgetChange, onLayoutTick } = {}) {
   const widgets = new Map();
   let editMode = false;
   let layoutRafId = null;
@@ -169,7 +169,12 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
   function startLayoutLoop() {
     if (layoutRafId !== null) return;
     const tick = () => {
-      applyLayout();
+      if (typeof onLayoutTick === 'function') {
+        const shouldRedraw = onLayoutTick(); // 返回 true 才全量 applyLayout
+        if (shouldRedraw) applyLayout();
+      } else {
+        applyLayout();
+      }
       layoutRafId = requestAnimationFrame(tick);
     };
     layoutRafId = requestAnimationFrame(tick);

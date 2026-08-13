@@ -98,7 +98,26 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let _vrmModulePromise = null;
   let appPluginAssetsLoaded = false;
   let persistedUiWidgetSettings = {};
-  const uiWidgetManager = createUiWidgetManager({ getModelBounds: () => getModelViewportBounds() });
+  // ── 响应式布局：脏标记驱动，变化才重绘（模型/视口/组件/编辑态） ──
+  const layoutDirty = { model: false, viewport: false, widget: false, edit: false };
+  function markLayoutDirty(kind) {
+    if (layoutDirty[kind] === undefined) return;
+    layoutDirty[kind] = true;
+  }
+  const uiWidgetManager = createUiWidgetManager({
+    getModelBounds: () => getModelViewportBounds(),
+    onWidgetChange: () => markLayoutDirty('widget'),
+    onLayoutTick: () => {
+      const anyDirty = layoutDirty.model || layoutDirty.viewport || layoutDirty.widget || layoutDirty.edit;
+      if (!anyDirty) return false;
+      if (layoutDirty.viewport) uiWidgetManager.invalidateAllWidgetSizes();
+      layoutDirty.model = false;
+      layoutDirty.viewport = false;
+      layoutDirty.widget = false;
+      layoutDirty.edit = false;
+      return true;
+    },
+  });
 
   async function loadUiWidgetSettings() {
     if (!window.api || typeof window.api.configRequest !== 'function') return;
@@ -501,6 +520,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       if (modelScaleSlider) modelScaleSlider.value = String(scaleFactor);
       if (modelScaleValue) modelScaleValue.textContent = scaleFactor.toFixed(2) + 'x';
       updateQuickControllerPosition();
+      markLayoutDirty('model');
     }catch(e){console.warn('applyModelScale err', e);}
   }
 
@@ -1999,6 +2019,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
       return;
     }
+    markLayoutDirty('widget');
   }
 
   function rememberAsrScrollIntent(){
@@ -2080,6 +2101,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     rememberAsrScrollIntent();
     asrBubbleEl.style.display = html ? 'flex' : 'none';
     asrTextEl.innerHTML = html;
+    markLayoutDirty('widget');
     if (html) {
       try {
         hydrateMermaidBlocks(asrTextEl);
@@ -2942,6 +2964,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         sprite.x = rawX;
         sprite.y = rawY;
         updateQuickControllerPosition();
+        markLayoutDirty('model');
       });
       app.stage.addChild(sprite);
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
@@ -3077,6 +3100,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       sprite.x = rawX;
       sprite.y = rawY;
       updateQuickControllerPosition();
+      markLayoutDirty('model');
     });
 
     app.stage.addChild(sprite);
@@ -3175,6 +3199,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         model.x = rawX;
         model.y = rawY;
         updateQuickControllerPosition();
+        markLayoutDirty('model');
       });
 
       // 官方示例支持的 hit 事件（例如点击 body 区域触发动作）
@@ -3277,6 +3302,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       baseScale = Math.min(app.renderer.width / 1600, app.renderer.height / 900);
       applyModelScale();
       hil.updatePosition();
+      markLayoutDirty('viewport');
     }catch(e){}
   });
 
@@ -3526,6 +3552,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     onEditModeChange: (enabled) => {
       if (clickThroughController) clickThroughController.setInteractiveLock(enabled);
       layoutSidePanel.setVisible(enabled);
+      markLayoutDirty('edit');
     },
     refreshLayout: refreshUiWidgetLayout,
     onPropChange: () => {
