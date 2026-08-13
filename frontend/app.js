@@ -708,7 +708,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         const top = b.y + b.height * binding.coord.y;
         const controllerScale = Math.max(0.72, Math.min(1.2, 1)) * (binding.scale || 1);
         const size = uiWidgetManager.getWidgetSize('quick-controller', { width: 104, height: 340 });
-        const clamped = clampToViewport(left + binding.offset.x, top + binding.offset.y, size.width, size.height, window.innerWidth, window.innerHeight, 8);
+        // 视觉尺寸含 transform scale（旧实现用 getBoundingClientRect 含缩放），clamp 用视觉尺寸避免贴边越界
+        const clamped = clampToViewport(left + binding.offset.x, top + binding.offset.y, size.width * controllerScale, size.height * controllerScale, window.innerWidth, window.innerHeight, 8);
         quickController.style.left = Math.round(clamped.left) + 'px';
         quickController.style.top = Math.round(clamped.top) + 'px';
         quickController.style.setProperty('--qc-scale', controllerScale.toFixed(3));
@@ -724,7 +725,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const top = topLeft.y + topLeft.scaleY * b.height * binding.coord.y;
       const controllerScale = Math.max(0.72, Math.min(1.2, topLeft.scaleX)) * (binding.scale || 1);
       const size = uiWidgetManager.getWidgetSize('quick-controller', { width: 104, height: 340 });
-      const clamped = clampToViewport(left + binding.offset.x, top + binding.offset.y, size.width, size.height, window.innerWidth, window.innerHeight, 8);
+      const clamped = clampToViewport(left + binding.offset.x, top + binding.offset.y, size.width * controllerScale, size.height * controllerScale, window.innerWidth, window.innerHeight, 8);
       quickController.style.left = Math.round(clamped.left) + 'px';
       quickController.style.top = Math.round(clamped.top) + 'px';
       quickController.style.setProperty('--qc-scale', controllerScale.toFixed(3));
@@ -1990,6 +1991,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   }
 
   function handleResultBubbleToggle(ev){
+    // 折叠/展开改变气泡尺寸 → 几何重绘（置于最前，任何 details toggle 都覆盖）
+    markLayoutDirty('widget');
     const details = ev.target;
     if (!details || !details.classList) return;
     // Tool call details
@@ -2021,7 +2024,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
       return;
     }
-    markLayoutDirty('widget');
   }
 
   function rememberAsrScrollIntent(){
@@ -2084,19 +2086,22 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   // 按 entry key/hash 对齐更新气泡子元素；仅 append 新 entry / replace 变化 entry / 移除多余节点
   function applyBubbleEntriesDiff(source, entries) {
     const keys = entries.map((e, i) => entryKey(source, e, i));
-    const hashes = entries.map((e) => entryHash(e));
+    const hashes = entries.map((e) => entryHash(e, source));
     const children = Array.from(asrTextEl.children);
     let changed = false;
+    let reasoningIdx = 0;
 
     for (let i = 0; i < keys.length; i++) {
       const el = children[i];
       const key = keys[i];
       const hash = hashes[i];
+      const isReasoning = !!(entries[i] && entries[i].type === 'reasoning');
+      const entryReasoningIdx = isReasoning ? reasoningIdx++ : reasoningIdx;
       if (!el) {
         const node = document.createElement('div');
         node.dataset.entryKey = key;
         node.dataset.entryHash = hash;
-        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i);
+        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i, entryReasoningIdx);
         asrTextEl.appendChild(node);
         hydrateNewBubbleNode(node);
         changed = true;
@@ -2106,7 +2111,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         const node = document.createElement('div');
         node.dataset.entryKey = key;
         node.dataset.entryHash = hash;
-        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i);
+        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i, entryReasoningIdx);
         el.replaceWith(node);
         hydrateNewBubbleNode(node);
         changed = true;
@@ -2122,10 +2127,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
 
   // 只 hydrate 新插入/更新的 md-block（局部），不再全量
   function hydrateNewBubbleNode(node) {
-    const blocks = node.querySelectorAll('.md-block');
-    if (!blocks.length) return;
+    const isMdBlock = !!(node.classList && node.classList.contains('md-block'));
+    if (!isMdBlock && !node.querySelector('.md-block')) return;
     try {
-      hydrateMermaidBlocks(node);
+      hydrateMermaidBlocks(node, { rootIsMdBlock: isMdBlock });
     } catch (e) {
       console.warn('[md-block] hydrate failed（不影响显示）', e);
     }
@@ -2182,10 +2187,14 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
   }
 
-  function hydrateMermaidBlocks(root){
+  function hydrateMermaidBlocks(root, opts = {}){
     const fm = window.FaustMarkdown;
     if (!root || !fm || !fm.mermaid) return;
-    const codes = root.querySelectorAll('.md-block code.language-mermaid');
+    // md entry 节点本身即 .md-block（增量路径传入单节点）：直接查 code.language-mermaid；
+    // 全量路径传入容器：查 .md-block 后代
+    const codes = opts.rootIsMdBlock
+      ? root.querySelectorAll('code.language-mermaid')
+      : root.querySelectorAll('.md-block code.language-mermaid');
     if (!codes.length) return;
     if (!mermaidInitialized) {
       fm.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
@@ -2597,7 +2606,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         const clientX = b.x + b.width * widget.coord.x + widget.offset.x;
         const waistY = b.y + b.height * widget.coord.y + widget.offset.y;
         const size = uiWidgetManager.getWidgetSize('text-chat-bar', { width: 420, height: 64 });
-        const clamped = clampToViewport(clientX, waistY, size.width, size.height, window.innerWidth, window.innerHeight, 12);
+        const chatScale = widget.scale || 1;
+        const clamped = clampToViewport(clientX, waistY, size.width * chatScale, size.height * chatScale, window.innerWidth, window.innerHeight, 12);
         textChatBar.style.left = Math.round(clamped.left) + 'px';
         textChatBar.style.top = Math.round(clamped.top) + 'px';
         textChatBar.style.bottom = 'auto';
@@ -2613,7 +2623,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const clientX = anchor.x + widget.offset.x;
       const waistY = anchor.y + widget.offset.y;
       const size = uiWidgetManager.getWidgetSize('text-chat-bar', { width: 420, height: 64 });
-      const clamped = clampToViewport(clientX, waistY, size.width, size.height, window.innerWidth, window.innerHeight, 12);
+      const chatScale = widget.scale || 1;
+      const clamped = clampToViewport(clientX, waistY, size.width * chatScale, size.height * chatScale, window.innerWidth, window.innerHeight, 12);
       textChatBar.style.left = Math.round(clamped.left) + 'px';
       textChatBar.style.top = Math.round(clamped.top) + 'px';
       textChatBar.style.bottom = 'auto';
@@ -3500,12 +3511,9 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       let mouseRafId = null;
       let mouseX = 0;
       let mouseY = 0;
-      // 调试/验证计数器：每帧完整检测处理次数
-      window.__mouseProcessCount = 0;
 
       function processMouse(){
         mouseRafId = null;
-        window.__mouseProcessCount++;
         const e = { clientX: mouseX, clientY: mouseY };
         detectDevToolsLikelyOpen();
         hoverQuickController = isPointOverQuickController(e.clientX, e.clientY);

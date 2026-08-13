@@ -180,6 +180,11 @@ function renderMemoryTree(currentDir) {
   if (!nodes.length) {
     tbody.innerHTML = "<tr><td colspan=3 class=empty-state>当前目录为空。</td></tr>";
   }
+  // 取消上一次可能仍在飞的分块渲染（模块重渲染时旧循环向已脱离 tbody 追加属浪费）
+  if (state._treeChunkHandle) {
+    try { state._treeChunkHandle.cancel(); } catch (e) {}
+    state._treeChunkHandle = null;
+  }
   const rowsToRender = [];
   for (const node of nodes) {
     if (node.type === "entity") continue;
@@ -196,7 +201,7 @@ function renderMemoryTree(currentDir) {
     rowsToRender.push({ node, displayIcon, typeText, descText, sel });
   }
   // 节点行分块渲染（父目录行已同步插入）
-  appendChunked(tbody, rowsToRender, (row) => {
+  state._treeChunkHandle = appendChunked(tbody, rowsToRender, (row) => {
     const { node, displayIcon, typeText, descText, sel } = row;
     return makeRow(displayIcon, node.name, typeText, descText, sel,
       () => {

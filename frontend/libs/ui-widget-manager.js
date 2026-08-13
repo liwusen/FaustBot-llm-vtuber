@@ -146,14 +146,10 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange, onLayout
     }
     if (!anchor) return;
     el.style.display = '';
-    const size = getWidgetSize(widget.id);
-    const width = size ? size.width : 0;
-    const height = size ? size.height : 0;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const clamped = clampToViewport(anchor.x, anchor.y, width, height, vw, vh, 8);
-    el.style.left = Math.round(clamped.left) + 'px';
-    el.style.top = Math.round(clamped.top) + 'px';
+    // 直接写入锚点（与改造前一致）：getWidgetAnchor 已做 [0, vw-16] 钳制，
+    // 用户自定义组件允许贴边半出屏（桌面宠物惯例），不做中心 clamp
+    el.style.left = Math.round(anchor.x) + 'px';
+    el.style.top = Math.round(anchor.y) + 'px';
     el.style.transform = 'translate(-50%, -50%) scale(' + (anchor.scale || 1) + ')';
   }
 

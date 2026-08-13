@@ -75,11 +75,11 @@ export function entryKey(source, entry, index) {
   return String((entry && entry.type) || 'text') + ':' + String(index);
 }
 
-export function entryHash(entry) {
+export function entryHash(entry, source) {
   if (!entry || typeof entry !== 'object') return 'null';
   try {
     const pick = [];
-    if (entry.type === 'text') pick.push(entry.text || '');
+    if (entry.type === 'text') pick.push(String(source || '') + ':' + (entry.text || ''));
     else if (entry.type === 'md') pick.push('md:' + (entry.text || ''));
     else if (entry.type === 'reasoning') pick.push('r:' + (entry.text || '') + ':' + (entry.expanded ? '1' : '0'));
     else if (entry.type === 'tool') {
@@ -107,7 +107,7 @@ function setMarkdownCached(text, html) {
   }
 }
 
-export function renderBubbleEntryHtml(source, entry, index) {
+export function renderBubbleEntryHtml(source, entry, index, reasoningIdx) {
   const item = entry;
   if (!item || typeof item !== 'object') return '';
   if (item.type === 'reasoning') {
@@ -115,7 +115,7 @@ export function renderBubbleEntryHtml(source, entry, index) {
     const expandedAttr = item.expanded ? ' open' : '';
     return (
       '<section class="thinking-card">' +
-        '<details class="thinking-details" data-r="' + index + '"' + expandedAttr + '>' +
+        '<details class="thinking-details" data-r="' + (reasoningIdx === undefined ? index : reasoningIdx) + '"' + expandedAttr + '>' +
           '<summary class="thinking-summary">' +
             '<span class="thinking-arrow">&#9654;</span>' +
             '<span class="thinking-divider"></span>' +
@@ -173,8 +173,10 @@ export function renderBubbleEntryHtml(source, entry, index) {
 export function renderResultBubbleHtml(source, entries) {
   const blocks = [];
   const items = Array.isArray(entries) ? entries : [];
+  let reasoningIdx = 0;
   for (let i = 0; i < items.length; i++) {
-    const html = renderBubbleEntryHtml(source, items[i], i);
+    const isReasoning = !!(items[i] && items[i].type === 'reasoning');
+    const html = renderBubbleEntryHtml(source, items[i], i, isReasoning ? reasoningIdx++ : reasoningIdx);
     if (html) blocks.push(html);
   }
   return blocks.join('');
