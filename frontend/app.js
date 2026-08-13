@@ -3325,9 +3325,12 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   // 自动尝试加载后端配置指定的模型与布局
   modelPathInput.value = defaultModel;
   (async ()=>{
-    await refreshSpeechRuntimeConfig(true);
-    await loadUiWidgetSettings();
-    const runtimeCfg = await loadRuntimeLive2DConfig();
+    // 并行加载三个相互独立的启动配置，任一失败不阻塞其余
+    const [runtimeCfg] = await Promise.all([
+      loadRuntimeLive2DConfig().catch((e) => { console.warn('loadRuntimeLive2DConfig failed', e); return null; }),
+      refreshSpeechRuntimeConfig(true).catch((e) => { console.warn('refreshSpeechRuntimeConfig failed', e); }),
+      loadUiWidgetSettings().catch((e) => { console.warn('loadUiWidgetSettings failed', e); }),
+    ]);
     const configuredModel = runtimeCfg && runtimeCfg.LIVE2D_MODEL_PATH ? String(runtimeCfg.LIVE2D_MODEL_PATH).trim() : '';
     const configuredScale = runtimeCfg && runtimeCfg.LIVE2D_MODEL_SCALE !== undefined && runtimeCfg.LIVE2D_MODEL_SCALE !== null && runtimeCfg.LIVE2D_MODEL_SCALE !== ''
       ? Number(runtimeCfg.LIVE2D_MODEL_SCALE)
