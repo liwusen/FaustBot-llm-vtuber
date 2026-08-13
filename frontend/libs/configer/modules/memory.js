@@ -160,26 +160,27 @@ function renderMemoryTree(currentDir) {
   table.append(thead);
   const tbody = document.createElement("tbody");
   table.append(tbody);
-  const addRow = (icon, name, typeText, descText, cls, onclick, oncontext, ondblclick) => {
+  const makeRow = (icon, name, typeText, descText, cls, onclick, oncontext, ondblclick) => {
     const tr = document.createElement("tr");
     tr.className = cls || "";
     tr.innerHTML = `<td><span class="col-name mono">${icon} ${name}</span></td><td class=col-type>${typeText}</td><td class=col-desc>${descText}</td>`;
     if (onclick) tr.addEventListener("click", onclick);
     if (oncontext) tr.addEventListener("contextmenu", (evt) => { evt.preventDefault(); oncontext(evt); });
     if (ondblclick) tr.addEventListener("dblclick", ondblclick);
-    tbody.append(tr);
+    return tr;
   };
-  addRow("\u{1F4C1}", "/ (根目录)", "目录", "", currentDir === "/" ? "selected" : "",
-    () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; refreshModule(); });
+  tbody.append(makeRow("\u{1F4C1}", "/ (根目录)", "目录", "", currentDir === "/" ? "selected" : "",
+    () => { state.kbCurrentDir = "/"; state.kbSelectedPath = ""; refreshModule(); }));
   const parentPath2 = kbParentPath(currentDir);
   if (parentPath2 !== currentDir) {
-    addRow("\u{1F4C2}", ".. (上一级)", "目录", "", "",
-      () => { state.kbCurrentDir = parentPath2; state.kbSelectedPath = ""; refreshModule(); });
+    tbody.append(makeRow("\u{1F4C2}", ".. (上一级)", "目录", "", "",
+      () => { state.kbCurrentDir = parentPath2; state.kbSelectedPath = ""; refreshModule(); }));
   }
   const nodes = getKbChildren(state.kbTree, currentDir);
   if (!nodes.length) {
     tbody.innerHTML = "<tr><td colspan=3 class=empty-state>当前目录为空。</td></tr>";
   }
+  const rowsToRender = [];
   for (const node of nodes) {
     if (node.type === "entity") continue;
     const iconText = node.type === "file" ? "\u{1F4C4}" : "\u{1F4C1}";
@@ -192,7 +193,12 @@ function renderMemoryTree(currentDir) {
       ? (desc ? desc.slice(0, 80) + (desc.length > 80 ? "\u2026" : "") : "")
       : (itemCount > 0 ? itemCount + " 项" + (desc ? " | " + desc.slice(0, 40) : "") : (desc.slice(0, 40) || "空"));
     const sel = state.kbSelectedPath === node.path ? "selected" : "";
-    addRow(displayIcon, node.name, typeText, descText, sel,
+    rowsToRender.push({ node, displayIcon, typeText, descText, sel });
+  }
+  // 节点行分块渲染（父目录行已同步插入）
+  appendChunked(tbody, rowsToRender, (row) => {
+    const { node, displayIcon, typeText, descText, sel } = row;
+    return makeRow(displayIcon, node.name, typeText, descText, sel,
       () => {
         if (node.type === "file") {
           state.kbSelectedPath = node.path;
@@ -214,7 +220,7 @@ function renderMemoryTree(currentDir) {
         await openKbEditorModal(node.path, String(d.content || ""), d.meta || {});
       }) : null
     );
-  }
+  });
   addSection("目录: " + currentDir + " (" + nodes.length + " 项)", [table]);
   // ── Detail section follows ──
 
