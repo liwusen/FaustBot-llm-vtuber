@@ -80,6 +80,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let asrBubbleTargetX = 0;
   let asrBubbleTargetY = 0;
   let asrBubbleInitialized = false;
+  let asrBubbleAnimating = false;
+  const ASR_SNAP_THRESHOLD = 0.5;
   let asrBubbleSource = 'ai';
   let asrBubbleState = { source: 'ai', entries: [] };
   let subagentStatuses = [];
@@ -2409,14 +2411,24 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           asrBubbleCurrentY = asrBubbleTargetY;
           asrBubbleInitialized = true;
         } else {
-          const smooth = 0.2;
-          asrBubbleCurrentX += (asrBubbleTargetX - asrBubbleCurrentX) * smooth;
-          asrBubbleCurrentY += (asrBubbleTargetY - asrBubbleCurrentY) * smooth;
+          const dx = asrBubbleTargetX - asrBubbleCurrentX;
+          const dy = asrBubbleTargetY - asrBubbleCurrentY;
+          if (Math.abs(dx) < ASR_SNAP_THRESHOLD && Math.abs(dy) < ASR_SNAP_THRESHOLD) {
+            asrBubbleCurrentX = asrBubbleTargetX;
+            asrBubbleCurrentY = asrBubbleTargetY;
+            asrBubbleAnimating = false;
+          } else {
+            asrBubbleCurrentX += dx * 0.2;
+            asrBubbleCurrentY += dy * 0.2;
+            asrBubbleAnimating = true;
+          }
         }
-        asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
-        asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
-        asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
-        hil.updatePosition();
+        if (asrBubbleAnimating || forceSnap || !asrBubbleInitialized) {
+          asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
+          asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
+          asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
+          hil.updatePosition();
+        }
       }catch(e){/*ignore*/}
       return;
     }
@@ -2435,14 +2447,24 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         asrBubbleCurrentY = asrBubbleTargetY;
         asrBubbleInitialized = true;
       } else {
-        const smooth = 0.2;
-        asrBubbleCurrentX += (asrBubbleTargetX - asrBubbleCurrentX) * smooth;
-        asrBubbleCurrentY += (asrBubbleTargetY - asrBubbleCurrentY) * smooth;
+        const dx = asrBubbleTargetX - asrBubbleCurrentX;
+        const dy = asrBubbleTargetY - asrBubbleCurrentY;
+        if (Math.abs(dx) < ASR_SNAP_THRESHOLD && Math.abs(dy) < ASR_SNAP_THRESHOLD) {
+          asrBubbleCurrentX = asrBubbleTargetX;
+          asrBubbleCurrentY = asrBubbleTargetY;
+          asrBubbleAnimating = false;
+        } else {
+          asrBubbleCurrentX += dx * 0.2;
+          asrBubbleCurrentY += dy * 0.2;
+          asrBubbleAnimating = true;
+        }
       }
-      asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
-      asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
-      asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
-      hil.updatePosition();
+      if (asrBubbleAnimating || forceSnap || !asrBubbleInitialized) {
+        asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
+        asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
+        asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
+        hil.updatePosition();
+      }
     }catch(e){/*ignore*/}
   }
 
