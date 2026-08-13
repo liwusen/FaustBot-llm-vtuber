@@ -1,7 +1,37 @@
+const widgetSizes = new Map();
+
+function readWidgetSize(el) {
+  if (!el) return null;
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
+  return { width: width > 0 ? width : 0, height: height > 0 ? height : 0 };
+}
+
 export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
   const widgets = new Map();
   let editMode = false;
   let layoutRafId = null;
+
+  function getWidgetSize(id, fallback = null) {
+    const widget = widgets.get(String(id));
+    if (!widget || !widget.element) return fallback;
+    if (!widgetSizes.has(String(id))) {
+      const size = readWidgetSize(widget.element);
+      // 修订（Main 确认）：隐藏元素（display:none）读到的 {0,0} 不缓存，直接返回
+      // fallback；元素可见后下次读取自然缓存真实尺寸，避免 ASR 气泡等组件永久命中 fallback。
+      if (size && size.width === 0 && size.height === 0) return fallback;
+      widgetSizes.set(String(id), size);
+    }
+    return widgetSizes.get(String(id));
+  }
+
+  function invalidateWidgetSize(id) {
+    widgetSizes.delete(String(id));
+  }
+
+  function invalidateAllWidgetSizes() {
+    widgetSizes.clear();
+  }
 
   function normalizeNumber(value, fallback = 0) {
     const parsed = Number(value);
@@ -116,8 +146,14 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
     }
     if (!anchor) return;
     el.style.display = '';
-    el.style.left = Math.round(anchor.x) + 'px';
-    el.style.top = Math.round(anchor.y) + 'px';
+    const size = getWidgetSize(widget.id);
+    const width = size ? size.width : 0;
+    const height = size ? size.height : 0;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const clamped = clampToViewport(anchor.x, anchor.y, width, height, vw, vh, 8);
+    el.style.left = Math.round(clamped.left) + 'px';
+    el.style.top = Math.round(clamped.top) + 'px';
     el.style.transform = 'translate(-50%, -50%) scale(' + (anchor.scale || 1) + ')';
   }
 
@@ -160,11 +196,26 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange } = {}) {
     getWidget,
     listWidgets,
     getWidgetAnchor,
+    getWidgetSize,
+    invalidateWidgetSize,
+    invalidateAllWidgetSizes,
     applyLayout,
     startLayoutLoop,
     stopLayoutLoop,
     setEditMode,
     isEditMode,
     getModelBounds: readModelBounds,
+  };
+}
+
+// 纯函数：把锚点坐标 clamp 到视口内（考虑元素宽高与边距；元素超宽时退化到 min 边界）
+export function clampToViewport(left, top, width, height, vw, vh, margin = 8) {
+  const minLeft = width * 0.5 + margin;
+  const maxLeft = Math.max(minLeft, vw - width * 0.5 - margin);
+  const minTop = height * 0.5 + margin;
+  const maxTop = Math.max(minTop, vh - height * 0.5 - margin);
+  return {
+    left: Math.max(minLeft, Math.min(maxLeft, left)),
+    top: Math.max(minTop, Math.min(maxTop, top)),
   };
 }
