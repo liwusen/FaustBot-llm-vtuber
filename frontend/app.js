@@ -2276,8 +2276,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const title = escapeHtml(formatSubagentEventSummary(item));
       return `<div class="subagent-summary-item" data-subagent-name="${name}" title="${title}"><span class="subagent-summary-name">${name}:${status}</span></div>`;
     }).join('');
-    console.log('[SubagentSummary] rendered', visibleItems.length, 'items, html:', subagentSummaryEl.innerHTML.substring(0, 200));
-    console.log('[SubagentSummary] display:', subagentSummaryEl.style.display, 'parent display:', asrBubbleEl ? asrBubbleEl.style.display : '?', 'data-source:', asrBubbleEl ? asrBubbleEl.dataset.source : '?');
   }
 
   function renderSubagentPanelFromCache(name){
@@ -2329,25 +2327,89 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     return { label: eventType || 'event', body: typeof event === 'object' ? JSON.stringify(event, null, 2) : String(event || '') };
   }
 
-  function renderSubagentPanel(item){
-    if (!subagentPanel || !subagentPanelBody || !item) return;
-    selectedSubagentName = String(item.name || '');
-    if (subagentPanelTitle) subagentPanelTitle.textContent = `Subagent: ${selectedSubagentName}`;
-    const events = normalizeSubagentPanelEvents(item.recent_events);
-    subagentPanelBody.innerHTML = [
+  function subagentEventKey(events, index) {
+    const event = events[index];
+    const eventType = String((event && event.type) || 'event');
+    // normalize 已在源头折叠相邻同类型事件（reasoning_delta/delta），索引即稳定 key
+    return eventType + ':' + index;
+  }
+
+  function subagentEventHash(event) {
+    if (!event || typeof event !== 'object') return 'null';
+    const eventType = String(event.type || '');
+    let body = '';
+    if (eventType === 'reasoning_delta' || eventType === 'delta') body = String(event.content || '');
+    else if (eventType === 'tool_start') body = String(event.tool_name || '');
+    else if (eventType === 'queued' || eventType === 'input') body = JSON.stringify((((event.message || {}).messages || [])[0] || {}).content || '');
+    else if (eventType === 'error') body = String(event.content || event.error || '');
+    else body = JSON.stringify(event);
+    return eventType + ':' + body;
+  }
+
+  function applySubagentPanelDiff(item, events){
+    if (!subagentPanelBody) return;
+    // ── meta 区全量刷新（字段少且低频） ──
+    const metaHtml = [
       '<div class="subagent-panel-meta">',
       `<div class="subagent-panel-meta-key">状态</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.status || 'unknown'))}</div>`,
       `<div class="subagent-panel-meta-key">工具组</div><div class="subagent-panel-meta-value">${escapeHtml((item.toolsets || []).join(', ') || '(none)')}</div>`,
       `<div class="subagent-panel-meta-key">Prompt</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.system_prompt_summary || ''))}</div>`,
       `<div class="subagent-panel-meta-key">错误</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.last_error || ''))}</div>`,
       '</div>',
-      '<div class="subagent-panel-events">',
-      (events.length ? events.map((event)=>{
-        const formatted = formatSubagentPanelEvent(event);
-        return `<div class="subagent-panel-event"><div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div></div>`;
-      }).join('') : '<div class="subagent-panel-event"><div class="subagent-panel-event-body">暂无事件</div></div>'),
-      '</div>',
     ].join('');
+    let eventsEl = subagentPanelBody.querySelector('.subagent-panel-events');
+    if (!eventsEl) {
+      subagentPanelBody.innerHTML = metaHtml + '<div class="subagent-panel-events"></div>';
+      eventsEl = subagentPanelBody.querySelector('.subagent-panel-events');
+    } else {
+      // 只替换 meta 容器（保留 events 容器与已渲染事件 DOM）
+      const existingMeta = subagentPanelBody.querySelector('.subagent-panel-meta');
+      if (existingMeta) existingMeta.outerHTML = metaHtml;
+    }
+    // ── events 区 diff 更新 ──
+    const keys = events.map((e, i) => subagentEventKey(events, i));
+    const hashes = events.map((e) => subagentEventHash(e));
+    const children = Array.from(eventsEl.children);
+    const childCountBefore = children.length;
+    for (let i = 0; i < keys.length; i++) {
+      const el = children[i];
+      const key = keys[i];
+      const hash = hashes[i];
+      if (!el) {
+        const node = document.createElement('div');
+        node.className = 'subagent-panel-event';
+        node.dataset.eventKey = key;
+        node.dataset.eventHash = hash;
+        const formatted = formatSubagentPanelEvent(events[i]);
+        node.innerHTML = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
+        eventsEl.appendChild(node);
+        continue;
+      }
+      if (el.dataset.eventKey !== key || el.dataset.eventHash !== hash) {
+        const node = document.createElement('div');
+        node.className = 'subagent-panel-event';
+        node.dataset.eventKey = key;
+        node.dataset.eventHash = hash;
+        const formatted = formatSubagentPanelEvent(events[i]);
+        node.innerHTML = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
+        el.replaceWith(node);
+      }
+    }
+    for (let i = keys.length; i < children.length; i++) {
+      children[i].remove();
+    }
+    if (!events.length) {
+      eventsEl.innerHTML = '<div class="subagent-panel-event"><div class="subagent-panel-event-body">暂无事件</div></div>';
+    }
+    return childCountBefore !== keys.length;
+  }
+
+  function renderSubagentPanel(item){
+    if (!subagentPanel || !subagentPanelBody || !item) return;
+    selectedSubagentName = String(item.name || '');
+    if (subagentPanelTitle) subagentPanelTitle.textContent = `Subagent: ${selectedSubagentName}`;
+    const events = normalizeSubagentPanelEvents(item.recent_events);
+    applySubagentPanelDiff(item, events);
     subagentPanel.style.display = 'flex';
     if (clickThroughController) clickThroughController.forceInteractive();
   }
