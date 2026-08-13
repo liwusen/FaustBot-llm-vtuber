@@ -13,8 +13,11 @@ from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
 
+from faust_backend.logger import get_logger
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.runtime import state
+
+log = get_logger("faust.tool_middleware")
 
 def wrap_tool_output(tool: BaseTool) -> BaseTool:
     """Wrap a LangChain tool so its output goes through OutputStore.

@@ -261,6 +261,13 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
                 if r is not None and isinstance(r, str):
                     text = r
                     break
+    if text == "__IGNORED__":
+        log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
+        done_payload = _main_event_payload("done")
+        if pm:
+            pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=[], ctx=None)
+        await websocket.send_text(json.dumps(done_payload, ensure_ascii=False))
+        return ""
     try:
         current_history: list[dict] = []
         async for event in stream_chat_agent_events(
@@ -328,7 +335,10 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
                 if state.subagent_manager and state.subagent_manager.consume_status_dirty():
                     await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
         schedule_memory_record_sync(text, reply)
-        await websocket.send_text(json.dumps(_main_event_payload("done"), ensure_ascii=False))
+        done_payload = _main_event_payload("done")
+        if pm:
+            pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=current_history, ctx=None)
+        await websocket.send_text(json.dumps(done_payload, ensure_ascii=False))
         log.debug("聊天流结束")
     except asyncio.CancelledError:
         await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
@@ -359,6 +369,10 @@ async def chat_post(payload: dict):
                     if r is not None and isinstance(r, str):
                         text = r
                         break
+        if text == "__IGNORED__":
+            events.ignore_trigger_event.clear()
+            log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
+            return {"reply": "", "suppressed": True}
         resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": text}]})
         if not resp:
             raise RuntimeError()

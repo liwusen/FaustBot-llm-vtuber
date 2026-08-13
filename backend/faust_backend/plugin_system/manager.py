@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 from types import ModuleType
@@ -351,6 +352,7 @@ class PluginManager:
         if spec is None or spec.loader is None:
             raise PluginLoadError(f"Cannot create import spec for {entry_file}")
         module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
         return module
 

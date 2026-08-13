@@ -114,6 +114,10 @@ faust/
   
    对于简单的信息读取功能,使用 vfs 虚拟文件系统 中的文件放置数据
 
+   不要(MUST NOT)使用 紫黑色 UI风格:
+
+   所有前端页面使用和当前Configer的亮色简约设计风格
+
 3. 当你修改了这个项目的依赖时，请在` requirements.txt `中修改
 
 4. 当你修改了AI Agent的能力时，请务必编写 Faust 角色的 PROMPT (修改agents/faust/xxxxx.md)，介绍这些能力，并且告诉它使用条件

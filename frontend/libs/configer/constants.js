@@ -1,4 +1,14 @@
-// Extracted constants for config-window. Loaded before config-window.js
+// constants for config-window. Loaded before config-window.js
+/*
+!!!Warning!!!:
+
+1. 这是内置功能的配置常量文件。
+2. 如果你在写插件或自定义功能，请绝对不要修改此文件。
+  你可以使用Plugin前端注入API
+3. 也许以后的i18n可以从这里下手?
+
+*/
+// Begin of constants
 var META = {
   EMBED_MODEL: { label: "Embedding 模型", help: "知识库文本向量化使用的 embedding 模型名称。" },
   EMBED_API_BASE: { label: "Embedding 接口地址", help: "知识库向量化使用的 API Base URL。" },
