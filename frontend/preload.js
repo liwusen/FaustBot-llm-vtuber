@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
     payload: payload ?? null,
   }),
   toggleLogPanel: () => ipcRenderer.invoke('toggle-log-panel'),
+  toggleWidgetEditMode: () => ipcRenderer.invoke('toggle-widget-edit-mode'),
   recreateFrontendWindow: () => ipcRenderer.invoke('recreate-frontend-window'),
 });
 

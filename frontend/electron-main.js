@@ -1165,6 +1165,15 @@ ipcMain.handle('toggle-log-panel', () => {
   return false;
 });
 
+ipcMain.handle('toggle-widget-edit-mode', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    showMainWindow();
+    mainWindow.webContents.send('faust-command', 'TOGGLE_WIDGET_EDIT');
+    return true;
+  }
+  return false;
+});
+
 ipcMain.handle('config-http-request', async (_event, req) => {
   const method = String((req && req.method) || 'GET').toUpperCase();
   const rawUrl = String((req && req.url) || '').trim();

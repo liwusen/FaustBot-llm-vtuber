@@ -1296,6 +1296,10 @@ import { initLayoutSidePanel } from './libs/layout-side-panel.js';
           bgAudio.onended = () => { try{ bgAudio = null; }catch(e){} };
           await bgAudio.play().catch(e=>{console.warn('bg play error',e)});
         }catch(e){ console.error('PLAYBG failed', e); }
+      } else if (cmd === 'TOGGLE_WIDGET_EDIT'){
+        if (window.faustAppUI && typeof window.faustAppUI.toggleWidgetEditMode === 'function') {
+          window.faustAppUI.toggleWidgetEditMode();
+        }
       } else if (cmd === 'SAY'){
         if (!arg) return;
         // use existing synthesizeAndPlay TTS function; prefer UI-selected lang
