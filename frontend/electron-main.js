@@ -838,6 +838,107 @@ ipcMain.handle('resolve-frontend-asset-path', (_event, relativePath) => {
   return resolveFrontendAssetPath(relativePath);
 });
 
+// ── soullink profile 生成/保存（主进程）
+// profile-generator 为 ESM 包，且打包(asar)环境下运行时动态 import 不可靠，
+// 因此构建期用 esbuild 打成 CJS（libs/soullink/profile-generator.cjs，见 build:soullink-main）后 require。
+let soullinkMain = null;
+function getSoullinkMain() {
+  if (soullinkMain) return soullinkMain;
+  try {
+    soullinkMain = require(path.join(__dirname, 'libs', 'soullink', 'profile-generator.cjs'));
+  } catch (e) {
+    console.warn('[soullink] profile-generator.cjs 加载失败（请先执行 npm run build:bundle）:', e && e.message ? e.message : e);
+  }
+  return soullinkMain;
+}
+
+const SOULLINK_MODELS_BASE_URL = `static://live2d_models`;
+
+function soullinkModelDirAbs(modelDir) {
+  const dir = String(modelDir || '').trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(dir)) {
+    throw new Error('modelDir 只能包含字母、数字、下划线和短横线');
+  }
+  return path.join(getLive2DModelDir(), dir);
+}
+
+async function ensureSoullinkProfile(modelDirInput, force) {
+  const t0 = Date.now();
+  try {
+    const modelDirAbs = soullinkModelDirAbs(modelDirInput);
+    const profilePath = path.join(modelDirAbs, 'soullink.profile.json');
+    if (!force && fs.existsSync(profilePath)) {
+      console.log(`[soullink:main] ensure ${modelDirInput}: 命中缓存 (${Date.now() - t0}ms)`);
+      return { ok: true, profile: JSON.parse(fs.readFileSync(profilePath, 'utf8')), cached: true };
+    }
+    const main = getSoullinkMain();
+    if (!main || !main.Live2DProfileAutoGenerator) {
+      console.warn('[soullink:main] ensure ' + modelDirInput + ': profile-generator 未加载');
+      return { ok: false, error: 'soullink profile-generator 未加载（build:soullink-main 未执行？）' };
+    }
+    console.log(`[soullink:main] ensure ${modelDirInput}: 开始生成 (force=${!!force}, modelsRoot=${getLive2DModelDir()}) ...`);
+    const generator = new main.Live2DProfileAutoGenerator({
+      modelsRoot: getLive2DModelDir(),
+      modelsBaseUrl: SOULLINK_MODELS_BASE_URL,
+    });
+    const result = await generator.ensure({ modelDir: String(modelDirInput || '').trim(), force: !!force });
+    const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    console.log(`[soullink:main] ensure ${modelDirInput}: 完成 (${Date.now() - t0}ms) generated=${!!result.generated} provider=${result.provider} parameterMap keys=${Object.keys(profile.parameterMap || {}).length}`);
+    return {
+      ok: true,
+      profile,
+      cached: false,
+      generated: !!result.generated,
+      notes: Array.isArray(result.notes) ? result.notes : [],
+      coverage: result.coverage || null,
+    };
+  } catch (e) {
+    console.warn(`[soullink:main] ensure ${modelDirInput} 失败 (${Date.now() - t0}ms):`, e && e.message ? e.message : e);
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+async function saveSoullinkProfile(modelDirInput, json) {
+  const t0 = Date.now();
+  try {
+    const modelDirAbs = soullinkModelDirAbs(modelDirInput);
+    if (!fs.existsSync(modelDirAbs)) {
+      console.warn(`[soullink:main] save ${modelDirInput} 失败: 模型目录不存在`);
+      return { ok: false, error: '模型目录不存在: ' + String(modelDirInput || '') };
+    }
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      console.warn(`[soullink:main] save ${modelDirInput} 失败: 非 JSON 对象`);
+      return { ok: false, error: 'profile 必须是 JSON 对象' };
+    }
+    const main = getSoullinkMain();
+    if (!main || typeof main.validateModelProfile !== 'function') {
+      return { ok: false, error: 'soullink 校验模块未加载（build:soullink-main 未执行？）' };
+    }
+    const validated = main.validateModelProfile(json);
+    if (!validated.ok) {
+      console.warn(`[soullink:main] save ${modelDirInput} 校验失败:`, validated.errors || []);
+      return { ok: false, error: 'profile 校验失败: ' + (validated.errors || []).join('; ') };
+    }
+    const profilePath = path.join(modelDirAbs, 'soullink.profile.json');
+    fs.writeFileSync(profilePath, JSON.stringify(validated.profile, null, 2), 'utf8');
+    console.log(`[soullink:main] save ${modelDirInput}: 已写入 (${Date.now() - t0}ms)`);
+    return { ok: true };
+  } catch (e) {
+    console.warn(`[soullink:main] save ${modelDirInput} 异常 (${Date.now() - t0}ms):`, e && e.message ? e.message : e);
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+ipcMain.handle('soullink-ensure-profile', async (_event, req) => {
+  const payload = req && typeof req === 'object' ? req : {};
+  return ensureSoullinkProfile(payload.modelDir, !!payload.force);
+});
+
+ipcMain.handle('soullink-save-profile', async (_event, req) => {
+  const payload = req && typeof req === 'object' ? req : {};
+  return saveSoullinkProfile(payload.modelDir, payload.json);
+});
+
 function showMainWindow(){
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();

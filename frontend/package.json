@@ -8,11 +8,13 @@
   "description": "FaustBot frontend application",
   "scripts": {
     "start": "electron .",
-    "build:bundle": "npm run build:codemirror && npm run build:vrm && npm run build:markdown && npm run build:live2d",
+    "build:bundle": "npm run build:codemirror && npm run build:vrm && npm run build:markdown && npm run build:live2d && npm run build:soullink && npm run build:soullink-main",
     "build:codemirror": "esbuild libs/configer/.codemirror-entry.js --bundle --platform=browser --format=iife --outfile=libs/codemirror/codemirror-bundle.js --minify-syntax",
     "build:markdown": "esbuild libs/markdown/.markdown-entry.js --bundle --platform=browser --format=iife --outfile=libs/markdown/markdown-bundle.js --minify-syntax",
     "build:vrm": "esbuild vrm-renderer.js --bundle --platform=browser --format=esm --outfile=libs/vrm-renderer.bundle.js --minify-syntax",
     "build:live2d": "esbuild libs/pixi-live2d/.pixi-live2d-entry.js --bundle --platform=browser --format=iife --outfile=libs/pixi-live2d.bundle.js --minify-syntax",
+    "build:soullink": "esbuild libs/soullink/.soullink-entry.js --bundle --platform=browser --format=iife --outfile=libs/soullink.bundle.js --minify-syntax",
+    "build:soullink-main": "esbuild libs/soullink/.profile-generator-entry.js --bundle --platform=node --format=cjs --outfile=libs/soullink/profile-generator.cjs --minify-syntax",
     "package": "npm run build:bundle && electron-builder --win dir",
     "check-js": "node scripts/check-js-syntax.js"
   },
@@ -35,6 +37,9 @@
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.2",
+    "@soullink-emotion/engine": "0.1.0-beta.1",
+    "@soullink-emotion/live2d-pixi": "0.1.0-beta.1",
+    "@soullink-emotion/profile-generator": "0.1.0-beta.1",
     "three": "^0.184.0",
     "ws": "^8.19.0"
   },

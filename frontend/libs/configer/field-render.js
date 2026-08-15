@@ -24,6 +24,84 @@ function getMeta(key) {
   return META[key] || { label: key, help: "" };
 }
 
+// soullink 参数映射编辑器（soullink.profile.json 的 CodeMirror JSON 编辑）
+async function openSoullinkProfileEditor(item) {
+  const rawPath = String((item && item.path) || "").replace(/\\/g, "/");
+  const segs = rawPath.split("/").filter(Boolean);
+  const idx2d = segs.indexOf("2D");
+  const modelDir = (idx2d >= 0 ? segs[idx2d + 1] : segs[0]) || "";
+  if (!/^[A-Za-z0-9_-]+$/.test(modelDir)) {
+    showBanner("error", "无法从模型路径解析模型目录: " + rawPath);
+    return;
+  }
+  if (!window.api || typeof window.api.ensureModelProfile !== "function") {
+    showBanner("error", "当前环境不支持 soullink profile（缺少 window.api.ensureModelProfile）");
+    return;
+  }
+  let profileObj = null;
+  let coverageText = "";
+  try {
+    const result = await window.api.ensureModelProfile(modelDir);
+    if (!result || !result.ok) throw new Error((result && result.error) || "未知错误");
+    profileObj = result.profile;
+    coverageText = result.cached ? "（已缓存）" : "（已生成）";
+    const cov = result.coverage;
+    if (cov && typeof cov.mappedKeyCount === "number" && typeof cov.facsKeyCount === "number") {
+      coverageText += ` | 标准参数覆盖率: ${cov.mappedKeyCount}/${cov.facsKeyCount}`;
+    }
+  } catch (e) {
+    showBanner("error", "获取 soullink profile 失败：" + String(e && e.message ? e.message : e));
+    return;
+  }
+  const status = el("div", "card-help", coverageText || "");
+  const editorHost = el("div", "");
+  editorHost.style.height = "420px";
+  editorHost.style.border = "1px solid rgba(0,0,0,0.15)";
+  editorHost.style.borderRadius = "8px";
+  editorHost.style.overflow = "hidden";
+  const setStatus = (text, isError) => {
+    status.textContent = text;
+    status.style.color = isError ? "#c62828" : "inherit";
+  };
+  let editor = null;
+  try {
+    editor = window.createCodeMirrorEditor(editorHost, JSON.stringify(profileObj, null, 2), { language: "json" });
+  } catch (e) {
+    setStatus("CodeMirror 编辑器初始化失败：" + String(e), true);
+  }
+  const actions = el("div", "toolbar");
+  actions.append(
+    makeButton("保存", async () => {
+      if (!editor) { setStatus("编辑器未就绪", true); return; }
+      let parsed = null;
+      try { parsed = JSON.parse(editor.getValue()); }
+      catch (e) { setStatus("JSON 解析失败：" + String(e && e.message ? e.message : e), true); return; }
+      try {
+        const r = await window.api.saveModelProfile(modelDir, parsed);
+        if (!r || !r.ok) throw new Error((r && r.error) || "保存失败");
+        setStatus("已保存，重载模型后生效");
+      } catch (e) {
+        setStatus("保存失败：" + String(e && e.message ? e.message : e), true);
+      }
+    }, "btn btn-primary"),
+    makeButton("重新生成", async () => {
+      try {
+        const r = await window.api.ensureModelProfile(modelDir, true);
+        if (!r || !r.ok) throw new Error((r && r.error) || "重新生成失败");
+        const next = JSON.stringify(r.profile || {}, null, 2);
+        if (editor && typeof editor.getValue === "function") {
+          editor.dispatch({ changes: { from: 0, to: editor.getValue().length, insert: next } });
+        }
+        setStatus("已重新生成（启发式），保存后重载生效");
+      } catch (e) {
+        setStatus("重新生成失败：" + String(e && e.message ? e.message : e), true);
+      }
+    }, "btn btn-ghost"),
+    makeButton("关闭", closeModal)
+  );
+  openModal(`参数映射 - ${String((item && item.label) || modelDir)}（soullink.profile.json）`, [status, editorHost, actions]);
+}
+
 function getNumberFieldSpec(key, value) {
   const numericValue = Number(value);
   
@@ -571,6 +649,9 @@ function renderConfigModule(moduleId) {
             renderModule();
             await saveConfig();
           }, "btn btn-ghost"));
+          if (modelType === "live2d") {
+            row.append(makeButton("参数映射", () => openSoullinkProfileEditor(item), "btn btn-ghost"));
+          }
           list.append(row);
         }
       }

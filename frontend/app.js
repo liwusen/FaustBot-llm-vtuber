@@ -463,6 +463,18 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       detachLipSyncAnalyser(){
         detachPluginLipSync();
       },
+
+      soullinkTriggerIntent(intent){
+        if (!soullinkLayer || !intent) return false;
+        try {
+          soullinkLayer.triggerIntent({
+            emotion: String(intent.emotion || 'calm'),
+            intensity: Math.max(0, Math.min(1, Number(intent.intensity) || 0.5)),
+            contextTags: Array.isArray(intent.contextTags) ? intent.contextTags : [],
+          }, soullinkNow());
+          return true;
+        } catch (e) { return false; }
+      },
     };
   }
 
@@ -1031,12 +1043,256 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     getLipSyncParamIds: () => currentLipSyncParamIds,
     showOverlay,
     stopBackgroundAudio: () => stopBackgroundAudio(),
+    onAnalyserCreated: (analyser) => {
+      // 内部 TTS 播放：analyser 交给 soullink 表演层驱动口型（engine beforeModelUpdate 注入）
+      if (!soullinkLayer || modelType !== 'live2d') return;
+      if (!window.Soullink || typeof window.Soullink.createAudioLevelAnalyzer !== 'function') return;
+      try {
+        soullinkAudioAnalyzer = analyser;
+        soullinkLayer.setAudioLevelAnalyzer(window.Soullink.createAudioLevelAnalyzer(analyser));
+        soullinkLayer.setVoicePlaybackActive(true);
+      } catch (e) { console.warn('[soullink] analyser attach failed', e); }
+    },
+    getLipSyncDriverActive: () => !!(soullinkLayer && modelType === 'live2d' && soullinkAudioAnalyzer),
   });
 
   // ── 插件口型同步 / 聊天暂挂（供 faustAppUI 使用，如歌台演唱期间）──
   let pluginLipSync = null;
   let pluginChatHold = false;
   const heldChatQueue = [];
+
+  // ── soullink 表演层（生命力：呼吸/微动/眨眼/动作调度/表情时间线/口型）──
+  let soullinkLayer = null;          // window.Soullink.createLayer 产物
+  let soullinkInjection = null;      // attachModelInjection 控制器（detach / applyNativeAnimation）
+  let soullinkAudioAnalyzer = null;  // 当前 feeding engine 的 analyser
+  let soullinkProfileSource = 'none'; // generated | cached | fallback
+  let soullinkTickRaf = 0;
+  let lastSoullinkTick = 0;
+  let lastSoullinkEmotion = '';
+  let lastSoullinkIntensity = -1;
+  let lastSoullinkProactiveId = null;
+  let soullinkInitialized = false;
+  let soullinkTickErrors = 0;
+  let soullinkTickLogCount = 0;
+  // 情绪触发节流：engine 每次 triggerIntent 都会 deferBlink（推迟眨眼约 3~6 秒）并重置表情时间线，
+  // 若触发过于频繁（<6s），眨眼会被无限推迟、表情永远在"起"阶段 → 表现为"没有生命力/眼神不变"。
+  const SOULLINK_INTENT_COOLDOWN_MS = 10000;
+  let lastSoullinkIntentAt = 0;
+  let lastSoullinkState = '';
+
+  function r3(v){
+    return typeof v === 'number' ? Number(v.toFixed(3)) : v;
+  }
+
+  // 引擎统一时间基准：必须与 soullinkTick 的 performance.now() 一致，
+  // 否则 stateMachine.elapsed 变成负值 → 状态机卡死（一直 LISTENING、无眨眼、无表情时间线）。
+  function soullinkNow(){
+    return ((typeof window.performance !== 'undefined' && typeof window.performance.now === 'function') ? window.performance.now() : Date.now()) / 1000;
+  }
+
+  // 从模型路径（如 2D/hiyori_pro_zh/hiyori_pro_t11.model3.json）提取模型目录名
+  function soullinkModelDirFromPath(path){
+    const raw = String(path || '').replace(/\\/g, '/');
+    const segs = raw.split('/').filter(Boolean);
+    const idx2d = segs.indexOf('2D');
+    const folder = idx2d >= 0 ? segs[idx2d + 1] : segs[0];
+    const dir = String(folder || '').trim();
+    return /^[A-Za-z0-9_-]+$/.test(dir) ? dir : '';
+  }
+
+  async function setupSoullinkForModel(model, path){
+    teardownSoullink();
+    if (!window.Soullink || !model || modelType !== 'live2d') {
+      console.warn('[soullink] setup 跳过:', { hasLib: !!window.Soullink, hasModel: !!model, modelType });
+      return;
+    }
+    try {
+      const modelDir = soullinkModelDirFromPath(path);
+      console.info('[soullink] setup 步骤1/5: 解析模型目录 =', JSON.stringify(modelDir), '| path =', String(path || ''));
+      let profile = null;
+      let profileSource = 'fallback';
+      if (modelDir) {
+        console.info('[soullink] setup 步骤2/5: 请求主进程 profile (modelDir=' + modelDir + ') ...');
+        const fetched = await window.Soullink.fetchProfileViaIpc(modelDir);
+        console.info('[soullink] setup 步骤2/5: IPC 返回', fetched ? ('ok, parameterMap keys=' + Object.keys(fetched.parameterMap || {}).length) : 'null（将使用回退）');
+        if (fetched) profileSource = 'generated';
+        profile = fetched;
+      } else {
+        console.info('[soullink] setup 步骤2/5: 无 modelDir，直接使用标准映射回退');
+      }
+      // 竞态保护：await 期间模型可能已切换/卸载
+      if (currentModel !== model || modelType !== 'live2d') {
+        console.info('[soullink] setup 中止: 模型已切换（竞态保护）');
+        teardownSoullink();
+        return;
+      }
+      if (!profile) {
+        console.warn('[soullink] setup 步骤3/5: 无可用 profile（模型目录: ' + (modelDir || path) + '），使用标准映射回退');
+        profile = window.Soullink.deriveFallbackProfile(modelDir || String(path || 'fallback'));
+      }
+      const validated = window.Soullink.validateProfile(profile);
+      console.info('[soullink] setup 步骤3/5: validateProfile =', validated.ok ? 'ok' : 'FAILED ' + JSON.stringify(validated.errors));
+      if (!validated.ok) {
+        profile = window.Soullink.deriveFallbackProfile(modelDir || String(path || 'fallback'));
+        profileSource = 'fallback';
+      } else {
+        profile = validated.profile;
+      }
+      // 补全标准键映射：生成 profile 缺键时兜底（参数不存在由 core 忽略）
+      const merged = window.Soullink.withStandardFallbackMappings(profile);
+      console.info('[soullink] setup 步骤3/5: 标准键补齐 =', merged.added, '个 | 映射总数 =', Object.keys(merged.profile.parameterMap || {}).length);
+      profile = merged.profile;
+      soullinkProfileSource = profileSource;
+      console.info('[soullink] setup 步骤4/5: createLayer (profile source=' + profileSource + ', seed=20240601) ...');
+      soullinkLayer = window.Soullink.createLayer({ profile, motionStyle: { seed: 20240601 } });
+      soullinkLayer.setLipSyncEnabled(true);
+      soullinkLayer.setIdleEnabled(true);
+      console.info('[soullink] setup 步骤5/5: attachModelInjection ...');
+      soullinkInjection = window.Soullink.attachModelInjection(model, () => soullinkLayer ? soullinkLayer.getParams() : {}, true);
+      if (!soullinkInjection) {
+        try { soullinkLayer.destroy(); } catch (e) {}
+        soullinkLayer = null;
+        soullinkProfileSource = 'none';
+        console.warn('[soullink] setup 步骤5/5: 模型注入挂载失败（internalModel 未就绪？）');
+        return;
+      }
+      console.info('[soullink] 表演层已启动:', { model: modelDir || path, source: soullinkProfileSource, mappedKeys: Object.keys(profile.parameterMap || {}).length });
+    } catch (e) {
+      console.warn('[soullink] setup failed', e);
+      teardownSoullink();
+    }
+  }
+
+  function teardownSoullink(){
+    if (soullinkInjection) { try { soullinkInjection.detach(); } catch (e) {} soullinkInjection = null; }
+    if (soullinkLayer) { try { soullinkLayer.destroy(); } catch (e) {} soullinkLayer = null; }
+    soullinkAudioAnalyzer = null;
+    soullinkProfileSource = 'none';
+    lastSoullinkEmotion = '';
+    lastSoullinkIntensity = -1;
+    lastSoullinkProactiveId = null;
+  }
+
+  function handleSoullinkProactive(event){
+    // 静默检测：仅借鉴 engine 的静默触发条件 → 轻微好奇反应（不接管现有主动对话生成）
+    try {
+      window.dispatchEvent(new CustomEvent('soullink-proactive', { detail: event }));
+      if (soullinkLayer && window.Soullink) {
+        const intent = window.Soullink.mapEmotionToIntent('curiosity', Math.max(4, (event.intensity || 0.5) * 8));
+        soullinkLayer.triggerIntent(intent, soullinkNow());
+      }
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function soullinkTick(nowMs){
+    soullinkTickRaf = requestAnimationFrame(soullinkTick);
+    if (!soullinkLayer || !soullinkInjection || modelType !== 'live2d' || !currentModel) {
+      lastSoullinkTick = 0;
+      return;
+    }
+    const nowSeconds = nowMs / 1000;
+    const dt = lastSoullinkTick ? Math.min(nowSeconds - lastSoullinkTick, 0.1) : 1 / 60;
+    lastSoullinkTick = nowSeconds;
+    try {
+      const snapshot = soullinkLayer.update(nowSeconds, dt);
+      soullinkInjection.applyNativeAnimation(snapshot.nativeAnimation || null);
+      // 调试日志：state 变化时打印一次
+      if (snapshot.state !== lastSoullinkState) {
+        lastSoullinkState = snapshot.state;
+        console.info('[soullink:state] ' + snapshot.state + ' @t=' + nowSeconds.toFixed(1) + 's');
+      }
+      // 调试日志：每秒采样一次引擎产出
+      soullinkTickLogCount += 1;
+      if (soullinkTickLogCount % 60 === 0) {
+        const p = snapshot.live2dParams || {};
+        console.info('[soullink:tick]', {
+          state: snapshot.state,
+          params: Object.keys(p).length,
+          eyeL: r3(p.ParamEyeLOpen),
+          breath: r3(p.ParamBreath),
+          angleX: r3(p.ParamAngleX),
+          angleY: r3(p.ParamAngleY),
+          bodyX: r3(p.ParamBodyAngleX),
+          mouthOpen: r3(p.ParamMouthOpenY),
+          mouthForm: r3(p.ParamMouthForm),
+          native: snapshot.nativeAnimation ? snapshot.nativeAnimation.token : null,
+          dominant: snapshot.vad && snapshot.vad.dominantEmotion,
+        });
+      }
+      if (snapshot.proactive && snapshot.proactive.id !== lastSoullinkProactiveId) {
+        lastSoullinkProactiveId = snapshot.proactive.id;
+        handleSoullinkProactive(snapshot.proactive);
+      }
+    } catch (e) {
+      // 引擎异常不应拖垮渲染；前 5 次打印便于定位
+      if (soullinkTickErrors < 5) {
+        soullinkTickErrors += 1;
+        console.warn('[soullink] tick error #' + soullinkTickErrors, e);
+      }
+    }
+  }
+
+  async function soullinkPollEmotion(){
+    if (!soullinkLayer || !window.faustAppUI || typeof window.faustAppUI.communicate !== 'function') return;
+    try {
+      const payload = await window.faustAppUI.communicate('emotion-engine', { action: 'get_state' });
+      const top = Array.isArray(payload && payload.top_emotions) ? payload.top_emotions : [];
+      const dominant = top[0] || null;
+      if (!dominant || !soullinkLayer) return;
+      const intent = window.Soullink.mapEmotionToIntent(dominant.key, dominant.value);
+      const now = Date.now();
+      const emotionChanged = intent.emotion !== lastSoullinkEmotion;
+      const intensityJump = Math.abs(intent.intensity - lastSoullinkIntensity) > 0.2;
+      const cooldownLeft = SOULLINK_INTENT_COOLDOWN_MS - (now - lastSoullinkIntentAt);
+      if ((emotionChanged || intensityJump) && cooldownLeft <= 0) {
+        lastSoullinkEmotion = intent.emotion;
+        lastSoullinkIntensity = intent.intensity;
+        lastSoullinkIntentAt = now;
+        console.info('[soullink:emotion] dominant=' + dominant.key + '=' + Number(dominant.value).toFixed(1) + ' → intent ' + intent.emotion + ' @' + intent.intensity.toFixed(2), { emotionChanged, intensityJump });
+        soullinkLayer.triggerIntent(intent, soullinkNow());
+      } else if (emotionChanged || intensityJump) {
+        console.info('[soullink:emotion] 跳过触发（冷却剩余 ' + (cooldownLeft / 1000).toFixed(1) + 's）: intent ' + intent.emotion + ' @' + intent.intensity.toFixed(2));
+      }
+    } catch (e) {
+      // 插件未安装或后端未就绪时静默
+    }
+  }
+
+  function initSoullinkDriver(){
+    if (soullinkInitialized) return;
+    soullinkInitialized = true;
+    // 诊断钩子：控制台可查看表演层实时状态与参数
+    try {
+      window.__soullinkDebug = {
+        getState: () => ({
+          hasSoullinkLib: !!window.Soullink,
+          layerActive: !!soullinkLayer,
+          injectionActive: !!soullinkInjection,
+          profileSource: soullinkProfileSource,
+          paramCount: soullinkLayer ? Object.keys(soullinkLayer.getParams()).length : 0,
+          modelType,
+        }),
+        getParams: () => (soullinkLayer ? soullinkLayer.getParams() : {}),
+        // 仅调试用：卸载表演层（不恢复内部 eyeBlink）
+        disable: () => { teardownSoullink(); return true; },
+        // 仅调试用：暂停/恢复 engine 空闲层
+        setIdleEnabled: (v) => { if (soullinkLayer) { try { soullinkLayer.setIdleEnabled(!!v); } catch (e) {} } return !!soullinkLayer; },
+      };
+    } catch (e) { /* 忽略 */ }
+    requestAnimationFrame(soullinkTick);
+    setInterval(soullinkPollEmotion, 3000);
+    window.addEventListener('faust-tts-end', () => {
+      if (!soullinkLayer) return;
+      try {
+        soullinkLayer.setVoicePlaybackActive(false);
+        // 说话结束后的等待姿态（engine VoiceWaitingMotionController）
+        soullinkLayer.startVoiceWaitingMotion(soullinkNow());
+      } catch (e) { /* 忽略 */ }
+    });
+    window.addEventListener('faust-tts-start', () => {
+      if (soullinkLayer) { try { soullinkLayer.setVoicePlaybackActive(true); } catch (e) {} }
+    });
+  }
 
   function attachPluginLipSync(analyser){
     if (!analyser) return false;
@@ -1045,6 +1301,18 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       try { vrmScene.startLipSync(analyser); } catch (e) { return false; }
       pluginLipSync = { mode: 'vrm' };
       return true;
+    }
+    // soullink 表演层接管口型：analyser → engine AudioLevelAnalyzer（不再直写参数）
+    if (soullinkLayer && window.Soullink && typeof window.Soullink.createAudioLevelAnalyzer === 'function') {
+      soullinkAudioAnalyzer = analyser;
+      try {
+        soullinkLayer.setAudioLevelAnalyzer(window.Soullink.createAudioLevelAnalyzer(analyser));
+        soullinkLayer.setVoicePlaybackActive(true);
+        pluginLipSync = { mode: 'soullink' };
+        return true;
+      } catch (e) {
+        console.warn('[soullink] attach plugin lipsync failed', e);
+      }
     }
     const data = new Uint8Array(analyser.fftSize || 2048);
     const state = { mode: 'raf', rafId: 0 };
@@ -1065,6 +1333,13 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
 
   function detachPluginLipSync(){
     if (!pluginLipSync) return;
+    if (pluginLipSync.mode === 'soullink' && soullinkLayer) {
+      try { soullinkLayer.setAudioLevelAnalyzer(null); } catch (e) {}
+      try { soullinkLayer.setVoicePlaybackActive(false); } catch (e) {}
+      soullinkAudioAnalyzer = null;
+      pluginLipSync = null;
+      return;
+    }
     if (pluginLipSync.mode === 'raf' && pluginLipSync.rafId) cancelAnimationFrame(pluginLipSync.rafId);
     if (pluginLipSync.mode === 'vrm' && vrmScene) { try { vrmScene.stopLipSync(); } catch (e) {} }
     try { audio.setLipSyncValue(0); } catch (e) {}
@@ -2854,6 +3129,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let vrmDragCleanup = null;
 
   async function loadVRMModel(path) {
+    teardownSoullink();
     const loadRequestId = ++activeModelLoadRequestId;
     showOverlay('加载 VRM 模型: ' + path);
     try {
@@ -3080,7 +3356,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       sprite.x = app.renderer.width - 200;
       sprite.y = app.renderer.height - 20;
       sprite.interactive = true;
-      sprite.buttonMode = true;
       sprite.cursor = 'grab';
       sprite.on('pointerdown', (e) => {
         if (clickThroughController) clickThroughController.forceInteractive();
@@ -3126,6 +3401,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   }
 
   async function loadImageModel(rawConfig){
+    teardownSoullink();
     if (modelType !== 'images') {
       switchToLive2DRenderer();
       modelType = 'images';
@@ -3152,7 +3428,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     sprite.x = app.renderer.width - 200;
     sprite.y = app.renderer.height - 20;
     sprite.interactive = true;
-    sprite.buttonMode = true;
     sprite.cursor = 'grab';
     sprite._faustImageModel = {
       config: resolvedConfig,
@@ -3300,7 +3575,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       return Live2DModel.from(resolvedPath);
     }).then(model => {
       if (loadRequestId !== activeModelLoadRequestId) return;
-      // 移除上个模型
+      // 移除上个模型（先卸载 soullink 注入，避免旧模型残留监听）
+      teardownSoullink();
       if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
       currentModel = model;
       // 缩放并定位到右下角初始位置 (scale will be applied via baseScale * slider)
@@ -3309,7 +3585,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       model.x = app.renderer.width - 200;
       model.y = app.renderer.height - 20;
       model.interactive = true;
-      model.buttonMode = true;
       model.cursor = 'grab';
 
       // 基本拖拽
@@ -3367,6 +3642,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       applyModelScale();
       // keep reference for mouth sync
       model._faustLive2D = { mouthValue: 0 };
+      // soullink 表演层（异步初始化，不阻塞模型展示）
+      setupSoullinkForModel(model, path);
 
       updateTextChatBarPosition();
       refreshQuickControllerVisibility();
@@ -3394,6 +3671,9 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     updateQuickControllerPosition();
     persistModelPositionToBackend();
   });
+
+  // soullink 表演层驱动（RAF tick + 情绪轮询 + TTS 事件）
+  initSoullinkDriver();
 
   // 自动尝试加载后端配置指定的模型与布局
   modelPathInput.value = defaultModel;

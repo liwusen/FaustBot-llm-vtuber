@@ -12,6 +12,8 @@ export function initAudioPlayback({
   getLipSyncParamIds,
   showOverlay,
   stopBackgroundAudio,
+  onAnalyserCreated,
+  getLipSyncDriverActive,
 }) {
   let audioEl = null;
   let audioCtx = null;
@@ -77,6 +79,7 @@ export function initAudioPlayback({
     sourceNode = audioCtx.createMediaElementSource(audioEl);
     sourceNode.connect(analyser);
     analyser.connect(audioCtx.destination);
+    try { if (typeof onAnalyserCreated === 'function') onAnalyserCreated(analyser); } catch (e) { /* 忽略 */ }
     audioEl.onended = () => {
       try { window.dispatchEvent(new CustomEvent('faust-tts-end')); } catch (e) {}
       if (modelType === 'vrm' && vrmScene) {
@@ -100,7 +103,9 @@ export function initAudioPlayback({
       for (let i = 0; i < dataArray.length; i++) { const v = (dataArray[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / dataArray.length);
       const mouth = Math.min(1, Math.max(0, (rms * 5)));
-      if (currentModel) {
+      // soullink 表演层接管口型时跳过直写，由 engine 在 beforeModelUpdate 注入
+      const driverActive = typeof getLipSyncDriverActive === 'function' ? getLipSyncDriverActive() : false;
+      if (currentModel && !driverActive) {
         try { setModelLipSyncValue(mouth); } catch (e) { /* ignore if model API differs */ }
       }
       rafId = requestAnimationFrame(tick);

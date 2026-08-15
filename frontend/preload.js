@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('api', {
   toggleLogPanel: () => ipcRenderer.invoke('toggle-log-panel'),
   toggleWidgetEditMode: () => ipcRenderer.invoke('toggle-widget-edit-mode'),
   recreateFrontendWindow: () => ipcRenderer.invoke('recreate-frontend-window'),
+  ensureModelProfile: (modelDir, force) => ipcRenderer.invoke('soullink-ensure-profile', { modelDir: String(modelDir || ''), force: !!force }),
+  saveModelProfile: (modelDir, json) => ipcRenderer.invoke('soullink-save-profile', { modelDir: String(modelDir || ''), json: json ?? null }),
 });
 
 // deeplink events

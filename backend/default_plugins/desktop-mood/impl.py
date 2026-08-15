@@ -41,6 +41,14 @@ DEFAULT_RULES = [
     {"id": "media_playing", "label": "媒体播放提醒", "enabled": True, "cooldown_sec": 1800, "kind": "event-trigger", "condition": {"type": "smtc_playing"}, "action": {"event_name": "desktop_mood_media", "summary": "检测到系统媒体正在播放。"}},
 ]
 
+SMTC_STATUS_MAP = {
+            '1': 'changing',
+            '0': 'closed',
+            '4': 'paused',
+            '3': 'playing',
+            '2': 'stopped',
+#            '5': 'seems to be paused?',#我的电脑上有时会返回 5，可能是文档的错误?
+        }
 
 class LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
@@ -113,14 +121,7 @@ async def _read_smtc_now() -> dict[str, Any] | None:
 
         FROM https://learn.microsoft.com/zh-cn/uwp/api/windows.media.mediaplaybackstatus?view=winrt-26100
         """
-        SMTC_STATUS_MAP = {
-            '1': 'changing',
-            '0': 'closed',
-            '4': 'paused',
-            '3': 'playing',
-            '2': 'stopped',
-#            '5': 'seems to be paused?',#我的电脑上有时会返回 5，可能是文档的错误?
-        }
+        
             
         return {
             'title': str(getattr(props, 'title', '') or ''),
@@ -459,7 +460,7 @@ class Plugin(FaustPlugin):
             return int(condition.get('start') or 0) <= hour <= int(condition.get('end') or 23)
         if ctype == 'window_contains':
             return str(condition.get('value') or '').lower() in str(context.get('window_title') or '').lower()
-        if ctype == 'smtc_playing':
+        if ctype == 'smtc_playing':#FIXME: 使用正确的逻辑,并且只在歌曲 播放状态 由 非Playing -> Playing 时触发一次,而不是每次 heartbeat 都触发
             smtc = context.get('smtc') or {}
             status = str(smtc.get('status') or '').lower()
             return 'play' in status
