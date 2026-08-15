@@ -26,3 +26,5 @@ frontend/models/
 *.db
 
 subagents.json
+# npm cache (workspace-local)
+.npm-cache/

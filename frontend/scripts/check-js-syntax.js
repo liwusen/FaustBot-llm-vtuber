@@ -10,7 +10,7 @@ const { execSync } = require('child_process');
 
 const FRONTEND_DIR = path.resolve(__dirname, '..');
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git']);
-const SKIP_FILES = new Set(['.codemirror-entry.js']);
+const SKIP_FILES = new Set(['.codemirror-entry.js', '.pixi-live2d-entry.js']);
 let errors = 0;
 
 function walk(dir) {
