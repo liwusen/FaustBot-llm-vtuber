@@ -51,7 +51,7 @@
 
 **读记忆库**：`read("memory://notes/math")` 读记忆库文档。`read("memory://")` 浏览记忆库结构。
 
-**读系统说明**：`read("faustbot://index.md")` 查看 FaustBot 的只读索引；`read("faustbot://tool_use.md")` 查看工具指南；`read("faustbot://mc.md")` 查看 Minecraft 指南；`read("faustbot://source/{PATH}")` 只读源码。
+**读系统说明**：`read("faustbot://index.md")` 查看 FaustBot 的只读索引；`read("faustbot://tool_use.md")` 查看工具指南；`read("faustbot://mc.md")` 查看 Minecraft 指南；`read("faustbot://source/{PATH}")` 只读源码。若启用了 quick-screen-view 插件且处于 VFS 模式，`read("faustbot://plugins/quick-screen-view/focus")` 可读写聚焦指示，`read("faustbot://plugins/quick-screen-view/text")` 获取屏幕结构化概括（见下方第 7 节）。
 
 **读 Subagent 状态**：`read("faustbot://subagents/<name>")` 查看某个 Subagent 的状态摘要；`read("faustbot://subagents/<name>/output")` 查看该 Subagent 的 Markdown 输出；`read("faustbot://subagents/<name>/finalResult")` 查看它记录的最终结论；`read("faustbot://subagenting.md")` 查看 Subagent 协议说明；`read("faustbot://avatoolset")` 查看当前 Toolset 与 MCP 工具组。
 
@@ -169,6 +169,17 @@ INS.POST 5:         ← 在第 5 行后插入
 - `find(["*.json", "*.md"])` → 项目根目录的 JSON 和 MD 文件
 
 结果按修改时间排序。用 `read` 进一步查看找到的特定文件。
+
+### 7. quickScreenView — 屏幕快照（可选插件）
+
+当启用了 **quick-screen-view** 插件且工作模式为 **Tool 模式**时，你拥有 `quickScreenView(focus)` 工具：截取主显示器截图，调用 `screen-model` 视觉模型，按 `focus` 指示以结构化 Markdown 概括屏幕内容。`focus` 为空时输出通用屏幕概览。适合"看看用户屏幕上现在有什么"这类需求。
+
+当插件处于 **VFS 模式**时，该工具不注册，改用 VFS 节点：
+
+- `write("faustbot://plugins/quick-screen-view/focus", "概括指示")` — 设置聚焦指示（可写可读）
+- `read("faustbot://plugins/quick-screen-view/text")` — 获取屏幕结构化概括（symbol 节点，读取时实时截图并调用模型）
+
+两种模式互斥，由插件配置 `mode` 决定（tool / vfs，默认 tool；修改后需重载插件生效）。屏幕内容可能包含敏感信息，仅在用户允许且确有需要时使用。
 
 ---
 

@@ -1,0 +1,11 @@
+{
+  "id": "quick-screen-view",
+  "name": "Quick Screen View",
+  "version": "0.1.0",
+  "description": "屏幕快照分析：截取主显示器截图，调用 screen-model 视觉模型（provider::model）按 focus 指示以结构化 Markdown 概括屏幕内容。支持两种互斥模式：Tool 模式（quickScreenView 工具）与 VFS 模式（faustbot://plugins/quick-screen-view/focus 与 /text）。",
+  "author": "FaustBot",
+  "enabled": true,
+  "entry": "impl.py",
+  "priority": 300,
+  "permissions": ["screen"]
+}

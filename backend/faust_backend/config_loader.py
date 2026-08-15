@@ -87,19 +87,24 @@ def _sync_default_plugins(project_root: Path, faustbot: Path) -> None:
         if item.name == 'plugins.state.json':
             continue
         dest = dst_plugins / item.name
-        if not dest.exists():
-            if item.is_dir():
+        try:
+            if not dest.exists():
+                if item.is_dir():
+                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                elif item.is_file():
+                    shutil.copy(item, dest)
+                copied.append(item.name)
+                continue
+            if not item.is_dir() or not dest.is_dir():
+                continue
+            if _plugin_manifest_version(item) > _plugin_manifest_version(dest):
+                shutil.rmtree(dest, ignore_errors=True)
                 shutil.copytree(item, dest, dirs_exist_ok=True)
-            elif item.is_file():
-                shutil.copy(item, dest)
-            copied.append(item.name)
-            continue
-        if not item.is_dir() or not dest.is_dir():
-            continue
-        if _plugin_manifest_version(item) > _plugin_manifest_version(dest):
-            shutil.rmtree(dest, ignore_errors=True)
-            shutil.copytree(item, dest, dirs_exist_ok=True)
-            copied.append(item.name)
+                copied.append(item.name)
+        except OSError as exc:
+            # 用户插件目录不可写（权限/只读/受控文件夹）时，单个插件同步失败
+            # 不应拖垮整个初始化：打印警告并跳过，运行时从仓库目录加载即可。
+            print(f"[config_loader]  WARNING:同步默认插件 {item.name} 失败: {exc}")
     if copied:
         print(f"[config_loader]  已同步默认插件: {', '.join(sorted(copied))}")
 

@@ -44,21 +44,26 @@ def _ensure_default_plugins() -> None:
         if src.exists() and src.is_dir():
             for item in src.iterdir():
                 dst_item = dst / item.name
-                if item.is_dir():
-                    shutil.copytree(item, dst_item, dirs_exist_ok=True)
-                    if dst_item.exists():
-                        src_children = {child.name for child in item.iterdir()}
-                        for stale in list(dst_item.iterdir()):
-                            if stale.name not in src_children:
-                                if stale.is_dir():
-                                    shutil.rmtree(stale, ignore_errors=True)
-                                else:
-                                    try:
-                                        stale.unlink()
-                                    except OSError:
-                                        pass
-                elif item.is_file():
-                    shutil.copy(item, dst_item)
+                try:
+                    if item.is_dir():
+                        shutil.copytree(item, dst_item, dirs_exist_ok=True)
+                        if dst_item.exists():
+                            src_children = {child.name for child in item.iterdir()}
+                            for stale in list(dst_item.iterdir()):
+                                if stale.name not in src_children:
+                                    if stale.is_dir():
+                                        shutil.rmtree(stale, ignore_errors=True)
+                                    else:
+                                        try:
+                                            stale.unlink()
+                                        except OSError:
+                                            pass
+                    elif item.is_file():
+                        shutil.copy(item, dst_item)
+                except OSError as exc:
+                    # 用户插件目录不可写（权限/受控文件夹）时跳过该条目，
+                    # 运行时从仓库默认插件目录加载即可，不阻塞 PluginManager 构造。
+                    log.warning("同步默认插件条目 %s 失败: %s", item.name, exc)
             return
 
 
@@ -186,7 +191,9 @@ class PluginManager:
                 "plugin_config_list": lambda: self._plugin_config_list(plugin_id),
                 "vfs_read_text": lambda path, default="": run_coro_sync(vfs.read_text(path, default=default)),
                 "vfs_write": lambda path, content: run_coro_sync(vfs.write(path, content)),
-                "vfs_write_symbolic": lambda path, func, should_be_included_in_search=True: run_coro_sync(vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search)),
+                "vfs_write_symbolic": lambda path, func, should_be_included_in_search=True, writable=False: run_coro_sync(vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable)),
+                "vfs_set_write_handler": lambda path, func: run_coro_sync(vfs.set_write_handler(path, func)),
+                "vfs_set_edit_handler": lambda path, func: run_coro_sync(vfs.set_edit_handler(path, func)),
                 "vfs_delete": lambda path: run_coro_sync(vfs.delete(path)),
                 "vfs_list": lambda path="/": run_coro_sync(vfs.list_dir(path)),
             },

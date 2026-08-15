@@ -80,11 +80,30 @@ class PluginContext:
             raise RuntimeError("vfs_write is not available")
         return fn(path, content)
 
-    def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True) -> Any:
+    def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True, writable: bool = False) -> Any:
+        """注册一个 symbol 节点：读取时调用 func(path)（支持同步或异步内容函数）。
+
+        writable=True 时允许写入，配合 vfs_set_write_handler/vfs_set_edit_handler
+        自定义写入行为（不设置 handler 时写入会替换节点为普通内容节点）。
+        """
         fn = self.config.get("vfs_write_symbolic")
         if not callable(fn):
             raise RuntimeError("vfs_write_symbolic is not available")
-        return fn(path, func, should_be_included_in_search)
+        return fn(path, func, should_be_included_in_search, writable)
+
+    def vfs_set_write_handler(self, path: str, func: Any) -> Any:
+        """为节点设置自定义写处理器，签名 (node, content)，支持同步或异步函数。"""
+        fn = self.config.get("vfs_set_write_handler")
+        if not callable(fn):
+            raise RuntimeError("vfs_set_write_handler is not available")
+        return fn(path, func)
+
+    def vfs_set_edit_handler(self, path: str, func: Any) -> Any:
+        """为节点设置自定义编辑处理器，签名 (node, content)，支持同步或异步函数。"""
+        fn = self.config.get("vfs_set_edit_handler")
+        if not callable(fn):
+            raise RuntimeError("vfs_set_edit_handler is not available")
+        return fn(path, func)
 
     def vfs_delete(self, path: str) -> Any:
         fn = self.config.get("vfs_delete")

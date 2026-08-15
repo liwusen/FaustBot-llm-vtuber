@@ -214,6 +214,13 @@ class AsyncVirtualFileSystem:
             await result
 
     async def write_symbolic(self, path: str, func: SymbolicFunc, *, should_be_included_in_search: bool = True, writable: bool = False) -> None:
+        """注册一个 symbol 节点：读取时调用 func(path) 生成内容。
+
+        内容函数 func 支持同步与异步两种形态（返回 awaitable 会被自动等待），
+        例如 async def fn(path): ... await 模型调用。异步内容函数执行期间不持有
+        读写锁，可安全地嵌套调用其它 VFS 方法。
+        writable=True 且未设置 write/edit handler 时，写入会替换为普通内容节点。
+        """
         parts = self.get_path_parts(path)
         if not parts:
             raise ValueError('Cannot write symbolic content to root directory')
@@ -247,6 +254,7 @@ class AsyncVirtualFileSystem:
             node.edit_handler = func
 
     async def read(self, path: str) -> Any:
+        """读取节点内容。symbol 节点会调用内容函数（同步/异步均可）并返回结果。"""
         async with self._rwlock.read_lock():
             node = self._get_node_unlocked(path)
             if node is None or node.is_directory:
