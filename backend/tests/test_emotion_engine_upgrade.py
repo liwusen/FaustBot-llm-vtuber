@@ -265,12 +265,35 @@ def test_boredom_restarts_timing_after_interaction(data_dir, clock):
         store.heartbeat(0.1)
     mid = store._state.vector["boredom"]
     assert 0 < mid < 10
-    # 新交互 → 计时归零：值不降，但增长暂停（曲线从 0 重新起，还没追上 mid）
+    # 新交互 → 按比例回退 max(1.0, 30%*mid)，且计时归零（增长暂停）
     store.note_user_message("又来了")
-    assert store._state.vector["boredom"] == pytest.approx(mid)
+    relieved = impl._clamp(mid - max(1.0, 0.3 * mid))
+    assert store._state.vector["boredom"] == pytest.approx(relieved)
     clock.advance(600)
     store.heartbeat(0.1)
-    assert store._state.vector["boredom"] == pytest.approx(mid)
+    # 曲线 10min ≈ 2.1 仍低于回退后的值 → 保持不回涨
+    assert store._state.vector["boredom"] == pytest.approx(relieved)
+
+
+def test_boredom_relief_on_user_message(data_dir, clock):
+    """对话缓解无聊：回退值 = max(1.0, 30% * 当前值)。"""
+    store = impl.EmotionEngineStore(data_dir)
+    # 高无聊 → 按 30% 回退
+    store.set_emotion("boredom", 8.0)
+    store.note_user_message("你好")
+    assert store._state.vector["boredom"] == pytest.approx(8.0 - max(1.0, 0.3 * 8.0))  # 8.0 → 5.6
+    # 再聊 → 继续按 30% 回退
+    store.note_user_message("还在吗")
+    v = store._state.vector["boredom"]
+    assert store._state.vector["boredom"] == pytest.approx(5.6 - max(1.0, 0.3 * 5.6))  # 5.6 → 3.92
+    # 低无聊 → 保底回退 1.0
+    store.set_emotion("boredom", 2.0)
+    store.note_user_message("嗯")
+    assert store._state.vector["boredom"] == pytest.approx(2.0 - 1.0)  # 2.0 → 1.0
+    # 趋近 0 时钳制到 0
+    store.set_emotion("boredom", 0.5)
+    store.note_user_message("哦")
+    assert store._state.vector["boredom"] == pytest.approx(0.0)
 
 
 def test_boredom_no_history_no_growth(data_dir, clock):

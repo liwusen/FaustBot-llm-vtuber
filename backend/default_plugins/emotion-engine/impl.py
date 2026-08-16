@@ -426,6 +426,13 @@ class EmotionEngineStore:
             self._state.last_user_message = text
             self._state.last_interaction_ts = _now()
             self._state.last_user_message_ts = _now()
+            # 对话缓解无聊：按比例回退 max(1.0, 30% * 当前无聊值)，
+            # 聊过天本身就能打断无聊积累；标签（EmotionInvokeSigned）再做精细调节
+            current_boredom = float(self._state.vector.get("boredom", 0.0))
+            relief = max(1.0, 0.3 * current_boredom)
+            if relief > 0:
+                self._state.vector["boredom"] = _clamp(current_boredom - relief)
+                self._record_history("user_message_boredom_relief", {"boredom": -relief})
             mode = "task" if len((text or "").strip()) <= 48 else "chat"
             self._state.recent_user_modes.append(mode)
             self._state.recent_user_modes = self._state.recent_user_modes[-8:]
