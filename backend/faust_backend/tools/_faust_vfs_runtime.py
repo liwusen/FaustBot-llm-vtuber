@@ -498,14 +498,13 @@ def _pc_info_doc() -> str:
 
 
 def _source_root() -> Path:
-    backend_root = Path(conf.PROJECT_ROOT)
-    repo_root = backend_root.parent
-    if getattr(sys, 'frozen', False):
-        mirror_root = backend_root / 'data' / 'source'
-        if mirror_root.exists():
-            return mirror_root
-        raise FileNotFoundError('源码镜像未生成: backend/data/source')
-    return repo_root
+    """源码根目录 = backend/ 的父目录（仓库根）。
+
+    重构说明：发布包（release zip）直接包含完整源码仓库（见 .github/workflows/release-package.yml
+    的 Prepare release archives 步骤），开发模式与发布包布局一致，因此无需 sys.frozen 判断，
+    也无需把源码预镜像到 backend/data/source。
+    """
+    return Path(conf.PROJECT_ROOT).parent
 
 
 async def _ensure_core_structure(vfs: AsyncVirtualFileSystem) -> None:

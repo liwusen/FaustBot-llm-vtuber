@@ -247,6 +247,9 @@ class Plugin(FaustPlugin):
         self.ctx: PluginContext | None = None
         self.store: DesktopMoodStore | None = None
         self._weather_refresh_started = False
+        # SMTC 播放状态边沿检测：只在 非Playing -> Playing 时触发一次
+        self._last_smtc_playing: bool | None = None
+        self._smtc_rising_edge = False
 
     def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
@@ -460,15 +463,20 @@ class Plugin(FaustPlugin):
         if ctype == 'window_contains':
             return str(condition.get('value') or '').lower() in str(context.get('window_title') or '').lower()
         if ctype == 'smtc_playing':
-            smtc = context.get('smtc') or {}
-            status = str(smtc.get('status') or '').lower()
-            return 'play' in status
+            # 播放状态边沿：只在 非Playing -> Playing 时触发一次（由 heartbeat 计算 _smtc_rising_edge）
+            return self._smtc_rising_edge
         return False
 
     def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None or self.ctx is None:
             return
         context = self.collect_context()
+        # SMTC 播放状态边沿检测：状态名判定（数字 status 无法判断播放），
+        # 只在 非Playing -> Playing 变化时置位一次，供 smtc_playing 规则使用
+        smtc = context.get('smtc') or {}
+        playing_now = str(smtc.get('status_name') or '').lower() == 'playing'
+        self._smtc_rising_edge = playing_now and self._last_smtc_playing is False
+        self._last_smtc_playing = playing_now
         self.store.update_snapshot(context)
         self.ctx.vfs_write('/plugins/desktop-context.json', json.dumps(context, ensure_ascii=False, indent=2))
         idle_seconds = int(context.get('idle_seconds') or 0)
