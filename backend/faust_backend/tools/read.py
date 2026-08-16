@@ -11,7 +11,6 @@ import getpass
 import json
 import os
 import platform
-import sys
 from io import BytesIO
 from pathlib import Path
 
@@ -396,19 +395,6 @@ def _read_img_source(parsed, *, force_plain_text: bool = False, show_line_number
         return f"读取图像源出错: {e}"
 
     return f"[未知 img_source 资源: {path}]"
-
-
-def _get_faustbot_source_root() -> Path:
-    from faust_backend.config_loader import PROJECT_ROOT
-
-    backend_root = Path(PROJECT_ROOT)
-    repo_root = backend_root.parent
-    if getattr(sys, "frozen", False):  # FIXME:使用正确的方式查询是否打包
-        mirror_root = backend_root / "data" / "source"
-        if mirror_root.exists():
-            return mirror_root
-        raise FileNotFoundError("源码镜像未生成: backend/data/source")
-    return repo_root
 
 
 def _capture_screenshot_image() -> Image.Image:

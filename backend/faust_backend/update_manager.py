@@ -426,7 +426,7 @@ class UpdateManager:
             "taskkill /F /IM FaustLive2DFrontend.exe >nul 2>&1",#不能使用/T参数
             "taskkill /F /IM python.exe >nul 2>&1",
             "taskkill /F /IM node.exe >nul 2>&1",#mc-operator和MCP
-        ]#FIXME: 其实直接杀掉所有python并不是一个好的做法
+        ]#!其实直接杀掉所有python并不是一个好的做法
 
         lines += [
             "echo Step 1: Syncing update files with robocopy...",
