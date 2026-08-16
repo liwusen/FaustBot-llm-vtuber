@@ -202,85 +202,95 @@ def test_build_prompt_suffix_silent_template(data_dir):
     assert "（silent）" in suffix
 
 
-# ── 无回应惩罚（触发与冷却） ──
+# ── 无聊自然增长（非线性饱和曲线：不对话时长 + 当前值 双自变量） ──
 
 
-def test_no_response_penalty_trigger_and_cooldown(data_dir, clock):
+def test_boredom_curve_values_and_saturation(data_dir):
+    """曲线：0 起步、单调递增、1.5h(5400s) 到达 10、之后封顶。"""
+    assert impl._boredom_curve(0) == pytest.approx(0.0)
+    assert impl._boredom_curve(300) == pytest.approx(1.08, abs=0.05)  # 5 分钟
+    assert impl._boredom_curve(600) == pytest.approx(2.10, abs=0.05)  # 10 分钟
+    assert impl._boredom_curve(2700) == pytest.approx(7.5, abs=0.3)  # 45 分钟
+    assert impl._boredom_curve(5400) == pytest.approx(10.0, abs=1e-6)
+    assert impl._boredom_curve(7200) == pytest.approx(10.0)  # 封顶
+
+
+def test_boredom_curve_is_nonlinear_and_gentle():
+    """非线性且平缓：分段增量随时间单调递减（导数递减、渐近封顶）。"""
+    deltas = [impl._boredom_curve(600 * (i + 1)) - impl._boredom_curve(600 * i) for i in range(8)]
+    for i in range(1, len(deltas)):
+        assert deltas[i] < deltas[i - 1]
+    # 最大瞬时增速 ≈ 0.22/分钟（起始 10 分钟增量 ≈2.1 < 2.5），不会突兀跳变
+    assert max(deltas) < 2.5
+
+
+def test_boredom_reaches_max_after_90min_silence(data_dir, clock):
     store = impl.EmotionEngineStore(data_dir)
     store.note_user_message("你好")
     clock.advance(10)
     store.mark_reply_done()
-    boredom_before = store._state.vector["boredom"]
-
-    # 未到超时
-    clock.advance(100)
-    assert store.check_no_response_penalty(300) is False
-
-    # 到达超时 → 触发，boredom +0.5
-    clock.advance(200)  # 距 done 310s
-    assert store.check_no_response_penalty(300) is True
-    assert store._state.vector["boredom"] == pytest.approx(boredom_before + 0.5)
-
-    # 冷却中
-    clock.advance(100)
-    assert store.check_no_response_penalty(300) is False
-
-    # 冷却结束 → 再次触发
-    clock.advance(300)
-    assert store.check_no_response_penalty(300) is True
-    assert store._state.vector["boredom"] == pytest.approx(boredom_before + 1.0)
+    for _ in range(360):  # 60 分钟
+        clock.advance(10)
+        store.heartbeat(0.1)
+    at_60min = store._state.vector["boredom"]
+    assert at_60min < 10.0  # 1.5h 内不允许到满值
+    for _ in range(180):  # 再 30 分钟 → 共 90 分钟
+        clock.advance(10)
+        store.heartbeat(0.1)
+    assert store._state.vector["boredom"] == pytest.approx(10.0)
 
 
-def test_no_response_penalty_blocked_by_new_message(data_dir, clock):
+def test_boredom_curve_never_lowers_current_value(data_dir, clock):
     store = impl.EmotionEngineStore(data_dir)
     store.note_user_message("你好")
     clock.advance(10)
     store.mark_reply_done()
-    clock.advance(400)
-    store.note_user_message("新消息")  # 期间有新消息 → 不惩罚
-    assert store.check_no_response_penalty(300) is False
+    store.set_emotion("boredom", 8.0)  # 手动抬高（如故事/工具）
+    clock.advance(600)
+    store.heartbeat(0.1)
+    # 曲线 10min ≈ 2.1 < 8 → 保持 8（只升不降，当前值参与）
+    assert store._state.vector["boredom"] == pytest.approx(8.0)
+    clock.advance(6000)  # 超过 1.5h 后曲线追上并到顶
+    store.heartbeat(0.1)
+    assert store._state.vector["boredom"] == pytest.approx(10.0)
 
 
-def test_no_response_penalty_requires_done(data_dir, clock):
+def test_boredom_restarts_timing_after_interaction(data_dir, clock):
     store = impl.EmotionEngineStore(data_dir)
-    clock.advance(400)
-    assert store.check_no_response_penalty(300) is False
+    store.note_user_message("你好")
+    clock.advance(10)
+    store.mark_reply_done()
+    for _ in range(180):  # 30 分钟不对话
+        clock.advance(10)
+        store.heartbeat(0.1)
+    mid = store._state.vector["boredom"]
+    assert 0 < mid < 10
+    # 新交互 → 计时归零：值不降，但增长暂停（曲线从 0 重新起，还没追上 mid）
+    store.note_user_message("又来了")
+    assert store._state.vector["boredom"] == pytest.approx(mid)
+    clock.advance(600)
+    store.heartbeat(0.1)
+    assert store._state.vector["boredom"] == pytest.approx(mid)
 
 
-def test_no_response_penalty_wired_in_heartbeat(monkeypatch):
-    seen = {}
+def test_boredom_no_history_no_growth(data_dir, clock):
+    """从未交互过的实例：无计时起点，boredom 保持默认不涨。"""
+    store = impl.EmotionEngineStore(data_dir)
+    clock.advance(3600)
+    store.heartbeat(0.1)
+    assert store._state.vector["boredom"] == pytest.approx(2.0)
 
-    class FakeStore:
-        def heartbeat(self, decay):
-            return {"boredom_bump": False}
 
-        def should_write_diary(self, reason, significant):
-            return False
-
-        def snapshot(self, config=None):
-            return {"pending_corememory_sync": False}
-
-        def sync_corememory(self):
-            pass
-
-        def check_no_response_penalty(self, timeout):
-            seen["timeout"] = timeout
-            return True
-
-        def tier(self):
-            return "normal"
-
-        def should_proactive(self, interval):
-            return False
-
-        def mark_proactive_fired(self):
-            pass
-
-    plugin = impl.Plugin()
-    plugin.ctx = _FakeCtx({})
-    plugin.store = FakeStore()
-    plugin.heartbeat(None)
-    assert seen.get("timeout") == pytest.approx(300.0)
+def test_offline_boredom_catchup_to_max(data_dir, clock):
+    d1 = data_dir / "case1"
+    store = impl.EmotionEngineStore(d1)
+    store.note_user_message("你好")
+    clock.advance(10)
+    store.mark_reply_done()
+    _write_last_decay(d1, clock.now)  # 开始离线
+    clock.advance(5400)  # 离线 1.5 小时
+    reloaded = impl.EmotionEngineStore(d1)
+    assert reloaded._state.vector["boredom"] == pytest.approx(10.0)
 
 
 # ── 离线回归补算 ──
@@ -384,9 +394,6 @@ class _FakeStore:
 
     def sync_corememory(self):
         pass
-
-    def check_no_response_penalty(self, timeout):
-        return False
 
     def tier(self):
         return self.tier_value
@@ -544,7 +551,6 @@ def test_startup_registers_new_configs(data_dir):
         "PROACTIVE_INTERVAL_CHATTY",
         "PROACTIVE_INTERVAL_NORMAL",
         "PROACTIVE_INTERVAL_QUIET",
-        "NO_RESPONSE_TIMEOUT",
     ):
         assert expected in keys
     assert plugin.store is not None

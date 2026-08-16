@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import threading
 import time
 from pathlib import Path
@@ -68,6 +69,33 @@ def _now() -> float:
 
 def _clamp(value: float, min_value: float = 0.0, max_value: float = 10.0) -> float:
     return max(min_value, min(max_value, round(float(value), 3)))
+
+
+# ── 无聊自然增长（非线性饱和曲线） ──
+# 设计目标：不对话时长 + 当前无聊值 两个自变量 → 目标无聊值。
+# 曲线为有限时间到达的幂次饱和型：b(t) = 10 − (√10 − (√10/T)·t)²，t ∈ [0, T]
+#   - 单调递增、导数递减（开头稍快、越接近上限越平缓），"自然"且不会突兀跳变
+#   - T = 5400s（1.5 小时）时恰好到达 10.0（之后封顶）
+#   - 当前值只升不降：b_target = max(current, curve(t))——自然增长方向由曲线决定，
+#     对话带来的降低仍走既有路径（用户消息/回复时 boredom −1 等）
+BOREDOM_MAX = 10.0
+BOREDOM_SATURATION_SECONDS = 5400.0  # 至少 1.5 小时不对话才升到满值
+_BOREDOM_ROOT = math.sqrt(BOREDOM_MAX)
+_BOREDOM_K = _BOREDOM_ROOT / BOREDOM_SATURATION_SECONDS
+
+
+def _boredom_curve(seconds: float) -> float:
+    """不对话时长（秒）→ 自然无聊值（0~10，1.5h 到达 10）。"""
+    t = max(0.0, float(seconds))
+    if t >= BOREDOM_SATURATION_SECONDS:
+        return BOREDOM_MAX
+    remainder = _BOREDOM_ROOT - _BOREDOM_K * t
+    return max(0.0, min(BOREDOM_MAX, BOREDOM_MAX - remainder * remainder))
+
+
+def _boredom_target(seconds: float, current: float) -> float:
+    """双自变量无聊目标：不对话时长 + 当前无聊值 → 目标值（只升不降）。"""
+    return max(float(current), _boredom_curve(seconds))
 
 
 def _agent_root() -> Path:
@@ -170,7 +198,6 @@ class EmotionState:
         self.history: list[dict[str, Any]] = []
         self.last_decay_ts = now
         self.last_interaction_ts = now
-        self.silence_ticks = 0
         self.recent_user_modes: list[str] = []
         self.last_user_message = ""
         self.last_reply = ""
@@ -179,7 +206,6 @@ class EmotionState:
         self.last_diary_ts = 0.0
         self.last_reply_ts = 0.0
         self.last_user_message_ts = 0.0
-        self.last_no_response_penalty_ts = 0.0
         self.last_proactive_ts = now
         self.dominant_emotion = "curiosity"
 
@@ -215,7 +241,6 @@ class EmotionEngineStore:
         ]
         state.last_decay_ts = float(raw.get("last_decay_ts") or _now())
         state.last_interaction_ts = float(raw.get("last_interaction_ts") or _now())
-        state.silence_ticks = int(raw.get("silence_ticks") or 0)
         state.recent_user_modes = list(raw.get("recent_user_modes") or [])[-8:]
         state.last_user_message = str(raw.get("last_user_message") or "")
         state.last_reply = str(raw.get("last_reply") or "")
@@ -224,12 +249,11 @@ class EmotionEngineStore:
         state.last_diary_ts = float(raw.get("last_diary_ts") or 0.0)
         state.last_reply_ts = float(raw.get("last_reply_ts") or 0.0)
         state.last_user_message_ts = float(raw.get("last_user_message_ts") or 0.0)
-        state.last_no_response_penalty_ts = float(raw.get("last_no_response_penalty_ts") or 0.0)
         state.last_proactive_ts = float(raw.get("last_proactive_ts") or _now())
         state.dominant_emotion = str(
             raw.get("dominant_emotion") or self._dominant_from_vector(state.vector)
         )
-        # ── 离线回归补算（与 heartbeat 同逻辑，boredom 除外） ──
+        # ── 离线回归补算（其它情绪按速率衰减；boredom 按非线性曲线补算） ──
         now = _now()
         offline_secs = max(0.0, now - state.last_decay_ts)
         if offline_secs > 60.0:
@@ -240,6 +264,11 @@ class EmotionEngineStore:
                 state.vector[key] = _clamp(
                     state.vector.get(key, 0.0) - self._decay_per_minute * offline_minutes
                 )
+            state.vector["boredom"] = _clamp(
+                _boredom_target(
+                    self._silence_seconds(state), float(state.vector.get("boredom", 0.0))
+                )
+            )
             state.last_decay_ts = now
         return state
 
@@ -249,7 +278,6 @@ class EmotionEngineStore:
             "history": self._state.history[-HISTORY_LIMIT:],
             "last_decay_ts": self._state.last_decay_ts,
             "last_interaction_ts": self._state.last_interaction_ts,
-            "silence_ticks": self._state.silence_ticks,
             "recent_user_modes": self._state.recent_user_modes[-8:],
             "last_user_message": self._state.last_user_message,
             "last_reply": self._state.last_reply,
@@ -258,13 +286,20 @@ class EmotionEngineStore:
             "last_diary_ts": self._state.last_diary_ts,
             "last_reply_ts": self._state.last_reply_ts,
             "last_user_message_ts": self._state.last_user_message_ts,
-            "last_no_response_penalty_ts": self._state.last_no_response_penalty_ts,
             "last_proactive_ts": self._state.last_proactive_ts,
             "dominant_emotion": self._state.dominant_emotion,
         }
         self._state_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    def _silence_seconds(self, state: "EmotionState | None" = None) -> float:
+        """距上次对话（用户消息或回复，取较新者）的秒数；无历史返回 0（不增长）。"""
+        st = state or self._state
+        last = max(st.last_user_message_ts, st.last_reply_ts)
+        if last <= 0:
+            return 0.0
+        return max(0.0, _now() - last)
 
     def _history_24h(self) -> list[dict[str, Any]]:
         cutoff = _now() - 86400
@@ -361,24 +396,6 @@ class EmotionEngineStore:
             self._state.last_reply_ts = _now()
             self._save_state()
 
-    def check_no_response_penalty(self, no_response_timeout: float) -> bool:
-        """距上次 done 超过超时且期间无新用户消息 → boredom +0.5（带冷却）。"""
-        with self._lock:
-            now = _now()
-            if self._state.last_reply_ts <= 0:
-                return False
-            if self._state.last_user_message_ts >= self._state.last_reply_ts:
-                return False
-            if now - self._state.last_reply_ts < no_response_timeout:
-                return False
-            if now - self._state.last_no_response_penalty_ts < no_response_timeout:
-                return False
-            # 复用 apply_signed_emotion_tag_list 同款的有符号情绪应用逻辑
-            self._apply_deltas({"boredom": 0.5}, "no_response_penalty")
-            self._state.last_no_response_penalty_ts = now
-            self._save_state()
-            return True
-
     def snapshot(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             cfg = config or {}
@@ -409,7 +426,6 @@ class EmotionEngineStore:
             self._state.last_user_message = text
             self._state.last_interaction_ts = _now()
             self._state.last_user_message_ts = _now()
-            self._state.silence_ticks = 0
             mode = "task" if len((text or "").strip()) <= 48 else "chat"
             self._state.recent_user_modes.append(mode)
             self._state.recent_user_modes = self._state.recent_user_modes[-8:]
@@ -537,19 +553,21 @@ class EmotionEngineStore:
                     self._state.vector.get(key, 0.0) - decay_per_minute * decay_units
                 )
             self._state.last_decay_ts = _now()
-            self._state.silence_ticks += 1
+            # 无聊自然增长：非线性饱和曲线（双自变量：不对话时长 + 当前无聊值），
+            # 至少 1.5 小时不对话才升到满值；对话降低仍走既有路径（用户消息/回复时 −1 等）
             boredom_bump = False
-            if self._state.silence_ticks >= 6:
-                self._state.vector["boredom"] = _clamp(
-                    self._state.vector.get("boredom", 0.0) + 1.0
-                )
-                self._state.silence_ticks = 0
+            current = float(self._state.vector.get("boredom", 0.0))
+            target = _boredom_target(self._silence_seconds(), current)
+            if target > current + 1e-9:
+                self._state.vector["boredom"] = _clamp(target)
                 boredom_bump = True
             self._state.dominant_emotion = self._dominant_from_vector(
                 self._state.vector
             )
             self._state.pending_corememory_sync = True
-            self._record_history("heartbeat", {"boredom": 1.0 if boredom_bump else 0.0})
+            self._record_history(
+                "heartbeat", {"boredom": target - current if boredom_bump else 0.0}
+            )
             self._save_state()
             return {"boredom_bump": boredom_bump}
 
@@ -649,12 +667,6 @@ class Plugin(FaustPlugin):
                     "type": "int",
                     "label": "主动对话间隔（低落档，秒）",
                     "default": 7200,
-                },
-                {
-                    "key": "NO_RESPONSE_TIMEOUT",
-                    "type": "int",
-                    "label": "无回应惩罚超时（秒）",
-                    "default": 300,
                 },
             ] # type: ignore
         )
@@ -840,12 +852,6 @@ class Plugin(FaustPlugin):
             self._write_diary({"diary_reason": "长时间沉默导致无聊上升"})
         if self.store.snapshot(cfg).get("pending_corememory_sync"):
             self.store.sync_corememory()
-        # ── 无回应惩罚：距上次 done 超时且期间无新消息 → boredom +0.5 ──
-        no_response_timeout = float(cfg.get("NO_RESPONSE_TIMEOUT", 300) or 300)
-        if no_response_timeout > 0 and self.store.check_no_response_penalty(
-            no_response_timeout
-        ):
-            log.debug("emotion-engine: 触发无回应惩罚，boredom +0.5")
         # ── 主动对话调度（silent 档不触发） ──
         if bool(cfg.get("PROACTIVE_ENABLED", True)):
             self._schedule_proactive()
