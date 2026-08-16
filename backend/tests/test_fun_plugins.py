@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.plugin_system import PluginManager
@@ -14,6 +16,13 @@ import faust_backend.config_loader as conf
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'
 STATE_FILE = Path(__file__).resolve().parents[2] / 'logs' / 'plugin-test-state-fun.json'
+
+
+@pytest.fixture(autouse=True)
+def _isolate_plugin_data(tmp_path, monkeypatch):
+    """隔离插件数据目录与启用状态到临时目录，避免测试往真实 ~/.faustbot 注入数据（如 RSS example.com feed）。"""
+    monkeypatch.setattr(conf, "PLUGIN_DATA_ROOT", str(tmp_path / "plugin_data"))
+    monkeypatch.setattr(sys.modules[__name__], "STATE_FILE", str(tmp_path / "plugin-state.json"))
 
 
 def _build_manager() -> PluginManager:
