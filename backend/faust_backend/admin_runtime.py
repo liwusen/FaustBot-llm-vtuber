@@ -68,6 +68,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "MODEL_TYPE": "live2d",
     "LIVE2D_MODEL_PATH": "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json",
     "LIVE2D_MODEL_SCALE": 0.3,
+    "LIVE2D_MOUSE_TRACKING_STRENGTH": 0.5,
     "LIVE2D_MODEL_X": None,
     "LIVE2D_MODEL_Y": None,
     "VRM_MODEL_PATH": "",

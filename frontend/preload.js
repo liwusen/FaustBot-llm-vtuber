@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
   saveModelProfile: (modelDir, json) => ipcRenderer.invoke('soullink-save-profile', { modelDir: String(modelDir || ''), json: json ?? null }),
   isNestedLive2DModelDir: (modelDir) => ipcRenderer.invoke('is-nested-live2d-model-dir', String(modelDir || '')),
   flattenNestedLive2DModelDir: (modelDir) => ipcRenderer.invoke('flatten-nested-live2d-model-dir', String(modelDir || '')),
+  ensureModel3Declarations: (modelDir) => ipcRenderer.invoke('ensure-model3-declarations', String(modelDir || '')),
 });
 
 // deeplink events

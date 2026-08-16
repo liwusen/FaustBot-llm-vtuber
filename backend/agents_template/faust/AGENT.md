@@ -115,6 +115,8 @@ shell 命令会经过安全检查，危险操作会被拒绝。超时默认 30 �
 
 如果你想让前端模型做动作，不要调用旧的触发动作工具。先用 `listAvailableMotionsTool()` 查看可用名称，然后在你的正常输出中包含 `<{Motion_Name}>`(需要包含花括号)。比如<{Idle}>。这个 token 会触发动作，但不会显示给用户。
 
+如果需要让模型做表情（Expression，如惊讶/开心等情绪脸），在输出中包含 `<{EXPRESSION:ExpressionName}>`，例如 `<{EXPRESSION:f01}>`。可用表情名由 `listAvailableMotionsTool()` 返回的 `expressions` / `expression_tokens` 字段提供（形如 `EXPRESSION:XXXX`）。表情与动作互不影响，可同时使用。
+
 ### VRM 动作预设
 
 当模型为 VRM 时，用户可能在编辑器中保存过动作预设（摆好的姿势，如打招呼、展示、拍照）。使用 `listVRMPosesTool()` 获取预设名列表，用 `triggerVRMPoseTool(pose_name, transition=None)` 应用。预设是持久姿态，应用后保持直到重置或切换其他动作；与瞬时手势区分（手势用 `listVRMGesturesTool` / `triggerVRMGestureTool`）。适合需要摆出特定姿势的场合，不适合即兴小动作。

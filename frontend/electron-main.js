@@ -958,6 +958,68 @@ ipcMain.handle('flatten-nested-live2d-model-dir', (_event, modelDir) => {
   return result;
 });
 
+// ── model3.json 缺 Motion/Expression 声明时按文件名补全 ──
+// 部分模型（如 yumi）的 model3.json 未声明 FileReferences.Motions / Expressions，
+// 但目录里有 *.motion3.json / *.exp3.json。pixi-live2d-display 只按声明加载，
+// 因此补全声明并写回 model3.json，才能通过文件名识别并渲染这些 Motion/Expression。
+function ensureModel3Declarations(modelDir) {
+  try {
+    const dir = String(modelDir || '').trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(dir)) return { ok: false, error: 'modelDir 只能包含字母、数字、下划线和短横线' };
+    const modelDirAbs = path.join(getLive2DModelDir(), dir);
+    if (!fs.existsSync(modelDirAbs)) return { ok: false, error: '模型目录不存在: ' + dir };
+    const model3Files = fs.readdirSync(modelDirAbs).filter((n) => n.toLowerCase().endsWith('.model3.json'));
+    if (model3Files.length === 0) return { ok: false, error: '未找到 model3.json' };
+    const model3Path = path.join(modelDirAbs, model3Files[0]);
+    const model3 = JSON.parse(fs.readFileSync(model3Path, 'utf8'));
+    if (!model3 || typeof model3 !== 'object') return { ok: false, error: 'model3.json 解析失败' };
+    const fr = model3.FileReferences || (model3.FileReferences = {});
+    let modified = false;
+
+    const motions = fr.Motions;
+    const hasMotions = motions && typeof motions === 'object' && Object.keys(motions).length > 0;
+    if (!hasMotions) {
+      const motionFiles = fs.readdirSync(modelDirAbs)
+        .filter((n) => n.toLowerCase().endsWith('.motion3.json'))
+        .sort();
+      if (motionFiles.length > 0) {
+        const map = {};
+        for (const name of motionFiles) {
+          map[name.replace(/\.motion3\.json$/i, '')] = [{ File: name }];
+        }
+        fr.Motions = map;
+        modified = true;
+      }
+    }
+
+    const expressions = fr.Expressions;
+    const hasExpressions = Array.isArray(expressions) && expressions.length > 0;
+    if (!hasExpressions) {
+      const expFiles = fs.readdirSync(modelDirAbs)
+        .filter((n) => n.toLowerCase().endsWith('.exp3.json'))
+        .sort();
+      if (expFiles.length > 0) {
+        fr.Expressions = expFiles.map((name) => ({
+          Name: name.replace(/\.exp3\.json$/i, ''),
+          File: name,
+        }));
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      fs.writeFileSync(model3Path, JSON.stringify(model3, null, 2), 'utf8');
+      console.log('[model3] 补全 Motion/Expression 声明:', model3Path,
+        `motions=${Object.keys(fr.Motions || {}).length} expressions=${(fr.Expressions || []).length}`);
+    }
+    return { ok: true, modified, model3 };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+ipcMain.handle('ensure-model3-declarations', (_event, modelDir) => ensureModel3Declarations(modelDir));
+
 function showMainWindow(){
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();

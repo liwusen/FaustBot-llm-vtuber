@@ -71,6 +71,9 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let Live2DModel=null;
   let textChatSending = false;
   let availableMotions = [];
+  let availableExpressions = [];
+  let mouseTrackingStrength = 0.5; // LIVE2D_MOUSE_TRACKING_STRENGTH（0=关闭头部跟踪）
+  let mouseTrackingInited = false;
   let hoverModel = false;
   let hoverQuickController = false;
   let interactionLocked = false;
@@ -375,6 +378,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           hasLive2DModel: !!currentModel,
           hasVRMModel: !!vrmScene,
           availableMotions: Array.isArray(availableMotions) ? [...availableMotions] : [],
+          availableExpressions: Array.isArray(availableExpressions) ? [...availableExpressions] : [],
           agentIsProcessing,
         };
       },
@@ -615,6 +619,40 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     return Object.keys(motions);
   }
 
+  function extractExpressionNames(modelDef){
+    const expressions = (((modelDef || {}).FileReferences || {}).Expressions) || [];
+    if (!Array.isArray(expressions)) return [];
+    return expressions.map((item) => String((item && item.Name) || '').trim()).filter(Boolean);
+  }
+
+  // 判断 model3 是否缺少 Motion/Expression 声明（缺少时按文件名扫描补全，pixi 才能渲染）
+  function modelHasMotionOrExpressionDecls(modelDef){
+    const fr = (modelDef || {}).FileReferences || {};
+    const motions = fr.Motions;
+    const expressions = fr.Expressions;
+    const hasMotions = motions && typeof motions === 'object' && Object.keys(motions).length > 0;
+    const hasExpressions = Array.isArray(expressions) && expressions.length > 0;
+    return hasMotions || hasExpressions;
+  }
+
+  // 缺声明时通过 IPC 让主进程按文件名扫描 *.motion3.json / *.exp3.json 补全并写回 model3.json，
+  // 返回补全后的 model3 定义（文件已写回，pixi Live2DModel.from 读取的即为补全内容）
+  async function ensureModel3Declarations(modelDir, modelDef){
+    if (!modelDir || !window.api || typeof window.api.ensureModel3Declarations !== 'function') return null;
+    if (modelHasMotionOrExpressionDecls(modelDef)) return null;
+    try {
+      const res = await window.api.ensureModel3Declarations(modelDir);
+      if (res && res.ok && res.model3) {
+        if (res.modified) console.info('[model3] 已按文件名补全 Motion/Expression 声明:', modelDir);
+        return res.model3;
+      }
+      if (res && res.error) console.warn('[model3] 补全声明失败:', res.error);
+    } catch (e) {
+      console.warn('[model3] ensureModel3Declarations error:', e);
+    }
+    return null;
+  }
+
   function extractLipSyncParamIds(modelDef){
     const groups = Array.isArray(modelDef && modelDef.Groups) ? modelDef.Groups : [];
     for (const group of groups){
@@ -839,6 +877,62 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
   }
 
+  // 鼠标跟踪强度：监听 pixi EventSystem 的 globalpointermove，把目标点按强度向模型中心
+  // 收缩后调用 model.focus（强度 0 = 完全不跟随鼠标）。
+  // 说明：soullink 无 autoFocus 逻辑；默认跟踪来自 pixi-live2d-display 的 Automator，
+  // 已在 Live2DModel.from 里以 autoFocus:false 关闭，这里自建按强度控制的轻量跟踪。
+  function currentMouseTrackingStrength(){
+    const raw = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MOUSE_TRACKING_STRENGTH;
+    const parsed = Number(raw);
+    mouseTrackingStrength = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.5;
+    return mouseTrackingStrength;
+  }
+
+  function initMouseTracking(){
+    if (mouseTrackingInited) return;
+    mouseTrackingInited = true;
+    // 注意：pixi v7 的 globalpointermove 只派发给 interactive 显示对象（EventBoundary.all），
+    // renderer.events.on('globalpointermove') 永远不会触发。
+    // 因此改用原生 window pointermove（必定触发），用 canvas 布局矩形把 clientX/Y 换算成世界坐标。
+    window.addEventListener('pointermove', (e) => {
+      if (!currentModel || typeof currentModel.focus !== 'function') return;
+      const strength = currentMouseTrackingStrength();
+      if (strength <= 0) return;
+      const canvas = app && app.renderer && app.renderer.view;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      // autoDensity 下 canvas CSS 尺寸 = pixi 逻辑尺寸 → clientX - rect.left 即世界坐标
+      const gx = e.clientX - rect.left;
+      const gy = e.clientY - rect.top;
+      if (!Number.isFinite(gx) || !Number.isFinite(gy)) return;
+      // 目标点按强度向模型中心收缩（模型中心 = 当前舞台坐标）
+      const targetX = currentModel.x + (gx - currentModel.x) * strength;
+      const targetY = currentModel.y + (gy - currentModel.y) * strength;
+      currentModel.focus(targetX, targetY);
+    });
+  }
+
+  // 鼠标跟踪的最终覆盖参数：pixi 的 updateFocus()（addParameterValueById）发生在
+  // beforeModelUpdate 之前，会被 soullink 注入（setParameterValueById）覆盖，导致跟踪不生效。
+  // 这里把 focusController 的方向按 pixi 同款公式换算，合并进 inject 的 getParams 结果
+  // （作为同键覆盖值），保证渲染的是"跟踪后的头部/视线"。
+  function focusParamOverrides(model){
+    if (currentMouseTrackingStrength() <= 0) return {};
+    const internal = model && model.internalModel;
+    if (!internal || !internal.focusController) return {};
+    const fc = internal.focusController;
+    if (!fc.x && !fc.y) return {};
+    const out = {};
+    if (internal.idParamEyeBallX) out[internal.idParamEyeBallX] = fc.x;
+    if (internal.idParamEyeBallY) out[internal.idParamEyeBallY] = fc.y;
+    if (internal.idParamAngleX) out[internal.idParamAngleX] = fc.x * 30;
+    if (internal.idParamAngleY) out[internal.idParamAngleY] = fc.y * 30;
+    if (internal.idParamAngleZ) out[internal.idParamAngleZ] = fc.x * fc.y * -30;
+    if (internal.idParamBodyAngleX) out[internal.idParamBodyAngleX] = fc.x * 10;
+    return out;
+  }
+
   function playRandomMotion(){
     const pool = availableMotions.length ? availableMotions : ['Idle'];
     const picked = pool[Math.floor(Math.random() * pool.length)];
@@ -848,6 +942,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   function triggerModelMotion(name){
     const motionName = String(name || '').trim();
     if (!motionName) return false;
+    // EXPRESSION: 前缀 → 触发表情（Live2D Expression / VRM Expression）
+    if (motionName.toUpperCase().startsWith('EXPRESSION:')) {
+      return triggerModelExpression(motionName.slice('EXPRESSION:'.length).trim());
+    }
     const now = Date.now();
     const cooldownKey = `${modelType}:${motionName}`;
     const lastTs = recentMotionTriggers.get(cooldownKey) || 0;
@@ -864,6 +962,38 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     } else {
       if (availableMotions.includes(motionName)) {
         triggered = playMotionByName(motionName);
+      }
+    }
+    if (triggered) {
+      recentMotionTriggers.set(cooldownKey, now);
+    }
+    return triggered;
+  }
+
+  // 触发 Live2D Expression / VRM Expression（带冷却，与 motion 共用触发频率控制）
+  function triggerModelExpression(name){
+    const exprName = String(name || '').trim();
+    if (!exprName) return false;
+    const now = Date.now();
+    const cooldownKey = `${modelType}:expr:${exprName}`;
+    const lastTs = recentMotionTriggers.get(cooldownKey) || 0;
+    if (now - lastTs < motionTriggerCooldownMs) return false;
+
+    let triggered = false;
+    if (modelType === 'vrm' && vrmScene) {
+      const expressions = Array.isArray(vrmScene.getAvailableExpressions?.()) ? vrmScene.getAvailableExpressions() : [];
+      if (expressions.includes(exprName)) {
+        triggered = !!vrmScene.setExpression(exprName);
+      }
+    } else if (modelType === 'live2d' && currentModel) {
+      if (availableExpressions.includes(exprName) && typeof currentModel.expression === 'function') {
+        try {
+          const result = currentModel.expression(exprName);
+          if (result && typeof result.catch === 'function') result.catch(() => {});
+          triggered = true;
+        } catch (e) {
+          console.warn('播放 expression 失败', exprName, e);
+        }
       }
     }
     if (triggered) {
@@ -1148,7 +1278,12 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       soullinkLayer.setLipSyncEnabled(true);
       soullinkLayer.setIdleEnabled(true);
       console.info('[soullink] setup 步骤5/5: attachModelInjection ...');
-      soullinkInjection = window.Soullink.attachModelInjection(model, () => soullinkLayer ? soullinkLayer.getParams() : {}, true);
+      soullinkInjection = window.Soullink.attachModelInjection(model, () => {
+        const base = soullinkLayer ? soullinkLayer.getParams() : {};
+        // 鼠标跟踪覆盖（focus 参数最终生效，避免被 soullink 注入覆盖）
+        const focusOverrides = focusParamOverrides(model);
+        return focusOverrides ? { ...base, ...focusOverrides } : base;
+      }, true);
       if (!soullinkInjection) {
         try { soullinkLayer.destroy(); } catch (e) {}
         soullinkLayer = null;
@@ -2377,6 +2512,26 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
       return;
     }
+    // /motion <名称>：触发指定 Live2D Motion / VRM Expression（支持 EXPRESSION: 前缀）
+    const motionCmd = text.match(/^\/motion\s+(.+)$/);
+    if (motionCmd) {
+      textChatInput.value = '';
+      showResultBubble('user', text);
+      const name = String(motionCmd[1] || '').trim();
+      const ok = name ? triggerModelMotion(name) : false;
+      showResultBubble(ok ? 'ai' : 'error', ok ? `已触发动作: ${name}` : `动作不存在或不可用: ${name}`);
+      return;
+    }
+    // /expression <名称>：触发指定 Expression（Live2D exp3 / VRM Expression）
+    const exprCmd = text.match(/^\/expression\s+(.+)$/);
+    if (exprCmd) {
+      textChatInput.value = '';
+      showResultBubble('user', text);
+      const name = String(exprCmd[1] || '').trim();
+      const ok = name ? triggerModelExpression(name) : false;
+      showResultBubble(ok ? 'ai' : 'error', ok ? `已触发表情: ${name}` : `表情不存在或不可用: ${name}`);
+      return;
+    }
     // Auto-interrupt if agent is currently processing
     if (agentIsProcessing) {
       await interruptAgentAndWait();
@@ -3479,6 +3634,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const sprite = new PIXI.Sprite(createMissingModelTexture());
       currentModel = sprite;
       availableMotions = [];
+      availableExpressions = [];
       currentLipSyncParamIds = [];
       sprite._faustFallback = true;
       sprite.anchor.set(0.5, 1.0);
@@ -3551,6 +3707,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     currentModel = sprite;
     runtimeImageModelConfig = resolvedConfig;
     availableMotions = resolvedConfig.emotions.map((item) => item.name);
+    availableExpressions = [];
     currentLipSyncParamIds = [];
     let pointerDownTime = 0;
     sprite.anchor.set(0.5, 1.0);
@@ -3706,16 +3863,22 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       return;
     }
     showOverlay('加载模型: ' + path);
+    const loadModelDir = soullinkModelDirFromPath(path);
     resolveFrontendAssetPath(path).then((resolvedPath)=>{
       console.log('Resolved model path:', resolvedPath);
       if (!resolvedPath) throw new Error('模型路径解析失败');
-      return readModelDefinition(resolvedPath).then((modelDef)=> ({ modelDef, resolvedPath }));
+      return readModelDefinition(resolvedPath).then(async (modelDef)=>{
+        // model3.json 缺 Motion/Expression 声明时按文件名补全（写回文件，pixi 才能渲染）
+        const enhanced = await ensureModel3Declarations(loadModelDir, modelDef);
+        return { modelDef: enhanced || modelDef, resolvedPath };
+      });
     }).then(({ modelDef, resolvedPath })=>{
       if (loadRequestId !== activeModelLoadRequestId) throw new Error('stale model load request');
       if (!modelDef) throw new Error('无法读取模型定义文件');
       availableMotions = extractMotionNames(modelDef);
+      availableExpressions = extractExpressionNames(modelDef);
       currentLipSyncParamIds = extractLipSyncParamIds(modelDef);
-      return Live2DModel.from(resolvedPath);
+      return Live2DModel.from(resolvedPath, { autoFocus: false, autoUpdate: true });
     }).then(model => {
       if (loadRequestId !== activeModelLoadRequestId) return;
       // 移除上个模型（先卸载 soullink 注入，避免旧模型残留监听）
@@ -3785,6 +3948,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       applyModelScale();
       // keep reference for mouth sync
       model._faustLive2D = { mouthValue: 0 };
+      // 鼠标跟踪监听（幂等注册；autoFocus 已在 from 里关闭）
+      initMouseTracking();
       // soullink 表演层（异步初始化，不阻塞模型展示）
       setupSoullinkForModel(model, path);
 

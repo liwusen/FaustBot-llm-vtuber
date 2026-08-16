@@ -47,6 +47,25 @@ def _read_model_motion_names(model_path: Path) -> list[str]:
     return sorted([str(k) for k in motions.keys() if str(k).strip()])
 
 
+def _read_model_expression_names(model_path: Path) -> list[str]:
+    if not model_path.exists() or not model_path.is_file():
+        return []
+    try:
+        data = json.loads(model_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    expressions = (((data or {}).get("FileReferences") or {}).get("Expressions") or [])
+    if not isinstance(expressions, list):
+        return []
+    return sorted(
+        [
+            str(item.get("Name") or "").strip()
+            for item in expressions
+            if isinstance(item, dict) and str(item.get("Name") or "").strip()
+        ]
+    )
+
+
 def _get_model_type() -> str:
     cfg = conf.config or {}
     return str(cfg.get("MODEL_TYPE", "live2d") or "live2d").strip().lower()
@@ -57,12 +76,16 @@ def _get_model_type() -> str:
 def listAvailableMotionsTool() -> str:
     """
     Description:
-        获取当前模型可用的 Motion/Expression 名称列表。
-        Live2D 模式列表来源于 model3.json；VRM 模式返回标准表情预设。
+        获取当前模型可用的 Motion / Expression 名称列表。
+        Live2D 模式列表来源于 model3.json（Motions 与 Expressions）；
+        VRM 模式返回标准表情预设。
+        触发方式：在正常输出文本中包含 <{MotionName}> 触发动作；
+        包含 <{EXPRESSION:ExpressionName}> 触发表情（Expression）。
     Args:
         None
     Returns:
-        str(json): 包含 model_type、model_path、motion_count、motions/expressions。
+        str(json): 包含 model_type、model_path、motion_count、motions、
+                   expressions、expression_tokens（EXPRESSION:XXXX 形式）。
     """
     try:
         model_type = _get_model_type()
@@ -72,20 +95,25 @@ def listAvailableMotionsTool() -> str:
                 "model_type": "vrm",
                 "motion_count": len(VRM_EXPRESSIONS),
                 "expressions": VRM_EXPRESSIONS,
-                "note": "VRM standard expression presets. Trigger one by including <{ExpressionName}> in the assistant output.",
+                "expression_tokens": [f"EXPRESSION:{name}" for name in VRM_EXPRESSIONS],
+                "note": "VRM standard expression presets. Trigger one by including <{ExpressionName}> or <{EXPRESSION:ExpressionName}> in the assistant output.",
             }
             log.info("VRM expressions: %s", VRM_EXPRESSIONS)
             return json.dumps(payload, ensure_ascii=False)
         model_path = _resolve_live2d_model_path()
         motions = _read_model_motion_names(model_path)
+        expressions = _read_model_expression_names(model_path)
         payload = {
             "status": "ok",
             "model_type": "live2d",
             "model_path": str(model_path),
             "motion_count": len(motions),
             "motions": motions,
+            "expressions": expressions,
+            "expression_tokens": [f"EXPRESSION:{name}" for name in expressions],
+            "note": "包含 <{MotionName}> 触发动作；包含 <{EXPRESSION:ExpressionName}> 触发表情。",
         }
-        log.info("model=%s count=%d", model_path, len(motions))
+        log.info("model=%s count=%d expressions=%d", model_path, len(motions), len(expressions))
         return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)

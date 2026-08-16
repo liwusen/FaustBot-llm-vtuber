@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import json
 import threading
@@ -99,6 +100,16 @@ async def _read_smtc_now() -> dict[str, Any] | None:
         manager = await _SMTCManager.request_async()
         session = manager.get_current_session()
         if session is None:
+            return None
+        # 排除 Faust/Electron 自身的媒体会话（如前端 TTS 播放）：
+        # 否则 Faust 自己播语音时会被当作"系统媒体播放"触发 smtc_playing 规则。
+        try:
+            app_id = getattr(session, 'source_app_user_model_id', None)
+            if asyncio.iscoroutine(app_id):
+                app_id = await app_id
+        except Exception:
+            app_id = None
+        if app_id and any(k in str(app_id).lower() for k in ('faust', 'electron')):
             return None
         props = await session.try_get_media_properties_async()
         info = session.get_playback_info()
