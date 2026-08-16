@@ -12,7 +12,7 @@
     "build:codemirror": "esbuild libs/configer/.codemirror-entry.js --bundle --platform=browser --format=iife --outfile=libs/codemirror/codemirror-bundle.js --minify-syntax",
     "build:markdown": "esbuild libs/markdown/.markdown-entry.js --bundle --platform=browser --format=iife --outfile=libs/markdown/markdown-bundle.js --minify-syntax",
     "build:vrm": "esbuild vrm-renderer.js --bundle --platform=browser --format=esm --outfile=libs/vrm-renderer.bundle.js --minify-syntax",
-    "build:live2d": "esbuild libs/pixi-live2d/.pixi-live2d-entry.js --bundle --platform=browser --format=iife --outfile=libs/pixi-live2d.bundle.js --minify-syntax",
+    "build:live2d": "node scripts/build-live2d.js",
     "build:soullink": "esbuild libs/soullink/.soullink-entry.js --bundle --platform=browser --format=iife --outfile=libs/soullink.bundle.js --minify-syntax",
     "build:soullink-main": "esbuild libs/soullink/.profile-generator-entry.js --bundle --platform=node --format=cjs --outfile=libs/soullink/profile-generator.cjs --minify-syntax",
     "package": "npm run build:bundle && electron-builder --win dir",

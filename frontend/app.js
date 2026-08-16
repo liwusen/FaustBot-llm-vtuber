@@ -3665,7 +3665,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     if (modelPathInput) modelPathInput.value = '__faust_images__';
   }
 
-  function loadModel(path){
+  async function loadModel(path){
     const ext = String(path || '').toLowerCase().trim();
     if (ext === '__faust_images__') {
       loadImageModel(runtimeImageModelConfig || (runtimeLive2DConfig && runtimeLive2DConfig.IMAGE_MODEL_CONFIG) || {}).catch((err) => {
@@ -3678,6 +3678,20 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     if (ext.endsWith('.vrm')) {
       loadVRMModel(path);
       return;
+    }
+    // 拒绝加载嵌套目录模型（*.model3.json 在子目录，soullink profile 无法生成）
+    const nestedModelDir = soullinkModelDirFromPath(path);
+    if (nestedModelDir && window.api && typeof window.api.isNestedLive2DModelDir === 'function') {
+      try {
+        if (await window.api.isNestedLive2DModelDir(nestedModelDir)) {
+          console.warn('[loadModel] 嵌套目录模型已拒绝加载:', nestedModelDir);
+          showResultBubble('error', `模型目录「${nestedModelDir}」为嵌套结构（*.model3.json 位于子目录），已拒绝加载。\n请在下次启动时选择「自动摊平」，或手动把模型文件移到目录顶层。`);
+          showModelLoadFallback();
+          return;
+        }
+      } catch (e) {
+        console.warn('[loadModel] 嵌套目录检查失败，继续加载:', e);
+      }
     }
     if (modelType !== 'live2d') {
       switchToLive2DRenderer();

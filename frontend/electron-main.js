@@ -9,6 +9,9 @@ const { spawn, exec } = require('child_process');
 
 const net = require('net');
 
+// Live2D 模型目录布局检测/摊平（纯 Node 模块）
+const live2dModelLayout = require(path.join(__dirname, 'libs', 'live2d-model-layout.js'));
+
 let mainWindow = null;
 let configWindow = null;
 let tray = null;
@@ -939,6 +942,22 @@ ipcMain.handle('soullink-save-profile', async (_event, req) => {
   return saveSoullinkProfile(payload.modelDir, payload.json);
 });
 
+// ── 嵌套目录模型查询/摊平（前端加载模型前检查） ──
+ipcMain.handle('is-nested-live2d-model-dir', (_event, modelDir) => isNestedLive2DModelDir(modelDir));
+
+ipcMain.handle('flatten-nested-live2d-model-dir', (_event, modelDir) => {
+  const dir = String(modelDir || '').trim();
+  const item = nestedLive2DModelDirs.find((n) => n.modelDir === dir);
+  if (!item) return { ok: false, error: '非嵌套目录' };
+  if (!item.flattable) return { ok: false, error: `目录包含 ${item.model3Paths.length} 份 model3.json（多角色），无法自动摊平` };
+  const result = live2dModelLayout.flattenNestedModelDir(
+    path.join(getLive2DModelDir(), dir),
+    item.model3Paths[0]
+  );
+  if (result.ok) refreshNestedLive2DModelDirs();
+  return result;
+});
+
 function showMainWindow(){
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
@@ -955,6 +974,65 @@ function showMainWindow(){
     console.error('showMainWindow failed', e);
     return false;
   }
+}
+
+// ── 嵌套目录模型检测 / 摊平提示（soullink profile 无法生成嵌套布局） ──
+let nestedLive2DModelDirs = []; // scanNestedModelDirs 结果缓存
+
+function refreshNestedLive2DModelDirs() {
+  nestedLive2DModelDirs = live2dModelLayout.scanNestedModelDirs(getLive2DModelDir());
+  return nestedLive2DModelDirs;
+}
+
+function isNestedLive2DModelDir(modelDir) {
+  const dir = String(modelDir || '').trim();
+  return nestedLive2DModelDirs.some((item) => item.modelDir === dir);
+}
+
+async function promptNestedModelFlatten() {
+  const nested = refreshNestedLive2DModelDirs();
+  if (nested.length === 0) return;
+  const lines = nested.map((item) =>
+    `  - ${item.modelDir}（${item.flattable ? '单角色，可自动摊平' : `含 ${item.model3Paths.length} 个角色，需手动整理`}）`
+  );
+  const { response } = await dialog.showMessageBox(mainWindow || undefined, {
+    type: 'warning',
+    title: '检测到嵌套目录模型',
+    message: '以下 Live2D 模型的 *.model3.json 位于子目录（soullink profile 无法生成）：',
+    detail: lines.join('\n') + '\n\n选择「自动摊平」将把单角色模型的文件平移到模型目录顶层（多角色目录需手动整理）。\n未处理的嵌套目录模型将被拒绝加载。',
+    buttons: ['自动摊平', '暂不处理'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response !== 0) return;
+  const flattened = [];
+  const skipped = [];
+  for (const item of nested) {
+    if (!item.flattable) {
+      skipped.push(item.modelDir);
+      continue;
+    }
+    const result = live2dModelLayout.flattenNestedModelDir(
+      path.join(getLive2DModelDir(), item.modelDir),
+      item.model3Paths[0]
+    );
+    if (result.ok) flattened.push(item.modelDir);
+    else skipped.push(`${item.modelDir}（${result.error}）`);
+  }
+  refreshNestedLive2DModelDirs();
+  if (flattened.length) console.log('[nested-models] 已自动摊平:', flattened.join(', '));
+  if (skipped.length) console.warn('[nested-models] 未处理:', skipped.join('; '));
+  await dialog.showMessageBox(mainWindow || undefined, {
+    type: flattened.length ? 'info' : 'warning',
+    title: '嵌套目录模型处理完成',
+    message: [
+      flattened.length ? `已自动摊平 ${flattened.length} 个模型目录：${flattened.join('、')}` : '',
+      skipped.length ? `未处理 ${skipped.length} 个（需手动整理）：${skipped.join('；')}` : '',
+      '刷新模型列表后即可正常加载与生成 soullink profile。',
+    ].filter(Boolean).join('\n\n'),
+    buttons: ['确定'],
+  });
 }
 
 function hideMainWindowToTray(){
@@ -1136,6 +1214,13 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   registerGlobalShortcuts();
+  // 嵌套目录模型检测：提示用户摊平（未处理目录将被前端拒绝加载）
+  try {
+    refreshNestedLive2DModelDirs();
+    void promptNestedModelFlatten();
+  } catch (e) {
+    console.warn('[nested-models] 嵌套目录检测失败:', e && e.message ? e.message : e);
+  }
   for (const arg of process.argv) {
     if (typeof arg === 'string' && arg.startsWith(`${FAUST_PROTOCOL}://`)) {
       queueDeepLinkUrl(arg);
