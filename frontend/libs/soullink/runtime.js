@@ -45,6 +45,10 @@ export function createSoullinkLayer({ profile, personality, motionStyle, audioLe
       return runtime.startVoiceWaitingMotion(nowSeconds, seedValue, options);
     },
 
+    clearVoiceWaitingMotion() {
+      runtime.clearVoiceWaitingMotion();
+    },
+
     setProfile(profile) {
       runtime.setProfile(profile);
     },

@@ -1184,6 +1184,23 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     } catch (e) { /* 忽略 */ }
   }
 
+  // 等待/聆听姿态：用户开始说话（VAD 检测到语音）时触发，
+  // 让角色在"听"的过程中保持灵动（慢摇/好奇前倾等，约 9s）；用户说话结束即清除。
+  function onUserSpeechStart(){
+    if (!soullinkLayer) return;
+    try {
+      const info = soullinkLayer.startVoiceWaitingMotion(soullinkNow());
+      console.info('[soullink:voicewait] 用户开始说话 → 聆听姿态:', info ? info.label : 'started');
+    } catch (e) { /* 忽略 */ }
+  }
+  function onUserSpeechEnd(){
+    if (!soullinkLayer) return;
+    try {
+      soullinkLayer.clearVoiceWaitingMotion();
+      console.info('[soullink:voicewait] 用户说话结束 → 聆听姿态已清除');
+    } catch (e) { /* 忽略 */ }
+  }
+
   function soullinkTick(nowMs){
     soullinkTickRaf = requestAnimationFrame(soullinkTick);
     if (!soullinkLayer || !soullinkInjection || modelType !== 'live2d' || !currentModel) {
@@ -1261,9 +1278,14 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   function initSoullinkDriver(){
     if (soullinkInitialized) return;
     soullinkInitialized = true;
-    // 诊断钩子：控制台可查看表演层实时状态与参数
+    // 诊断/调试钩子：浏览器 Console 可直接调用 window.__soullinkDebug.xxx
+    // 所有触发类方法统一使用 soullinkNow()（performance.now 基准），避免状态机时间错乱。
     try {
+      const debugEngine = () => (soullinkLayer && soullinkLayer.runtime) || null;
+      const debugFail = (err) => ({ ok: false, error: String(err && err.message ? err.message : err) });
+      const debugClamp = (v, min, max) => Math.max(min, Math.min(max, Number(v) || min));
       window.__soullinkDebug = {
+        // ── 查询 ──
         getState: () => ({
           hasSoullinkLib: !!window.Soullink,
           layerActive: !!soullinkLayer,
@@ -1273,10 +1295,117 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           modelType,
         }),
         getParams: () => (soullinkLayer ? soullinkLayer.getParams() : {}),
-        // 仅调试用：卸载表演层（不恢复内部 eyeBlink）
-        disable: () => { teardownSoullink(); return true; },
-        // 仅调试用：暂停/恢复 engine 空闲层
+        // 完整快照摘要（state / 情绪 / FACS / native 动画）
+        getSnapshot: () => {
+          const s = soullinkLayer ? soullinkLayer.getSnapshot() : null;
+          if (!s) return { ok: false, error: '表演层未激活' };
+          return {
+            state: s.state,
+            emotionIntent: s.emotionIntent ? { emotion: s.emotionIntent.emotion, intensity: Number(s.emotionIntent.intensity.toFixed(3)) } : null,
+            vad: s.vad ? { dominantEmotion: s.vad.dominantEmotion, current: s.vad.current, intensity: Number(s.vad.intensity.toFixed(3)) } : null,
+            facs: s.facs ? {
+              eyeBlinkL: r3(s.facs.eyeBlinkL), eyeBlinkR: r3(s.facs.eyeBlinkR), eyeOpen: r3(s.facs.eyeOpen),
+              mouthOpen: r3(s.facs.mouthOpen), mouthSmile: r3(s.facs.mouthSmile),
+              headX: r3(s.facs.headX), headY: r3(s.facs.headY), breath: r3(s.facs.breath),
+            } : null,
+            params: Object.keys(s.live2dParams || {}).length,
+            nativeAnimation: s.nativeAnimation ? { token: s.nativeAnimation.token, expression: s.nativeAnimation.expression, motion: s.nativeAnimation.motion } : null,
+            proactive: s.proactive ? { id: s.proactive.id, silenceSeconds: Number(s.proactive.silenceSeconds.toFixed(1)) } : null,
+            idleEnabled: s.idleEnabled,
+            lipSyncEnabled: s.lipSyncEnabled,
+          };
+        },
+        // engine 支持的完整情绪预设列表（VAD 坐标）
+        getEmotions: () => (window.Soullink && window.Soullink.EMOTION_PRESETS
+          ? Object.keys(window.Soullink.EMOTION_PRESETS)
+          : ['calm', 'happy', 'excited', 'shy', 'affectionate', 'curious', 'confused', 'tired', 'sad', 'anxiety', 'anger', 'angry', 'concerned', 'surprised']),
+        getProfile: () => ({
+          source: soullinkProfileSource,
+          mappedKeys: soullinkLayer && soullinkLayer.runtime ? Object.keys(soullinkLayer.runtime.getSnapshot().profile.parameterMap || {}).length : 0,
+        }),
+
+        // ── 情绪触发 ──
+        // 用法: triggerIntent('excited') | triggerIntent('excited', 0.9) | triggerIntent({emotion:'sad', intensity:0.7, contextTags:['debug']})
+        triggerIntent: (arg, intensity) => {
+          const rt = debugEngine();
+          if (!rt) return { ok: false, error: '表演层未激活' };
+          let intent;
+          if (typeof arg === 'string') {
+            intent = { emotion: arg, intensity: debugClamp(intensity === undefined ? 0.6 : intensity, 0, 1), contextTags: ['debug'] };
+          } else if (arg && typeof arg === 'object') {
+            intent = {
+              emotion: String(arg.emotion || 'calm'),
+              intensity: debugClamp(arg.intensity === undefined ? 0.5 : arg.intensity, 0, 1),
+              contextTags: Array.isArray(arg.contextTags) ? arg.contextTags.map(String) : ['debug'],
+            };
+          } else {
+            return { ok: false, error: '参数必须是情绪名或 {emotion, intensity?, contextTags?}' };
+          }
+          try {
+            rt.triggerIntent(intent, soullinkNow());
+            console.info('[soullink:debug] triggerIntent', intent);
+            return { ok: true, intent };
+          } catch (e) { return debugFail(e); }
+        },
+        // 查看 6维→soullink 桥接结果（不触发表演）
+        bridge: (dominantKey, value) => {
+          try { return { ok: true, intent: window.Soullink.mapEmotionToIntent(dominantKey, value) }; }
+          catch (e) { return debugFail(e); }
+        },
+        // 本地正则分类消息 → 触发意图
+        sendMessage: (text) => {
+          const rt = debugEngine();
+          if (!rt) return { ok: false, error: '表演层未激活' };
+          try {
+            const intent = rt.sendMessage(String(text || ''), soullinkNow());
+            console.info('[soullink:debug] sendMessage', text, '→', intent);
+            return { ok: true, intent };
+          } catch (e) { return debugFail(e); }
+        },
+
+        // ── 表演开关 ──
         setIdleEnabled: (v) => { if (soullinkLayer) { try { soullinkLayer.setIdleEnabled(!!v); } catch (e) {} } return !!soullinkLayer; },
+        setLipSyncEnabled: (v) => { if (soullinkLayer) { try { soullinkLayer.setLipSyncEnabled(!!v); } catch (e) {} } return !!soullinkLayer; },
+        setVoicePlaybackActive: (v) => { if (soullinkLayer) { try { soullinkLayer.setVoicePlaybackActive(!!v); } catch (e) {} } return !!soullinkLayer; },
+        // 触发说话等待姿态（约 9 秒）
+        startVoiceWaitingMotion: () => {
+          const rt = debugEngine();
+          if (!rt) return { ok: false, error: '表演层未激活' };
+          try { return { ok: true, info: rt.startVoiceWaitingMotion(soullinkNow()) }; }
+          catch (e) { return debugFail(e); }
+        },
+        // 手动 FACS 覆盖（如 {mouthSmile: 0.8}），传 null/空对象清除
+        setManualFACS: (facs) => {
+          const rt = debugEngine();
+          if (!rt) return { ok: false, error: '表演层未激活' };
+          try {
+            if (!facs || typeof facs !== 'object') { rt.clearManualFACS(); return { ok: true, cleared: true }; }
+            rt.setManualFACS({ ...facs });
+            return { ok: true, facs };
+          } catch (e) { return debugFail(e); }
+        },
+        clearManualFACS: () => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.clearManualFACS(); return { ok: true }; } catch (e) { return debugFail(e); } },
+
+        // ── 风格/增益 ──
+        setMotionStyle: (options) => {
+          const rt = debugEngine();
+          if (!rt) return { ok: false, error: '表演层未激活' };
+          try { rt.setMotionStyle(options || {}); return { ok: true, motionStyle: rt.getMotionStyle() }; }
+          catch (e) { return debugFail(e); }
+        },
+        setParameterGain: (g) => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.setParameterGain(debugClamp(g, 0, 2)); return { ok: true }; } catch (e) { return debugFail(e); } },
+        setBodyMotionGain: (g) => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.setBodyMotionGain(debugClamp(g, 0, 2)); return { ok: true }; } catch (e) { return debugFail(e); } },
+
+        // ── 情绪向量微调 ──
+        applyVADTarget: (target, amount) => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.applyVADTarget(target || {}, amount === undefined ? 0.65 : debugClamp(amount, 0, 1)); return { ok: true }; } catch (e) { return debugFail(e); } },
+        applyVADDelta: (delta, amount) => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.applyVADDelta(delta || {}, amount === undefined ? 0.6 : debugClamp(amount, 0, 1)); return { ok: true }; } catch (e) { return debugFail(e); } },
+
+        // ── 自定义通道 / 重置 / 卸载 ──
+        setCustomChannel: (name, value) => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.setCustomChannel(String(name || ''), Number(value) || 0); return { ok: true }; } catch (e) { return debugFail(e); } },
+        clearCustomChannels: () => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.clearCustomChannels(); return { ok: true }; } catch (e) { return debugFail(e); } },
+        reset: () => { const rt = debugEngine(); if (!rt) return { ok: false, error: '表演层未激活' }; try { rt.reset(soullinkNow()); return { ok: true }; } catch (e) { return debugFail(e); } },
+        // 卸载表演层（不恢复内部 eyeBlink；重新加载模型后自动恢复）
+        disable: () => { teardownSoullink(); return true; },
       };
     } catch (e) { /* 忽略 */ }
     requestAnimationFrame(soullinkTick);
@@ -1285,8 +1414,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       if (!soullinkLayer) return;
       try {
         soullinkLayer.setVoicePlaybackActive(false);
-        // 说话结束后的等待姿态（engine VoiceWaitingMotionController）
-        soullinkLayer.startVoiceWaitingMotion(soullinkNow());
       } catch (e) { /* 忽略 */ }
     });
     window.addEventListener('faust-tts-start', () => {
@@ -1429,6 +1556,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   function finalizeSpeechSegment(probability){
     inSpeech = false;
     vadEndTimer = null;
+    onUserSpeechEnd();
     const spokenEnough = speechFrameCnt >= minSpeechFrameLimit;
     speechFrameCnt = 0;
     if (!spokenEnough){
@@ -1457,6 +1585,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         uploadFrames = preBufferFrames.slice();
         preBufferFrames = [];
         asrStatusEl.textContent = '开始录音...';
+        onUserSpeechStart();
       }
       if (vadEndTimer){ clearTimeout(vadEndTimer); vadEndTimer = null; }
       return;

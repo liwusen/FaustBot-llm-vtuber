@@ -5,6 +5,7 @@ import { mapEmotionToIntent, EMOTION_BRIDGE } from './bridge.js';
 import { createAudioLevelAnalyzer } from './audio-level.js';
 import { fetchProfileViaIpc, validateProfileObject, deriveFallbackProfile, withStandardFallbackMappings } from './profile.js';
 import { attachModelInjection } from './inject.js';
+import { emotionVADPresets } from '@soullink-emotion/engine';
 
 window.Soullink = {
   createLayer: createSoullinkLayer,
@@ -16,4 +17,6 @@ window.Soullink = {
   withStandardFallbackMappings,
   attachModelInjection,
   EMOTION_BRIDGE,
+  // engine 情绪预设表（VAD 坐标），供调试/诊断使用
+  EMOTION_PRESETS: emotionVADPresets,
 };
