@@ -14,9 +14,9 @@ from faust_backend.runtime.uri import (
     SCHEME_FAUSTBOT,
     SCHEME_MEMORY,
     SCHEME_SKILL,
+    SCHEME_SOURCE_CODE,
 )
 from faust_backend.tools.vfs import (
-    ensure_source_file,
     get_faustbot_vfs,
     refresh_runtime_nodes,
     run_coro_sync,
@@ -49,14 +49,24 @@ def _resolve_path_html(spec: str) -> str:
             raise FileNotFoundError(f"skill 文件不存在: {ref}")
         return target.read_text(encoding="utf-8")
 
+    if parsed.scheme == SCHEME_SOURCE_CODE:
+        import faust_backend.config_loader as conf
+
+        repo_root = Path(conf.PROJECT_ROOT).parent
+        parts = [p for p in parsed.path.split("/") if p]
+        if any(p in (".", "..") for p in parts):
+            raise ValueError("不允许越界访问源码目录")
+        target = (repo_root / Path(*parts)).resolve()
+        if not str(target).startswith(str(repo_root.resolve())):
+            raise ValueError("不允许访问源码根目录外的文件")
+        if not target.is_file():
+            raise FileNotFoundError(f"源码文件不存在: {ref}")
+        return target.read_text(encoding="utf-8", errors="replace")
+
     if parsed.scheme == SCHEME_FAUSTBOT:
         vfs = get_faustbot_vfs(refresh=True)
         run_coro_sync(refresh_runtime_nodes(vfs))
         normalized = "/" + parsed.path
-        if parsed.path.startswith("source/"):
-            normalized = run_coro_sync(
-                ensure_source_file(vfs, parsed.path[len("source/"):])
-            )
         content = run_coro_sync(vfs.read_text(normalized, default=""))
         if not content:
             raise FileNotFoundError(f"faustbot 资源不存在或为空: {ref}")
@@ -100,7 +110,7 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
         - 直接传入 HTML 字符串；
         - 传入 `path:{URI}` 从文件加载，例如：
           `path:skill://nimble-window/tictactoe.html`（skill 内置模板）、
-          `path:faustbot://source/frontend/xxx.html`、`path:memory://notes/x`、`path:D:/tmp/a.html`。
+          `path:sourceCode://frontend/xxx.html`、`path:memory://notes/x`、`path:D:/tmp/a.html`。
 
         双向通信（核心机制，全部走 console）：
         - faustbot://nimble/{callback_id}/summary — 窗口概览（工具自动生成，你可用 write 覆写）；

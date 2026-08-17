@@ -253,6 +253,11 @@ class AsyncVirtualFileSystem:
                 raise FileNotFoundError(f'VFS node not found: {self.normalize_path(path)}')
             node.edit_handler = func
 
+    async def get_node(self, path: str) -> VfsNode | None:
+        """返回节点引用（带读锁），供调用方校验节点属性（如卸载时的归属确认）。"""
+        async with self._rwlock.read_lock():
+            return self._get_node_unlocked(path)
+
     async def read(self, path: str) -> Any:
         """读取节点内容。symbol 节点会调用内容函数（同步/异步均可）并返回结果。"""
         async with self._rwlock.read_lock():
@@ -413,11 +418,6 @@ def run_coro_sync(coro):
     return result.get('value')
 
 
-def _repo_root() -> Path:
-    backend_root = Path(conf.PROJECT_ROOT)
-    return backend_root.parent
-
-
 def _read_task_section(section_title: str) -> str:
     from faust_backend.runtime import state
     task_path = Path(state.AGENT_ROOT) / 'TASK.md'
@@ -497,20 +497,9 @@ def _pc_info_doc() -> str:
     ])
 
 
-def _source_root() -> Path:
-    """源码根目录 = backend/ 的父目录（仓库根）。
-
-    重构说明：发布包（release zip）直接包含完整源码仓库（见 .github/workflows/release-package.yml
-    的 Prepare release archives 步骤），开发模式与发布包布局一致，因此无需 sys.frozen 判断，
-    也无需把源码预镜像到 backend/data/source。
-    """
-    return Path(conf.PROJECT_ROOT).parent
-
-
 async def _ensure_core_structure(vfs: AsyncVirtualFileSystem) -> None:
     await vfs.mkdir('/plugins')
     await vfs.mkdir('/subagents')
-    await vfs.mkdir('/source')
     await vfs.write_symbolic('/tool_use.md', lambda _path: _read_task_section('## 核心工具速查'))
     await vfs.write_symbolic('/mc.md', lambda _path: _read_task_section('## Minecraft 操作系统说明'))
     await vfs.write_symbolic('/subagenting.md', lambda _path: _subagenting_doc())
@@ -526,19 +515,11 @@ async def _ensure_core_structure(vfs: AsyncVirtualFileSystem) -> None:
             child_path = '/' + item if item else '/'
             is_dir = await vfs.is_dir(child_path)
             lines.append(f"- faustbot://{item}{'/' if is_dir else ''}")
-        lines += ['', '源码入口：faustbot://source/{PATH}']
+        lines += ['', '源码阅读：使用 read("sourceCode://{PATH}")（目录自动列出内容）。']
         lines += ['', '建议：优先读取 faustbot://index.md、faustbot://plugins/、faustbot://subagents/。']
         return '\n'.join(lines)
 
     await vfs.write_symbolic('/index.md', index_doc)
-
-    await vfs.write(
-        '/source/index.md',
-        '# faustbot://source\n\n'
-        '这是源码镜像入口。读取 faustbot://source/<path> 时会按需从仓库读取真实文件并缓存到 VFS，'
-        '不会在启动时全量挂载整棵仓库。\n',
-        writable=False,
-    )
 
 
 async def refresh_runtime_nodes(vfs: AsyncVirtualFileSystem | None = None) -> AsyncVirtualFileSystem:
@@ -560,24 +541,6 @@ async def refresh_runtime_nodes(vfs: AsyncVirtualFileSystem | None = None) -> As
             await target.write_symbolic('/subagents/' + name + '/output.md', lambda _path, agent_name=name: manager.format_subagent_output(agent_name))
             await target.write_symbolic('/subagents/' + name + '/finalResult.md', lambda _path, agent_name=name: manager.format_subagent_final_result(agent_name))
     return target
-
-
-async def ensure_source_file(vfs: AsyncVirtualFileSystem, source_path: str) -> str:
-    normalized = AsyncVirtualFileSystem.normalize_path('/source/' + str(source_path or '').strip('/'))
-    if await vfs.exists(normalized):
-        return normalized
-    repo_root = _source_root().resolve()
-    rel = Path(str(source_path or '').strip('/'))
-    if any(part in ('.', '..') for part in rel.parts):
-        raise ValueError('不允许访问 source 根目录外的路径')
-    real_path = (repo_root / rel).resolve()
-    if not str(real_path).startswith(str(repo_root)):
-        raise ValueError('不允许访问 source 根目录外的路径')
-    if not real_path.exists() or not real_path.is_file():
-        raise FileNotFoundError(str(rel))
-    content = real_path.read_text(encoding='utf-8', errors='replace')
-    await vfs.write(normalized, content, writable=False)
-    return normalized
 
 
 def get_faustbot_vfs(refresh: bool = False) -> AsyncVirtualFileSystem:

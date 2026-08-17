@@ -6,7 +6,8 @@ Supports:
   - artifact references:  artifact://abc123, artifact://abc123:50-100
   - memory references:    memory://notes/math, memory://notes/math:50-100
     - skill references:     skill://slug/SKILL.md
-    - faustbot references:  faustbot://index.md, faustbot://source/backend/main.py
+    - faustbot references:  faustbot://index.md
+    - sourceCode references: sourceCode://backend/main.py, sourceCode://backend/ (目录自动列目录)
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ SCHEME_MEMORY = "memory"
 SCHEME_SKILL = "skill"
 SCHEME_FAUSTBOT = "faustbot"
 SCHEME_IMG_SOURCE = "img_source"
+SCHEME_SOURCE_CODE = "sourcecode"
 SCHEME_FILE = "file"
 
 
@@ -121,10 +123,11 @@ def parse(uri: str) -> ParsedURI:
     if not raw:
         return ParsedURI(scheme=SCHEME_FILE, path="", selector=None, query={})
 
-    # Detect scheme prefix
-    for scheme in (SCHEME_ARTIFACT, SCHEME_MEMORY, SCHEME_SKILL, SCHEME_FAUSTBOT, SCHEME_IMG_SOURCE):
+    # Detect scheme prefix (case-insensitive: sourceCode:// == sourcecode://)
+    lower_raw = raw.lower()
+    for scheme in (SCHEME_ARTIFACT, SCHEME_MEMORY, SCHEME_SKILL, SCHEME_FAUSTBOT, SCHEME_IMG_SOURCE, SCHEME_SOURCE_CODE):
         prefix = f"{scheme}://"
-        if raw.startswith(prefix):
+        if lower_raw.startswith(prefix):
             rest = raw[len(prefix):]
             # Split off selector and query
             selector = None

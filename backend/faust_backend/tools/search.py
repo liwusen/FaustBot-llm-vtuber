@@ -19,7 +19,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import ensure_source_file, get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
 
 log = get_logger("faust.tools.search")
 
@@ -208,11 +208,6 @@ def _search_faustbot(pattern: str, scopes: list[str]) -> str:
     vfs = get_faustbot_vfs(refresh=True)
     results: list[str] = []
     for scope in scopes:
-        if scope.startswith('/source/'):
-            try:
-                run_coro_sync(ensure_source_file(vfs, scope[len('/source/'):]))
-            except Exception:
-                continue
         results.extend(run_coro_sync(vfs.search(scope, pattern, include_symbolic=True)))
     if not results:
         return f"[faustbot://] 未找到匹配: {pattern}"

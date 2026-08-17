@@ -27,16 +27,17 @@ from faust_backend.runtime.uri import (
     SCHEME_SKILL,
     SCHEME_FAUSTBOT,
     SCHEME_IMG_SOURCE,
+    SCHEME_SOURCE_CODE,
 )
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
 from faust_backend.logger import get_logger
 from faust_backend.tools.vfs import (
-    ensure_source_file,
     get_faustbot_vfs,
     refresh_runtime_nodes,
     run_coro_sync,
 )
+import faust_backend.config_loader as conf
 
 log = get_logger("faust.tools.read")
 
@@ -83,11 +84,19 @@ def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = F
     - Use this when: checking your knowledge base, reviewing past notes or diaries.
 
     **Reading system resources (faustbot://):**
-    - `read("faustbot://")` → list all available faustbot resources (index.md, tool_use.md, mc.md, pc_info, source/).
+    - `read("faustbot://")` → list all available faustbot resources (index.md, tool_use.md, mc.md, pc_info).
     - `read("faustbot://index.md")` → read the faustbot index.
     - `read("faustbot://pc_info")` → read system information.
-    - `read("faustbot://source/{PATH}")` → read project source files.
-    - Use this when: you need system info, tool usage guides, or project source code.
+    - Use this when: you need system info or tool usage guides.
+
+    **Reading project source code (sourceCode://):**
+    - `read("sourceCode://")` → list the repository root.
+    - `read("sourceCode://backend/")` → list a source directory (auto listdir).
+    - `read("sourceCode://backend/faust_backend/tools/read.py")` → read a source file
+      (structured summary for code, same as plain file reads).
+    - `read("sourceCode://backend/main.py:50-100")` → read a line range of a source file.
+    - Use this when: you need to inspect FaustBot's own source code.
+      (This replaces the old `faustbot://source/{PATH}` form.)
 
     **Reading skills (skill://):**
     - `read("skill://")` → list all available skill names.
@@ -134,7 +143,8 @@ def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = F
         For directories: list of entries.
         For artifacts: full or ranged tool output.
         For memory: document content or file tree.
-        For faustbot://: system resources and project source code.
+        For faustbot://: system resources.
+        For sourceCode://: FaustBot repository source files and directory listings.
         For skill://: skill files and directory listings.
         For img_source://: screenshot or camera images (multimodal).
     """
@@ -166,6 +176,10 @@ def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = F
         return result
     elif parsed.scheme == SCHEME_IMG_SOURCE:
         result = _read_img_source(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        log.info("read OUTPUT len=%d", len(result))
+        return result
+    elif parsed.scheme == SCHEME_SOURCE_CODE:
+        result = _read_source_code(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     else:
@@ -335,13 +349,6 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: 
         return "\n".join(lines)
 
     normalized = "/" + raw_path
-    if raw_path.startswith("source/"):
-        try:
-            normalized = run_coro_sync(
-                ensure_source_file(vfs, raw_path[len("source/") :])
-            )
-        except Exception as exc:
-            return f"[source 文件不存在或不可读取: {exc}]"
     if run_coro_sync(vfs.is_dir(normalized)):
         items = run_coro_sync(vfs.list_dir(normalized)) or []
         lines = [f"faustbot://{raw_path}/ 内容:"]
@@ -355,6 +362,64 @@ def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: 
     if not content:
         return f"[未知 faustbot 资源: {raw_path}]"
     return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)
+
+
+def _repo_root() -> Path:
+    """源码根目录 = backend/ 的父目录（仓库根）。"""
+    return Path(conf.PROJECT_ROOT).parent
+
+
+def _read_source_code(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+    """读取 FaustBot 仓库源码：sourceCode://{path}。
+
+    文件 → 与 read 普通文件一致（结构化摘要 / 行范围 / 全文）；
+    目录（含尾斜杠或空路径）→ 自动列出目录内容。
+    路径被限制在仓库根内，禁止 .. 越界。
+    """
+    del force_plain_text
+    repo_root = _repo_root()
+    raw_path = str(parsed.path or "").strip("/")
+    rel_parts = [p for p in raw_path.split("/") if p]
+
+    if not rel_parts:
+        # 根目录：列出一级条目
+        lines = ["sourceCode:// 仓库根 内容:"]
+        for item in sorted(repo_root.iterdir()):
+            if item.name.startswith("."):
+                continue
+            suffix = "/" if item.is_dir() else ""
+            lines.append(f"  sourceCode://{item.name}{suffix}")
+        return "\n".join(lines)
+
+    if any(p in (".", "..") for p in rel_parts):
+        return "[不允许越界访问源码目录]"
+
+    target = (repo_root / Path(*rel_parts)).resolve()
+    if not str(target).startswith(str(repo_root.resolve())):
+        return "[不允许访问源码根目录外的文件]"
+
+    if target.is_dir():
+        items = sorted(target.iterdir())
+        dirs, files = [], []
+        for item in items:
+            if item.name.startswith("."):
+                continue
+            if item.is_dir():
+                dirs.append(item.name + "/")
+            else:
+                files.append(item.name)
+        lines = [f"sourceCode://{raw_path}/ 内容:"]
+        lines += [f"  sourceCode://{raw_path}/{d}" for d in dirs]
+        lines += [f"  sourceCode://{raw_path}/{f}" for f in files]
+        return "\n".join(lines)
+
+    if not target.exists():
+        return f"[源码文件不存在: {raw_path}]"
+
+    file_uri = str(target)
+    if parsed.selector:
+        file_uri += parsed.selector
+    return _read_file(parse(file_uri))
 
 
 def _read_img_source(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:

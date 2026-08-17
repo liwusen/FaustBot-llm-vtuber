@@ -6,14 +6,14 @@
 
 在开始写任何插件代码前，必须先读取两类资料：
 
-1. 先读取插件文档：`read("faustbot://tool_use.md")` 与 `read("faustbot://source//document/plugin.md")`
+1. 先读取插件文档：`read("faustbot://tool_use.md")` 与 `read("sourceCode://document/plugin.md")`
 2. 再读取源码：至少阅读以下一个或多个入口，再决定如何实现
-    - `read("faustbot://source//backend/faust_backend/plugin_system/interfaces.py")`
-    - `read("faustbot://source//backend/faust_backend/plugin_system/manager.py")`
-    - `read("faustbot://source//backend/faust_backend/plugin_system/plugin_base.py")`
-    - `read("faustbot://source//backend/faust_backend/routes/admin_plugins.py")`
+    - `read("sourceCode://backend/faust_backend/plugin_system/interfaces.py")`
+    - `read("sourceCode://backend/faust_backend/plugin_system/manager.py")`
+    - `read("sourceCode://backend/faust_backend/plugin_system/plugin_base.py")`
+    - `read("sourceCode://backend/faust_backend/routes/admin_plugins.py")`
 
-不要在没有阅读 `faustbot://source//...` 源码的情况下直接生成插件代码。
+不要在没有阅读 `sourceCode://...` 源码的情况下直接生成插件代码。
 
 ## 目录结构
 
@@ -257,7 +257,7 @@ ctx.vfs_list(path)                # 列出目录
 
 - 优先使用新风格 `FaustPlugin` 基类，不要新建旧风格示例
 - 若插件需要工具、配置、路由、前端资源，请逐项对照源码接口后再实现
-- 如果要调用现有后端能力，优先通过 `faustbot://source//backend/faust_backend/...` 阅读真实实现
+- 如果要调用现有后端能力，优先通过 `sourceCode://backend/faust_backend/...` 阅读真实实现（目录可直接列出）
 - 如果要暴露前端资源，必须同时检查插件管理路由与前端资源收集逻辑
 - 如果要落地配置，必须先注册 schema，再读写配置值
 

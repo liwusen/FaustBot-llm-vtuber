@@ -9,7 +9,6 @@ from ._faust_vfs_runtime import (
     AsyncRWLock,
     AsyncVirtualFileSystem,
     VfsNode,
-    ensure_source_file,
     get_faustbot_vfs,
     refresh_runtime_nodes,
     run_coro_sync,
@@ -20,7 +19,6 @@ VirtualFileSystem = AsyncVirtualFileSystem
 __all__ = [
     "AsyncRWLock",
     "AsyncVirtualFileSystem",
-    "ensure_source_file",
     "VfsNode",
     "VirtualFileSystem",
     "get_faustbot_vfs",

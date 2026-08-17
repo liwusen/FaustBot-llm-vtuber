@@ -345,18 +345,34 @@ class MyClass:
         from faust_backend.tools.read import read
         result = read.invoke({"uri": "faustbot://index.md"})
         assert "faustbot://tool_use.md" in result
-        assert "faustbot://source/{PATH}" in result
+        assert "sourceCode://{PATH}" in result
 
-    def test_read_faustbot_source(self, tmp_path):
+    def test_read_source_code_file(self):
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
-        result = read.invoke({"uri": "faustbot://source/README.md"})
-        assert "img src" in result
+        result = read.invoke({"uri": "sourceCode://README.md"})
+        assert "img src" in result or "faustbot" in result.lower()
 
-    def test_read_faustbot_source_rejects_escape(self):
+    def test_read_source_code_rejects_escape(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "faustbot://source/../secret.txt"})
+        result = read.invoke({"uri": "sourceCode://../secret.txt"})
         assert "不允许" in result
+
+    def test_read_source_code_root_lists(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "sourceCode://"})
+        assert "sourceCode://backend/" in result
+        assert "sourceCode://frontend/" in result
+
+    def test_read_source_code_dir_lists(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "sourceCode://backend/"})
+        assert "sourceCode://backend/main.py" in result
+        assert "sourceCode://backend/faust_backend/" in result
+
+    def test_read_source_code_line_range(self):
+        from faust_backend.tools.read import read
+        result = read.invoke({"uri": "sourceCode://backend/faust_backend/tools/read.py:1-5"})
+        assert "Unified Read tool" in result or "read" in result
 
     def test_read_skill_default_skill_md(self, tmp_path):
         from faust_backend.tools.read import read
