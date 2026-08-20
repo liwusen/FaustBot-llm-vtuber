@@ -73,6 +73,19 @@ def edit(path: str, patch: str) -> str:
 
     log.info("edit INPUT path=%s patch_len=%d", path, len(patch))
 
+    from faust_backend.runtime.uri import (
+        detect_unsupported_protocol,
+        SCHEME_FILE,
+        SCHEME_MEMORY,
+        SCHEME_FAUSTBOT,
+    )
+
+    err = detect_unsupported_protocol(path, {SCHEME_FILE, SCHEME_MEMORY, SCHEME_FAUSTBOT})
+    if err:
+        _msg = f"edit: {err}"
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
+
     # Detect memory:// scheme3
     is_memory = path.startswith("memory://")
     is_faustbot = path.startswith("faustbot://")

@@ -787,19 +787,25 @@ def _truncate_long(content: str, max_lines: int = 300) -> str:
 
 
 def _format_tree(tree: dict, indent: int = 0) -> str:
-    """Format a memory file tree dict into a text listing."""
+    """Format a memory tree node into a text listing.
+
+    只列出当前层的直接子项（类似 ``ls``），不再递归展开整个子树：
+    - 目录显示为 ``name/``
+    - 文件显示为 ``name``
+    """
     result = []
     name = tree.get("name", "/")
     prefix = "  " * indent
     result.append(f"{prefix}{name}/")
     for child in tree.get("children", []):
-        if isinstance(child, dict):
-            ctype = child.get("type", "")
-            cname = child.get("name", "?")
-            if ctype == "dir":
-                result.append(_format_tree(child, indent + 1))
-            else:
-                result.append(f"{prefix}  {cname}")
+        if not isinstance(child, dict):
+            continue
+        ctype = child.get("type", "")
+        cname = child.get("name", "?")
+        if ctype == "dir":
+            result.append(f"{prefix}  {cname}/")
+        else:
+            result.append(f"{prefix}  {cname}")
     return "\n".join(result)
 
 

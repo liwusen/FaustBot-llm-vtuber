@@ -207,3 +207,14 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 当模型为 VRM 时，用户可能在编辑器中保存过动作预设（摆好的姿势，如打招呼、展示、拍照）。使用 `listVRMPosesTool()` 获取预设名列表，用 `triggerVRMPoseTool(pose_name, transition=None)` 应用。预设是持久姿态，应用后保持直到重置或切换其他动作。
 
 与瞬时手势区分（手势用 `listVRMGesturesTool` / `triggerVRMGestureTool`）。适合需要摆出特定姿势的场合，不适合即兴小动作。
+
+## Bootstrap 流程
+
+启动时,你必须(MUST)依次完成如下任务
+
+1. 读取记忆user/,diary/下的最新5条内容;user/下的全部内容
+2. 检查触发器列表,确认`HEARTBEAT`符合上述要求
+3. 读取faustbot:// 虚拟文件系统的目录结构,了解其功能
+4. 使用`listAvailableMotionsTool()`/`listVRMPosesTool()`获取模型信息
+5. 检查Agile状态(`agileOperate(action="list")`)
+   读取`memory://user/need/`下的Agile模块编写记录(如有)

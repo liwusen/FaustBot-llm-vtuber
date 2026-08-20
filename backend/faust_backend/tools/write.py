@@ -62,6 +62,19 @@ def write(path: str, content: str) -> str:
     raw = path_str
     log.info("write INPUT path=%s content_len=%d", path_str, len(content))
 
+    from faust_backend.runtime.uri import (
+        detect_unsupported_protocol,
+        SCHEME_FILE,
+        SCHEME_MEMORY,
+        SCHEME_FAUSTBOT,
+    )
+
+    err = detect_unsupported_protocol(raw, {SCHEME_FILE, SCHEME_MEMORY, SCHEME_FAUSTBOT})
+    if err:
+        result = f"write: {err}"
+        log.info("write OUTPUT %s", result[:120])
+        return result
+
     # memory:// backend
     if raw.startswith("memory://"):
         result = _write_memory(raw[len("memory://"):].strip("/"), content)

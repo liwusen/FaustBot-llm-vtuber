@@ -9,6 +9,7 @@ The `patterns` parameter accepts globs that may include memory:// prefix:
 from __future__ import annotations
 
 import glob as globmod
+import re
 from pathlib import Path
 
 from langchain.tools import tool
@@ -37,14 +38,20 @@ def find(patterns: list[str]) -> str:
     - `find(["memory://*"])` → list all memory documents.
     - Use this when: browsing your memory store structure.
 
+    FAUSTBOT VFS GLOBBING:
+    - `find(["faustbot://plugins/"])` → list all nodes under faustbot://plugins/.
+    - `find(["faustbot://agile/*"])` → list all agile mirror nodes.
+    - `find(["faustbot://**/*.md"])` → list all .md nodes across the VFS.
+    - Use this when: locating virtual nodes (plugin data, agile mirrors, resources).
+
     COMBINED:
-    - `find(["src/**/*.py", "memory://notes/*"])` → both filesystem and memory.
+    - `find(["src/**/*.py", "memory://notes/*", "faustbot://plugins/"])` → all backends.
 
     TIP: The output may be long.  Use read() to inspect specific files found.
 
     Args:
         patterns: List of glob patterns. Supports ** for recursive matching
-                  and memory:// prefix for memory store.
+                  and memory:// / faustbot:// prefixes for virtual stores.
 
     Returns:
         Sorted list of matching paths, newest first.
@@ -53,11 +60,28 @@ def find(patterns: list[str]) -> str:
     log.info("find INPUT patterns=%s", patterns)
     fs_globs: list[str] = []
     mem_globs: list[str] = []
+    vfs_globs: list[str] = []
+
+    from faust_backend.runtime.uri import (
+        detect_unsupported_protocol,
+        SCHEME_FILE,
+        SCHEME_MEMORY,
+        SCHEME_FAUSTBOT,
+    )
 
     for p in patterns:
         p = str(p).strip()
+        err = detect_unsupported_protocol(
+            p, {SCHEME_FILE, SCHEME_MEMORY, SCHEME_FAUSTBOT}
+        )
+        if err:
+            result = f"find: {err}"
+            log.info("find OUTPUT len=%d", len(result))
+            return result
         if p.startswith("memory://"):
             mem_globs.append(p[len("memory://"):].strip("/"))
+        elif p.startswith("faustbot://"):
+            vfs_globs.append(p[len("faustbot://"):])  # 保留尾斜杠以区分目录
         else:
             fs_globs.append(p)
 
@@ -68,6 +92,9 @@ def find(patterns: list[str]) -> str:
 
     if mem_globs:
         results.append(_find_memory(mem_globs))
+
+    if vfs_globs:
+        results.append(_find_faustbot(vfs_globs))
 
     if not results:
         result = "没有匹配任何文件"
@@ -154,17 +181,101 @@ def _find_memory(globs: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _extract_paths_from_tree(tree: dict, prefix: str) -> list[str]:
-    paths: list[str] = []
-    name = tree.get("name", "").strip("/")
-    full = f"{prefix}/{name}" if name else prefix
-    for child in tree.get("children", []):
-        if isinstance(child, dict):
-            ctype = child.get("type", "")
-            cname = child.get("name", "?")
-            cpath = f"{full}/{cname}".strip("/")
-            if ctype == "dir":
-                paths.extend(_extract_paths_from_tree(child, cpath))
+def _find_faustbot(globs: list[str]) -> str:
+    """在 faustbot:// 虚拟文件系统里做 glob 匹配（VFS 自带 glob，fnmatch 语义）。
+
+    - ``faustbot://plugins/`` → 该目录下所有节点（含子目录递归）
+    - ``faustbot://agile/*`` → 所有 agile 节点
+    - ``faustbot://**/*.md`` → 全 VFS 的 .md 节点
+    目录节点以 ``/`` 结尾标注。
+    """
+    try:
+        from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+    except ImportError:
+        return "(faustbot VFS 不可用)"
+
+    vfs = get_faustbot_vfs(refresh=True)
+    found: list[str] = []
+    all_nodes = run_coro_sync(vfs.walk("/")) or []
+
+    def _glob_regex(pat: str) -> re.Pattern:
+        """把 glob 转成正则：``**/`` 跨任意层（含零层），``**`` 跨任意层，``*`` 不跨层。"""
+        out = []
+        i = 0
+        n = len(pat)
+        while i < n:
+            ch = pat[i]
+            if ch == "*":
+                if i + 1 < n and pat[i + 1] == "*":
+                    if i + 2 < n and pat[i + 2] == "/":
+                        # **/ → 零或多个目录层
+                        out.append("(?:.*/)?")
+                        i += 3
+                    else:
+                        out.append(".*")
+                        i += 2
+                else:
+                    out.append("[^/]*")
+                    i += 1
+            elif ch == "?":
+                out.append("[^/]")
+                i += 1
             else:
-                paths.append(cpath)
+                out.append(re.escape(ch))
+                i += 1
+        return re.compile("^" + "".join(out) + "$")
+
+    for g in globs:
+        # faustbot://plugins/ → /plugins/**（列目录含子级）；其余按原样 glob
+        norm = "/" + g.rstrip("/") if g else "/"
+        if g.endswith("/") or not g:
+            norm = norm.rstrip("/") + "/**" if norm != "/" else "/**"
+        rx = _glob_regex(norm)
+        for p in all_nodes:
+            if p == "/" or not rx.match(p):
+                continue
+            is_dir = False
+            try:
+                is_dir = run_coro_sync(vfs.is_dir(p))
+            except Exception:
+                pass
+            disp = f"faustbot://{p.strip('/')}"
+            if is_dir:
+                disp += "/"
+            if disp not in found:
+                found.append(disp)
+
+    if not found:
+        return f"[faustbot://] 未匹配: {', '.join(globs)}"
+
+    lines = [f"[faustbot://] {len(found)} 个节点:"]
+    for r in sorted(found)[:50]:
+        lines.append(f"  {r}")
+    if len(found) > 50:
+        lines.append(f"  ... 还有 {len(found) - 50} 个")
+    return "\n".join(lines)
+
+
+def _extract_paths_from_tree(tree: dict, prefix: str) -> list[str]:
+    """从 tree_list 返回的树里收集所有文件路径。
+
+    tree 的每个文件节点都带准确的 ``path``（绝对路径，如 /user/facts），
+    直接使用它，避免用 prefix 再拼 root 的 name 导致路径重复
+    （如 user/user/facts）。
+    prefix 仅用于兼容调用方，不再参与路径拼接。
+    """
+    del prefix
+    paths: list[str] = []
+
+    def walk(node: dict) -> None:
+        if not isinstance(node, dict):
+            return
+        ntype = node.get("type", "")
+        node_path = str(node.get("path") or "").strip("/")
+        if ntype == "file" and node_path:
+            paths.append(node_path)
+        for child in node.get("children", []):
+            walk(child)
+
+    walk(tree)
     return paths

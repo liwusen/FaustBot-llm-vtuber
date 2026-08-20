@@ -272,6 +272,38 @@ class TestReadTool:
         result = read.invoke({"uri": "artifact://nonexistent"})
         assert "找不到" in result
 
+    def test_format_tree_lists_single_level(self):
+        """回归：记忆目录应像 ls 一样只列一层，不递归展开整个子树。"""
+        from faust_backend.tools.read import _format_tree
+        tree = {
+            "path": "/",
+            "name": "/",
+            "type": "dir",
+            "children": [
+                {"path": "/diary", "name": "diary", "type": "dir", "children": [
+                    {"path": "/diary/2026-07-11", "name": "2026-07-11", "type": "dir", "children": [
+                        {"path": "/diary/2026-07-11/a.md", "name": "a.md", "type": "file"},
+                    ]},
+                ]},
+                {"path": "/user", "name": "user", "type": "dir", "children": [
+                    {"path": "/user/facts", "name": "facts", "type": "file"},
+                ]},
+                {"path": "/auto_index.md", "name": "auto_index.md", "type": "file"},
+            ],
+        }
+        text = _format_tree(tree)
+        assert text == "//\n  diary/\n  user/\n  auto_index.md", repr(text)
+        assert "2026-07-11" not in text, "不应递归列出子层"
+
+    def test_read_uri_is_dir_for_trailing_slash(self):
+        """回归：带 / 结尾的 scheme URI 应识别为目录（memory://user/ → is_dir）。"""
+        from faust_backend.runtime.uri import parse
+        assert parse("memory://user/").is_dir is True
+        assert parse("memory://user").is_dir is False
+        assert parse("memory://").is_dir is True
+        assert parse("src/").is_dir is True
+        assert parse("src/main.py").is_dir is False
+
     def test_read_file_with_structural_summary(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
@@ -624,6 +656,83 @@ class TestFindTool:
             assert "未匹配" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
+
+    def test_find_memory_glob_no_duplicate_prefix(self):
+        """回归：memory glob 结果不应出现重复路径前缀（user/user/...）。"""
+        from faust_backend.tools.find import _extract_paths_from_tree
+        tree = {
+            "path": "/user",
+            "name": "user",
+            "type": "dir",
+            "children": [
+                {"path": "/user/facts", "name": "facts", "type": "file", "description": ""},
+                {"path": "/user/preferences", "name": "preferences", "type": "file", "description": ""},
+                {
+                    "path": "/user/projects",
+                    "name": "projects",
+                    "type": "dir",
+                    "children": [
+                        {"path": "/user/projects/bomb-gomoku-video", "name": "bomb-gomoku-video", "type": "file", "description": ""}
+                    ],
+                },
+            ],
+        }
+        paths = _extract_paths_from_tree(tree, "user")
+        assert paths == [
+            "user/facts",
+            "user/preferences",
+            "user/projects/bomb-gomoku-video",
+        ]
+        for p in paths:
+            assert "user/user" not in p, f"出现重复前缀: {p}"
+
+    def test_find_faustbot_glob(self, monkeypatch):
+        """回归：find 支持 faustbot:// 前缀的 glob 匹配。"""
+        import faust_backend.tools.vfs as vfs_mod
+        from faust_backend.tools.find import find
+
+        class FakeVFS:
+            async def walk(self, path="/"):
+                return ["/", "/plugins", "/plugins/a.md", "/agile/demo/status", "/index.md"]
+
+            async def is_dir(self, node):
+                return node in ("/plugins", "/agile", "/agile/demo")
+
+        def fake_get(refresh=False):
+            return FakeVFS()
+
+        def fake_run_coro_sync(coro):
+            import asyncio as _asyncio
+            return _asyncio.run(coro)
+
+        monkeypatch.setattr(vfs_mod, "get_faustbot_vfs", fake_get)
+        monkeypatch.setattr(vfs_mod, "run_coro_sync", fake_run_coro_sync)
+        result = find.invoke({"patterns": ["faustbot://plugins/"]})
+        assert "faustbot://plugins/a.md" in result
+        assert "faustbot://agile" not in result
+
+        result2 = find.invoke({"patterns": ["faustbot://**/*.md"]})
+        assert "faustbot://index.md" in result2
+
+    def test_find_rejects_unsupported_protocol(self):
+        """find 对 skill:// 等不支持协议应返回明确错误。"""
+        from faust_backend.tools.find import find
+        result = find.invoke({"patterns": ["skill://abc/*"]})
+        assert "skill://" in result
+        assert "不支持" in result
+
+    def test_search_rejects_unsupported_protocol(self):
+        """search 对 skill:// 等不支持协议应返回明确错误。"""
+        from faust_backend.tools.search import search
+        result = search.invoke({"pattern": "x", "paths": ["skill://abc/SKILL.md"]})
+        assert "skill://" in result
+        assert "不支持" in result
+
+    def test_write_rejects_unsupported_protocol(self):
+        """write 对 sourceCode:// 等不支持协议应返回明确错误。"""
+        from faust_backend.tools.write import write
+        result = write.invoke({"path": "sourceCode://a.py", "content": "x"})
+        assert "不支持" in result
 
 
 # ============================================================

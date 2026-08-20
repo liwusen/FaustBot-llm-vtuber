@@ -32,6 +32,38 @@ SCHEME_IMG_SOURCE = "img_source"
 SCHEME_SOURCE_CODE = "sourcecode"
 SCHEME_FILE = "file"
 
+# 全部已知协议前缀（小写）
+_ALL_SCHEMES = (
+    SCHEME_ARTIFACT,
+    SCHEME_MEMORY,
+    SCHEME_SKILL,
+    SCHEME_FAUSTBOT,
+    SCHEME_IMG_SOURCE,
+    SCHEME_SOURCE_CODE,
+)
+
+
+def detect_unsupported_protocol(uri: str, supported: set[str]) -> str | None:
+    """检测 URI 是否带了当前工具不支持的协议前缀。
+
+    - ``uri`` 带 ``xxx://`` 前缀且 scheme 不在 ``supported`` 中 →
+      返回形如 ``"skill:// 协议不支持 search（支持: faustbot, memory）"`` 的错误文本；
+    - 带支持的协议前缀或裸路径 → 返回 None（继续正常处理）。
+    """
+    lower = str(uri or "").strip().lower()
+    for scheme in _ALL_SCHEMES:
+        if lower.startswith(f"{scheme}://"):
+            if scheme not in supported:
+                supported_list = sorted(
+                    s for s in supported if s != SCHEME_FILE
+                ) or [SCHEME_FILE]
+                return (
+                    f"{scheme}:// 协议不支持此操作"
+                    f"（支持: {', '.join(f'{s}://' for s in supported_list)} 或直接写文件路径）"
+                )
+            return None
+    return None
+
 
 @dataclass
 class ParsedURI:
@@ -39,6 +71,7 @@ class ParsedURI:
     path: str  # normalized path (no selector, no query)
     selector: str | None  # ":50-100", ":50+20", ":raw" — or None
     query: dict[str, list[str]]  # parsed query params (only memory://)
+    trailing_slash: bool = False  # 原始 URI 是否以 / 结尾（区分目录）
 
     @property
     def selector_lines(self) -> tuple[int, int] | None:
@@ -68,8 +101,8 @@ class ParsedURI:
 
     @property
     def is_dir(self) -> bool:
-        """True if path ends with / and has no selector."""
-        return not self.selector and (self.path == "" or self.path.endswith("/"))
+        """True if path is empty or the URI ends with / (and has no selector)."""
+        return not self.selector and (self.path == "" or self.trailing_slash)
 
 
 def _extract_selector(rest: str) -> str | None:
@@ -146,8 +179,10 @@ def parse(uri: str) -> ParsedURI:
                 if selector:
                     rest = rest[:len(rest) - len(selector)]
 
+            trailing_slash = rest.endswith("/")
             path = rest.strip("/")
-            return ParsedURI(scheme=scheme, path=path, selector=selector, query=query)
+            return ParsedURI(scheme=scheme, path=path, selector=selector, query=query,
+                             trailing_slash=trailing_slash)
 
     # Bare file path
     selector = None
@@ -161,7 +196,9 @@ def parse(uri: str) -> ParsedURI:
 
     # Normalize
     path = rest.replace("\\", "/").strip()
-    return ParsedURI(scheme=SCHEME_FILE, path=path, selector=selector, query={})
+    trailing_slash = path.endswith("/")
+    return ParsedURI(scheme=SCHEME_FILE, path=path, selector=selector, query={},
+                     trailing_slash=trailing_slash)
 def resolve(path: str, base_dir: str | None = None) -> str:
     """Resolve a relative path to an absolute one."""
     p = Path(path.replace("\\", "/"))

@@ -84,7 +84,21 @@ def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
     vfs_scopes: list[str] = []
     fs_paths: list[str] = []
 
+    from faust_backend.runtime.uri import (
+        detect_unsupported_protocol,
+        SCHEME_FILE,
+        SCHEME_MEMORY,
+        SCHEME_FAUSTBOT,
+    )
+
     for p in paths_list:
+        err = detect_unsupported_protocol(
+            p, {SCHEME_FILE, SCHEME_MEMORY, SCHEME_FAUSTBOT}
+        )
+        if err:
+            result = f"search: {err}"
+            log.info("search OUTPUT len=%d", len(result))
+            return result
         if p.startswith("memory://"):
             scope = p[len("memory://"):].strip("/") or "/"
             mem_scopes.append(f"/{scope}" if scope != "/" else "/")

@@ -1740,7 +1740,7 @@ class GraphStore:
             return []
 
         scope_prefix = _normalize_path(scope or "").strip("/")
-        scope_prefix = f"{scope_prefix}/" if scope_prefix else ""
+        scope_prefix = f"/{scope_prefix}/" if scope_prefix else ""
 
         hybrid_results = await self._hybrid_search(q, scope_prefix, tags, top_k)
         graph_results = self._graph_search(q, top_k) if use_graph else []

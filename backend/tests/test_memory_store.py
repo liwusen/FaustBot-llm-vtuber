@@ -566,6 +566,24 @@ class TestPhase5AdvancedSearch:
             assert "/scope_b/doc.md" not in paths
         asyncio.run(_test())
 
+    def test_search_with_scope_filters_to_scope(self, memory_store, monkeypatch):
+        """回归：search() 带 scope 时不应滤掉所有结果（scope_prefix 丢失前导斜杠的 bug）。"""
+        monkeypatch.setattr(store.conf, "BM25_ONLY", True)  # 走 BM25 路径，避免依赖向量库
+        async def _test():
+            await memory_store.file_write("/user/preferences", "用户偏好是喜欢简洁回复", index=True, tags=["user"])
+            await memory_store.file_write("/records/2026-01-01/chat", "随意聊天记录内容", index=True)
+            # 不带 scope：两篇都应出现在潜在结果里
+            global_results = await memory_store.search("简洁 回复", top_k=5, use_graph=False)
+            global_paths = [r["path"] for r in global_results]
+            assert global_paths, "BM25 索引应能检索到内容"
+            # 带 scope：只应返回 user 内的
+            scoped = await memory_store.search("简洁 回复", scope="/user", top_k=5, use_graph=False)
+            scoped_paths = [r["path"] for r in scoped]
+            assert scoped_paths, "带 scope 搜索不应为空（scope_prefix 前导斜杠 bug 回归）"
+            assert "/user/preferences" in scoped_paths
+            assert all(p.startswith("/user") for p in scoped_paths)
+        asyncio.run(_test())
+
     def test_advanced_search_by_text_query(self, memory_store):
         async def _test():
             await memory_store.file_write("/test/alpha.md", "alpha bravo charlie", index=False)
