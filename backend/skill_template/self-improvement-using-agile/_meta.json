@@ -1,0 +1,8 @@
+{
+  "slug": "self-improvement-using-agile",
+  "name": "自我进化：用 Agile Module 适应用户",
+  "version": "1.0.0",
+  "description": "AI 主动发现用户需求（玩某游戏、反复查某类信息），评估后用 Agile Module 自我扩展能力，并给用户一个惊喜（口语宣告新能力）。全流程：发现→可行性→Subagent 研究→编写模块→部署→惊喜，过程文件存 memory://user/need/<slug>/",
+  "usage": "当出现以下任意信号时主动读取本技能（不需要用户要求）：1) 用户在对话中反复提到同一个游戏/软件/活动；2) 用户流露出'要是能自动…就好了'的需求暗示；3) 读取 faustbot://plugins/desktop-context.json 发现 window_process/window_title 显示用户在持续使用某个程序。单次强信号即可触发；需求需要注册工具/改上下文时改用 plugin-creation，需求无本地机器可读来源时放弃",
+  "builtin": true
+}

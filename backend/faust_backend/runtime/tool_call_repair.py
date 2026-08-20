@@ -12,13 +12,14 @@ OpenAI 兼容接口要求历史消息中带 ``tool_calls`` 的 assistant 消息�
 本中间件通过 ``wrap_model_call`` / ``awrap_model_call`` 在每次模型调用
 前重写 ``request.messages``：
 
-- 为缺失响应的 ``tool_call_id`` 注入占位 ``ToolMessage``；
+- 对**被打断/作废**的 ``tool_calls``（后续被 Human/System/新 AI 消息打断，
+  没有对应 ToolMessage）清空该 AIMessage 的 ``tool_calls`` —— 这类是
+  正常的中断流程（用户新消息、agent 中断），不是历史损坏，不应注入占位；
+- 对**序列结尾**真实悬空的 ``tool_calls``（上下文被裁剪 / 工具执行被中断
+  的遗留）注入占位 ``ToolMessage``；
 - 丢弃没有对应 assistant ``tool_calls`` 的孤立 ``ToolMessage``。
-
-修复只作用于本次模型请求，不会写回 checkpoint，因此不会污染持久化
-对话状态。
-
-讨厌的终止对话功能!
+  修复只作用于本次模型请求，不会写回 checkpoint，因此不会污染持久化
+  对话状态。
 """
 
 from __future__ import annotations
@@ -70,16 +71,45 @@ class ToolCallRepairMiddleware(AgentMiddleware):
 
     @classmethod
     def _repair_messages(cls, messages: list[AnyMessage]) -> list[AnyMessage]:
-        """修复消息序列，返回新列表（不改动原列表）。"""
+        """修复消息序列，返回新列表（不改动原列表）。
+
+        区分两种“悬空”并分别处理：
+        1. 被打断/作废的工具调用：AIMessage(tool_calls) 后面跟的是
+           Human/System/新的 AIMessage（没有对应 ToolMessage 跟进）——
+           说明该调用从未执行就被放弃（如用户新消息打断、agent 中断）。
+           此时**清空该 AIMessage 的 tool_calls**（而不是注入占位），
+           避免 LLM 看到“调用了工具但没有结果”的幽灵调用。
+        2. 序列真正结尾的悬空：消息序列在 AIMessage(tool_calls) 处结束——
+           可能是上下文被裁剪/工具执行被中断的遗留，此时**注入占位**
+           ToolMessage，满足 OpenAI 兼容接口“tool_calls 必须被响应”的要求。
+
+        只有情况 2 才会注入占位，因此修复器只在极少数（真实损坏）场景生效。
+        """
         repaired: list[AnyMessage] = []
-        # tool_call_id -> tool name（来自 assistant 声明的 tool_calls）
-        pending: dict[str, str] = {}
+        # tool_call_id -> (tool name, AIMessage 在 repaired 中的下标)
+        pending: dict[str, tuple[str, int]] = {}
         injected = 0
         dropped = 0
 
+        def drop_pending() -> None:
+            """被打断的工具调用：清空对应 AIMessage 的 tool_calls（作废）。"""
+            nonlocal dropped
+            for tool_call_id, (_name, ai_idx) in pending.items():
+                ai_msg = repaired[ai_idx]
+                if isinstance(ai_msg, AIMessage) and getattr(ai_msg, "tool_calls", None):
+                    new_ai = ai_msg.model_copy(deep=True)
+                    new_ai.tool_calls = [
+                        tc for tc in new_ai.tool_calls
+                        if cls._tool_call_id(tc) != tool_call_id
+                    ]
+                    repaired[ai_idx] = new_ai
+                    dropped += 1
+            pending.clear()
+
         def flush_pending() -> None:
+            """序列结尾的悬空：注入占位 ToolMessage。"""
             nonlocal injected
-            for tool_call_id, name in pending.items():
+            for tool_call_id, (name, _ai_idx) in pending.items():
                 repaired.append(cls._make_placeholder(tool_call_id, name))
                 injected += 1
             pending.clear()
@@ -88,14 +118,20 @@ class ToolCallRepairMiddleware(AgentMiddleware):
             if isinstance(msg, AIMessage):
                 tool_calls = list(getattr(msg, "tool_calls", None) or [])
                 if tool_calls:
-                    # 若前一个 assistant 的 tool_calls 尚未被响应，先补齐
+                    # 前一批 tool_calls 尚未被响应，又有新的 AI 调用 → 前一批作废
                     if pending:
-                        flush_pending()
+                        drop_pending()
+                    ai_idx = len(repaired)
+                    repaired.append(msg)
                     for tc in tool_calls:
                         tcid = cls._tool_call_id(tc)
                         if tcid:
-                            pending[tcid] = cls._tool_call_name(tc)
-                repaired.append(msg)
+                            pending[tcid] = (cls._tool_call_name(tc), ai_idx)
+                else:
+                    # 无 tool_calls 的 AI：若前一批悬空，作废
+                    if pending:
+                        drop_pending()
+                    repaired.append(msg)
             elif isinstance(msg, ToolMessage):
                 tcid = getattr(msg, "tool_call_id", None)
                 if tcid and tcid in pending:
@@ -105,18 +141,19 @@ class ToolCallRepairMiddleware(AgentMiddleware):
                     # 孤立的 ToolMessage：没有对应 assistant 声明，丢弃
                     dropped += 1
             else:
-                # 其他消息（Human/System 等）：若 tool_calls 悬空，先补齐
+                # 其他消息（Human/System 等）：若前一批 tool_calls 悬空，
+                # 说明被新输入打断，作废而非注入占位
                 if pending:
-                    flush_pending()
+                    drop_pending()
                 repaired.append(msg)
 
-        # 序列末尾仍有未响应的 tool_calls
+        # 序列末尾仍有未响应的 tool_calls（真·裁切/中断遗留）→ 注入占位
         if pending:
             flush_pending()
 
         if injected or dropped:
             log.info(
-                "ToolCallRepair: 注入 %d 个占位 ToolMessage，丢弃 %d 个孤立 ToolMessage",
+                "ToolCallRepair: 注入 %d 个占位 ToolMessage，作废 %d 个被打断的 tool_calls",
                 injected,
                 dropped,
             )

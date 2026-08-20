@@ -174,6 +174,25 @@ def _wrap_errors(invoker: Callable[..., Any], name: str) -> Callable[..., Any]:
     return wrapper
 
 
+def _stamp_activity(name: str) -> None:
+    """模块活动打点：更新 last_seen（供 status 展示 idle 观测）。
+
+    活动 = vfsContent 读取（缓存命中也算）/ vfs 写 / 编辑 handler 触发 / event_fire 成功。
+    interval 轮询、onload/onunload 生命周期不算活动——否则后台轮询会让模块永远新鲜。
+    """
+    inst = AGILE_INSTANCES.get(name)
+    if inst is not None:
+        inst["last_seen"] = time.time()
+
+
+def _wrap_activity(invoker: Callable[..., Any], name: str) -> Callable[..., Any]:
+    """活动包装器：每次真实调用（含缓存命中路径）都打点 last_seen。"""
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _stamp_activity(name)
+        return await invoker(*args, **kwargs)
+    return wrapper
+
+
 # ─────────────────────────── interval 任务 ───────────────────────────
 
 class IntervalHandle:
@@ -262,18 +281,18 @@ async def _register_hooks(agile_module: AgileModule, agile: AgileContext, name: 
         path = _norm_vfs_path(hook.name)
         if hook.hookType is AgileHookType.VFS_CONTENT:
             strategy = (hook.attr or {}).get("cacheStrategy", "cache@10")
-            wrapped = _wrap_errors(_wrap_cache_strategy(invoker, strategy, name), name)
+            wrapped = _wrap_errors(_wrap_activity(_wrap_cache_strategy(invoker, strategy, name), name), name)
             await agile.vfs_write_symbolic(path, wrapped, writable=False,
                                            should_be_included_in_search=True)
             vfs_paths.append(path)
             owned_funcs.append(wrapped)
         elif hook.hookType is AgileHookType.VFS_WRITE:
-            wrapped = _wrap_errors(invoker, name)
+            wrapped = _wrap_errors(_wrap_activity(invoker, name), name)
             await agile.vfs_set_write_handler(path, wrapped)
             vfs_paths.append(path)
             owned_funcs.append(wrapped)
         elif hook.hookType is AgileHookType.VFS_EDIT:
-            wrapped = _wrap_errors(invoker, name)
+            wrapped = _wrap_errors(_wrap_activity(invoker, name), name)
             await agile.vfs_set_edit_handler(path, wrapped)
             vfs_paths.append(path)
             owned_funcs.append(wrapped)
@@ -443,7 +462,9 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
         agile_module = module.get_agile_module()
         if not isinstance(agile_module, AgileModule):
             raise TypeError(f"{name} 的 get_agile_module() 未返回 AgileModule 实例")
-        agile = AgileContext(_CTX, LM, name, trigger_limiter=lambda n=name: check_trigger_limit(n))
+        agile = AgileContext(_CTX, LM, name,
+                             trigger_limiter=lambda n=name: check_trigger_limit(n),
+                             on_activity=lambda n=name: _stamp_activity(n))
         vfs_paths, owned_funcs, interval_handles = await _register_hooks(agile_module, agile, name)
         mirror_paths = await _register_mirror_nodes(name)
         # 生效上限：reload 传入的 preset_limit > 磁盘持久化值 > 默认值
@@ -465,6 +486,7 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
             "sys_name": f"agile_module_{name}",
             "file_path": f,
             "loaded_at": time.time(),
+            "last_seen": time.time(),
             "tpm_limit": effective_limit,
             "trigger_times": [],
             "trigger_lock": threading.Lock(),
@@ -591,6 +613,13 @@ def format_module_status(name: str) -> str:
         return "\n".join(lines)
     lines.append(f"状态: {inst['status']}")
     lines.append(f"加载时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(inst.get('loaded_at', 0)))}")
+    last_seen = inst.get("last_seen")
+    if last_seen:
+        idle_secs = max(0, int(time.time() - last_seen))
+        idle_txt = "刚刚" if idle_secs < 60 else (
+            f"{idle_secs // 60} 分钟前" if idle_secs < 3600 else f"{idle_secs // 3600} 小时前")
+        lines.append(
+            f"上次活动: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen))}（{idle_txt}）")
     lines.append(f"文件: {inst.get('file_path')}")
     if inst.get("last_error"):
         lines.append(f"最近错误: {inst['last_error']}")

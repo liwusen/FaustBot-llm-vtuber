@@ -24,11 +24,14 @@ class AgileHookBase:
     func_signature: Optional[str] = None
 
 class AgileContext:
-    def __init__(self,ctx:PluginContext,alm:AgileLogManager,agile_name:str,trigger_limiter:Optional[Callable[[],Any]]=None):
+    def __init__(self,ctx:PluginContext,alm:AgileLogManager,agile_name:str,
+                 trigger_limiter:Optional[Callable[[],Any]]=None,
+                 on_activity:Optional[Callable[[],Any]]=None):
         self.ctx = ctx
         self.alm = alm
         self.agile_name = agile_name
         self._trigger_limiter = trigger_limiter
+        self._on_activity = on_activity
 
     async def vfs_write(self,path:str,content:Any):
         self.ctx.vfs_write(path,content)
@@ -59,6 +62,8 @@ class AgileContext:
             "recall_description": recall_description,
             "lifespan": lifespan,
         })
+        if self._on_activity is not None:
+            self._on_activity()  # 事件成功进入触发器 = 模块活动，打点 last_seen
 
     async def log(self,level:str,msg:str):
         await self.alm.log(self.agile_name,level,msg,extra={})

@@ -37,7 +37,8 @@ def test_complete_sequence_is_unchanged():
     assert repaired == messages
 
 
-def test_missing_all_tool_responses_injects_placeholder():
+def test_interrupted_tool_call_is_voided_not_placeholder():
+    """工具调用被新用户消息打断 → 作废（清空 tool_calls），不注入占位。"""
     messages = [
         HumanMessage(content="hi"),
         _ai("", [{"id": "t1", "name": "read", "args": {}}]),
@@ -45,13 +46,15 @@ def test_missing_all_tool_responses_injects_placeholder():
     ]
     repaired = ToolCallRepairMiddleware._repair_messages(messages)
     tool_ids = _tool_ids(repaired)
-    assert "t1" in tool_ids
-    placeholder = next(m for m in repaired if isinstance(m, ToolMessage))
-    assert placeholder.content == PLACEHOLDER_CONTENT
-    assert placeholder.name == "read"
+    assert "t1" not in tool_ids, "被打断的调用不应注入占位"
+    assert not any(isinstance(m, ToolMessage) for m in repaired)
+    # 原 AIMessage 的 tool_calls 被清空
+    ai = next(m for m in repaired if isinstance(m, AIMessage))
+    assert ai.tool_calls == []
 
 
-def test_partial_missing_response_injects_only_missing():
+def test_partial_response_then_interrupt_voids_remaining():
+    """t1 已响应，t2 未执行就遇到新消息 → t2 作废，t1 保持。"""
     messages = [
         HumanMessage(content="hi"),
         _ai(
@@ -67,10 +70,9 @@ def test_partial_missing_response_injects_only_missing():
     repaired = ToolCallRepairMiddleware._repair_messages(messages)
     tool_ids = _tool_ids(repaired)
     assert "t1" in tool_ids
-    assert "t2" in tool_ids
-    # t1 保持原样，t2 是占位
-    t2 = next(m for m in repaired if isinstance(m, ToolMessage) and m.tool_call_id == "t2")
-    assert t2.content == PLACEHOLDER_CONTENT
+    assert "t2" not in tool_ids, "未执行的 t2 应作废而不是注入占位"
+    ai = next(m for m in repaired if isinstance(m, AIMessage))
+    assert [tc["id"] for tc in ai.tool_calls] == ["t1"]
 
 
 def test_dangling_tool_calls_at_end_get_placeholder():
@@ -103,7 +105,8 @@ def test_tool_message_with_unknown_id_after_pending_is_dropped():
     repaired = ToolCallRepairMiddleware._repair_messages(messages)
     tool_ids = _tool_ids(repaired)
     assert "t2" not in tool_ids
-    assert "t1" in tool_ids
+    # t1 被后面的 HumanMessage 打断 → 作废，不再注入占位
+    assert "t1" not in tool_ids
 
 
 def test_original_list_not_mutated():
@@ -153,4 +156,7 @@ def test_wrap_model_call_forwards_repaired_messages():
     )
     middleware.wrap_model_call(request, handler)
     assert calls, "handler 必须被调用"
-    assert "t1" in _tool_ids(calls[0])
+    # 被打断的 t1 被作废：转发给模型的消息里不再有该占位/调用
+    assert "t1" not in _tool_ids(calls[0])
+    ai = next(m for m in calls[0] if isinstance(m, AIMessage))
+    assert ai.tool_calls == []

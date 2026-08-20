@@ -24,8 +24,6 @@ log = get_logger("faust.tools.find")
 def find(patterns: list[str]) -> str:
     """Find files matching glob patterns — the universal file locator.
 
-    This replaces listDirectoryTool for recursive directory searches.
-
     FILESYSTEM GLOBBING:
     - `find(["src/**/*.py"])` → all Python files under src/.
     - `find(["tests/**/*.py", "docs/**/*.md"])` → multiple patterns.

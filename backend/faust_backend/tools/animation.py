@@ -190,6 +190,7 @@ def triggerVRMPoseTool(pose_name: str, transition: float | None = None) -> str:
     """
     Description:
         应用 VRM 模型的某个动作预设（仅在 VRM 模式下有效）。预设由用户在编辑器中保存。
+        预设是持久姿态，应用后保持直到重置或切换其他动作
     Args:
         pose_name (str): 预设名称，从 listVRMPosesTool 获取，不含空格。
         transition (float, optional): 过渡时长毫秒，默认用预设自带值；0 表示瞬间。

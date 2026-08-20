@@ -28,3 +28,5 @@ frontend/models/
 subagents.json
 # npm cache (workspace-local)
 .npm-cache/
+
+profile-generator.cjs

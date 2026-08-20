@@ -50,8 +50,6 @@ def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = F
     """Read a file, directory, tool output, or memory document — the universal read tool.
 
     This is your PRIMARY tool for inspecting anything on disk or in memory.
-    You should use it instead of the old readTextFileTool, listDirectoryTool, kbReadTool, or kbListTool.
-
     URI FORMATS AND WHEN TO USE THEM:
 
     **Reading code files (structured summary mode):**

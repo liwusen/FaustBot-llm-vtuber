@@ -28,8 +28,7 @@ log = get_logger("faust.tools.search")
 def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
     """Search content across filesystem and memory store in one call.
 
-    This unifies the old memorySearchTool and filesystem grep into a single
-    tool.  The `paths` argument determines which backend to use.
+    The `paths` argument determines which backend to use.
 
     SEARCHING MEMORY (memory://):
     - `search("勾股定理", paths=["memory://"])` → semantic + BM25 hybrid search

@@ -25,19 +25,23 @@ def test_minecraft_skill_contains_command_handbook():
     assert "事件触发" in text
 
 
-def test_agent_md_keeps_core_tools_and_points_to_skills():
-    """核心工具详解保留在主 Prompt；TASK.md 指引指向内置 skill。"""
-    text = (AGENT_TEMPLATE / "AGENT.md").read_text(encoding="utf-8")
-    # 核心工具详解仍在 AGENT.md（不移入 skill）
-    assert "### 1. read — 通用读取" in text
-    assert "### 2. execute — 执行代码" in text
-    # 行为核心规则保留
+def test_agent_md_keeps_core_rules_and_points_to_skills():
+    """核心行为规则保留在 AGENT.md；工具速查在 TASK.md；两者都指向内置 skill。"""
+    agent = (AGENT_TEMPLATE / "AGENT.md").read_text(encoding="utf-8")
+    task = (AGENT_TEMPLATE / "TASK.md").read_text(encoding="utf-8")
+    # 行为核心规则保留在 AGENT.md（工具详解已移入 TASK.md）
     for rule in ("不要在输出中使用 Markdown", "function call", "listAvailableMotionsTool",
-                 "直播模式", "TASK.md", "skill.d"):
-        assert rule in text
+                 "skill.d", "memory://user"):
+        assert rule in agent
+    # 核心工具速查在 TASK.md
+    assert "## 核心工具速查" in task
+    assert "| **read** |" in task
+    assert "| **execute** |" in task
     # Minecraft/Nimble 指引指向内置 skill
-    assert "skill://minecraft" in text
-    assert "skill://nimble-window" in text
+    assert "skill://minecraft" in task
+    assert "skill://nimble-window" in task
+    # 自我进化技能在 AGENT.md 有入口（AI 主动触发适应用户）
+    assert "skill://self-improvement-using-agile" in agent
 
 
 def test_task_md_slimmed():

@@ -72,6 +72,7 @@ def test_desktop_context_and_vfs():
     context = plugin.collect_context()
     assert 'idle_seconds' in context
     assert 'window_title' in context
+    assert 'window_process' in context
     vfs = get_faustbot_vfs(refresh=True)
     plugin.heartbeat(plugin.ctx)
     payload = json.loads(run_coro_sync(vfs.read_text('/plugins/desktop-context.json', default='{}'))) # type: ignore

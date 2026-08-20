@@ -24,15 +24,14 @@ log = get_logger("faust.tools.execute")
 def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "") -> str:
     """Run code or shell commands in a sandboxed subprocess.
 
-    This replaces the old sysExecTool and pythonExecTool.  All execution now
-    happens in isolated child processes with timeout protection.
+    All execution happens in isolated child processes with timeout protection.
 
     WHEN TO USE EACH LANGUAGE:
 
     **language="shell":**
     - Use for: listing directories, checking file existence, running installed
       programs, getting system info, git commands.
-    - Examples: "dir", "git status", "pip list", "echo %PATH%".
+ ·
     - Security: commands are checked by the security module before execution.
       Dangerous operations (rm -rf, format, etc.) will be rejected.
 
@@ -111,7 +110,7 @@ def _run_shell_no_check(command: str, timeout: int, cwd: str) -> str:
     try:
         proc = subprocess.run(
             command, shell=True, capture_output=True, text=True,
-            timeout=timeout, cwd=work_dir,
+            timeout=timeout, cwd=work_dir,encoding='utf-8', errors='ignore'
         )
     except subprocess.TimeoutExpired:
         return f"命令超时 ({timeout}s)"
@@ -128,11 +127,17 @@ def _run_shell_no_check(command: str, timeout: int, cwd: str) -> str:
 
 def _run_python(code: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
+    # Windows 默认 locale 常为 GBK，子进程 print 非 ASCII（emoji/特殊符号）会抛
+    # UnicodeEncodeError；强制 PYTHONIOENCODING=utf-8 让子进程 stdout/stderr 用 UTF-8。
+    env = dict(os.environ)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         proc = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True, text=True,
             timeout=timeout, cwd=work_dir,
+            encoding='utf-8', errors='replace',
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return f"Python 执行超时 ({timeout}s)"
@@ -171,6 +176,7 @@ def _run_js(code: str, timeout: int, cwd: str) -> str:
                 [runtime, "-e", code],
                 capture_output=True, text=True,
                 timeout=timeout, cwd=work_dir,
+                encoding='utf-8', errors='replace',
             )
             out = []
             if proc.stdout:

@@ -111,3 +111,27 @@ def test_araya_trigger_run_is_non_blocking(monkeypatch, tmp_path):
     result = _asyncio.run(runtime.trigger_run(reason="manual-test"))
     assert result["accepted"] is True
     assert result["status"] == "queued"
+
+
+def test_araya_should_trigger_false_after_grouping_marker(monkeypatch, tmp_path):
+    """触发后立即写入 last_trigger_ts 抢占，下次轮响应返回 False，避免重复刷屏。"""
+    import faust_backend.araya_runtime as ar
+    # 直接用真实 runtime 的 should_trigger + _load_state/_save_state 验证抢占效果
+    monkeypatch.setattr(ar.conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(ar.conf, "AGENT_NAME", "faust")
+    monkeypatch.setattr(ar.conf, "ARAYA_ENABLED", True)
+    monkeypatch.setattr(ar.conf, "ARAYA_IDLE_MINUTES", 1)
+
+    runtime = ar.ArayaRuntime()
+    state = runtime._load_state()
+    state["last_main_activity_ts"] = time.time() - 120  # idle 已超阈值
+    state["last_trigger_ts"] = 0.0
+    state["idle_minutes"] = 1
+    runtime._save_state(state)
+    assert runtime.should_trigger() is True
+
+    # 模拟 loop 触发后的抢占：last_trigger_ts 更新到 now
+    state["last_trigger_ts"] = time.time()
+    runtime._save_state(state)
+    # 即便 idle 仍超阈值，抢占后 should_trigger 也应为 False（不重复触发）
+    assert runtime.should_trigger() is False

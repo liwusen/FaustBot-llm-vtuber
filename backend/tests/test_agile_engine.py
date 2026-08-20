@@ -453,3 +453,109 @@ def test_tpm_limit_via_tool(agile_env):
     assert "上限" in op.invoke({"action": "limit", "name": "tpm", "value": "abc"})
     assert "触发限制: 10/min" in op.invoke({"action": "status", "name": "tpm"})
     plugin.plugin_unloaded(ctx)
+
+
+# ── last_seen 活动打点 ──
+
+
+def test_last_seen_initialized_on_load(agile_env):
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "demo", SIMPLE_MODULE)
+    assert runner.load_module("demo")["ok"]
+    assert runner.AGILE_INSTANCES["demo"]["last_seen"] > 0
+    status = run_coro_sync(agile_env["vfs"].read_text("/agile/demo/status"))
+    assert "上次活动" in status
+
+
+def test_last_seen_updated_on_vfs_content_read_and_cache_hit(agile_env):
+    """vfsContent 读取更新 last_seen，且缓存命中也算活动（用户触达模块即活动）。"""
+    vfs, mods_dir = agile_env["vfs"], agile_env["mods_dir"]
+    _write_module(mods_dir, "cache", CACHE_MODULE)
+    assert runner.load_module("cache")["ok"]
+    # 首次读取（执行内容函数）→ 打点
+    assert run_coro_sync(vfs.read_text("/cache/c")) == "call-1"
+    runner.AGILE_INSTANCES["cache"]["last_seen"] = 0.0
+    # cache@0.5 内第二次读取命中缓存，仍算活动
+    assert run_coro_sync(vfs.read_text("/cache/c")) == "call-1"
+    assert runner.AGILE_INSTANCES["cache"]["last_seen"] > 0.0
+
+
+def test_last_seen_updated_on_write_and_edit_handler(agile_env):
+    vfs, mods_dir = agile_env["vfs"], agile_env["mods_dir"]
+    _write_module(mods_dir, "w", '''
+from agile_base import AgileModule
+
+module = AgileModule("w", "write test")
+
+@module.vfsContentFunc("/w/h")
+def state(_path):
+    return "init"
+
+@module.vfsWriteHook("/w/h")
+def on_write(node, content):
+    pass
+
+@module.vfsEditHook("/w/h")
+def on_edit(node, content):
+    pass
+
+def get_agile_module():
+    return module
+''')
+    assert runner.load_module("w")["ok"]
+    runner.AGILE_INSTANCES["w"]["last_seen"] = 0.0
+    run_coro_sync(vfs.write("/w/h", "x"))
+    assert runner.AGILE_INSTANCES["w"]["last_seen"] > 0.0
+    runner.AGILE_INSTANCES["w"]["last_seen"] = 0.0
+    run_coro_sync(vfs.edit("/w/h", "y"))
+    assert runner.AGILE_INSTANCES["w"]["last_seen"] > 0.0
+
+
+def test_last_seen_updated_on_event_fire(agile_env):
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "ev", '''
+from agile_base import AgileModule
+
+module = AgileModule("ev", "event test")
+
+def get_agile_module():
+    return module
+''')
+    assert runner.load_module("ev")["ok"]
+    runner.AGILE_INSTANCES["ev"]["last_seen"] = 0.0
+    agile = runner.AGILE_INSTANCES["ev"]["agile"]
+    run_coro_sync(agile.event_fire("probe", {}, "probe"))
+    assert runner.AGILE_INSTANCES["ev"]["last_seen"] > 0.0
+
+
+def test_last_seen_not_updated_by_interval(agile_env):
+    """interval 轮询不算活动——后台自转不能让模块永远新鲜。"""
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "tick", '''
+from agile_base import AgileModule, AgileContext
+
+module = AgileModule("tick", "interval test")
+
+@module.registerInterval(1)
+async def tick(agile: AgileContext):
+    await agile.linfo("interval-fired")
+
+def get_agile_module():
+    return module
+''')
+    assert runner.load_module("tick")["ok"]
+    runner.AGILE_INSTANCES["tick"]["last_seen"] = 0.0
+    time.sleep(1.5)
+    logs = run_coro_sync(runner.LM.getLog(agile_from="tick"))
+    assert any("interval-fired" in str(l.message) for l in logs)  # interval 确实跑了
+    assert runner.AGILE_INSTANCES["tick"]["last_seen"] == 0.0  # 但没打点
+
+
+def test_status_shows_idle_time(agile_env):
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "demo", SIMPLE_MODULE)
+    assert runner.load_module("demo")["ok"]
+    runner.AGILE_INSTANCES["demo"]["last_seen"] = time.time() - 7200  # 2 小时前
+    status = run_coro_sync(agile_env["vfs"].read_text("/agile/demo/status"))
+    assert "上次活动" in status
+    assert "小时前" in status

@@ -86,6 +86,32 @@ def _foreground_window_title() -> str:
         return ''
 
 
+def _foreground_window_process() -> dict[str, str] | None:
+    """前台窗口所属进程（名/路径），用于稳定识别用户正在运行的程序（如游戏 exe）。
+
+    窗口标题易变（游戏可能显示当前地图/加载界面等），可执行名才是稳定信号。
+    """
+    if psutil is None:
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return None
+        proc = psutil.Process(pid.value)
+        try:
+            exe = proc.exe()
+        except Exception:
+            exe = ''
+        return {"name": proc.name(), "path": exe}
+    except Exception:
+        return None
+
+
 def _holiday_name() -> str | None:
     now = time.localtime()
     month_day = f'{now.tm_mon:02d}-{now.tm_mday:02d}'
@@ -279,6 +305,7 @@ class Plugin(FaustPlugin):
             "/plugins/desktop-mood.md",
             "# Desktop Mood\n\n"
             "Desktop Mood 会持续把桌面环境写入 faustbot://plugins/desktop-context.json。\n"
+            "其中 window_title / window_process 是当前活动窗口标题与所属进程（如游戏 exe），可用来感知用户在做什么。\n"
             "当你想根据用户环境主动提醒、播报、关心用户时，请先读取这个上下文文件。\n"
             "规则文件位于 ~/.faustbot/desktop-mood.rules.json，插件会按规则自动触发动作或 event-trigger。\n",
         )
@@ -304,7 +331,7 @@ class Plugin(FaustPlugin):
     def register_prompt_suffix(self) -> list[str]:
         return [
             "\n[Desktop Mood 情景感知]\n"
-            "桌面环境实时快照在 faustbot://plugins/desktop-context.json( 包含天气,播放的媒体 等有用信息)，使用指南在 faustbot://plugins/desktop-mood.md。"
+            "桌面环境实时快照在 faustbot://plugins/desktop-context.json( 包含天气,前台窗口标题/进程,播放的媒体 等有用信息)，使用指南在 faustbot://plugins/desktop-mood.md。"
             "在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
         ]
 
@@ -349,7 +376,11 @@ class Plugin(FaustPlugin):
             except Exception:
                 pass
         idle = _windows_idle_seconds() if self.ctx is None or bool(self.ctx.get_config('ENABLE_IDLE_WATCH', True)) else None
-        window_title = _foreground_window_title() if self.ctx is None or bool(self.ctx.get_config('ENABLE_WINDOW_WATCH', True)) else ''
+        window_title = ''
+        window_process = None
+        if self.ctx is None or bool(self.ctx.get_config('ENABLE_WINDOW_WATCH', True)):
+            window_title = _foreground_window_title()
+            window_process = _foreground_window_process()
         weather = self.store.snapshot().get('weather') if self.store is not None else None
         holiday = _holiday_name() if self.ctx is not None and bool(self.ctx.get_config('ENABLE_HOLIDAY_EGG', True)) else None
         smtc = None
@@ -365,6 +396,7 @@ class Plugin(FaustPlugin):
             'disk_io': disk_io,
             'idle_seconds': idle,
             'window_title': window_title,
+            'window_process': window_process,
             'weather': weather,
             'hour': time.localtime().tm_hour,
             'manual_mood': self.store.snapshot().get('manual_mood') if self.store is not None else 'auto',

@@ -225,10 +225,16 @@ class ArayaRuntime:
         while not (self._stop_event and self._stop_event.is_set()):
             try:
                 await asyncio.sleep(5)
-                should = self.should_trigger()
-                if not should:
+                if not self.should_trigger():
+                    continue
+                # 已有 run 正在执行时不重复触发（避免 5 秒轮询叠起多个并发 run）
+                if self._run_lock is not None and self._run_lock.locked():
                     continue
                 log.info("Araya loop decided to trigger a run based on idle time")
+                # 抢占 last_trigger_ts：立即标记"已触发"，防止下次轮询(5秒后)再次命中
+                state = self._load_state()
+                state["last_trigger_ts"] = time.time()
+                self._save_state(state)
                 asyncio.create_task(self.run_once_async(reason="idle"))
             except Exception as exc:
                 log.error("_loop 异常: %s", exc)
