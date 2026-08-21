@@ -509,8 +509,8 @@ async def rebuild_runtime(
                             {
                                 "role": "user",
                                 "content": (
-                                    f"请继续按当前角色设定工作。\n 如果你需要重新了解你的角色设定，"
-                                    f"请读取agents/{state.AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件"
+                                    f"请执行启动流程(Bootstrap 流程)[如有]"
+                                    f"你可以读取agents/{state.AGENT_NAME}/AGENT.md、ROLE.md、COREMEMORY.md、TASK.md等文件"
                                     f"来获取最新的设定内容。\n 这一条对话无需写入日记"
                                 ),
                             }

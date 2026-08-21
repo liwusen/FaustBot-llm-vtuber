@@ -111,3 +111,47 @@ def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
         str(json): 搜索结果列表。compact 模式下每项含 path, line_count, description, score。
     """
     return _memorySearchTool(query, scope, top_k, return_mode, tags_json, use_graph)
+
+
+@register
+@tool
+def memoryDeleteTool(path: str, recursive_dangerous: bool = False) -> str:
+    """删除记忆库中的文档或目录。
+
+    - ``path``: 要删除的记忆库路径，例如 ``/notes/todo.md`` 或 ``/notes``。
+    - ``recursive_dangerous``: 当目标是**目录**时必须为 True 才会递归删除整个目录树；
+      为 False 且目标是目录时拒绝删除（防止误删）。删除单个文件时无需该参数。
+
+    Args:
+        path (str): 记忆库路径（memory:// 前缀或裸路径均可）。
+        recursive_dangerous (bool): 是否允许递归删除目录树。
+
+    Returns:
+        str(json): 操作结果。
+    """
+    try:
+        from faust_backend.memory import get_memory
+        m = get_memory()
+        p = str(path or "").strip()
+        if p.startswith("memory://"):
+            p = p[len("memory://"):]
+        if not p:
+            return json.dumps({"status": "error", "error": "path 不能为空"}, ensure_ascii=False)
+        p = "/" + p.strip("/")
+        nid = None
+        try:
+            from faust_backend.memory.store import _path_id
+            nid = _path_id(p)
+        except Exception:
+            nid = None
+        if nid is not None and m._has_node(nid):
+            ntype = m._get_node_attr(nid, "type", "file")
+            if ntype == "dir" and not recursive_dangerous:
+                return json.dumps(
+                    {"status": "error", "error": f"{p} 是目录，删除目录需 recursive_dangerous=True"},
+                    ensure_ascii=False,
+                )
+        result = asyncio.run(m.file_delete_tree(p))
+        return json.dumps({"status": "ok", **result}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)

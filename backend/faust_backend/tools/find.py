@@ -22,7 +22,7 @@ log = get_logger("faust.tools.find")
 
 @register
 @tool
-def find(patterns: list[str]) -> str:
+def find(patterns: list[str], *, max_file_walks_fs: int = 1000) -> str:
     """Find files matching glob patterns — the universal file locator.
 
     FILESYSTEM GLOBBING:
@@ -52,6 +52,8 @@ def find(patterns: list[str]) -> str:
     Args:
         patterns: List of glob patterns. Supports ** for recursive matching
                   and memory:// / faustbot:// prefixes for virtual stores.
+        max_file_walks_fs: 文件系统模式下最多遍历文件数（默认 1000），避免在超大目录上
+                          遍历过多文件；达到上限即停止并提示。
 
     Returns:
         Sorted list of matching paths, newest first.
@@ -88,7 +90,7 @@ def find(patterns: list[str]) -> str:
     results: list[str] = []
 
     if fs_globs:
-        results.append(_find_filesystem(fs_globs))
+        results.append(_find_filesystem(fs_globs, max_file_walks_fs))
 
     if mem_globs:
         results.append(_find_memory(mem_globs))
@@ -106,12 +108,13 @@ def find(patterns: list[str]) -> str:
     return result
 
 
-def _find_filesystem(globs: list[str]) -> str:
+def _find_filesystem(globs: list[str], max_file_walks_fs: int = 1000) -> str:
     from faust_backend.config_loader import WORKDIR_ROOT
     project_root = Path(WORKDIR_ROOT)
 
     all_matches: list[Path] = []
     seen: set[str] = set()
+    limit_reached = False
 
     for g in globs:
         full_pattern = str(project_root / g) if not Path(g).is_absolute() else g
@@ -122,8 +125,13 @@ def _find_filesystem(globs: list[str]) -> str:
         for m in matches:
             mp = Path(m)
             if mp.is_file() and str(mp) not in seen:
+                if len(all_matches) >= max_file_walks_fs:
+                    limit_reached = True
+                    break
                 seen.add(str(mp))
                 all_matches.append(mp)
+        if limit_reached:
+            break
 
     # Sort by mtime (newest first)
     try:
@@ -132,6 +140,8 @@ def _find_filesystem(globs: list[str]) -> str:
         all_matches.sort()
 
     if not all_matches:
+        if limit_reached:
+            return f"[文件系统] 未匹配到文件: {', '.join(globs)}（已达到遍历上限 {max_file_walks_fs} 个文件，可调大 max_file_walks_fs 再试）"
         return f"[文件系统] 未匹配到文件: {', '.join(globs)}"
 
     lines = [f"[文件系统] {len(all_matches)} 个文件:"]
@@ -143,6 +153,8 @@ def _find_filesystem(globs: list[str]) -> str:
         lines.append(f"  {rel}")
     if len(all_matches) > 50:
         lines.append(f"  ... 还有 {len(all_matches) - 50} 个文件")
+    if limit_reached:
+        lines.append(f"[达到文件遍历上限 {max_file_walks_fs}，结果可能不完整]")
     return "\n".join(lines)
 
 

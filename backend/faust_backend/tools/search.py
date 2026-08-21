@@ -25,7 +25,7 @@ log = get_logger("faust.tools.search")
 
 @register
 @tool
-def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
+def search(pattern: str, *, paths: list[str] | str | None = None, max_file_walks_fs: int = 1000) -> str:
     """Search content across filesystem and memory store in one call.
 
     The `paths` argument determines which backend to use.
@@ -55,6 +55,8 @@ def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
     Args:
         pattern: Regex (filesystem) or natural language query (memory).
         paths: List of paths/URIs. memory:// for memory store, bare paths for filesystem.
+        max_file_walks_fs: 文件系统模式下最多遍历文件数（默认 1000），避免在超大目录上
+                          遍历过多文件；达到上限即停止并提示。
 
     Returns:
         Summarized results grouped by backend with paths, snippets, and scores.
@@ -117,7 +119,7 @@ def search(pattern: str, *, paths: list[str] | str | None = None) -> str:
         results.append(_search_faustbot(pattern, vfs_scopes))
 
     if fs_paths:
-        results.append(_search_filesystem(pattern, fs_paths))
+        results.append(_search_filesystem(pattern, fs_paths, max_file_walks_fs))
 
     if not mem_scopes and not vfs_scopes and not fs_paths:
         return "错误: 没有有效的搜索路径"
@@ -161,7 +163,7 @@ def _search_memory(query: str, scopes: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _search_filesystem(pattern: str, paths: list[str]) -> str:
+def _search_filesystem(pattern: str, paths: list[str], max_file_walks_fs: int = 1000) -> str:
     try:
         regex = re.compile(pattern)
     except re.error as e:
@@ -172,8 +174,12 @@ def _search_filesystem(pattern: str, paths: list[str]) -> str:
 
     results: list[dict] = []
     max_results = 20
+    walked = 0
+    limit_reached = False
 
     for p in paths:
+        if limit_reached:
+            break
         search_dir = project_root / p if not Path(p).is_absolute() else Path(p)
         if not search_dir.exists():
             continue
@@ -183,6 +189,10 @@ def _search_filesystem(pattern: str, paths: list[str]) -> str:
             for fname in files:
                 if fname.startswith("."):
                     continue
+                if walked >= max_file_walks_fs:
+                    limit_reached = True
+                    break
+                walked += 1
                 fpath = Path(root) / fname
                 if fpath.suffix in (".pyc", ".pyd", ".dll", ".so", ".exe", ".bin", ".mp3", ".wav"):
                     continue
@@ -205,15 +215,19 @@ def _search_filesystem(pattern: str, paths: list[str]) -> str:
                             break
                 if len(results) >= max_results:
                     break
-            if len(results) >= max_results:
+            if limit_reached or len(results) >= max_results:
                 break
 
     if not results:
+        if limit_reached:
+            return f"[文件系统] 未找到匹配: {pattern}（已达到遍历上限 {max_file_walks_fs} 个文件，可调大 max_file_walks_fs 再试）"
         return f"[文件系统] 未找到匹配: {pattern}"
 
     lines = [f"[文件系统] {len(results)} 条结果:"]
     for r in results[:max_results]:
         lines.append(f"  {r['file']}:{r['line']}: {r['text']}")
+    if limit_reached:
+        lines.append(f"[达到文件遍历上限 {max_file_walks_fs}，结果可能不完整]")
     return "\n".join(lines)
 
 

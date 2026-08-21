@@ -7,5 +7,6 @@
   "enabled": true,
   "entry": "impl.py",
   "priority": 300,
-  "permissions": ["screen"]
+  "permissions": ["screen"],
+  "faustbot.internal.mark.builtin": true
 }

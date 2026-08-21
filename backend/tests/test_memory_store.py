@@ -721,3 +721,48 @@ class TestPhase7EntityDetail:
         memory_store.relation_add(eid1, eid2, rel_type="relates_to")
         detail = memory_store.get_entity_detail(eid1)
         assert detail["relations_count"] >= 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7: file_delete_tree (recursive delete)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestFileDeleteTree:
+
+    def _seed(self, memory_store):
+        async def _test():
+            await memory_store.file_write("/del/dir1/a.md", "a", index=True)
+            await memory_store.file_write("/del/dir1/sub/b.md", "b", index=True)
+            await memory_store.file_write("/del/f.md", "f", index=True)
+        asyncio.run(_test())
+
+    def test_delete_single_file(self, memory_store):
+        self._seed(memory_store)
+        result = asyncio.run(memory_store.file_delete_tree("/del/f.md"))
+        assert result["path"] == "/del/f.md"
+        assert not memory_store._has_node(store._path_id("/del/f.md"))
+        assert not memory_store._content_path("/del/f.md").exists()
+
+    def test_recursive_delete_clears_tree(self, memory_store):
+        self._seed(memory_store)
+        result = asyncio.run(memory_store.file_delete_tree("/del/dir1"))
+        assert result["path"] == "/del/dir1"
+        for p in ("/del/dir1", "/del/dir1/a.md", "/del/dir1/sub", "/del/dir1/sub/b.md"):
+            assert not memory_store._has_node(store._path_id(p)), f"节点残留: {p}"
+        assert not memory_store._content_path("/del/dir1").exists()
+        # 兄弟节点不受影响
+        assert memory_store._has_node(store._path_id("/del/f.md"))
+
+    def test_delete_nonexistent_raises(self, memory_store):
+        import pytest
+        with pytest.raises(FileNotFoundError):
+            asyncio.run(memory_store.file_delete_tree("/no/such/path"))
+
+    def test_delete_dir_requires_recursive_flag(self, memory_store):
+        """工具层保护：目录不带 recursive_dangerous 应拒绝。"""
+        from faust_backend.memory.store import _path_id
+        self._seed(memory_store)
+        nid = _path_id("/del/dir1")
+        assert memory_store._has_node(nid)
+        ntype = memory_store._get_node_attr(nid, "type", "file")
+        assert ntype == "dir"

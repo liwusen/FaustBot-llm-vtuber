@@ -178,7 +178,15 @@ function renderMemoryTree(currentDir) {
   }
   const nodes = getKbChildren(state.kbTree, currentDir);
   if (!nodes.length) {
-    tbody.innerHTML = "<tr><td colspan=3 class=empty-state>当前目录为空。</td></tr>";
+    // 追加空状态行，而不是覆盖 tbody —— 否则会清掉上面已插入的根目录行与 ".. (上一级)" 行，
+    // 导致进入空目录后无法返回上级/根目录。
+    const emptyRow = document.createElement("tr");
+    const emptyTd = document.createElement("td");
+    emptyTd.colSpan = 3;
+    emptyTd.className = "empty-state";
+    emptyTd.textContent = "当前目录为空。";
+    emptyRow.appendChild(emptyTd);
+    tbody.appendChild(emptyRow);
   }
   // 取消上一次可能仍在飞的分块渲染（模块重渲染时旧循环向已脱离 tbody 追加属浪费）
   if (state._treeChunkHandle) {

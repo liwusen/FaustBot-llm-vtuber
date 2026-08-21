@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -682,13 +683,17 @@ class GraphStore:
         async with self._write_lock:
             cp = self._content_path(norm)
             if cp.exists():
-                cp.unlink()
+                if cp.is_dir():
+                    # 目录节点：递归删除其内容目录（含残留子目录/文件）
+                    shutil.rmtree(cp, ignore_errors=True)
+                else:
+                    cp.unlink(missing_ok=True)
             mp = self._meta_path(norm)
             if mp.exists():
-                mp.unlink()
+                mp.unlink(missing_ok=True)
             cf = self._chunks_file(norm)
             if cf.exists():
-                cf.unlink()
+                cf.unlink(missing_ok=True)
 
             parent_nid = _path_id(str(Path(norm).parent))
             self._remove_edge(parent_nid, nid)
@@ -708,6 +713,36 @@ class GraphStore:
         self.flush()
         return {"path": norm}
 
+    async def file_delete_tree(self, path: str) -> dict:
+        """递归删除目录（含所有子文件/子目录），或删除单个文件。
+
+        先深层后浅层逐个调用 file_delete，最后删除目录本身。
+        """
+        norm = _normalize_path(path)
+        nid = _path_id(norm)
+        log.info("file_delete_tree path=%s", norm)
+        if not self._has_node(nid):
+            raise FileNotFoundError(f"节点不存在: {norm}")
+        ntype = self._get_node_attr(nid, "type", "file")
+        if ntype != "dir":
+            return await self.file_delete(norm)
+
+        tree = await self.tree_list(norm)
+        descendants: list[str] = []
+
+        def collect(node: dict) -> None:
+            p = str(node.get("path") or "").strip("/")
+            if p and f"/{p}" != norm:
+                descendants.append(f"/{p}")
+            for child in node.get("children", []):
+                collect(child)
+
+        collect(tree)
+        # 先删深层，再删浅层（子先于父）
+        for cp in sorted(set(descendants), key=lambda s: s.count("/"), reverse=True):
+            await self.file_delete(cp)
+        await self.file_delete(norm)
+        return {"path": norm}
 
     async def file_rename(self, path: str, new_name: str) -> dict:
         """重命名文件或目录。目录会递归重命名所有子节点。"""

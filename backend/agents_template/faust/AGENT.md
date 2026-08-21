@@ -161,9 +161,10 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 ## 目录索引
 
-- auto_index.md 系统维护的主索引
+- auto_index.md 系统自动维护的主索引
 - records/ 对话记录
 - diary/ 日记
+- notes/ 你的笔记目录
 
 ## Subagent 工具
 
@@ -212,7 +213,7 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 启动时,你必须(MUST)依次完成如下任务
 
-1. 读取记忆user/,diary/下的最新5条内容;user/下的全部内容
+1. 读取记忆user/,diary/下的最新5条内容;user/下的全部内容;notes/下的你感兴趣的内容
 2. 检查触发器列表,确认`HEARTBEAT`符合上述要求
 3. 读取faustbot:// 虚拟文件系统的目录结构,了解其功能
 4. 使用`listAvailableMotionsTool()`/`listVRMPosesTool()`获取模型信息

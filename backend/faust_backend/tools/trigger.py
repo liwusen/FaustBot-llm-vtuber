@@ -32,10 +32,19 @@ def triggerAddTool(trigger_json: str) -> str:
         添加一个新的触发器（同 id 会覆盖旧触发器）。
         通用字段: id, type, recall_description(可选), lifespan(可选,秒),
         run_background(可选,默认 false)。
-        run_background=true 时触发器在后台运行，处理过程与结果不会推送给用户前端；
+        run_background=true 时触发器在后台运行，你被触发时输出的内容/工具调用不会被推送给用户，只有你知道；
+        HEARTBEAT 触发器应该是 run_background=false 的
         false 时结果会通过聊天窗口流式展示给用户。
         类型专属字段: interval → interval_seconds; datetime → target("YYYY-MM-DD HH:MM:SS");
         py-eval → eval_code。
+        例子:
+        {
+            "id": "my_trigger",
+            "type": "interval",
+            "interval_seconds": 60,
+            "recall_description": "每分钟触发一次",
+            "run_background": false
+        }
     Args:
         trigger_json (str): 触发器的JSON字符串表示。
     Returns:

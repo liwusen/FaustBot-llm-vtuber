@@ -734,6 +734,23 @@ class TestFindTool:
         result = write.invoke({"path": "sourceCode://a.py", "content": "x"})
         assert "不支持" in result
 
+    def test_find_max_file_walks_limit(self, tmp_path):
+        """find 的 max_file_walks_fs 应限制文件系统遍历文件数。"""
+        from faust_backend.tools.find import find
+        import faust_backend.config_loader as conf
+
+        (tmp_path / "d/").mkdir()
+        for i in range(30):
+            (tmp_path / "d" / f"f{i}.txt").write_text("x", encoding="utf-8")
+
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
+        try:
+            result = find.invoke({"patterns": ["d/*.txt"], "max_file_walks_fs": 8})
+            assert "上限 8" in result or "遍历上限 8" in result
+        finally:
+            conf.WORKDIR_ROOT = orig_root
+
 
 # ============================================================
 # Search tool (filesystem only, no memory dep)
@@ -768,6 +785,23 @@ class TestSearchToolFilesystem:
         try:
             result = search.invoke({"pattern": "xyznonexistentpattern", "paths": ["src/"]})
             assert "未找到" in result
+        finally:
+            conf.WORKDIR_ROOT = orig_root
+
+    def test_search_max_file_walks_limit(self, tmp_path):
+        """search 的 max_file_walks_fs 应限制文件系统遍历文件数。"""
+        from faust_backend.tools.search import search
+        import faust_backend.config_loader as conf
+
+        (tmp_path / "dir/").mkdir()
+        for i in range(30):
+            (tmp_path / "dir" / f"f{i}.txt").write_text(f"hello {i}", encoding="utf-8")
+
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
+        try:
+            result = search.invoke({"pattern": "hello", "paths": ["dir/"], "max_file_walks_fs": 10})
+            assert "上限 10" in result or "遍历上限 10" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
