@@ -9,7 +9,7 @@ import faust_backend.minecraft_client as minecraft_client
 
 @register
 @tool
-def minecraftCommandTool(command_json: str) -> str:
+async def minecraftCommandTool(command_json: str) -> str:
     """
     Description:
         向 Minecraft 操作系统发送一条 JSON 命令，并返回执行结果。
@@ -25,7 +25,7 @@ def minecraftCommandTool(command_json: str) -> str:
         args = payload.get("args") or {}
         if not name:
             return json.dumps({"ok": False, "error": "missing command name"}, ensure_ascii=False)
-        result = asyncio.run(minecraft_client.send_command(name, args))
+        result = await minecraft_client.send_command(name, args)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
