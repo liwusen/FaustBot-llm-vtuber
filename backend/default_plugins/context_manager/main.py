@@ -24,30 +24,30 @@ class ContextPruneMiddleware(AgentMiddleware):
 
     @override
     def before_model(self, state: AgentState[Any], runtime: Runtime) -> dict[str, Any] | None:
-        messages = state.get("messages") or []
-        if not messages:
-            return None
-
-        self._ensure_message_ids(messages)
-        trigger_keep, normal_keep = self._resolve_limits()
-        removals = self._build_removals(messages, trigger_keep=trigger_keep, normal_keep=normal_keep)
-        if not removals:
-            return None
-        return {"messages": removals}
+        pass
 
     @override
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime
     ) -> dict[str, Any] | None:
-        return self.before_model(state, runtime)
+        messages = state.get("messages") or []
+        if not messages:
+            return None
 
-    def _resolve_limits(self) -> tuple[int, int]:
+        self._ensure_message_ids(messages)
+        trigger_keep, normal_keep = await self._resolve_limits()
+        removals = self._build_removals(messages, trigger_keep=trigger_keep, normal_keep=normal_keep)
+        if not removals:
+            return None
+        return {"messages": removals}
+
+    async def _resolve_limits(self) -> tuple[int, int]:
         trigger_keep = self._coerce_non_negative_int(
-            self.ctx.get_config("TRIGGER_USER_KEEP", DEFAULT_TRIGGER_USER_KEEP),
+            await self.ctx.get_config("TRIGGER_USER_KEEP", DEFAULT_TRIGGER_USER_KEEP),
             DEFAULT_TRIGGER_USER_KEEP,
         )
         normal_keep = self._coerce_non_negative_int(
-            self.ctx.get_config("NORMAL_USER_KEEP", DEFAULT_NORMAL_USER_KEEP),
+            await self.ctx.get_config("NORMAL_USER_KEEP", DEFAULT_NORMAL_USER_KEEP),
             DEFAULT_NORMAL_USER_KEEP,
         )
         return trigger_keep, normal_keep
@@ -149,8 +149,8 @@ class Plugin:
         priority=260,
     )
 
-    def startup(self, ctx: PluginContext) -> None:
-        ctx.register_config(
+    async def startup(self, ctx: PluginContext) -> None:
+        await ctx.register_config(
             """
             TRIGGER_USER_KEEP:int:<Trigger>消息保留条数=3
             NORMAL_USER_KEEP:int:普通用户消息保留条数=50

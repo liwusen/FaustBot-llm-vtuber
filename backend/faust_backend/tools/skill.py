@@ -13,46 +13,9 @@ import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state
 
 
-@tool
-async def installOpenClawSkillTool(slug: str, overwrite: bool = False) -> str:
-    """
-    [已弃用] 安装 OpenClaw Skill。无核心工具替代，但仍可用于安装插件。
-    安装前会触发前端 HIL 确认框。
-
-    Args:
-        slug (str): skill 名称（slug）。
-        overwrite (bool): 若已存在是否覆盖安装。
-    Returns:
-        str: 安装结果说明。
-    """
-
-    slug = str(slug or "").strip()
-    if not slug:
-        return "安装失败：slug 不能为空。"
-
-    approved, reason = await HILRequest(
-        id=f"skill_install_{uuid.uuid4().hex}",
-        title=f"允许安装 Skill: {slug} ?",
-        summary=(
-            f"Agent 请求安装 Skill：{slug}\n"
-            f"目标目录: agents/{conf.AGENT_NAME}/skill.d/{slug}\n"
-            f"来源: https://wry-manatee-359.convex.site/api/v1/download?slug={slug}\n"
-            f"overwrite={bool(overwrite)}"
-        ),
-    )
-    if not approved:
-        return f"用户拒绝安装 Skill，slug={slug}，原因={reason}"
-
-    try:
-        result = await asyncio.to_thread(install_skill_from_slug, slug, overwrite)
-        return f"Skill 安装成功: {json.dumps(result, ensure_ascii=False)}"
-    except Exception as e:
-        return f"Skill 安装失败: {str(e)}"
-
-
 @register
 @tool
-def listSkills(show_detail: bool = False) -> str:
+async def listSkills(show_detail: bool = False) -> str:
     """列出当前 Agent 已安装的所有可用技能（Skill）。
     返回技能的 slug 和描述，帮助了解 Agent 具备哪些领域能力。
     如需某个技能的详细说明，用 read("skill://<slug>/SKILL.md") 读取。

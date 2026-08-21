@@ -28,15 +28,15 @@ class Plugin(FaustPlugin):
     def __init__(self):
         self.ctx: PluginContext | None = None
 
-    def startup(self, ctx: PluginContext) -> None:
+    async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         runner.configure(ctx)
-        runner.register_overview_node()
+        await runner.register_overview_node()
         # 启动时自动加载所有 .py 模块（.disabled 跳过）；单个失败不阻塞启动
         for item in runner.list_modules():
             if item["disabled"]:
                 continue
-            result = runner.load_module(item["name"])
+            result = await runner.load_module(item["name"])
             if not result.get("ok"):
                 log.warning("agile 模块自动加载失败: %s", result.get("message"))
 
@@ -46,13 +46,13 @@ class Plugin(FaustPlugin):
         _PLUGIN = self
 
     @hookimpl
-    def plugin_unloaded(self, ctx: PluginContext) -> None:
+    async def plugin_unloaded(self, ctx: PluginContext) -> None:
         global _PLUGIN
         if _PLUGIN is self:
             _PLUGIN = None
         for name in list(runner.AGILE_INSTANCES.keys()):
             try:
-                runner.unload_module(name)
+                await runner.unload_module(name)
             except Exception as exc:  # noqa: BLE001
                 log.warning("agile 模块卸载失败 %s: %s", name, exc)
 
@@ -60,10 +60,10 @@ class Plugin(FaustPlugin):
         from langchain.tools import tool
 
         @tool
-        def agileOperate(action: str, name: str = "", value: str = "") -> str:
+        async def agileOperate(action: str, name: str = "", value: str = "") -> str:
             """Description:
             管理 Agile 模块（Agent 可编程的轻量扩展模块）。
-            Agile 模块 = 放在 ~/.faustbot/agile-modules/ 下的 .py 文件，能力限于
+            Agile 模块 = 放在 ~/.faustbot/agile-modules/ 下 of .py 文件，能力限于
             VFS 内容/写/编辑节点、定时任务、事件、日志；不能注册工具或修改 Agent 上下文。
             模块状态与日志可读 faustbot://agile/status、faustbot://agile/{name}/status、
             faustbot://agile/{name}/log/all、faustbot://agile/{name}/log/errors。
@@ -77,7 +77,7 @@ class Plugin(FaustPlugin):
             - disable <name>: 禁用模块（卸载并重命名为 .py.disabled）
             - status <name>: 查看单个模块状态
             - limit <name> <value>: 设置该模块每分钟触发 trigger 的上限（value 为整数，
-              0 或负数 = 不限制；超限时模块的 event_fire 会报错并记入 log/errors）
+              0 或负数 = 不限制；超限时模块 of event_fire 会报错并记入 log/errors）
             Args:
                 action (str): 操作名
                 name (str): 模块名（list 可留空）
@@ -94,15 +94,15 @@ class Plugin(FaustPlugin):
                 if not name:
                     return "错误: 该操作需要指定模块名 (name)"
                 if action == "load":
-                    return str(runner.load_module(name).get("message"))
+                    return str((await runner.load_module(name)).get("message"))
                 if action == "reload":
-                    return str(runner.reload_module(name).get("message"))
+                    return str((await runner.reload_module(name)).get("message"))
                 if action == "unload":
-                    return str(runner.unload_module(name).get("message"))
+                    return str((await runner.unload_module(name)).get("message"))
                 if action == "enable":
-                    return str(runner.enable_module(name).get("message"))
+                    return str((await runner.enable_module(name)).get("message"))
                 if action == "disable":
-                    return str(runner.disable_module(name).get("message"))
+                    return str((await runner.disable_module(name)).get("message"))
                 if action == "status":
                     return runner.format_module_status(name)
                 if action == "limit":

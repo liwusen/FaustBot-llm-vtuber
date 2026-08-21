@@ -85,13 +85,14 @@ def test_abort_all_sse_sets_events_and_clears():
 
 
 def test_reload_aborts_active_sse():
+    import asyncio
     pm = PluginManager(plugins_dir=REPO_PLUGIN_DIR, state_file=STATE_FILE)
-    pm.reload()
+    asyncio.run(pm.reload())
     pm._plugins['sse-test'] = {
         "manifest": PluginManifest(plugin_id='sse-test', name='sse-test', enabled=True),
         "plugin": SsePlugin(),
         "ctx": object(),
     }
     _, abort = pm.open_sse('sse-test', {})
-    pm.reload(force=True)
+    asyncio.run(pm.reload(force=True))
     assert abort.is_set()

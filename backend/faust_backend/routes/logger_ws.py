@@ -5,7 +5,7 @@ from faust_backend.logger import subscribe_ws, unsubscribe_ws, get_logger
 log = get_logger("faust.logger_ws")
 
 router = APIRouter(tags=["logger"])
-router.description = "日志流：前端通过 WebSocket 订阅实时日志"
+
 
 
 @router.websocket("/faust/logger/ws")

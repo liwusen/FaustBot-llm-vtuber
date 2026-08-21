@@ -7,7 +7,7 @@ from faust_backend.tools._registry import register
 
 @register
 @tool
-def writeDiaryFileTool(content: str) -> str:
+async def writeDiaryFileTool(content: str) -> str:
     """
     Description:
         将指定内容写入知识库，使用UTF-8编码。
@@ -20,7 +20,7 @@ def writeDiaryFileTool(content: str) -> str:
     """
     try:
         from faust_backend.memory import get_memory
-        result = asyncio.run(get_memory().write_diary(content))
+        result = await get_memory().write_diary(content)
         return f"日记已写入知识库: {result.get('path')}"
     except Exception as e:
         return f"写入日记文件出错: {str(e)}"

@@ -89,13 +89,16 @@ class _FakeCtx:
         self.plugin_dir = data_dir
         self._config = config
 
-    def register_config(self, schema):
+    async def register_config(self, schema):
         return None
 
-    def get_config(self, key, default=None):
+    async def get_config(self, key, default=None):
         return self._config.get(key, default)
 
-    def vfs_write(self, path, content):
+    async def list_configs(self):
+        return dict(self._config)
+
+    async def vfs_write(self, path, content):
         self._config.setdefault('_vfs', {})[path] = content
 
 
@@ -110,7 +113,7 @@ def plugin(tmp_path):
         'VOCAL_GAIN_DB': 0.0,
     })
     ctx.plugin_data_dir.mkdir(parents=True, exist_ok=True)
-    p.startup(ctx)
+    asyncio.run(p.startup(ctx))
     return p
 
 

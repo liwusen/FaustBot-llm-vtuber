@@ -8,7 +8,7 @@ from faust_backend.logger import get_logger
 log = get_logger("faust.hil_nimble")
 
 router = APIRouter(tags=["hil-nimble"])
-router.description = "HIL / Nimble 交互：人工审批反馈、Nimble 窗口提交回调和关闭"
+
 
 
 @router.post("/faust/humanInLoop/feedback")
@@ -78,7 +78,7 @@ async def nimble_close_post(payload: dict):
         reason = payload.get("reason") or reason
     if not callback_id:
         return {"error": "no callback_id provided"}
-    session = nimble.finalize_close(callback_id, reason=reason)
+    session = await nimble.finalize_close(callback_id, reason=reason)
     if not session:
         return {"error": f"unknown callback_id: {callback_id}"}
 

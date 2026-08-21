@@ -328,11 +328,11 @@ if "%INSTALL_TORCH%"=="1" (
   if "%SOURCE_MODE%"=="cn" (
     set "TORCH_INDEX_FLAG=-f https://mirrors.aliyun.com/pytorch-wheels/%TORCH_VARIANT%/"
     echo 安装 PyTorch %TORCH_VARIANT% 版（%SOURCE_MODE% 源）...
-    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --no-index
+    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --no-index --user
   ) else (
     set "TORCH_INDEX_FLAG=--index-url https://download.pytorch.org/whl/%TORCH_VARIANT%"
     echo 安装 PyTorch %TORCH_VARIANT% 版（%SOURCE_MODE% 源）...
-    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG!
+    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --user
   )
   
   if errorlevel 1 goto fail

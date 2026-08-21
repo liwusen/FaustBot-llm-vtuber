@@ -413,7 +413,7 @@ class GraphStore:
             from faust_backend.runtime import state
             pm = getattr(state, 'plugin_manager', None)
             if pm:
-                results = pm._call_pluggy_hook('memory_read_pre', query=path, filters=None, ctx=None)
+                results = await pm._call_pluggy_hook('memory_read_pre', query=path, filters=None, ctx=None)
                 if results:
                     for r in results:
                         if r is not None and isinstance(r, str):
@@ -452,7 +452,7 @@ class GraphStore:
             from faust_backend.runtime import state as _state
             pm = getattr(_state, 'plugin_manager', None)
             if pm:
-                post_results = pm._call_pluggy_hook('memory_read_post', query=path, results=[result], ctx=None)
+                post_results = await pm._call_pluggy_hook('memory_read_post', query=path, results=[result], ctx=None)
                 if post_results:
                     for r in post_results:
                         if r is not None:
@@ -473,7 +473,7 @@ class GraphStore:
             from faust_backend.runtime import state
             pm = getattr(state, 'plugin_manager', None)
             if pm:
-                results = pm._call_pluggy_hook('memory_write_pre', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, ctx=None)
+                results = await pm._call_pluggy_hook('memory_write_pre', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, ctx=None)
                 if results:
                     for r in results:
                         if r is not None and isinstance(r, str):
@@ -562,7 +562,7 @@ class GraphStore:
             from faust_backend.runtime import state as _state
             pm = getattr(_state, 'plugin_manager', None)
             if pm:
-                pm._call_pluggy_hook('memory_write_post', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, id=nid, ctx=None)
+                await pm._call_pluggy_hook('memory_write_post', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, id=nid, ctx=None)
         except Exception:
             pass
 

@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import threading
-import uuid
 from typing import Any
 import traceback
 
@@ -15,100 +13,59 @@ from openai import AsyncOpenAI
 log = get_logger("faust.memory.tools")
 
 
-def _run(coro) -> Any:
-    try:
-        loop = asyncio.get_running_loop()
-        if loop.is_running():
-            result_box: dict[str, Any] = {}
-            error_box: dict[str, BaseException] = {}
-
-            def _thread_main() -> None:
-                try:
-                    result_box["value"] = asyncio.run(coro)
-                except BaseException as exc:
-                    error_box["error"] = exc
-
-            worker = threading.Thread(target=_thread_main, daemon=True, name="faust-memory-run")
-            worker.start()
-            worker.join(timeout=120)
-            if worker.is_alive():
-                raise TimeoutError("memory coroutine execution timed out")
-            if "error" in error_box:
-                raise error_box["error"]
-            return result_box.get("value")# ?:Review Needed
-        return asyncio.run(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
-
-
-def _run_bg(name: str, coro) -> str:
-    task_id = f"bg_{uuid.uuid4().hex[:12]}"
-    try:
-        loop = asyncio.get_running_loop()
-        if loop.is_running():
-            async def _wrapped():
-                try:
-                    await coro
-                except Exception as e:
-                    import faust_backend.logger as log
-                    log.get_logger("faust.memory.bg").error("background task %s failed: %s", name, e)
-            asyncio.run_coroutine_threadsafe(_wrapped(), loop)
-        else:
-            import threading
-            def _thread():
-                import asyncio as _a
-                _a.run(coro)
-            threading.Thread(target=_thread, daemon=True, name=f"bg_{name}").start()
-    except RuntimeError:
-        import threading
-        def _thread():
-            import asyncio as _a
-            _a.run(coro)
-        threading.Thread(target=_thread, daemon=True, name=f"bg_{name}").start()
-    return task_id
-
-
 def _m() -> GraphStore:
     return get_memory()
 
 
-def memoryListTool(scope: str = "") -> str:
+def schedule_extract(content: str, doc_path: str) -> None:
+    """后台调度 LLM 实体抽取（fire-and-forget）。
+
+    必须在运行中的事件循环内调用（async 上下文）。
+    """
     try:
-        return json.dumps(_run(_m().tree_list(scope)), ensure_ascii=False)
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(_bg_extract_and_save(content, doc_path))
+
+
+async def memoryListTool(scope: str = "") -> str:
+    try:
+        return json.dumps(await _m().tree_list(scope), ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-def memoryReadTool(path: str) -> str:
+async def memoryReadTool(path: str) -> str:
     try:
-        return json.dumps(_run(_m().file_read(path)), ensure_ascii=False)
+        return json.dumps(await _m().file_read(path), ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-def memoryWriteTool(path: str, content: str, declared_by: str = "agent",
-                    index: bool = True, tags_json: str = "[]") -> str:
+async def memoryWriteTool(path: str, content: str, declared_by: str = "agent",
+                          index: bool = True, tags_json: str = "[]") -> str:
     try:
         tags = json.loads(tags_json) if str(tags_json or "").strip() else []
-        result = _run(_m().file_write(path, content, declared_by=declared_by,
-                                       index=index, tags=tags))
-        _run_bg("auto_extract", _bg_extract_and_save(content, path))
+        result = await _m().file_write(path, content, declared_by=declared_by,
+                                       index=index, tags=tags)
+        schedule_extract(content, path)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
-                     return_mode: str = "compact", tags_json: str = "[]",
-                     use_graph: bool = True) -> str:
+async def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
+                           return_mode: str = "compact", tags_json: str = "[]",
+                           use_graph: bool = True) -> str:
     try:
         tags = json.loads(tags_json) if str(tags_json or "").strip() else []
         if return_mode == "compact":
-            items = _run(_m().search_compact(query, top_k=int(top_k)))
+            items = await _m().search_compact(query, top_k=int(top_k))
         else:
-            items = _run(_m().search(query=query, scope=scope, top_k=int(top_k),
+            items = await _m().search(query=query, scope=scope, top_k=int(top_k),
                                       return_mode=return_mode, tags=tags,
-                                      use_graph=use_graph))
+                                      use_graph=use_graph)
         if return_mode == "paths":
             return json.dumps([it.get("path") for it in items], ensure_ascii=False)
         return json.dumps(items, ensure_ascii=False)
@@ -116,9 +73,9 @@ def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-def attachmentWriteTool(file_path: str, path: str = "", *,
-                        description: str = "",
-                        content_type: str = "") -> str:
+async def attachmentWriteTool(file_path: str, path: str = "", *,
+                              description: str = "",
+                              content_type: str = "") -> str:
     try:
         from pathlib import Path as _Path
         fp = _Path(file_path)
@@ -131,17 +88,17 @@ def attachmentWriteTool(file_path: str, path: str = "", *,
             ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
         }.get(fp.suffix.lower(), "image/png")
-        result = _run(_m().attachment_write(kb_path, image_base64,
-                                            description=description,
-                                            content_type=ct))
+        result = await _m().attachment_write(kb_path, image_base64,
+                                             description=description,
+                                             content_type=ct)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-def attachmentReadTool(path: str) -> str:
+async def attachmentReadTool(path: str) -> str:
     try:
-        result = _run(_m().attachment_read(path))
+        result = await _m().attachment_read(path)
         payload = {
             "kind": "multimodal_tool_result",
             "text": result.get("description", ""),
@@ -167,7 +124,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         from faust_backend.runtime import state as runtime_state
         from faust_backend.provider import get_main_credentials
         api_model, api_key, api_base_raw = get_main_credentials(runtime_state.get_model_providers())
-        api_base = (api_base_raw or None).rstrip("/") if api_base_raw else None
+        api_base = api_base_raw.rstrip("/") if api_base_raw else None
         api_key = api_key or None
         api_model = api_model or None
         if not api_key or not api_base or not api_model:
@@ -221,7 +178,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         if entities and doc_path:
             names = [str(e.get("name", "")) for e in entities]
             name_vecs = await m._embed_texts(names)
-            existing_ids = await m.entity_find_similar(name_vecs, threshold=ENTITY_DEDUP_THRESHOLD)
+            existing_ids = await m.entity_find_similar(name_vecs, threshold=ENTITY_DEDUP_THRESHOLD)#type: ignore
             doc_nid = _path_id(doc_path)
 
             for item, name_vec, existing_id in zip(entities, name_vecs, existing_ids):

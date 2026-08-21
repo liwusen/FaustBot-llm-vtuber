@@ -6,7 +6,7 @@ from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import _graceful_shutdown_task
 
 router = APIRouter(tags=["system"])
-router.description = "系统：健康检查 & 活跃 Trigger 状态、优雅关闭"
+
 
 
 @router.get("/faust/status")

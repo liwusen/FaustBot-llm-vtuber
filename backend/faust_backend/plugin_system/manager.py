@@ -15,7 +15,7 @@ from typing import Any
 import pluggy
 
 import faust_backend.trigger_manager as trigger_manager
-from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs
 
 from .hooks import CoreHooks, hookimpl
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
@@ -23,8 +23,25 @@ from .plugin_base import FaustPlugin
 
 import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
-
+from typing_extensions import deprecated
 log = get_logger(__name__)
+
+
+def _run_awaitable_sync(awaitable: Any) -> Any:
+    """在同步上下文中执行协程：优先复用运行中的事件循环，否则新建一个。
+
+    仅用于无法改为 async 的调用点（如 watchdog 线程、同步工具包装器）。
+
+    常规情况下,限制该函数使用。
+
+    不允许在该文件之外使用这个函数.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    return asyncio.run_coroutine_threadsafe(awaitable, loop).result()
+
 
 class PluginLoadError(RuntimeError):
     pass
@@ -173,8 +190,30 @@ class PluginManager:
             priority=int(raw.get("priority") or 100),
         )
 
-    def _build_plugin_context(self, plugin_id: str, plugin_dir: Path) -> PluginContext:
-        vfs = get_faustbot_vfs(refresh=True)
+    async def _build_plugin_context_async(self, plugin_id: str, plugin_dir: Path) -> PluginContext:
+        vfs = await get_faustbot_vfs(refresh=True)
+
+        async def _vfs_read_text(path, default=""):
+            return await vfs.read_text(path, default=default)
+
+        async def _vfs_write(path, content):
+            return await vfs.write(path, content)
+
+        async def _vfs_write_symbolic(path, func, should_be_included_in_search=True, writable=False):
+            return await vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable)
+
+        async def _vfs_set_write_handler(path, func):
+            return await vfs.set_write_handler(path, func)
+
+        async def _vfs_set_edit_handler(path, func):
+            return await vfs.set_edit_handler(path, func)
+
+        async def _vfs_delete(path):
+            return await vfs.delete(path)
+
+        async def _vfs_list(path="/"):
+            return await vfs.list_dir(path)
+
         return PluginContext(
             plugin_id=plugin_id,
             plugin_dir=plugin_dir,
@@ -189,13 +228,13 @@ class PluginManager:
                 "plugin_config_get": lambda key, default=None: self._plugin_config_get(plugin_id, key, default),
                 "plugin_config_set": lambda key, value: self._plugin_config_set(plugin_id, key, value),
                 "plugin_config_list": lambda: self._plugin_config_list(plugin_id),
-                "vfs_read_text": lambda path, default="": run_coro_sync(vfs.read_text(path, default=default)),
-                "vfs_write": lambda path, content: run_coro_sync(vfs.write(path, content)),
-                "vfs_write_symbolic": lambda path, func, should_be_included_in_search=True, writable=False: run_coro_sync(vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable)),
-                "vfs_set_write_handler": lambda path, func: run_coro_sync(vfs.set_write_handler(path, func)),
-                "vfs_set_edit_handler": lambda path, func: run_coro_sync(vfs.set_edit_handler(path, func)),
-                "vfs_delete": lambda path: run_coro_sync(vfs.delete(path)),
-                "vfs_list": lambda path="/": run_coro_sync(vfs.list_dir(path)),
+                "vfs_read_text": _vfs_read_text,
+                "vfs_write": _vfs_write,
+                "vfs_write_symbolic": _vfs_write_symbolic,
+                "vfs_set_write_handler": _vfs_set_write_handler,
+                "vfs_set_edit_handler": _vfs_set_edit_handler,
+                "vfs_delete": _vfs_delete,
+                "vfs_list": _vfs_list,
             },
         )
 
@@ -370,7 +409,7 @@ class PluginManager:
             return module.Plugin()
         raise PluginLoadError("Plugin module must expose get_plugin() or Plugin class")
 
-    def _call_plugin_startup(self, plugin: Any, ctx: PluginContext) -> None:
+    async def _call_plugin_startup(self, plugin: Any, ctx: PluginContext) -> None:
         startup_fn = None
         if hasattr(plugin, "startup"):
             startup_fn = getattr(plugin, "startup")
@@ -381,9 +420,11 @@ class PluginManager:
             return
 
         try:
-            startup_fn(ctx)
+            res = startup_fn(ctx)
         except TypeError:
-            startup_fn()
+            res = startup_fn()
+        if inspect.isawaitable(res):
+            await res
 
     def _normalize_tool_specs(self, plugin_id: str, tools: list[Any] | None) -> list[ToolSpec]:
         out: list[ToolSpec] = []
@@ -435,7 +476,7 @@ class PluginManager:
         p_state = self._state.setdefault("plugins", {}).setdefault(plugin_id, {})
         return bool(p_state.get("enabled", default))
 
-    def reload(self, *, force: bool = False) -> dict[str, Any]:
+    async def reload(self, *, force: bool = False) -> dict[str, Any]:
         if not force and not self.needs_reload():
             return {
                 "loaded": len(self._plugins),
@@ -451,7 +492,11 @@ class PluginManager:
             ctx = record.get("ctx")
             try:
                 if isinstance(plugin, FaustPlugin):
-                    self._pluggy_manager.hook.plugin_unloaded(ctx=ctx)
+                    res = self._pluggy_manager.hook.plugin_unloaded(ctx=ctx)
+                    if isinstance(res, list):
+                        for r in res:
+                            if inspect.isawaitable(r):
+                                await r
                     self._pluggy_manager.unregister(plugin)
                 if plugin and hasattr(plugin, "on_unload"):
                     plugin.on_unload(ctx) # type: ignore
@@ -479,7 +524,7 @@ class PluginManager:
                     "middlewares": [],
                 }
                 continue
-            ctx = self._build_plugin_context(manifest.plugin_id, plugin_dir)
+            ctx = await self._build_plugin_context_async(manifest.plugin_id, plugin_dir)
 
             try:
                 module = self._load_module(manifest.plugin_id, plugin_dir / manifest.entry)
@@ -498,16 +543,33 @@ class PluginManager:
                     self._pluggy_loaded = True
                     # Call plugin_loaded hook
                     log.debug(f"Calling plugin_loaded hook for plugin: {manifest.plugin_id}")
-                    self._pluggy_manager.hook.plugin_loaded(ctx=ctx)
+                    res = self._pluggy_manager.hook.plugin_loaded(ctx=ctx)
+                    if isinstance(res, list):
+                        for r in res:
+                            if inspect.isawaitable(r):
+                                await r
                 else:
                     # Old-style plugins
                     if hasattr(plugin, "on_load"):
                         plugin.on_load(ctx)
 
-                self._call_plugin_startup(plugin, ctx)
+                await self._call_plugin_startup(plugin, ctx)
 
-                tools = self._normalize_tool_specs(manifest.plugin_id, plugin.register_tools(ctx) if hasattr(plugin, "register_tools") else [])
-                middlewares = self._normalize_middleware_specs(plugin.register_middlewares(ctx) if hasattr(plugin, "register_middlewares") else [])
+                if hasattr(plugin, "register_tools"):
+                    tools_res = plugin.register_tools(ctx)
+                    if inspect.isawaitable(tools_res):
+                        tools_res = await tools_res
+                else:
+                    tools_res = []
+                tools = self._normalize_tool_specs(manifest.plugin_id, tools_res)
+
+                if hasattr(plugin, "register_middlewares"):
+                    mw_res = plugin.register_middlewares(ctx)
+                    if inspect.isawaitable(mw_res):
+                        mw_res = await mw_res
+                else:
+                    mw_res = []
+                middlewares = self._normalize_middleware_specs(mw_res)
 
                 self._plugins[manifest.plugin_id] = {
                     "manifest": manifest,
@@ -554,7 +616,7 @@ class PluginManager:
             "last_reload_ts": self._last_reload_ts,
         }
 
-    def hot_reload_tick(self) -> dict[str, Any]:
+    async def hot_reload_tick(self) -> dict[str, Any]:
         if not self._hot_reload_enabled:
             return {"changed": False, "enabled": False}
         new_fp = self._build_plugins_fingerprint()
@@ -563,7 +625,7 @@ class PluginManager:
             return {"changed": False, "enabled": True}
         if new_fp == self._plugin_fingerprint:
             return {"changed": False, "enabled": True}
-        summary = self.reload()
+        summary = await self.reload()
         return {"changed": True, "enabled": True, "reload": summary}
 
     def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> None:
@@ -709,7 +771,7 @@ class PluginManager:
 
         return out
 
-    def heartbeat_tick(self) -> dict[str, Any]:
+    async def heartbeat_tick(self) -> dict[str, Any]:
         called = 0
         errors: list[dict[str, str]] = []
         for plugin_id, record in self._plugins.items():
@@ -735,9 +797,11 @@ class PluginManager:
 
             try:
                 try:
-                    hb(ctx)
+                    result = hb(ctx)
                 except TypeError:
-                    hb()
+                    result = hb()
+                if inspect.isawaitable(result):
+                    await result
                 called += 1
             except Exception as e:
                 errors.append({"plugin": plugin_id, "error": str(e)})
@@ -808,7 +872,8 @@ class PluginManager:
 
     # ── pluggy hook dispatch helpers ──
 
-    def _call_pluggy_hook(self, hook_name: str, **kwargs) -> list:
+    def _hook_results(self, hook_name: str, **kwargs) -> list:
+        """同步调用 pluggy hook，返回原始结果列表（可能含未 await 的协程）。"""
         if not self._pluggy_loaded:
             return []
         try:
@@ -820,6 +885,32 @@ class PluginManager:
         except Exception as exc:
             log.warning("插件 hook 调用失败 %s: %s", hook_name, exc)
             return []
+
+    async def _call_pluggy_hook(self, hook_name: str, **kwargs) -> list:
+        """调用 pluggy hook 并收集所有结果；异步实现会被逐个 await。"""
+        collected: list = []
+        for res in self._hook_results(hook_name, **kwargs):
+            if inspect.isawaitable(res):
+                try:
+                    collected.append(await res)
+                except Exception as exc:
+                    log.warning("插件 hook %s 执行失败: %s", hook_name, exc)
+            else:
+                collected.append(res)
+        return collected
+
+    def _call_pluggy_hook_sync(self, hook_name: str, **kwargs) -> list:
+        """同步上下文调用 pluggy hook；异步实现会被同步桥接执行。"""
+        collected: list = []
+        for res in self._hook_results(hook_name, **kwargs):
+            if inspect.isawaitable(res):
+                try:
+                    collected.append(_run_awaitable_sync(res))
+                except Exception as exc:
+                    log.warning("插件 hook %s 执行失败: %s", hook_name, exc)
+            else:
+                collected.append(res)
+        return collected
 
     def _load_schedules(self) -> None:
         """Load schedules from pluggy-registered plugins."""

@@ -15,6 +15,7 @@ from typing import Any
 
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 from faust_backend.logger import get_logger
+import asyncio
 
 log = get_logger("faust.plugins.dev-debugger")
 
@@ -79,7 +80,7 @@ def _iter_tools():
         yield name, t
 
 
-def _invoke_tool(name: str, args: dict) -> Any:
+async def _invoke_tool(name: str, args: dict) -> Any:
     """按名称查找注册的工具并同步调用。
 
     在独立线程里执行 tool.invoke：插件 communicate_handler 常运行在事件循环中，
@@ -101,16 +102,14 @@ def _invoke_tool(name: str, args: dict) -> Any:
     result_box: dict = {}
     exc_box: dict = {}
 
-    def _run() -> None:
+    async def _arun() -> None:
         try:
-            result_box["value"] = tool.invoke(args)
+            result_box["value"] = await tool.ainvoke(args)
         except BaseException as e:  # noqa: BLE001
             exc_box["error"] = e
 
-    import threading
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join()
+    await _arun()
+
     if "error" in exc_box:
         raise exc_box["error"]
 
@@ -124,8 +123,8 @@ def _invoke_tool(name: str, args: dict) -> Any:
 
 
 class Plugin(FaustPlugin):
-    def startup(self, ctx: PluginContext) -> None:
-        ctx.register_config([
+    async def startup(self, ctx: PluginContext) -> None:
+        await ctx.register_config([
             {"key": "DEV_DEBUGGER_ENABLED", "type": "bool", "label": "启用 Dev Debugger", "default": True},
         ])
 
@@ -139,7 +138,7 @@ class Plugin(FaustPlugin):
         ]
 
     @hookimpl
-    def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+    async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         action = str((payload or {}).get("action") or "").strip().lower()
         if action == "list_tools":
             tools = []
@@ -160,7 +159,7 @@ class Plugin(FaustPlugin):
             if not isinstance(args, dict):
                 args = json.loads(str(args))
             try:
-                result = _invoke_tool(name, args)
+                result = await _invoke_tool(name, args)
                 return {"status": "ok", "tool": name, "result": result}
             except Exception as e:
                 log.warning("dev-debugger invoke_tool error: %s", e)

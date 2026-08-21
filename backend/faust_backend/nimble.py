@@ -151,7 +151,7 @@ async def register_session_vfs_nodes(callback_id: str) -> None:
     if not session:
         raise KeyError(f"nimble session 不存在: {callback_id}")
 
-    vfs = get_faustbot_vfs()
+    vfs = await get_faustbot_vfs()
     base = _vfs_session_dir(callback_id)
     await vfs.mkdir(base)
 
@@ -230,7 +230,7 @@ async def register_session_vfs_nodes(callback_id: str) -> None:
 async def unregister_session_vfs_nodes(callback_id: str) -> None:
     from faust_backend.tools.vfs import get_faustbot_vfs
 
-    vfs = get_faustbot_vfs()
+    vfs = await get_faustbot_vfs()
     await vfs.delete(_vfs_session_dir(callback_id))
     log.info("VFS nodes removed: faustbot:/%s", _vfs_session_dir(callback_id))
 
@@ -239,11 +239,10 @@ def message_trigger_id(callback_id: str) -> str:
     return f"nimble_message::{callback_id}"
 
 
-def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[str, Any]]:
+async def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[str, Any]]:
     """关闭会话的统一出口：删 trigger、通知前端、清理 VFS 与内存/磁盘记录。"""
     import faust_backend.backend2front as backend2frontend
     import faust_backend.trigger_manager as trigger_manager
-    from faust_backend.tools.vfs import run_coro_sync
 
     session = close_nimble_session(callback_id, reason=reason)
     if not session:
@@ -251,7 +250,7 @@ def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[st
     trigger_manager.delete_trigger(session["expire_trigger_id"])
     trigger_manager.delete_trigger(message_trigger_id(callback_id))
     backend2frontend.FrontEndCloseNimbleWindow({"callback_id": callback_id, "reason": reason})
-    run_coro_sync(unregister_session_vfs_nodes(callback_id))
+    await unregister_session_vfs_nodes(callback_id)
     cleanup_nimble_session(callback_id)
     return session
 
@@ -371,7 +370,7 @@ async def restore_persistent_sessions():
             if entry.get("summary_text"):
                 session["summary_text"] = entry["summary_text"]
             await register_session_vfs_nodes(callback_id)
-            backend2frontend.FrontEndShowNimbleWindow(export_window_payload(callback_id))
+            backend2frontend.FrontEndShowNimbleWindow(export_window_payload(callback_id) or {})
             restored += 1
             log.info("持久化 Nimble 窗口已恢复: %s", callback_id)
         except Exception as e:
@@ -405,7 +404,7 @@ def push_persistent_sessions_to_frontend():
     count = 0
     for callback_id, session in list(_nimble_sessions.items()):
         if session.get("persistent") and not session.get("closed") and _now() < float(session.get("expires_at", 0)):
-            backend2frontend.FrontEndShowNimbleWindow(export_window_payload(callback_id))
+            backend2frontend.FrontEndShowNimbleWindow(export_window_payload(callback_id) or {})
             count += 1
     if count:
         log.info("已推送 %d 个持久化 Nimble 窗口到前端", count)

@@ -526,7 +526,7 @@ async function refreshComponentStatus() {
     const c = getModuleContainer("components");
     c.innerHTML = "";
     renderGpuCard(c);
-    renderFunasrCard(c);
+    renderAsrCards(c);
     renderTtsCard(c);
     renderMinecraftCard(c);
     renderProgressArea(c);

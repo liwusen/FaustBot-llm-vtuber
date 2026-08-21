@@ -15,13 +15,12 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import run_coro_sync
 
 log = get_logger("faust.tools.execute")
 
 @register
 @tool
-def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "") -> str:
+async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "") -> str:
     """Run code or shell commands in a sandboxed subprocess.
 
     All execution happens in isolated child processes with timeout protection.
@@ -64,7 +63,7 @@ def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "") -> st
     log.info("execute INPUT lang=%s code_len=%d timeout=%d cwd=%s", lang, len(code), timeout, cwd or '.')
 
     if lang == "shell":
-        result = _run_shell(code, timeout, cwd)
+        result = await _run_shell(code, timeout, cwd)
     elif lang == "python":
         result = _run_python(code, timeout, cwd)
     elif lang == "js":
@@ -83,7 +82,7 @@ def _resolve_cwd(cwd: str) -> str:
     return WORKDIR_ROOT
 
 
-def _run_shell(command: str, timeout: int, cwd: str) -> str:
+async def _run_shell(command: str, timeout: int, cwd: str) -> str:
     import faust_backend.config_loader as conf
     if not getattr(conf, 'SECURITY_SYS_ENABLED', False):
         # Security system is disabled — execute without checks
@@ -95,7 +94,7 @@ def _run_shell(command: str, timeout: int, cwd: str) -> str:
         return _run_shell_no_check(command, timeout, cwd)
 
     try:
-        ok = run_coro_sync(security_check_command(command))
+        ok = await security_check_command(command)
         if not ok:
             return "安全检查拒绝执行该命令"
     except Exception as e:

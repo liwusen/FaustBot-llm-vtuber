@@ -22,7 +22,7 @@ log = get_logger("faust.tools.find")
 
 @register
 @tool
-def find(patterns: list[str], *, max_file_walks_fs: int = 1000) -> str:
+async def find(patterns: list[str], *, max_file_walks_fs: int = 1000) -> str:
     """Find files matching glob patterns — the universal file locator.
 
     FILESYSTEM GLOBBING:
@@ -93,10 +93,10 @@ def find(patterns: list[str], *, max_file_walks_fs: int = 1000) -> str:
         results.append(_find_filesystem(fs_globs, max_file_walks_fs))
 
     if mem_globs:
-        results.append(_find_memory(mem_globs))
+        results.append(await _find_memory(mem_globs))
 
     if vfs_globs:
-        results.append(_find_faustbot(vfs_globs))
+        results.append(await _find_faustbot(vfs_globs))
 
     if not results:
         result = "没有匹配任何文件"
@@ -158,7 +158,7 @@ def _find_filesystem(globs: list[str], max_file_walks_fs: int = 1000) -> str:
     return "\n".join(lines)
 
 
-def _find_memory(globs: list[str]) -> str:
+async def _find_memory(globs: list[str]) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -173,8 +173,7 @@ def _find_memory(globs: list[str]) -> str:
             g = g[len("memory://"):]
         scope = g.rstrip("*").rstrip("/") or ""
         try:
-            import asyncio
-            tree = asyncio.run(store.tree_list(scope if scope else "/"))
+            tree = await store.tree_list(scope if scope else "/")
         except Exception as e:
             log.warning("find memory tree error (scope=%s): %s", scope, e)
             continue
@@ -193,7 +192,7 @@ def _find_memory(globs: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _find_faustbot(globs: list[str]) -> str:
+async def _find_faustbot(globs: list[str]) -> str:
     """在 faustbot:// 虚拟文件系统里做 glob 匹配（VFS 自带 glob，fnmatch 语义）。
 
     - ``faustbot://plugins/`` → 该目录下所有节点（含子目录递归）
@@ -202,13 +201,13 @@ def _find_faustbot(globs: list[str]) -> str:
     目录节点以 ``/`` 结尾标注。
     """
     try:
-        from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+        from faust_backend.tools.vfs import get_faustbot_vfs
     except ImportError:
         return "(faustbot VFS 不可用)"
 
-    vfs = get_faustbot_vfs(refresh=True)
+    vfs = await get_faustbot_vfs(refresh=True)
     found: list[str] = []
-    all_nodes = run_coro_sync(vfs.walk("/")) or []
+    all_nodes = await vfs.walk("/") or []
 
     def _glob_regex(pat: str) -> re.Pattern:
         """把 glob 转成正则：``**/`` 跨任意层（含零层），``**`` 跨任意层，``*`` 不跨层。"""
@@ -248,7 +247,7 @@ def _find_faustbot(globs: list[str]) -> str:
                 continue
             is_dir = False
             try:
-                is_dir = run_coro_sync(vfs.is_dir(p))
+                is_dir = await vfs.is_dir(p)
             except Exception:
                 pass
             disp = f"faustbot://{p.strip('/')}"

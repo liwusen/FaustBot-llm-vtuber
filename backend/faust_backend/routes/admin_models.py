@@ -5,7 +5,7 @@ import faust_backend.vrm_pose_manager as vrm_pose_manager
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-models"])
-router.description = "Live2D / VRM 模型管理：应用 Live2D 设定、VRM 配置 CRUD、模型列表"
+
 
 
 @router.post("/faust/admin/live2d/apply")

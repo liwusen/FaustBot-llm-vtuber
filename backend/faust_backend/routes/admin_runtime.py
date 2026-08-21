@@ -4,7 +4,7 @@ from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import rebuild_runtime
 
 router = APIRouter(tags=["admin-runtime"])
-router.description = "Runtime 管理：运行时摘要、重载 Agent（保留对话）、全量重载（重置对话）"
+
 
 
 @router.get("/faust/admin/runtime")

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 import faust_backend.trigger_manager as tm
 
 router = APIRouter(tags=["public-api"])
-router.description = "外部公开 API：供外部系统触发 FaustBot 事件/触发器（无需内部鉴权路径）"
+
 
 
 class EventTriggerPushRequest(BaseModel):

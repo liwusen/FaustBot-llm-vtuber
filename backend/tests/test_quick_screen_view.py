@@ -12,7 +12,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.plugin_system import PluginManager
-from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / "default_plugins"
 
@@ -37,24 +37,24 @@ class _FakeModelBuilder:
         return self.chat
 
 
-def _build_manager(tmp_path: Path) -> PluginManager:
+async def _build_manager_async(tmp_path: Path) -> PluginManager:
     state_file = tmp_path / "plugin-test-state.json"
     pm = PluginManager(plugins_dir=REPO_PLUGIN_DIR, state_file=str(state_file))
     pm.set_plugin_enabled("quick-screen-view", True)
-    pm.reload(force=True)
+    await pm.reload(force=True)
     return pm
 
 
-def _clean_vfs() -> None:
-    vfs = get_faustbot_vfs()
-    run_coro_sync(vfs.delete("/plugins/quick-screen-view"))
+async def _clean_vfs_async() -> None:
+    vfs = await get_faustbot_vfs()
+    await vfs.delete("/plugins/quick-screen-view")
 
 
-def _set_mode(pm: PluginManager, mode: str, screen_model: str = "test::fake") -> None:
+async def _set_mode_async(pm: PluginManager, mode: str, screen_model: str = "test::fake") -> None:
     pm.set_plugin_config_values(
         "quick-screen-view", {"mode": mode, "screen-model": screen_model}
     )
-    pm.reload(force=True)
+    await pm.reload(force=True)
 
 
 def _patch_screenshot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,126 +74,133 @@ def _patch_model(monkeypatch: pytest.MonkeyPatch) -> _FakeModelBuilder:
 # ── Tool 模式 ──
 
 
-def test_tool_mode_registers_tool_and_no_vfs(tmp_path: Path) -> None:
-    _clean_vfs()
-    pm = _build_manager(tmp_path)
+@pytest.mark.asyncio
+async def test_tool_mode_registers_tool_and_no_vfs(tmp_path: Path) -> None:
+    await _clean_vfs_async()
+    pm = await _build_manager_async(tmp_path)
     plugin = pm._faust_plugins["quick-screen-view"]
-    tools = plugin.register_tools(plugin.ctx)
+    tools = await plugin.register_tools(plugin.ctx)
     names = [spec.name for spec in tools]
     assert "quickScreenView" in names
-    vfs = get_faustbot_vfs()
-    assert not run_coro_sync(vfs.exists(FOCUS_PATH))
-    assert not run_coro_sync(vfs.exists(TEXT_PATH))
+    vfs = await get_faustbot_vfs()
+    assert not await vfs.exists(FOCUS_PATH)
+    assert not await vfs.exists(TEXT_PATH)
 
 
-def test_tool_call_with_focus(
+@pytest.mark.asyncio
+async def test_tool_call_with_focus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _clean_vfs()
+    await _clean_vfs_async()
     fake = _patch_model(monkeypatch)
     _patch_screenshot(monkeypatch)
-    pm = _build_manager(tmp_path)
+    pm = await _build_manager_async(tmp_path)
     pm.set_plugin_config_values("quick-screen-view", {"screen-model": "test::fake"})
-    pm.reload(force=True)
+    await pm.reload(force=True)
     plugin = pm._faust_plugins["quick-screen-view"]
-    tool = plugin.register_tools(plugin.ctx)[0].tool
-    result = tool.invoke({"focus": "看看屏幕上有什么"})
+    tool = (await plugin.register_tools(plugin.ctx))[0].tool
+    result = await tool.ainvoke({"focus": "看看屏幕上有什么"})
     assert "屏幕概览" in result
     assert fake.chat.calls == 1
     # 同 focus 二次调用命中缓存
-    result2 = tool.invoke({"focus": "看看屏幕上有什么"})
+    result2 = await tool.ainvoke({"focus": "看看屏幕上有什么"})
     assert result2 == result
     assert fake.chat.calls == 1
     # 不同 focus 重新计算
-    tool.invoke({"focus": "只看数字"})
+    await tool.ainvoke({"focus": "只看数字"})
     assert fake.chat.calls == 2
 
 
 # ── VFS 模式 ──
 
 
-def test_vfs_mode_nodes_and_async_content(
+@pytest.mark.asyncio
+async def test_vfs_mode_nodes_and_async_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _clean_vfs()
+    await _clean_vfs_async()
     fake = _patch_model(monkeypatch)
     _patch_screenshot(monkeypatch)
-    pm = _build_manager(tmp_path)
-    _set_mode(pm, "vfs")
+    pm = await _build_manager_async(tmp_path)
+    await _set_mode_async(pm, "vfs")
     plugin = pm._faust_plugins["quick-screen-view"]
-    assert plugin.register_tools(plugin.ctx) == []
+    assert await plugin.register_tools(plugin.ctx) == []
 
-    vfs = get_faustbot_vfs()
-    assert run_coro_sync(vfs.exists(FOCUS_PATH))
-    assert run_coro_sync(vfs.exists(TEXT_PATH))
+    vfs = await get_faustbot_vfs()
+    assert await vfs.exists(FOCUS_PATH)
+    assert await vfs.exists(TEXT_PATH)
 
     # focus 可写可读
-    run_coro_sync(vfs.write(FOCUS_PATH, "关注屏幕上的数字"))
-    assert run_coro_sync(vfs.read_text(FOCUS_PATH)) == "关注屏幕上的数字"
+    await vfs.write(FOCUS_PATH, "关注屏幕上的数字")
+    assert await vfs.read_text(FOCUS_PATH) == "关注屏幕上的数字"
 
     # text 为异步内容函数，读取时实时分析
-    text = run_coro_sync(vfs.read_text(TEXT_PATH))
+    text = await vfs.read_text(TEXT_PATH)
     assert "屏幕概览" in text
     assert fake.chat.calls == 1
 
 
-def test_text_cache_and_focus_invalidation(
+@pytest.mark.asyncio
+async def test_text_cache_and_focus_invalidation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _clean_vfs()
+    await _clean_vfs_async()
     fake = _patch_model(monkeypatch)
     _patch_screenshot(monkeypatch)
-    pm = _build_manager(tmp_path)
-    _set_mode(pm, "vfs")
-    vfs = get_faustbot_vfs()
+    pm = await _build_manager_async(tmp_path)
+    await _set_mode_async(pm, "vfs")
+    vfs = await get_faustbot_vfs()
 
-    run_coro_sync(vfs.write(FOCUS_PATH, "focus-a"))
-    run_coro_sync(vfs.read_text(TEXT_PATH))
-    run_coro_sync(vfs.read_text(TEXT_PATH))
+    await vfs.write(FOCUS_PATH, "focus-a")
+    await vfs.read_text(TEXT_PATH)
+    await vfs.read_text(TEXT_PATH)
     assert fake.chat.calls == 1  # 缓存命中
 
     # 写 focus 清缓存 → 重算
-    run_coro_sync(vfs.write(FOCUS_PATH, "focus-b"))
-    run_coro_sync(vfs.read_text(TEXT_PATH))
+    await vfs.write(FOCUS_PATH, "focus-b")
+    await vfs.read_text(TEXT_PATH)
     assert fake.chat.calls == 2
 
     # 相同 focus 再次命中缓存
-    run_coro_sync(vfs.read_text(TEXT_PATH))
+    await vfs.read_text(TEXT_PATH)
     assert fake.chat.calls == 2
 
 
 # ── 错误处理 ──
 
 
-def test_missing_screen_model(tmp_path: Path) -> None:
-    _clean_vfs()
-    pm = _build_manager(tmp_path)
-    _set_mode(pm, "vfs")
-    vfs = get_faustbot_vfs()
-    text = run_coro_sync(vfs.read_text(TEXT_PATH))
+@pytest.mark.asyncio
+async def test_missing_screen_model(tmp_path: Path) -> None:
+    await _clean_vfs_async()
+    pm = await _build_manager_async(tmp_path)
+    await _set_mode_async(pm, "vfs")
+    vfs = await get_faustbot_vfs()
+    text = await vfs.read_text(TEXT_PATH)
     assert text.startswith("[quick-screen-view]")
     assert "screen-model" in text
 
 
-def test_malformed_screen_model(tmp_path: Path) -> None:
-    _clean_vfs()
-    pm = _build_manager(tmp_path)
+@pytest.mark.asyncio
+async def test_malformed_screen_model(tmp_path: Path) -> None:
+    await _clean_vfs_async()
+    pm = await _build_manager_async(tmp_path)
     pm.set_plugin_config_values(
         "quick-screen-view", {"mode": "vfs", "screen-model": "bad-spec"}
     )
-    pm.reload(force=True)
-    vfs = get_faustbot_vfs()
-    text = run_coro_sync(vfs.read_text(TEXT_PATH))
+    await pm.reload(force=True)
+    vfs = await get_faustbot_vfs()
+    text = await vfs.read_text(TEXT_PATH)
     assert text.startswith("[quick-screen-view]")
 
 
-def test_plugin_unload_cleans_vfs_nodes(tmp_path: Path) -> None:
-    _clean_vfs()
-    pm = _build_manager(tmp_path)
-    _set_mode(pm, "vfs")
-    vfs = get_faustbot_vfs()
-    assert run_coro_sync(vfs.exists(FOCUS_PATH))
+@pytest.mark.asyncio
+async def test_plugin_unload_cleans_vfs_nodes(tmp_path: Path) -> None:
+    await _clean_vfs_async()
+    pm = await _build_manager_async(tmp_path)
+    await _set_mode_async(pm, "vfs")
+    vfs = await get_faustbot_vfs()
+    assert await vfs.exists(FOCUS_PATH)
     pm.set_plugin_enabled("quick-screen-view", False)
-    pm.reload(force=True)
-    assert not run_coro_sync(vfs.exists(FOCUS_PATH))
-    assert not run_coro_sync(vfs.exists(TEXT_PATH))
+    await pm.reload(force=True)
+    assert not await vfs.exists(FOCUS_PATH)
+    assert not await vfs.exists(TEXT_PATH)

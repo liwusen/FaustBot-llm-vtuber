@@ -627,11 +627,12 @@ class Plugin(FaustPlugin):
     def __init__(self):
         self.ctx: PluginContext | None = None
         self.store: EmotionEngineStore | None = None
+        self._configs_cache: dict[str, Any] = {}
 
-    def startup(self, ctx: PluginContext) -> None:
+    async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
-        ctx.register_config(
+        await ctx.register_config(
             [
                 {
                     "key": "SHARP_TONGUE_REWRITE",
@@ -678,12 +679,13 @@ class Plugin(FaustPlugin):
             ] # type: ignore
         )
         try:
-            decay = float(ctx.get_config("DECAY_PER_MINUTE", 0.1) or 0.1)
+            decay = float(await ctx.get_config("DECAY_PER_MINUTE", 0.1) or 0.1)
         except (TypeError, ValueError):
             decay = 0.1
         self.store = EmotionEngineStore(data_dir, decay_per_minute=decay)
         self.store.sync_corememory()
-        ctx.vfs_write(
+        self._configs_cache = await ctx.list_configs()
+        await ctx.vfs_write(
             "/plugins/emotion-engine.md",
             "# Emotion Engine\n\n"
             "Emotion Engine 通过 EmotionInvokeSigned(tags) 工具更新情绪状态。\n"
@@ -691,7 +693,7 @@ class Plugin(FaustPlugin):
             "调用后返回当前完整情绪向量。该工具的 tool_start/tool_result 对用户不可见，\n"
             "请大胆使用。当前状态也可通过 faustbot://plugins/emotion-engine-state.json 读取。\n",
         )
-        ctx.vfs_write_symbolic(
+        await ctx.vfs_write_symbolic(
             "/plugins/emotion-engine-state.json",
             lambda _path: json.dumps(
                 self.get_state_payload(), ensure_ascii=False, indent=2
@@ -709,8 +711,14 @@ class Plugin(FaustPlugin):
         if _PLUGIN is self:
             _PLUGIN = None
 
+    @hookimpl
+    async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
+        # 用 startup 保存的 self.ctx（hook 参数 ctx 可能为 None）
+        if self.ctx is not None:
+            self._configs_cache = await self.ctx.list_configs()
+
     def _configs(self) -> dict[str, Any]:
-        return self.ctx.list_configs() if self.ctx else {}
+        return self._configs_cache
 
     def _write_diary(self, analysis: dict[str, Any]) -> None:
         if self.store is None:

@@ -44,7 +44,8 @@ class TestDetectGpu:
         """nvidia-smi not available -> has_nvidia=False, empty list."""
         from faust_backend.component_manager import detect_gpu
 
-        with patch("subprocess.run", side_effect=FileNotFoundError("no nvidia-smi")):
+        with patch("subprocess.run", side_effect=FileNotFoundError("no nvidia-smi")), \
+             patch("torch.cuda.is_available", return_value=False):
             result = detect_gpu()
 
         assert result["has_nvidia"] is False

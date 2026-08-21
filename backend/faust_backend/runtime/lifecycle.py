@@ -75,7 +75,7 @@ async def _plugin_heartbeat_loop():
             await asyncio.sleep(10.0)
             pm = state.plugin_manager
             if pm:
-                summary = pm.heartbeat_tick()
+                summary = await pm.heartbeat_tick()
                 if summary.get("errors"):
                     log.error("插件心跳错误: %s", summary.get("errors"))
         except asyncio.CancelledError:
@@ -93,7 +93,7 @@ async def _sleep_backoff(attempt: int) -> None:
     await asyncio.sleep(min(3.0, base + jitter))
 
 
-def _apply_llm_request_pre(payload: dict) -> dict:
+async def _apply_llm_request_pre(payload: dict) -> dict:
     """llm_request_pre hook: plugins may rewrite the messages list before each
     agent LLM invocation. First non-empty list result wins."""
     pm = getattr(state, "plugin_manager", None)
@@ -103,7 +103,7 @@ def _apply_llm_request_pre(payload: dict) -> dict:
     if not messages:
         return payload
     try:
-        results = pm._call_pluggy_hook("llm_request_pre", messages=messages, ctx=None)
+        results = await pm._call_pluggy_hook("llm_request_pre", messages=messages, ctx=None)
     except Exception:
         return payload
     for r in results:
@@ -144,7 +144,7 @@ async def invoke_agent_locked(target_agent, payload, config=None):
         async with state.agent_lock:
             log.debug("开始调用 LLM")
             try:
-                payload = _apply_llm_request_pre(payload)
+                payload = await _apply_llm_request_pre(payload)
                 res = await target_agent.ainvoke(payload, config)
                 log.debug("LLM 调用结束")
                 return res
@@ -171,7 +171,7 @@ async def stream_chat_agent_events(
         async with state.agent_lock:
             log.debug("开始调用 LLM")
             try:
-                payload = _apply_llm_request_pre(payload)
+                payload = await _apply_llm_request_pre(payload)
                 async for event in target_agent.astream_events(
                     payload, config=config, version="v2"
                 ):
@@ -411,7 +411,7 @@ async def rebuild_runtime(
                 log.info("模板文件已同步: %s", ", ".join(updated))
             state.makeup_init_prompt()
             llm_tools.refresh_runtime_paths()
-            await refresh_runtime_nodes(get_faustbot_vfs(refresh=True))
+            await refresh_runtime_nodes(await get_faustbot_vfs(refresh=True))
 
             # ---mcp---
             from faust_backend.mcp_manager import get_mcp_manager
@@ -429,7 +429,7 @@ async def rebuild_runtime(
                 pm and pm.needs_reload()
             ):  # 不在每次重建时都重载插件，而是仅在插件配置或文件变更时才重载
                 log.info("插件配置或文件变更，正在重载插件...")
-                plugin_reload = pm.reload(force=True)
+                plugin_reload = await pm.reload(force=True)
                 log.info("插件重载摘要: %s", plugin_reload)
                 _sync_plugin_trigger_filters()
                 backend2frontend.FrontEndReloadPluginAssets()

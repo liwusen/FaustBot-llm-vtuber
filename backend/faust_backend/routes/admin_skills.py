@@ -4,7 +4,7 @@ import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-skills"])
-router.description = "Skill 管理：列出/查看/安装（市场/ZIP）/更新 SKILL.md/删除/启用/禁用 Skill"
+
 
 
 @router.get("/faust/admin/skills")

@@ -7,9 +7,9 @@ import faust_backend.plugin_market as plugin_market
 from faust_backend.plugin_system.manager import PluginLoadError
 from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import rebuild_runtime, _sync_plugin_trigger_filters
-
+from typing import AsyncGenerator
 router = APIRouter(tags=["admin-plugins"])
-router.description = "Plugin 管理：列出/重载/启用/禁用/配置/安装（市场/ZIP）/打包/删除插件"
+
 
 
 
@@ -35,7 +35,7 @@ async def admin_list_plugins():
 async def admin_reload_plugins(payload: dict | None = None):
     pm = state.plugin_manager
     if pm:
-        summary = pm.reload(force=True)
+        summary = await pm.reload(force=True)
         _sync_plugin_trigger_filters()
     else:
         summary = {"error": "plugin_manager not initialized"}
@@ -61,7 +61,7 @@ async def admin_plugins_hot_reload_status():
 
 @router.post("/faust/admin/plugins/heartbeat")
 async def admin_plugins_heartbeat_once():
-    result = state.plugin_manager.heartbeat_tick() if state.plugin_manager else {}
+    result = await state.plugin_manager.heartbeat_tick() if state.plugin_manager else {}
     return {"status": "ok", "result": result}
 
 
@@ -171,7 +171,9 @@ async def plugin_communicate_sse(plugin_id: str, request: Request):
         raise HTTPException(status_code=503, detail="plugin_manager not initialized")
     params = dict(request.query_params)
     try:
-        agen, abort = pm.open_sse(plugin_id, params)
+        agen: AsyncGenerator
+        abort: asyncio.Event
+        agen, abort = pm.open_sse(plugin_id, params)# type: ignore[assignment]
     except PluginLoadError as exc:
         raise _map_plugin_error(exc)
 
@@ -181,7 +183,7 @@ async def plugin_communicate_sse(plugin_id: str, request: Request):
         try:
             while not abort.is_set():
                 if next_task is None:
-                    next_task = asyncio.create_task(agen.__anext__())
+                    next_task = asyncio.create_task(agen.__anext__()) # pyright: ignore[reportAttributeAccessIssue]
                 done, _ = await asyncio.wait(
                     {next_task, abort_task},
                     timeout=SSE_KEEPALIVE_SEC,

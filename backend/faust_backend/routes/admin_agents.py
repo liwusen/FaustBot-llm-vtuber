@@ -7,7 +7,7 @@ from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import rebuild_runtime
 
 router = APIRouter(tags=["admin-agents"])
-router.description = "Agent 管理：列出/创建/查看/编辑/删除 Agent，切换 Agent，删除 Checkpoint"
+
 
 
 @router.get("/faust/admin/agents")
@@ -17,7 +17,7 @@ async def admin_list_agents():
 
 @router.post("/faust/admin/agents")
 async def admin_create_agent(payload: dict):
-    agent_name = (payload or {}).get("agent_name")
+    agent_name = (payload or {}).get("agent_name","faust")
     template_agent = (payload or {}).get("template_agent")
     detail = admin_runtime.create_agent(agent_name, template_agent=template_agent)
     return {"status": "ok", "detail": detail}
@@ -43,7 +43,7 @@ async def admin_delete_agent(agent_name: str):
 
 @router.post("/faust/admin/agents/switch")
 async def admin_switch_agent(payload: dict):
-    agent_name = (payload or {}).get("agent_name")
+    agent_name = (payload or {}).get("agent_name","faust")
     result = await admin_runtime.switch_agent(agent_name)
     info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
     return {

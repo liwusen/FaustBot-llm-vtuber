@@ -247,29 +247,32 @@ class TestReadTool:
     def setup_method(self):
         reset_output_store()
 
-    def test_read_artifact(self):
+    @pytest.mark.asyncio
+    async def test_read_artifact(self):
         from faust_backend.tools.read import read
         from faust_backend.runtime.output_store import get_output_store
         store = get_output_store()
         oid = store.put("artifact content", tool_name="test")
-        result = read.invoke({"uri": f"artifact://{oid}"})
+        result = await read.ainvoke({"uri": f"artifact://{oid}"})
         assert "artifact content" in result
 
-    def test_read_artifact_with_range(self):
+    @pytest.mark.asyncio
+    async def test_read_artifact_with_range(self):
         from faust_backend.tools.read import read
         from faust_backend.runtime.output_store import get_output_store
         store = get_output_store()
         content = "\n".join(f"line {i}" for i in range(1, 21))
         oid = store.put(content, tool_name="test")
-        result = read.invoke({"uri": f"artifact://{oid}:5-7"})
+        result = await read.ainvoke({"uri": f"artifact://{oid}:5-7"})
         assert "line 5" in result
         assert "line 6" in result
         assert "line 7" in result
         assert "line 8" not in result
 
-    def test_read_missing_artifact(self):
+    @pytest.mark.asyncio
+    async def test_read_missing_artifact(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "artifact://nonexistent"})
+        result = await read.ainvoke({"uri": "artifact://nonexistent"})
         assert "找不到" in result
 
     def test_format_tree_lists_single_level(self):
@@ -304,7 +307,8 @@ class TestReadTool:
         assert parse("src/").is_dir is True
         assert parse("src/main.py").is_dir is False
 
-    def test_read_file_with_structural_summary(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_read_file_with_structural_summary(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
         code = '''"""
@@ -331,7 +335,7 @@ class MyClass:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = read.invoke({"uri": "test.py"})
+            result = await read.ainvoke({"uri": "test.py"})
             assert "foo" in result
             assert "bar" in result
             assert "MyClass" in result
@@ -339,7 +343,8 @@ class MyClass:
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_read_file_with_line_range(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_read_file_with_line_range(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
         content = "\n".join(f"line {i}" for i in range(1, 11))
@@ -349,64 +354,73 @@ class MyClass:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = read.invoke({"uri": "data.txt:3-5"})
+            result = await read.ainvoke({"uri": "data.txt:3-5"})
             assert "line 3" in result
             assert "line 5" in result
             assert "line 6" not in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_read_directory(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_read_directory(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
         (tmp_path / "sub/").mkdir()
         (tmp_path / "a.txt").write_text("a")
         (tmp_path / "b.py").write_text("b")
 
-        result = read.invoke({"uri": str(tmp_path)})
+        result = await read.ainvoke({"uri": str(tmp_path)})
         assert "a.txt" in result
         assert "b.py" in result
         assert "sub/" in result
 
-    def test_read_nonexistent_file(self):
+    @pytest.mark.asyncio
+    async def test_read_nonexistent_file(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "nonexistent_file_xyz.txt"})
+        result = await read.ainvoke({"uri": "nonexistent_file_xyz.txt"})
         assert "不存在" in result
 
-    def test_read_faustbot_index(self):
+    @pytest.mark.asyncio
+    async def test_read_faustbot_index(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "faustbot://index.md"})
+        result = await read.ainvoke({"uri": "faustbot://index.md"})
         assert "faustbot://tool_use.md" in result
         assert "sourceCode://{PATH}" in result
 
-    def test_read_source_code_file(self):
+    @pytest.mark.asyncio
+    async def test_read_source_code_file(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "sourceCode://README.md"})
+        result = await read.ainvoke({"uri": "sourceCode://README.md"})
         assert "img src" in result or "faustbot" in result.lower()
 
-    def test_read_source_code_rejects_escape(self):
+    @pytest.mark.asyncio
+    async def test_read_source_code_rejects_escape(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "sourceCode://../secret.txt"})
+        result = await read.ainvoke({"uri": "sourceCode://../secret.txt"})
         assert "不允许" in result
 
-    def test_read_source_code_root_lists(self):
+    @pytest.mark.asyncio
+    async def test_read_source_code_root_lists(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "sourceCode://"})
+        result = await read.ainvoke({"uri": "sourceCode://"})
         assert "sourceCode://backend/" in result
         assert "sourceCode://frontend/" in result
 
-    def test_read_source_code_dir_lists(self):
+    @pytest.mark.asyncio
+    async def test_read_source_code_dir_lists(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "sourceCode://backend/"})
+        result = await read.ainvoke({"uri": "sourceCode://backend/"})
         assert "sourceCode://backend/main.py" in result
         assert "sourceCode://backend/faust_backend/" in result
 
-    def test_read_source_code_line_range(self):
+    @pytest.mark.asyncio
+    async def test_read_source_code_line_range(self):
         from faust_backend.tools.read import read
-        result = read.invoke({"uri": "sourceCode://backend/faust_backend/tools/read.py:1-5"})
+        result = await read.ainvoke({"uri": "sourceCode://backend/faust_backend/tools/read.py:1-5"})
         assert "Unified Read tool" in result or "read" in result
 
-    def test_read_skill_default_skill_md(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_read_skill_default_skill_md(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
         from faust_backend.runtime import state
@@ -424,14 +438,15 @@ class MyClass:
         state.AGENT_NAME = "demo_agent"
         state.AGENT_ROOT = str(agent_root)
         try:
-            result = read.invoke({"uri": "skill://demo_skill"})
+            result = await read.ainvoke({"uri": "skill://demo_skill"})
             assert "skill content" in result
         finally:
             conf.CONFIG_ROOT = orig_config_root
             state.AGENT_NAME = orig_agent_name
             state.AGENT_ROOT = orig_agent_root
 
-    def test_read_skill_rejects_escape(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_read_skill_rejects_escape(self, tmp_path):
         from faust_backend.tools.read import read
         from faust_backend.runtime import state
 
@@ -440,33 +455,36 @@ class MyClass:
         orig_agent_root = state.AGENT_ROOT
         state.AGENT_ROOT = str(agent_root)
         try:
-            result = read.invoke({"uri": "skill://demo_skill/../secret.txt"})
+            result = await read.ainvoke({"uri": "skill://demo_skill/../secret.txt"})
             assert "不允许" in result
         finally:
             state.AGENT_ROOT = orig_agent_root
 
-    def test_read_img_source_screenshot_force_plain_text(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_read_img_source_screenshot_force_plain_text(self, monkeypatch):
         from faust_backend.tools.read import read
         from faust_backend.tools import read as read_module
 
         monkeypatch.setattr(read_module, "_capture_screenshot_image", lambda: Image.new("RGBA", (32, 24), (255, 0, 0, 255)))
-        result = read.invoke({"uri": "img_source://screenshot?grid=true&scale=0.5", "force_plain_text": True})
+        result = await read.ainvoke({"uri": "img_source://screenshot?grid=true&scale=0.5", "force_plain_text": True})
         assert "屏幕截图" in result
         assert "grid: True" in result
         assert "scale: 0.5" in result
 
-    def test_read_img_source_invalid_scale(self):
+    @pytest.mark.asyncio
+    async def test_read_img_source_invalid_scale(self):
         from faust_backend.tools.read import read
 
-        result = read.invoke({"uri": "img_source://screenshot?scale=1.2", "force_plain_text": True})
+        result = await read.ainvoke({"uri": "img_source://screenshot?scale=1.2", "force_plain_text": True})
         assert "scale 必须满足" in result
 
-    def test_read_img_source_camera_mocked(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_read_img_source_camera_mocked(self, monkeypatch):
         from faust_backend.tools.read import read
         from faust_backend.tools import read as read_module
 
         monkeypatch.setattr(read_module, "_capture_camera_image", lambda camera_id: Image.new("RGBA", (16, 16), (0, 0, 255, 255)))
-        result = read.invoke({"uri": "img_source://camera_2", "force_plain_text": True})
+        result = await read.ainvoke({"uri": "img_source://camera_2", "force_plain_text": True})
         assert "摄像头 2" in result
         assert "camera_id: 2" in result
 
@@ -476,31 +494,34 @@ class MyClass:
 # ============================================================
 
 class TestWriteTool:
-    def test_write_text_file(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_write_text_file(self, tmp_path):
         from faust_backend.tools.write import write
         import faust_backend.config_loader as conf
 
-        result = write.invoke({"path": "hello.md", "content": "# Hello\nWorld"})
+        result = await write.ainvoke({"path": "hello.md", "content": "# Hello\nWorld"})
         assert "已写入" in result
         assert "bytes" in result
         assert (Path(conf.WORKDIR_ROOT) / "hello.md").read_text() == "# Hello\nWorld"
 
 
-    def test_write_rejects_outside_path(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_write_rejects_outside_path(self, tmp_path):
         from faust_backend.tools.write import write
         import faust_backend.config_loader as conf
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = write.invoke({"path": "/etc/passwd", "content": "bad"})
+            result = await write.ainvoke({"path": "/etc/passwd", "content": "bad"})
             assert "不允许" in result or "错误" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_write_empty_path(self):
+    @pytest.mark.asyncio
+    async def test_write_empty_path(self):
         from faust_backend.tools.write import write
-        result = write.invoke({"path": "", "content": "content"})
+        result = await write.ainvoke({"path": "", "content": "content"})
         assert "错误" in result
 
 
@@ -509,7 +530,8 @@ class TestWriteTool:
 # ============================================================
 
 class TestEditTool:
-    def test_swap_lines(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_swap_lines(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
@@ -521,7 +543,7 @@ class TestEditTool:
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "SWAP 2.=3:\n+LINE TWO\n+LINE THREE\n"
-            result = edit.invoke({"path": "test.txt", "patch": patch})
+            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
             assert "已编辑" in result
             new_content = f.read_text()
             assert "line 1" in new_content
@@ -532,7 +554,8 @@ class TestEditTool:
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_delete_lines(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_delete_lines(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
@@ -544,14 +567,15 @@ class TestEditTool:
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "DEL 2.=3\n"
-            result = edit.invoke({"path": "test.txt", "patch": patch})
+            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
             assert "已编辑" in result
             new = f.read_text().split("\n")
             assert new == ["line 1", "line 4", "line 5"]
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_ins_pre(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_ins_pre(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
@@ -563,14 +587,15 @@ class TestEditTool:
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "INS.PRE 2:\n+INSERTED\n"
-            result = edit.invoke({"path": "test.txt", "patch": patch})
+            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
             assert "已编辑" in result
             new = f.read_text().split("\n")
             assert new == ["line 1", "INSERTED", "line 2"]
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_ins_post(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_ins_post(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
@@ -582,21 +607,22 @@ class TestEditTool:
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
             patch = "INS.POST 1:\n+INSERTED\n"
-            result = edit.invoke({"path": "test.txt", "patch": patch})
+            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
             assert "已编辑" in result
             new = f.read_text().split("\n")
             assert new == ["line 1", "INSERTED", "line 2"]
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_missing_file(self):
+    @pytest.mark.asyncio
+    async def test_missing_file(self):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = "/tmp"
         try:
-            result = edit.invoke({"path": "nonexistent.txt", "patch": "SWAP 1.=1:\n+x\n"})
+            result = await edit.ainvoke({"path": "nonexistent.txt", "patch": "SWAP 1.=1:\n+x\n"})
             assert "不存在" in result or "出错" in result or "No such file" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
@@ -607,7 +633,8 @@ class TestEditTool:
 # ============================================================
 
 class TestFindTool:
-    def test_find_filesystem(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_find_filesystem(self, tmp_path):
         from faust_backend.tools.find import find
         import faust_backend.config_loader as conf
 
@@ -620,14 +647,15 @@ class TestFindTool:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = find.invoke({"patterns": ["src/**/*.py"]})
+            result = await find.ainvoke({"patterns": ["src/**/*.py"]})
             assert "a.py" in result
             assert "test_a.py" not in result
             assert "b.ts" not in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_find_multiple_globs(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_find_multiple_globs(self, tmp_path):
         from faust_backend.tools.find import find
         import faust_backend.config_loader as conf
 
@@ -639,20 +667,21 @@ class TestFindTool:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = find.invoke({"patterns": ["src/**/*.py", "tests/**/*.py"]})
+            result = await find.ainvoke({"patterns": ["src/**/*.py", "tests/**/*.py"]})
             assert "a.py" in result
             assert "b.py" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_find_no_match(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_find_no_match(self, tmp_path):
         from faust_backend.tools.find import find
         import faust_backend.config_loader as conf
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = find.invoke({"patterns": ["nonexistent/**/*.xyz"]})
+            result = await find.ainvoke({"patterns": ["nonexistent/**/*.xyz"]})
             assert "未匹配" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
@@ -687,9 +716,10 @@ class TestFindTool:
             assert "user/user" not in p, f"出现重复前缀: {p}"
 
     def test_find_faustbot_glob(self, monkeypatch):
-        """回归：find 支持 faustbot:// 前缀的 glob 匹配。"""
+        """回归：find 支持 faustbot:// 前缀 of glob 匹配。"""
         import faust_backend.tools.vfs as vfs_mod
         from faust_backend.tools.find import find
+        import asyncio
 
         class FakeVFS:
             async def walk(self, path="/"):
@@ -698,43 +728,46 @@ class TestFindTool:
             async def is_dir(self, node):
                 return node in ("/plugins", "/agile", "/agile/demo")
 
-        def fake_get(refresh=False):
+        async def fake_get(refresh=False):
             return FakeVFS()
 
-        def fake_run_coro_sync(coro):
-            import asyncio as _asyncio
-            return _asyncio.run(coro)
-
         monkeypatch.setattr(vfs_mod, "get_faustbot_vfs", fake_get)
-        monkeypatch.setattr(vfs_mod, "run_coro_sync", fake_run_coro_sync)
-        result = find.invoke({"patterns": ["faustbot://plugins/"]})
-        assert "faustbot://plugins/a.md" in result
-        assert "faustbot://agile" not in result
+        
+        async def _run_find():
+            res1 = await find.ainvoke({"patterns": ["faustbot://plugins/"]})
+            res2 = await find.ainvoke({"patterns": ["faustbot://**/*.md"]})
+            return res1, res2
 
-        result2 = find.invoke({"patterns": ["faustbot://**/*.md"]})
-        assert "faustbot://index.md" in result2
+        res1, res2 = asyncio.run(_run_find())
+        assert "faustbot://plugins/a.md" in res1
+        assert "faustbot://agile" not in res1
+        assert "faustbot://index.md" in res2
 
-    def test_find_rejects_unsupported_protocol(self):
+    @pytest.mark.asyncio
+    async def test_find_rejects_unsupported_protocol(self):
         """find 对 skill:// 等不支持协议应返回明确错误。"""
         from faust_backend.tools.find import find
-        result = find.invoke({"patterns": ["skill://abc/*"]})
+        result = await find.ainvoke({"patterns": ["skill://abc/*"]})
         assert "skill://" in result
         assert "不支持" in result
 
-    def test_search_rejects_unsupported_protocol(self):
+    @pytest.mark.asyncio
+    async def test_search_rejects_unsupported_protocol(self):
         """search 对 skill:// 等不支持协议应返回明确错误。"""
         from faust_backend.tools.search import search
-        result = search.invoke({"pattern": "x", "paths": ["skill://abc/SKILL.md"]})
+        result = await search.ainvoke({"pattern": "x", "paths": ["skill://abc/SKILL.md"]})
         assert "skill://" in result
         assert "不支持" in result
 
-    def test_write_rejects_unsupported_protocol(self):
+    @pytest.mark.asyncio
+    async def test_write_rejects_unsupported_protocol(self):
         """write 对 sourceCode:// 等不支持协议应返回明确错误。"""
         from faust_backend.tools.write import write
-        result = write.invoke({"path": "sourceCode://a.py", "content": "x"})
+        result = await write.ainvoke({"path": "sourceCode://a.py", "content": "x"})
         assert "不支持" in result
 
-    def test_find_max_file_walks_limit(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_find_max_file_walks_limit(self, tmp_path):
         """find 的 max_file_walks_fs 应限制文件系统遍历文件数。"""
         from faust_backend.tools.find import find
         import faust_backend.config_loader as conf
@@ -746,7 +779,7 @@ class TestFindTool:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = find.invoke({"patterns": ["d/*.txt"], "max_file_walks_fs": 8})
+            result = await find.ainvoke({"patterns": ["d/*.txt"], "max_file_walks_fs": 8})
             assert "上限 8" in result or "遍历上限 8" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
@@ -757,7 +790,8 @@ class TestFindTool:
 # ============================================================
 
 class TestSearchToolFilesystem:
-    def test_search_regex(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_search_regex(self, tmp_path):
         from faust_backend.tools.search import search
         import faust_backend.config_loader as conf
 
@@ -768,12 +802,13 @@ class TestSearchToolFilesystem:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = search.invoke({"pattern": "hello", "paths": ["src/"]})
+            result = await search.ainvoke({"pattern": "hello", "paths": ["src/"]})
             assert "hello" in result.lower()
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_search_no_match(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_search_no_match(self, tmp_path):
         from faust_backend.tools.search import search
         import faust_backend.config_loader as conf
 
@@ -783,12 +818,13 @@ class TestSearchToolFilesystem:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = search.invoke({"pattern": "xyznonexistentpattern", "paths": ["src/"]})
+            result = await search.ainvoke({"pattern": "xyznonexistentpattern", "paths": ["src/"]})
             assert "未找到" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
-    def test_search_max_file_walks_limit(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_search_max_file_walks_limit(self, tmp_path):
         """search 的 max_file_walks_fs 应限制文件系统遍历文件数。"""
         from faust_backend.tools.search import search
         import faust_backend.config_loader as conf
@@ -800,7 +836,7 @@ class TestSearchToolFilesystem:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            result = search.invoke({"pattern": "hello", "paths": ["dir/"], "max_file_walks_fs": 10})
+            result = await search.ainvoke({"pattern": "hello", "paths": ["dir/"], "max_file_walks_fs": 10})
             assert "上限 10" in result or "遍历上限 10" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
@@ -811,35 +847,41 @@ class TestSearchToolFilesystem:
 # ============================================================
 
 class TestExecuteTool:
-    def test_execute_python(self):
+    @pytest.mark.asyncio
+    async def test_execute_python(self):
         from faust_backend.tools.execute import execute
-        result = execute.invoke({"language": "python", "code": "print('hello')"})
+        result = await execute.ainvoke({"language": "python", "code": "print('hello')"})
         assert "hello" in result
 
-    def test_execute_python_multiline(self):
+    @pytest.mark.asyncio
+    async def test_execute_python_multiline(self):
         from faust_backend.tools.execute import execute
         code = "x = 1 + 2\nprint(x)"
-        result = execute.invoke({"language": "python", "code": code})
+        result = await execute.ainvoke({"language": "python", "code": code})
         assert "3" in result
 
-    def test_execute_python_error(self):
+    @pytest.mark.asyncio
+    async def test_execute_python_error(self):
         from faust_backend.tools.execute import execute
-        result = execute.invoke({"language": "python", "code": "raise ValueError('test')"})
+        result = await execute.ainvoke({"language": "python", "code": "raise ValueError('test')"})
         assert "ValueError" in result or "exit code" in result
 
-    def test_execute_shell(self):
+    @pytest.mark.asyncio
+    async def test_execute_shell(self):
         from faust_backend.tools.execute import execute
-        result = execute.invoke({"language": "shell", "code": "echo hello world"})
+        result = await execute.ainvoke({"language": "shell", "code": "echo hello world"})
         assert "hello world" in result
 
-    def test_execute_timeout(self):
+    @pytest.mark.asyncio
+    async def test_execute_timeout(self):
         from faust_backend.tools.execute import execute
-        result = execute.invoke({"language": "python", "code": "import time; time.sleep(999)", "timeout": 1})
+        result = await execute.ainvoke({"language": "python", "code": "import time; time.sleep(999)", "timeout": 1})
         assert "超时" in result
 
-    def test_execute_unknown_language(self):
+    @pytest.mark.asyncio
+    async def test_execute_unknown_language(self):
         from faust_backend.tools.execute import execute
-        result = execute.invoke({"language": "ruby", "code": "puts 'hi'"})
+        result = await execute.ainvoke({"language": "ruby", "code": "puts 'hi'"})
         assert "不支持" in result
 
 
@@ -897,6 +939,7 @@ class TestMiddlewareTruncation:
 
         assert "artifact://" in result
         assert len(result) < len(self._long_output())
+        assert "错" not in result
 
     def test_short_output_passes_through(self):
         """Short single-line output (<=120 chars) should NOT create an artifact."""

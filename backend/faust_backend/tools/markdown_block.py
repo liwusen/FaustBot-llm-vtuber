@@ -9,7 +9,7 @@ log = get_logger("faust.tools.markdown_block")
 
 @register
 @tool
-def RenderMarkdownBlock(content: str) -> str:
+async def RenderMarkdownBlock(content: str) -> str:
     """
     Description:
         在聊天气泡中渲染一个 Markdown 内容块。

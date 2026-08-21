@@ -8,7 +8,7 @@ from fastapi import APIRouter
 log = get_logger("faust.autocomplete")
 
 router = APIRouter(tags=["autocomplete"])
-router.description = "斜杠命令自动补全：/skill:<slug> 等"
+
 
 BASE_COMMANDS = [
     {

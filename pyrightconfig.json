@@ -1,0 +1,6 @@
+{
+ "include": ["backend"],
+ "exclude": ["frontend",".runtime",".nodejs"],
+ "pythonVersion": "3.13",
+ "typeCheckingMode": "basic"
+}

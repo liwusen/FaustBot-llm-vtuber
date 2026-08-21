@@ -9,7 +9,7 @@ log = get_logger("faust.tools.trigger")
 
 @register
 @tool
-def triggerListTool() -> str:
+async def triggerListTool() -> str:
     """
     Description:
         列出当前所有已注册的触发器。
@@ -26,7 +26,7 @@ def triggerListTool() -> str:
 
 @register
 @tool
-def triggerAddTool(trigger_json: str) -> str:
+async def triggerAddTool(trigger_json: str) -> str:
     """
     Description:
         添加一个新的触发器（同 id 会覆盖旧触发器）。
@@ -60,7 +60,7 @@ def triggerAddTool(trigger_json: str) -> str:
 
 @register
 @tool
-def triggerRemoveTool(trigger_id: str) -> str:
+async def triggerRemoveTool(trigger_id: str) -> str:
     """
     Description:
         移除指定ID的触发器。

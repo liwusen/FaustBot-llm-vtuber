@@ -75,9 +75,10 @@ def _emit_trigger(trigger_payload: dict):
         return False
     trigger_queue.put(payload)
     from faust_backend.runtime import state
-    pm = getattr(state, 'plugin_manager', None)
+    pm = state.plugin_manager
     if pm:
-        results = pm._call_pluggy_hook('trigger_fire', payload=payload, ctx=None)
+        # watchdog 线程/同步回调上下文，使用同步桥接执行（可能含异步 hook 实现）
+        results = pm._call_pluggy_hook_sync('trigger_fire', payload=payload, ctx=None)
         if results:
             for item in results:
                 if item is None:
@@ -268,7 +269,7 @@ def get_next_trigger(timeout: Optional[float] = None):
         return None
 
 
-def append_trigger(trigger: dict | str):
+def append_trigger(trigger_dict_or_str: dict | str):
     """Append a new trigger to the store.
 
     Supported trigger types are 'datetime', 'interval', 'py-eval', 'event', and 'nimble-expire'.
@@ -294,22 +295,25 @@ def append_trigger(trigger: dict | str):
 
 
     Args:
-        trigger (dict): The trigger to append.
-
+    Args:
+        trigger_dict_or_str (dict | str): The trigger to append.
     Raises:
         ValueError: If the trigger type is unsupported or invalid.
     """    
-    if isinstance(trigger, str):
+    if isinstance(trigger_dict_or_str, str):
         try:
-            trigger = json.loads(trigger)
+            trigger = json.loads(trigger_dict_or_str)
         except Exception as e:
             log.error("无效的 trigger JSON 字符串: %s", e)
             raise
+    else:
+        trigger = trigger_dict_or_str
     trigger = _apply_append_filters(trigger)
     from faust_backend.runtime import state
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        results = pm._call_pluggy_hook('trigger_append', payload=trigger, ctx=None)
+        # append_trigger 是同步入口（同步工具/to_thread 调用），使用同步桥接执行
+        results = pm._call_pluggy_hook_sync('trigger_append', payload=trigger, ctx=None)
         if results:
             for item in results:
                 if item is None:

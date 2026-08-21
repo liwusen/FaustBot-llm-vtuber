@@ -16,14 +16,14 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs
 from ._patch_utils import _parse_patch,_parse_range
 log = get_logger("faust.tools.edit")
 
 
 @register
 @tool
-def edit(path: str, patch: str) -> str:
+async def edit(path: str, patch: str) -> str:
     """Apply precise line-based edits to a file without rewriting the whole thing.
 
     Use this when you need to change a few lines in a file — it is much more
@@ -108,8 +108,8 @@ def edit(path: str, patch: str) -> str:
     elif is_faustbot:
         vfs_path = "/" + path[len("faustbot://"):].strip("/")
         try:
-            vfs = get_faustbot_vfs(refresh=True)
-            original = run_coro_sync(vfs.read_text(vfs_path, default=""))
+            vfs = await get_faustbot_vfs(refresh=True)
+            original = await vfs.read_text(vfs_path, default="")
         except Exception as e:
             _msg = f"无法读取 faustbot 文档 {path}: {e}"
             log.info("edit OUTPUT %s", _msg[:120])
@@ -180,8 +180,8 @@ def edit(path: str, patch: str) -> str:
             _asyncio.run(store.file_write(mem_path, result))
             # 触发 LLM 实体抽取
             try:
-                from faust_backend.memory.tools import _bg_extract_and_save, _run_bg
-                _run_bg("auto_extract", _bg_extract_and_save(result, mem_path))
+                from faust_backend.memory.tools import schedule_extract
+                schedule_extract(result, mem_path)
             except Exception:
                 pass
         except Exception as e:
@@ -193,7 +193,7 @@ def edit(path: str, patch: str) -> str:
         return _msg
     elif is_faustbot:
         try:
-            run_coro_sync(vfs.write(vfs_path, result))
+            await vfs.write(vfs_path, result)
         except Exception as e:
             _msg = f"无法写入 faustbot 文档 {path}: {e}"
             log.info("edit OUTPUT %s", _msg[:120])

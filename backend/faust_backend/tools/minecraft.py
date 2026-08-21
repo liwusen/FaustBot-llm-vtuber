@@ -33,7 +33,7 @@ def minecraftCommandTool(command_json: str) -> str:
 
 @register
 @tool
-def minecraftConnectTool(host: str, port: int, username: str, version: str = "") -> str:
+async def minecraftConnectTool(host: str, port: int, username: str, version: str = "") -> str:
     """
     Description:
         连接到 Minecraft 服务器。Agent 应自行决定何时加入服务器。
@@ -46,7 +46,7 @@ def minecraftConnectTool(host: str, port: int, username: str, version: str = "")
         str(json): 连接结果。
     """
     try:
-        result = asyncio.run(minecraft_client.connect_server(host, port, username, version or None))
+        result = await minecraft_client.connect_server(host, port, username, version or None)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
@@ -54,7 +54,7 @@ def minecraftConnectTool(host: str, port: int, username: str, version: str = "")
 
 @register
 @tool
-def minecraftStatusTool() -> str:
+async def minecraftStatusTool() -> str:
     """
     Description:
         获取当前 Minecraft Bot 状态，包括连接、坐标、血量、饱食度和附近实体等。
@@ -64,7 +64,7 @@ def minecraftStatusTool() -> str:
         str(json): Bot 状态 JSON。
     """
     try:
-        result = asyncio.run(minecraft_client.get_status())
+        result = await minecraft_client.get_status()
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
@@ -72,7 +72,7 @@ def minecraftStatusTool() -> str:
 
 @register
 @tool
-def minecraftDisconnectTool(reason: str = "disconnect requested") -> str:
+async def minecraftDisconnectTool(reason: str = "disconnect requested") -> str:
     """
     Description:
         断开当前 Minecraft 服务器连接。
@@ -82,7 +82,7 @@ def minecraftDisconnectTool(reason: str = "disconnect requested") -> str:
         str(json): 断开结果 JSON。
     """
     try:
-        result = asyncio.run(minecraft_client.disconnect_server(reason))
+        result = await minecraft_client.disconnect_server(reason)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)

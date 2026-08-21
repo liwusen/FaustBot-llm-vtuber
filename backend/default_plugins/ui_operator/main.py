@@ -140,8 +140,16 @@ class Plugin:
         priority=240,
     )
 
-    def startup(self, ctx: PluginContext) -> None:
-        ctx.register_config(
+    def __init__(self):
+        self.ctx: PluginContext | None = None
+        self._configs_cache: dict[str, Any] = {}
+
+    def _get_config_sync(self, key: str, default: Any = None) -> Any:
+        return self._configs_cache.get(key, default)
+
+    async def startup(self, ctx: PluginContext) -> None:
+        self.ctx = ctx
+        await ctx.register_config(
             """
             OCR_LANGS:json:OCR语言列表=["ch_sim","en"]
             OCR_GPU:bool:OCR启用GPU=false
@@ -152,6 +160,7 @@ class Plugin:
             SCROLL_STEP:int:滚轮每档默认步长=300
             """
         )
+        self._configs_cache = await ctx.list_configs()
 
     def on_load(self, ctx: PluginContext) -> None:
         pass
@@ -159,13 +168,19 @@ class Plugin:
     def on_unload(self, ctx: PluginContext) -> None:
         pass
 
+    @hookimpl
+    async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
+        # 用 startup 保存的 self.ctx（hook 参数 ctx 可能为 None）
+        if self.ctx is not None:
+            self._configs_cache = await self.ctx.list_configs()
+
     def register_middlewares(self, ctx: PluginContext):
         return []
 
     def register_tools(self, ctx: PluginContext):
         def _apply_pyautogui_runtime_settings() -> None:
-            pyautogui.PAUSE = _safe_float(ctx.get_config("PYAUTOGUI_PAUSE", 0.05), 0.05)
-            pyautogui.FAILSAFE = bool(ctx.get_config("PYAUTOGUI_FAILSAFE", True))
+            pyautogui.PAUSE = _safe_float(self._get_config_sync("PYAUTOGUI_PAUSE", 0.05), 0.05)
+            pyautogui.FAILSAFE = bool(self._get_config_sync("PYAUTOGUI_FAILSAFE", True))
 
         def _resolve_target(ocr_id: int | None, x: float | None, y: float | None) -> tuple[float, float] | None:
             if ocr_id is not None and ocr_id > 0:
@@ -194,10 +209,10 @@ class Plugin:
             """
             try:
                 _apply_pyautogui_runtime_settings()
-                cfg_langs = ctx.get_config("OCR_LANGS", ["ch_sim", "en"])
+                cfg_langs = self._get_config_sync("OCR_LANGS", ["ch_sim", "en"])
                 langs = _parse_langs(lang_list_json, _parse_langs(cfg_langs, ["ch_sim", "en"]))
-                use_gpu = bool(ctx.get_config("OCR_GPU", False))
-                min_conf = _safe_float(ctx.get_config("OCR_MIN_CONF", 0.3), 0.3)
+                use_gpu = bool(self._get_config_sync("OCR_GPU", False))
+                min_conf = _safe_float(self._get_config_sync("OCR_MIN_CONF", 0.3), 0.3)
 
                 reader = _load_ocr_reader(langs=langs, gpu=use_gpu)
                 screenshot = pyautogui.screenshot()
@@ -305,7 +320,7 @@ class Plugin:
             try:
                 _apply_pyautogui_runtime_settings()
                 step_count = max(1, _safe_int(steps, 1))
-                base = max(1, _safe_int(ctx.get_config("SCROLL_STEP", 300), 300))
+                base = max(1, _safe_int(self._get_config_sync("SCROLL_STEP", 300), 300))
                 amount = base * step_count
 
                 d = str(direction or "down").strip().lower()
@@ -339,7 +354,7 @@ class Plugin:
             """
             try:
                 _apply_pyautogui_runtime_settings()
-                default_interval = _safe_float(ctx.get_config("DEFAULT_TYPE_INTERVAL", 0.02), 0.02)
+                default_interval = _safe_float(self._get_config_sync("DEFAULT_TYPE_INTERVAL", 0.02), 0.02)
                 key_interval = default_interval if interval < 0 else max(0.0, _safe_float(interval, default_interval))
                 pyautogui.write(str(text), interval=key_interval)
                 if bool(press_enter):

@@ -12,7 +12,6 @@ from typing import Any
 
 import faust_backend.backend2front as backend2frontend
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
-from faust_backend.tools.vfs import run_coro_sync
 
 from faust_backend.logger import get_logger
 log = get_logger("faust.plugins.desktop-mood")
@@ -289,11 +288,11 @@ class Plugin(FaustPlugin):
         self._last_smtc_playing: bool | None = None
         self._smtc_rising_edge = False
 
-    def startup(self, ctx: PluginContext) -> None:
+    async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
         self.store = DesktopMoodStore(data_dir)
-        ctx.register_config([
+        await ctx.register_config([
             {"key": "GLOBAL_COOLDOWN_SEC", "type": "int", "label": "全局冷却（秒）", "default": 180},
             {"key": "WEATHER_CITY", "type": "str", "label": "天气城市", "default": 'auto'},
             {"key": "ENABLE_WINDOW_WATCH", "type": "bool", "label": "窗口监控开关", "default": True},
@@ -301,7 +300,7 @@ class Plugin(FaustPlugin):
             {"key": "ENABLE_HOLIDAY_EGG", "type": "bool", "label": "节日彩蛋开关", "default": True},
             {"key": "ENABLE_SMTC_WATCH", "type": "bool", "label": "媒体监控开关", "default": True},
         ])
-        ctx.vfs_write(
+        await ctx.vfs_write(
             "/plugins/desktop-mood.md",
             "# Desktop Mood\n\n"
             "Desktop Mood 会持续把桌面环境写入 faustbot://plugins/desktop-context.json。\n"
@@ -335,19 +334,19 @@ class Plugin(FaustPlugin):
             "在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
         ]
 
-    def _maybe_refresh_weather(self) -> None:
+    async def _maybe_refresh_weather(self) -> None:
         if self.store is None or self.ctx is None:
             return
         state = self.store.snapshot()
         if _now() - int(state.get('weather_updated_at') or 0) < 600:
             return
-        city = str(self.ctx.get_config('WEATHER_CITY', 'auto') or 'auto')
+        city = str(await self.ctx.get_config('WEATHER_CITY', 'auto') or 'auto')
         weather = _fetch_weather(city)
         self.store.set_weather(weather)
 
-    def collect_context(self) -> dict[str, Any]:
+    async def collect_context(self) -> dict[str, Any]:
         if self.store is not None:
-            self._maybe_refresh_weather()
+            await self._maybe_refresh_weather()
         cpu = None
         memory = None
         battery_percent = None
@@ -375,18 +374,18 @@ class Plugin(FaustPlugin):
                     disk_io = {'read_bytes': int(disk.read_bytes), 'write_bytes': int(disk.write_bytes)}
             except Exception:
                 pass
-        idle = _windows_idle_seconds() if self.ctx is None or bool(self.ctx.get_config('ENABLE_IDLE_WATCH', True)) else None
+        idle = _windows_idle_seconds() if self.ctx is None or bool(await self.ctx.get_config('ENABLE_IDLE_WATCH', True)) else None
         window_title = ''
         window_process = None
-        if self.ctx is None or bool(self.ctx.get_config('ENABLE_WINDOW_WATCH', True)):
+        if self.ctx is None or bool(await self.ctx.get_config('ENABLE_WINDOW_WATCH', True)):
             window_title = _foreground_window_title()
             window_process = _foreground_window_process()
         weather = self.store.snapshot().get('weather') if self.store is not None else None
-        holiday = _holiday_name() if self.ctx is not None and bool(self.ctx.get_config('ENABLE_HOLIDAY_EGG', True)) else None
+        holiday = _holiday_name() if self.ctx is not None and bool(await self.ctx.get_config('ENABLE_HOLIDAY_EGG', True)) else None
         smtc = None
-        if self.ctx is not None and bool(self.ctx.get_config('ENABLE_SMTC_WATCH', True)):
+        if self.ctx is not None and bool(await self.ctx.get_config('ENABLE_SMTC_WATCH', True)):
             try:
-                smtc = run_coro_sync(_read_smtc_now())
+                smtc = await _read_smtc_now()
             except Exception:
                 smtc = None
         return {
@@ -404,12 +403,12 @@ class Plugin(FaustPlugin):
             'smtc': smtc,
         }
 
-    def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+    async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         action = str((payload or {}).get('action') or '').strip().lower()
         if action == 'get_state':
             return {"status": "ok", "state": self.store.snapshot() if self.store is not None else {}}
         if action == 'get_context':
-            return {"status": "ok", "context": self.collect_context()}
+            return {"status": "ok", "context": await self.collect_context()}
         if action == 'get_rules':
             items = self.store.snapshot().get('rules', []) if self.store is not None else []
             return {"status": "ok", "items": items}
@@ -435,6 +434,7 @@ class Plugin(FaustPlugin):
 
     def _show_nimble_note(self, title: str, note: str) -> None:
         import faust_backend.nimble as nimble
+        import asyncio
 
         html = '<div style="padding:18px;font-family:Segoe UI;color:#fff;background:rgba(20,20,30,.85);border-radius:16px;">' + note + '</div>'
         callback_id = nimble.build_callback_id()
@@ -447,14 +447,33 @@ class Plugin(FaustPlugin):
             lifespan=lifespan,
             metadata={'source': 'desktop-mood'},
         )
-        run_coro_sync(nimble.register_session_vfs_nodes(callback_id))
-        backend2frontend.FrontEndShowNimbleWindow(nimble.export_window_payload(callback_id))
-        # 便签为纯展示，到期由插件静默关闭，不通过 expire trigger 唤醒 Agent
-        timer = threading.Timer(lifespan, lambda: nimble.finalize_close(callback_id, reason='expired'))
-        timer.daemon = True
-        timer.start()
 
-    def _execute_rule(self, rule: dict[str, Any], context: dict[str, Any]) -> None:
+        async def run_async():
+            await nimble.register_session_vfs_nodes(callback_id)
+            backend2frontend.FrontEndShowNimbleWindow(nimble.export_window_payload(callback_id))
+            await asyncio.sleep(lifespan)
+            try:
+                await nimble.finalize_close(callback_id, reason='expired')
+            except Exception:
+                pass
+
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(run_async(), loop)
+            else:
+                loop.run_until_complete(run_async())
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop_policy().get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(run_async(), loop)
+                else:
+                    loop.run_until_complete(run_async())
+            except Exception:
+                asyncio.run(run_async())
+
+    async def _execute_rule(self, rule: dict[str, Any], context: dict[str, Any]) -> None:
         action = rule.get('action') or {}
         kind = str(rule.get('kind') or '')
         if kind == 'motion':
@@ -473,7 +492,7 @@ class Plugin(FaustPlugin):
             event_name = str(action.get('event_name') or 'desktop_mood_event')
             summary = self._render_template(str(action.get('summary') or '桌面情景触发。'), context)
             try:
-                self.ctx.trigger_create({
+                await self.ctx.trigger_create({
                     'id': f'desktop_mood::{rule.get("id") or event_name}::{_now()}',
                     'type': 'event',
                     'event_name': event_name,
@@ -511,10 +530,10 @@ class Plugin(FaustPlugin):
             return self._smtc_rising_edge
         return False
 
-    def heartbeat(self, ctx: PluginContext) -> None:
+    async def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None or self.ctx is None:
             return
-        context = self.collect_context()
+        context = await self.collect_context()
         # SMTC 播放状态边沿检测：状态名判定（数字 status 无法判断播放），
         # 只在 非Playing -> Playing 变化时置位一次，供 smtc_playing 规则使用
         smtc = context.get('smtc') or {}
@@ -522,12 +541,12 @@ class Plugin(FaustPlugin):
         self._smtc_rising_edge = playing_now and self._last_smtc_playing is False
         self._last_smtc_playing = playing_now
         self.store.update_snapshot(context)
-        self.ctx.vfs_write('/plugins/desktop-context.json', json.dumps(context, ensure_ascii=False, indent=2))
+        await self.ctx.vfs_write('/plugins/desktop-context.json', json.dumps(context, ensure_ascii=False, indent=2))
         idle_seconds = int(context.get('idle_seconds') or 0)
         last_idle_state = self.store.get_last_idle_state()
         next_idle_state = 'idle' if idle_seconds >= 600 else 'active'
         self.store.set_last_idle_state(next_idle_state)
-        global_cooldown = int(self.ctx.get_config('GLOBAL_COOLDOWN_SEC', 180) or 180)
+        global_cooldown = int(await self.ctx.get_config('GLOBAL_COOLDOWN_SEC', 180) or 180)
         rules = self.store.snapshot().get('rules', [])
         for rule in rules:
             if not bool(rule.get('enabled', True)):
@@ -538,7 +557,7 @@ class Plugin(FaustPlugin):
                 continue
             if not self._match_rule(rule, context, last_idle_state, next_idle_state):
                 continue
-            self._execute_rule(rule, context)
+            await self._execute_rule(rule, context)
             self.store.touch_rule_fire(rule_id)
             break
 

@@ -12,7 +12,7 @@ from faust_backend.logger import get_logger
 log = get_logger("faust.audio")
 
 router = APIRouter(tags=["audio"])
-router.description = "Audio / 语音：语音配置、VAD 状态 & WebSocket 推理、TTS 合成、ASR 转录"
+
 
 
 @router.get("/faust/audio/config")

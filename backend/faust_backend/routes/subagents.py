@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["subagents"])
-router.description = "Subagent 状态与控制：查看状态、停止与移除 Subagent"
+
 
 # Debug override: set by POST /faust/debugging/subagent-override
 subagent_status_overrides: list[dict[str, Any]] = []

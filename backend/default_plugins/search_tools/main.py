@@ -28,8 +28,8 @@ class Plugin:
         priority=200,
     )
 
-    def startup(self, ctx: PluginContext) -> None:
-        ctx.register_config(
+    async def startup(self, ctx: PluginContext) -> None:
+        await ctx.register_config(
             """
             SEARCH_ENGINE:str:SearchAPI引擎=google
             SEARCHAPI_API_KEY:str:SearchAPI Key(使用__MAIN_CONFIG__表示主配置)=__MAIN_CONFIG__
@@ -44,21 +44,21 @@ class Plugin:
     def on_unload(self, ctx: PluginContext) -> None:
         pass
 
-    def register_tools(self, ctx: PluginContext):
+    async def register_tools(self, ctx: PluginContext):
         @tool
-        def webSearchTool(query: str) -> str:
+        async def webSearchTool(query: str) -> str:
             """
             Description:
                 使用SearchApi进行网络搜索，并返回搜索结果的摘要。
             Args:
-                query (str): 需要搜索的查询字符串。
+                query (str): 需要搜索的查询字符串.
             Returns:
                 str: 搜索结果的摘要。
             """
-            if not bool(ctx.get_config("ENABLE_SEARCHAPI", True)):
+            if not bool(await ctx.get_config("ENABLE_SEARCHAPI", True)):
                 return "SearchAPI 搜索已在插件配置中禁用。"
-            engine = str(ctx.get_config("SEARCH_ENGINE", "google") or "google")
-            api_key_cfg = str(ctx.get_config("SEARCHAPI_API_KEY", "__MAIN_CONFIG__") or "__MAIN_CONFIG__").strip()
+            engine = str(await ctx.get_config("SEARCH_ENGINE", "google") or "google")
+            api_key_cfg = str(await ctx.get_config("SEARCHAPI_API_KEY", "__MAIN_CONFIG__") or "__MAIN_CONFIG__").strip()
             api_key = conf.SEARCH_API_KEY if api_key_cfg == "__MAIN_CONFIG__" else api_key_cfg
             try:
                 # 明确使用 patched 版本，规避原 SearchAPI 包装器已知问题
@@ -69,7 +69,7 @@ class Plugin:
                 return f"SearchAPI 搜索失败: {str(e)}"
 
         @tool
-        def wikiSearchTool(query: str) -> str:
+        async def wikiSearchTool(query: str) -> str:
             """
             Description:
                 使用Wikipedia进行搜索，并返回搜索结果的摘要。
@@ -78,7 +78,7 @@ class Plugin:
             Returns:
                 str: 搜索结果的摘要。
             """
-            if not bool(ctx.get_config("ENABLE_WIKIPEDIA", True)):
+            if not bool(await ctx.get_config("ENABLE_WIKIPEDIA", True)):
                 return "Wikipedia 搜索已在插件配置中禁用。"
             try:
                 wrapper = WikipediaAPIWrapper()

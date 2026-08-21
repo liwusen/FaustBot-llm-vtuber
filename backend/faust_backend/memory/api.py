@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from faust_backend.logger import get_logger
 from faust_backend.memory import get_memory
-from faust_backend.memory.tools import _bg_extract_and_save, _run_bg
+from faust_backend.memory.tools import schedule_extract
 
 log = get_logger("faust.memory.api")
 router = APIRouter(prefix="/faust/memory", tags=["memory"])
@@ -45,7 +45,7 @@ async def memory_save(payload: dict):
     declared_by = str(payload.get("declared_by", "config") or "config")
     log.info("POST /save path=%s declared_by=%s content_len=%d", path, declared_by, len(content))
     result = await _m().file_write(path, content, description=description, declared_by=declared_by, tags=tags)
-    _run_bg("auto_extract", _bg_extract_and_save(content, path))
+    schedule_extract(content, path)
     return {"status": "ok", **result}
 
 

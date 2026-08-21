@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -384,19 +385,19 @@ class _FakeCtx:
         self.plugin_dir = data_dir or Path(".")
         self.registered = []
 
-    def register_config(self, schema):
+    async def register_config(self, schema):
         self.registered.append(schema)
 
-    def get_config(self, key, default=None):
+    async def get_config(self, key, default=None):
         return self.configs.get(key, default)
 
-    def list_configs(self):
+    async def list_configs(self):
         return dict(self.configs)
 
-    def vfs_write(self, *args, **kwargs):
+    async def vfs_write(self, *args, **kwargs):
         return None
 
-    def vfs_write_symbolic(self, *args, **kwargs):
+    async def vfs_write_symbolic(self, *args, **kwargs):
         return None
 
 
@@ -431,8 +432,10 @@ class _FakeStore:
 
 def _make_plugin(store, configs=None):
     plugin = impl.Plugin()
-    plugin.ctx = _FakeCtx(configs=configs)
+    ctx = _FakeCtx(configs=configs)
+    plugin.ctx = ctx
     plugin.store = store
+    plugin._configs_cache = ctx.configs
     return plugin
 
 
@@ -567,7 +570,7 @@ def test_covered_hooks_marked_as_hookimpl():
 def test_startup_registers_new_configs(data_dir):
     plugin = impl.Plugin()
     ctx = _FakeCtx(configs={}, data_dir=data_dir)
-    plugin.startup(ctx)
+    asyncio.run(plugin.startup(ctx))
     keys = [item["key"] for item in ctx.registered[0]]
     for expected in (
         "PROACTIVE_ENABLED",
@@ -582,5 +585,5 @@ def test_startup_registers_new_configs(data_dir):
 def test_startup_uses_configured_decay(data_dir):
     plugin = impl.Plugin()
     ctx = _FakeCtx(configs={"DECAY_PER_MINUTE": 0.3}, data_dir=data_dir)
-    plugin.startup(ctx)
+    asyncio.run(plugin.startup(ctx))
     assert plugin.store._decay_per_minute == pytest.approx(0.3)

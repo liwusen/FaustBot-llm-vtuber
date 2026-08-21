@@ -66,14 +66,14 @@ class Plugin(FaustPlugin):
 
     # ── lifecycle ──
 
-    def startup(self, ctx: PluginContext) -> None:
+    async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / "data")
         self.lib = library.SongLibrary(data_dir)
         self.runtime_dir = data_dir.parent / "sva-runtime"
         self.logs_dir = data_dir / "logs"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
-        ctx.register_config(
+        await ctx.register_config(
             [
                 {"key": "REF_AUDIO_PATH", "type": "str", "label": "参考音色音频路径（留空使用 TTS 参考音频）", "default": ""},
                 {"key": "DIFFUSION_STEPS", "type": "int", "label": "Seed-VC 扩散步数", "default": 50},
@@ -83,9 +83,16 @@ class Plugin(FaustPlugin):
                 {"key": "USE_PYPI_MIRROR", "type": "bool", "label": "安装依赖时使用阿里云 PyPI 镜像", "default": True},
             ]
         )
+        self._configs_cache = await ctx.list_configs()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="song-studio-worker")
         self._worker.start()
         self._write_vfs_index()
+
+    @hookimpl
+    async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
+        # 用 startup 保存的 self.ctx（hook 参数 ctx 可能为 None）
+        if self.ctx is not None:
+            self._configs_cache = await self.ctx.list_configs()
 
     @hookimpl
     def plugin_loaded(self, ctx: PluginContext) -> None:
@@ -134,6 +141,10 @@ class Plugin(FaustPlugin):
 
     # ── helpers ──
 
+    def _get_config_sync(self, key: str, default: Any = None) -> Any:
+        cache = getattr(self, "_configs_cache", {})
+        return cache.get(key, default)
+
     def _runtime_installed(self) -> bool:
         return self.runtime_dir is not None and runtime_installer.is_installed(self.runtime_dir)
 
@@ -148,7 +159,7 @@ class Plugin(FaustPlugin):
 
     def _ref_file(self) -> Path:
         assert self.ctx is not None
-        raw = str(self.ctx.get_config("REF_AUDIO_PATH", "") or "").strip()
+        raw = str(self._get_config_sync("REF_AUDIO_PATH", "") or "").strip()
         if raw:
             path = Path(raw).expanduser()
             if not path.exists():
@@ -170,10 +181,10 @@ class Plugin(FaustPlugin):
     def _convert_params(self) -> dict:
         assert self.ctx is not None
         return {
-            "diffusion_steps": int(self.ctx.get_config("DIFFUSION_STEPS", 50) or 50),
-            "semi_tone_shift": int(self.ctx.get_config("SEMI_TONE_SHIFT", 0) or 0),
-            "auto_f0": bool(self.ctx.get_config("AUTO_F0_ADJUST", True)),
-            "vocal_gain_db": float(self.ctx.get_config("VOCAL_GAIN_DB", 0.0) or 0.0),
+            "diffusion_steps": int(self._get_config_sync("DIFFUSION_STEPS", 50) or 50),
+            "semi_tone_shift": int(self._get_config_sync("SEMI_TONE_SHIFT", 0) or 0),
+            "auto_f0": bool(self._get_config_sync("AUTO_F0_ADJUST", True)),
+            "vocal_gain_db": float(self._get_config_sync("VOCAL_GAIN_DB", 0.0) or 0.0),
         }
 
     def _song_status(self, song: dict, ref_file: Path | None, params: dict) -> dict:
@@ -200,34 +211,52 @@ class Plugin(FaustPlugin):
     def _write_vfs_index(self) -> None:
         if self.ctx is None:
             return
+
+        async def run_async():
+            try:
+                songs = self._list_songs_with_status()
+            except Exception as exc:
+                log.warning("song-studio VFS index failed: %s", exc)
+                return
+            lines = [
+                "# 歌台 Song Studio 曲库",
+                "",
+                f"独立推理环境: {'已安装' if self._runtime_installed() else '未安装（需在插件面板中一键安装）'}",
+                "",
+                "| 歌曲 | 已转换 | 歌词 |",
+                "| --- | --- | --- |",
+            ]
+            if not songs:
+                lines.append("| (曲库为空，请将歌曲文件放入 library/source 目录) | - | - |")
+            for song in songs:
+                lines.append(
+                    f"| {song['name']} | {'是' if song.get('cached') else '否'} | {'有' if song.get('lrc') else '无'} |"
+                )
+            lines += [
+                "",
+                f"曲库目录: {self.lib.source_dir}",
+                "用 singSong(name) 演唱，未转换的歌曲会自动排队转换后开唱。",
+            ]
+            try:
+                await self.ctx.vfs_write("/plugins/song-studio/songs.md", "\n".join(lines) + "\n")
+            except Exception as exc:
+                log.warning("song-studio vfs_write failed: %s", exc)
+
         try:
-            songs = self._list_songs_with_status()
-        except Exception as exc:
-            log.warning("song-studio VFS index failed: %s", exc)
-            return
-        lines = [
-            "# 歌台 Song Studio 曲库",
-            "",
-            f"独立推理环境: {'已安装' if self._runtime_installed() else '未安装（需在插件面板中一键安装）'}",
-            "",
-            "| 歌曲 | 已转换 | 歌词 |",
-            "| --- | --- | --- |",
-        ]
-        if not songs:
-            lines.append("| (曲库为空，请将歌曲文件放入 library/source 目录) | - | - |")
-        for song in songs:
-            lines.append(
-                f"| {song['name']} | {'是' if song.get('cached') else '否'} | {'有' if song.get('lrc') else '无'} |"
-            )
-        lines += [
-            "",
-            f"曲库目录: {self.lib.source_dir}",
-            "用 singSong(name) 演唱，未转换的歌曲会自动排队转换后开唱。",
-        ]
-        try:
-            self.ctx.vfs_write("/plugins/song-studio/songs.md", "\n".join(lines) + "\n")
-        except Exception as exc:
-            log.warning("song-studio vfs_write failed: %s", exc)
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(run_async(), loop)
+            else:
+                loop.run_until_complete(run_async())
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop_policy().get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(run_async(), loop)
+                else:
+                    loop.run_until_complete(run_async())
+            except Exception:
+                asyncio.run(run_async())
 
     # ── job queue ──
 
@@ -311,7 +340,7 @@ class Plugin(FaustPlugin):
 
         runtime_installer.install_runtime(
             self.runtime_dir, progress, cancel_check=lambda: bool(job["cancel"]),
-            use_pypi_mirror=bool(self.ctx.get_config("USE_PYPI_MIRROR", True)),
+            use_pypi_mirror=bool(self._get_config_sync("USE_PYPI_MIRROR", True)),
             local_seedvc_zip=self.lib.cache_dir / runtime_installer.SEEDVC_ZIP_NAME,
             torch_variant=str(job.get("torch_variant") or runtime_installer.DEFAULT_TORCH_VARIANT))
 
@@ -528,7 +557,7 @@ class Plugin(FaustPlugin):
                     "source_dir": str(self.lib.source_dir),
                     "ref_audio": ref_audio,
                     "ref_audio_error": ref_error,
-                    "ref_audio_config": str(ctx.get_config("REF_AUDIO_PATH", "") or ""),
+                    "ref_audio_config": str(self._get_config_sync("REF_AUDIO_PATH", "") or ""),
                     "singing": dict(self._singing) if self._singing else None,
                     "jobs": job_list,
                 }

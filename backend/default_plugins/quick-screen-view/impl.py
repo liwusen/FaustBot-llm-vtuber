@@ -12,7 +12,6 @@ from PIL import Image
 
 from faust_backend.logger import get_logger
 from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
-from faust_backend.tools.vfs import run_coro_sync
 
 log = get_logger("faust.plugins.quick-screen-view")
 
@@ -90,16 +89,16 @@ class Plugin(FaustPlugin):
         self._cache_text: str | None = None
 
     # ── 配置 ──
-    def _config(self, key: str, default: Any = None) -> Any:
+    async def _config(self, key: str, default: Any = None) -> Any:
         if self.ctx is None:
             return default
         try:
-            return self.ctx.get_config(key, default)
+            return await self.ctx.get_config(key, default)
         except Exception:
             return default
 
-    def _mode(self) -> str:
-        return str(self._config("mode", "tool") or "tool").strip().lower()
+    async def _mode(self) -> str:
+        return str(await self._config("mode", "tool") or "tool").strip().lower()
 
     # ── 缓存 ──
     def _clear_cache(self) -> None:
@@ -125,14 +124,14 @@ class Plugin(FaustPlugin):
 
     # ── 核心分析（Tool 与 VFS 共用） ──
     async def _analyze(self, focus: str) -> str:
-        spec = str(self._config("screen-model", "") or "").strip()
+        spec = str(await self._config("screen-model", "") or "").strip()
         if not spec:
             return (
                 f"{ERROR_PREFIX} screen-model 未配置：请在配置中心为 quick-screen-view "
                 "插件设置 screen-model（格式 provider::model）"
             )
         try:
-            window = float(self._config("text-cache-seconds", 60.0) or 0.0)
+            window = float(await self._config("text-cache-seconds", 60.0) or 0.0)
         except (TypeError, ValueError):
             window = 0.0
         now = time.time()
@@ -145,7 +144,7 @@ class Plugin(FaustPlugin):
             return self._cache_text
 
         try:
-            scale = float(self._config("screen-scale", 0.5) or 0.5)
+            scale = float(await self._config("screen-scale", 0.5) or 0.5)
         except (TypeError, ValueError):
             scale = 0.5
         if not (0 < scale <= 1):
@@ -201,59 +200,59 @@ class Plugin(FaustPlugin):
             return f"{ERROR_PREFIX} screen-model 无效或调用失败: {exc}"
 
     # ── 生命周期 ──
-    def startup(self, ctx: PluginContext) -> None:
+    async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
-        ctx.register_config(CONFIG_SCHEMA)  # type: ignore[arg-type]
-        self._apply_mode()
+        await ctx.register_config(CONFIG_SCHEMA)  # type: ignore[arg-type]
+        await self._apply_mode()
 
     @hookimpl
-    def plugin_unloaded(self, ctx: PluginContext) -> None:
+    async def plugin_unloaded(self, ctx: PluginContext) -> None:
         del ctx
-        self._unmount_vfs()
+        await self._unmount_vfs()
 
-    def _apply_mode(self) -> None:
-        if self._mode() == "vfs":
-            self._mount_vfs()
+    async def _apply_mode(self) -> None:
+        if await self._mode() == "vfs":
+            await self._mount_vfs()
         else:
-            self._unmount_vfs()
+            await self._unmount_vfs()
 
-    def _mount_vfs(self) -> None:
+    async def _mount_vfs(self) -> None:
         if self.ctx is None:
             return
         self._focus_value = ""
         self._clear_cache()
-        self.ctx.vfs_write_symbolic(FOCUS_PATH, self._read_focus, writable=True)
-        self.ctx.vfs_set_write_handler(FOCUS_PATH, self._write_focus)
-        self.ctx.vfs_set_edit_handler(FOCUS_PATH, self._write_focus)
-        self.ctx.vfs_write_symbolic(
+        await self.ctx.vfs_write_symbolic(FOCUS_PATH, self._read_focus, writable=True)
+        await self.ctx.vfs_set_write_handler(FOCUS_PATH, self._write_focus)
+        await self.ctx.vfs_set_edit_handler(FOCUS_PATH, self._write_focus)
+        await self.ctx.vfs_write_symbolic(
             TEXT_PATH, self._read_text, should_be_included_in_search=False
         )
         log.info("quick-screen-view: VFS 模式已挂载 %s, %s", FOCUS_PATH, TEXT_PATH)
 
-    def _unmount_vfs(self) -> None:
+    async def _unmount_vfs(self) -> None:
         if self.ctx is None:
             return
         for path in (FOCUS_PATH, TEXT_PATH):
             try:
-                self.ctx.vfs_delete(path)
+                await self.ctx.vfs_delete(path)
             except Exception:
                 pass
 
     @hookimpl
-    def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
+    async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
         del old, new, ctx
         if key == "mode":
-            self._apply_mode()
+            await self._apply_mode()
 
     @hookimpl
-    def register_tools(self, ctx: PluginContext) -> list:
+    async def register_tools(self, ctx: PluginContext) -> list:
         self.ctx = ctx
         # 严格互斥：mode=vfs 时不注册工具
-        if self._mode() != "tool":
+        if await self._mode() != "tool":
             return []
 
         @tool
-        def quickScreenView(focus: str = "") -> str:
+        async def quickScreenView(focus: str = "") -> str:
             """截取主显示器屏幕截图，调用 screen-model 视觉模型，按照 focus 指示以结构化 Markdown 概括屏幕内容。
 
             Args:
@@ -262,7 +261,7 @@ class Plugin(FaustPlugin):
             Returns:
                 str: 结构化 Markdown 概括文本；失败时返回以 [quick-screen-view] 开头的错误说明。
             """
-            return run_coro_sync(self._analyze(str(focus or "")))
+            return await self._analyze(str(focus or ""))
 
         return [
             ToolSpec(

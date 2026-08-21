@@ -99,9 +99,11 @@ FaustBot 插件系统基于 **pluggy** 框架实现，支持两种插件风格�
 
 ### 触发器管理
 
+> 💡 **重要说明**：所有的 `PluginContext` 方法均为原生异步函数，调用时必须使用 `await` 关键字。
+
 ```python
 # 创建触发器
-ctx.trigger_create({
+await ctx.trigger_create({
     "id": "my_event::1234567890",
     "type": "event",
     "event_name": "my_event",
@@ -111,42 +113,42 @@ ctx.trigger_create({
 })
 
 # 列出所有触发器
-triggers = ctx.trigger_list()
+triggers = await ctx.trigger_list()
 
 # 获取单个触发器
-trigger = ctx.trigger_get("my_event::1234567890")
+trigger = await ctx.trigger_get("my_event::1234567890")
 
 # 更新触发器
-ctx.trigger_update("my_event::1234567890", {"payload": {"summary": "新摘要"}})
+await ctx.trigger_update("my_event::1234567890", {"payload": {"summary": "新摘要"}})
 
 # 删除触发器
-ctx.trigger_delete("my_event::1234567890")
+await ctx.trigger_delete("my_event::1234567890")
 ```
 
 ### 配置管理
 
 ```python
 # 注册配置 schema（list 格式，推荐）
-ctx.register_config([
+await ctx.register_config([
     {"key": "PUSH_THRESHOLD", "type": "int", "label": "推送阈值", "default": 3},
     {"key": "QUIET_START", "type": "str", "label": "静默开始", "default": "23:00"},
     {"key": "ENABLE_FEATURE", "type": "bool", "label": "启用功能", "default": True},
 ])
 
 # 注册配置 schema（string 格式，旧版兼容）
-ctx.register_config("""
+await ctx.register_config("""
 PUSH_THRESHOLD:int:推送阈值=3
 QUIET_START:str:静默开始=23:00
 """)
 
 # 读取配置
-threshold = ctx.get_config("PUSH_THRESHOLD", 3)
+threshold = await ctx.get_config("PUSH_THRESHOLD", 3)
 
 # 写入配置
-ctx.set_config("PUSH_THRESHOLD", 5)
+await ctx.set_config("PUSH_THRESHOLD", 5)
 
 # 列出所有配置
-configs = ctx.list_configs()
+configs = await ctx.list_configs()
 ```
 
 支持的配置类型：`str`, `string`, `int`, `float`, `bool`, `json`, `text`
@@ -155,28 +157,35 @@ configs = ctx.list_configs()
 
 ```python
 # 读取文本
-content = ctx.vfs_read_text("/plugins/my-plugin/data.md", default="")
+content = await ctx.vfs_read_text("/plugins/my-plugin/data.md", default="")
 
 # 写入文本
-ctx.vfs_write("/plugins/my-plugin/index.md", "# My Plugin\n\n内容...")
+await ctx.vfs_write("/plugins/my-plugin/index.md", "# My Plugin\n\n内容...")
 
 # 写入动态内容（符号链接，每次读取时调用函数）
-ctx.vfs_write_symbolic(
+await ctx.vfs_write_symbolic(
     "/plugins/my-plugin/dynamic.json",
     lambda path: json.dumps(get_data()),
     should_be_included_in_search=True,
 )
 
 # 删除文件
-ctx.vfs_delete("/plugins/my-plugin/old.md")
+await ctx.vfs_delete("/plugins/my-plugin/old.md")
 
 # 列出目录
-files = ctx.vfs_list("/plugins/my-plugin/")
+files = await ctx.vfs_list("/plugins/my-plugin/")
 ```
 
 ---
 
 ## Hook 完整参考
+
+> 💡 **异步 Hook 支持**：所有 Hook 既可以是同步函数，也可以是 `async def` 原生异步函数。
+> PluginManager 在分发时会自动识别并等待协程结果。
+>
+> - **异步上下文**（如配置保存、聊天流、工具调用、记忆读写）中，异步 Hook 会被直接 `await`；
+> - **同步上下文**（如 trigger watchdog 线程、同步工具包装器）中，异步 Hook 会被自动桥接执行，插件无需感知调用方上下文；
+> - 需要异步能力时（如调用 `await ctx.get_config(...)`、`await ctx.vfs_write(...)`），请将 Hook 声明为 `async def`。
 
 ### 生命周期
 
@@ -573,13 +582,15 @@ def register_prompt_suffix(self) -> list[str]:
 
 #### `config_changed(key: str, old: Any, new: Any, ctx: PluginContext) -> None`
 
-配置值变更时调用。
+配置值变更时调用。可在内部使用 `await ctx.list_configs()` 刷新配置缓存，因此推荐声明为异步实现：
 
 ```python
 @hookimpl
-def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
+async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
     if key == "PUSH_THRESHOLD":
         self.threshold = int(new or 3)
+    # 刷新插件配置缓存（同步/异步调用方均会正确等待）
+    self._configs_cache = await ctx.list_configs()
 ```
 
 ---

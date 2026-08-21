@@ -55,7 +55,7 @@ def _prime_local_tts_reference() -> None:
 LOCAL_TTS_ENDPOINT = "http://127.0.0.1:5000/"
 
 
-def _apply_tts_text_hook(text: str) -> str:
+async def _apply_tts_text_hook(text: str) -> str:
     """tts_text hook: plugins may rewrite the text fed to TTS (speech only,
     subtitles unaffected). First non-empty string result wins."""
     try:
@@ -64,7 +64,7 @@ def _apply_tts_text_hook(text: str) -> str:
         pm = getattr(state, "plugin_manager", None)
         if pm is None:
             return text
-        results = pm._call_pluggy_hook("tts_text", text=text, ctx=None)
+        results = await pm._call_pluggy_hook("tts_text", text=text, ctx=None)
         for r in results:
             if isinstance(r, str) and r:
                 return r
@@ -73,7 +73,7 @@ def _apply_tts_text_hook(text: str) -> str:
     return text
 
 
-def _fire_tts_start(text: str) -> None:
+async def _fire_tts_start(text: str) -> None:
     """tts_start hook: notified when a TTS segment is synthesized and about to
     be delivered to the frontend for playback."""
     try:
@@ -81,7 +81,7 @@ def _fire_tts_start(text: str) -> None:
 
         pm = getattr(state, "plugin_manager", None)
         if pm is not None:
-            pm._call_pluggy_hook("tts_start", text=text, ctx=None)
+            await pm._call_pluggy_hook("tts_start", text=text, ctx=None)
     except Exception:
         pass
 
@@ -90,11 +90,11 @@ async def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str
     payload_text = str(text or "").strip()
     if not payload_text:
         raise SpeechRuntimeError("TTS 文本不能为空")
-    payload_text = _apply_tts_text_hook(payload_text)
+    payload_text = await _apply_tts_text_hook(payload_text)
     try:
         return await _synthesize_impl(payload_text, lang)
     finally:
-        _fire_tts_start(payload_text)
+        await _fire_tts_start(payload_text)
 
 
 async def _synthesize_impl(payload_text: str, lang: str | None) -> tuple[bytes, str]:

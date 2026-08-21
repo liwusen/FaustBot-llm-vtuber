@@ -16,31 +16,6 @@ log = get_logger("faust.tools.memory")
 
 
 
-@tool
-def kbListTool(scope: str = "") -> str:
-    """[已弃用] 列出知识库树 → 请使用 read("memory://") 或 find(["memory://**"]).
-    直接转发给 read 工具。
-    """
-    from faust_backend.tools.read import read
-    return read(f"memory://{scope}" if scope else "memory://")
-
-
-@tool
-def kbReadTool(path: str) -> str:
-    """[已弃用] 读取知识库节点 → 请使用 read("memory://path")。
-    直接转发给 read 工具。
-    """
-    from faust_backend.tools.read import read
-    return read(f"memory://{path}")
-
-
-@tool
-def kbWriteTool(path: str, content: str, declared_by: str = "agent", index: bool = True, tags_json: str = "[]") -> str:
-    """[已弃用] 写入知识库 → 请使用 write("memory://path", content")。
-    直接转发给 write 工具。
-    """
-    from faust_backend.tools.write import write
-    return write(f"memory://{path}", content)
 
 
 # @register
@@ -91,9 +66,9 @@ def kbChangedNodesTool(since_ts: float, scope: str = "", tags_json: str = "[]") 
 
 @register
 @tool
-def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
-                     return_mode: str = "compact", tags_json: str = "[]",
-                     use_graph: bool = True) -> str:
+async def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
+                           return_mode: str = "compact", tags_json: str = "[]",
+                           use_graph: bool = True) -> str:
     """
     Description:
         增强记忆搜索。默认返回 compact JSON（path, line_count, description），
@@ -110,12 +85,12 @@ def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
     Returns:
         str(json): 搜索结果列表。compact 模式下每项含 path, line_count, description, score。
     """
-    return _memorySearchTool(query, scope, top_k, return_mode, tags_json, use_graph)
+    return await _memorySearchTool(query, scope, top_k, return_mode, tags_json, use_graph)
 
 
 @register
 @tool
-def memoryDeleteTool(path: str, recursive_dangerous: bool = False) -> str:
+async def memoryDeleteTool(path: str, recursive_dangerous: bool = False) -> str:
     """删除记忆库中的文档或目录。
 
     - ``path``: 要删除的记忆库路径，例如 ``/notes/todo.md`` 或 ``/notes``。
@@ -151,7 +126,7 @@ def memoryDeleteTool(path: str, recursive_dangerous: bool = False) -> str:
                     {"status": "error", "error": f"{p} 是目录，删除目录需 recursive_dangerous=True"},
                     ensure_ascii=False,
                 )
-        result = asyncio.run(m.file_delete_tree(p))
+        result = await m.file_delete_tree(p)
         return json.dumps({"status": "ok", **result}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)

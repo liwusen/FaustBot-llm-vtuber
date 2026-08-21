@@ -14,14 +14,14 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes
 
 log = get_logger("faust.tools.write")
 
 
 @register
 @tool
-def write(path: str, content: str) -> str:
+async def write(path: str, content: str) -> str:
     """Create or overwrite a file on disk or in the memory store.
 
     This is your PRIMARY tool for writing content.  It replaces the old
@@ -77,11 +77,11 @@ def write(path: str, content: str) -> str:
 
     # memory:// backend
     if raw.startswith("memory://"):
-        result = _write_memory(raw[len("memory://"):].strip("/"), content)
+        result = await _write_memory(raw[len("memory://"):].strip("/"), content)
         log.info("write OUTPUT %s", result[:120])
         return result
     if raw.startswith("faustbot://"):
-        result = _write_faustbot(raw[len("faustbot://"):].strip("/"), content)
+        result = await _write_faustbot(raw[len("faustbot://"):].strip("/"), content)
         log.info("write OUTPUT %s", result[:120])
         return result
 
@@ -122,21 +122,21 @@ def _write_file(raw: str, content: str) -> str:
     return f"已写入 {file_path} ({size} bytes)"
 
 
-def _write_faustbot(path: str, content: str) -> str:
+async def _write_faustbot(path: str, content: str) -> str:
     if not path:
         return "错误: faustbot:// 路径不能为空"
-    vfs = get_faustbot_vfs(refresh=True)
-    run_coro_sync(refresh_runtime_nodes(vfs))
+    vfs = await get_faustbot_vfs(refresh=True)
+    await refresh_runtime_nodes(vfs)
     target_path = "/" + path.strip("/")
     try:
-        run_coro_sync(vfs.write(target_path, content))
+        await vfs.write(target_path, content)
     except Exception as e:
         return f"写入 faustbot 资源出错: {e}"
     size = len(content.encode("utf-8"))
     return f"已写入 faustbot://{path} ({size} bytes)"
 
 
-def _write_memory(path: str, content: str) -> str:
+async def _write_memory(path: str, content: str) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -147,14 +147,14 @@ def _write_memory(path: str, content: str) -> str:
 
     store = get_memory()
     try:
-        run_coro_sync(store.file_write(path, content))
+        await store.file_write(path, content)
     except Exception as e:
         return f"写入记忆库出错: {e}"
 
     # 触发 LLM 实体抽取（后台异步）
     try:
-        from faust_backend.memory.tools import _bg_extract_and_save, _run_bg
-        _run_bg("auto_extract", _bg_extract_and_save(content, path))
+        from faust_backend.memory.tools import schedule_extract
+        schedule_extract(content, path)
     except Exception:
         pass
 

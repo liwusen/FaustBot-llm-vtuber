@@ -19,13 +19,13 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
-from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs
 
 log = get_logger("faust.tools.search")
 
 @register
 @tool
-def search(pattern: str, *, paths: list[str] | str | None = None, max_file_walks_fs: int = 1000) -> str:
+async def search(pattern: str, *, paths: list[str] | str | None = None, max_file_walks_fs: int = 1000) -> str:
     """Search content across filesystem and memory store in one call.
 
     The `paths` argument determines which backend to use.
@@ -113,10 +113,10 @@ def search(pattern: str, *, paths: list[str] | str | None = None, max_file_walks
     results: list[str] = []
 
     if mem_scopes:
-        results.append(_search_memory(pattern, mem_scopes))
+        results.append(await _search_memory(pattern, mem_scopes))
 
     if vfs_scopes:
-        results.append(_search_faustbot(pattern, vfs_scopes))
+        results.append(await _search_faustbot(pattern, vfs_scopes))
 
     if fs_paths:
         results.append(_search_filesystem(pattern, fs_paths, max_file_walks_fs))
@@ -129,7 +129,7 @@ def search(pattern: str, *, paths: list[str] | str | None = None, max_file_walks
     return result
 
 
-def _search_memory(query: str, scopes: list[str]) -> str:
+async def _search_memory(query: str, scopes: list[str]) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -141,9 +141,8 @@ def _search_memory(query: str, scopes: list[str]) -> str:
     for scope in scopes:
         scope_arg = scope.strip("/") if scope != "/" else ""
         try:
-            import asyncio
-            hits = asyncio.run(store.search(query, scope=scope_arg, top_k=5,
-                                            return_mode="snippets", use_graph=False))
+            hits = await store.search(query, scope=scope_arg, top_k=5,
+                                            return_mode="snippets", use_graph=False)
             all_results.extend(hits)
         except Exception as e:
             log.warning("记忆搜索出错 (scope=%s): %s", scope, e)
@@ -231,11 +230,11 @@ def _search_filesystem(pattern: str, paths: list[str], max_file_walks_fs: int = 
     return "\n".join(lines)
 
 
-def _search_faustbot(pattern: str, scopes: list[str]) -> str:
-    vfs = get_faustbot_vfs(refresh=True)
+async def _search_faustbot(pattern: str, scopes: list[str]) -> str:
+    vfs = await get_faustbot_vfs(refresh=True)
     results: list[str] = []
     for scope in scopes:
-        results.extend(run_coro_sync(vfs.search(scope, pattern, include_symbolic=True)))
+        results.extend(await vfs.search(scope, pattern, include_symbolic=True))
     if not results:
         return f"[faustbot://] 未找到匹配: {pattern}"
     unique = []

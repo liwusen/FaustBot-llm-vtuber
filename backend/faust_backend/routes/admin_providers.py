@@ -10,7 +10,7 @@ import faust_backend.config_loader as conf
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-providers"])
-router.description = "AI Provider 管理：provider CRUD、模型自动加载、主/Subagent 模型选择"
+
 
 
 class ProviderCreate(BaseModel):

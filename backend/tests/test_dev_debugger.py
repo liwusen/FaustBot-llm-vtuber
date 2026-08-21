@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
@@ -56,7 +57,7 @@ def test_schema_parses_bool_and_types(plugin, monkeypatch):
         "ORIGINAL_TOOL_FUNCS",
         {**registry.ORIGINAL_TOOL_FUNCS, registered_name: testTool},
     )
-    r = plugin.communicate_handler({"action": "list_tools"}, _Ctx())
+    r = asyncio.run(plugin.communicate_handler({"action": "list_tools"}, _Ctx()))
     assert r["status"] == "ok"
     tools = {t["name"]: t for t in r["tools"]}
     assert registered_name in tools
@@ -72,23 +73,23 @@ def test_schema_parses_bool_and_types(plugin, monkeypatch):
 
 
 def test_invoke_tool_returns_result(plugin):
-    r = plugin.communicate_handler(
+    r = asyncio.run(plugin.communicate_handler(
         {"action": "invoke_tool", "name": "read", "args": {"uri": "surely_nonexistent_zz"}},
         _Ctx(),
-    )
+    ))
     assert r["status"] == "ok"
     assert isinstance(r["result"], str)
 
 
 def test_invoke_unknown_tool_errors(plugin):
-    r = plugin.communicate_handler(
+    r = asyncio.run(plugin.communicate_handler(
         {"action": "invoke_tool", "name": "no_such_tool", "args": {}}, _Ctx()
-    )
+    ))
     assert r["status"] == "error"
 
 
 def test_unknown_action_errors(plugin):
-    r = plugin.communicate_handler({"action": "bogus"}, _Ctx())
+    r = asyncio.run(plugin.communicate_handler({"action": "bogus"}, _Ctx()))
     assert r["status"] == "error"
 
 
@@ -96,9 +97,9 @@ def test_invoke_inside_running_loop(plugin, monkeypatch):
     """回归：在运行中的事件循环里 invoke 一个内部用 asyncio.run 的工具不应报错。
 
     触发场景：invoke_tool 在 running loop（如路由上下文）里调用，
-    同步工具内部 asyncio.run 会冲突。修复后走独立线程，与 LLM 路径一致。
+    同步工具内部 asyncio.run 会冲突。修复后走 LangChain ainvoke 的
+    线程池路径，与 LLM 路径一致。
     """
-    import asyncio
     from langchain.tools import tool
     from faust_backend.tools import _registry as registry
 
@@ -118,17 +119,12 @@ def test_invoke_inside_running_loop(plugin, monkeypatch):
         {**registry.ORIGINAL_TOOL_FUNCS, registered_name: loopSensitiveTool},
     )
 
-    def _invoke_in_loop():
-        # 在一个 running event loop 中调用 communicate_handler（模拟路由上下文）
-        r = plugin.communicate_handler(
+    async def _async_wrapper():
+        # 在 running loop 中 await communicate_handler（模拟路由上下文）
+        return await plugin.communicate_handler(
             {"action": "invoke_tool", "name": registered_name, "args": {"content": "hi"}},
             _Ctx(),
         )
-        return r
-
-    async def _async_wrapper():
-        # 在已有 running loop 内部调用同步的 communicate_handler
-        return _invoke_in_loop()
 
     r = asyncio.run(_async_wrapper())
     assert r["status"] == "ok"

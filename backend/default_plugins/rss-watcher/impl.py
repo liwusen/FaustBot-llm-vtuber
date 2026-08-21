@@ -131,7 +131,7 @@ class RSSWatcherStore:
                 dict(row)
                 if row
                 else {
-                    "id": int(cursor.lastrowid),
+                    "id": int(cursor.lastrowid or 0),
                     "url": url,
                     "name": name,
                     "category": category,
@@ -351,15 +351,19 @@ def _parse_feed(xml_text: str) -> list[dict[str, Any]]:
 
 class Plugin(FaustPlugin):
     def __init__(self):
-        self.ctx: PluginContext | None = None
+        self.ctx: PluginContext
         self.store: RSSWatcherStore | None = None
         self.last_user_activity_ts = time.time()
+        self._configs_cache: dict[str, Any] = {}
 
-    def startup(self, ctx: PluginContext) -> None:
+    def _get_config_sync(self, key: str, default: Any = None) -> Any:
+        return self._configs_cache.get(key, default)
+
+    async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / "data")
         self.store = RSSWatcherStore(data_dir)
-        ctx.register_config(
+        await ctx.register_config(
             [
                 {
                     "key": "PUSH_THRESHOLD",
@@ -399,14 +403,15 @@ class Plugin(FaustPlugin):
                 },
             ]
         )
-        ctx.vfs_write(
+        self._configs_cache = await ctx.list_configs()
+        await ctx.vfs_write(
             "/plugins/rss-watcher.md",
             "# RSS Watcher\n\n"
             "RSS Watcher 会把 RSS 正文存到 faustbot://plugins/rss-watcher/ 下。\n"
             "正常对话和被 event-trigger 唤醒时，都可以优先读取 faustbot://plugins/rss-watcher/index.md 获取最近一天的更新概览。\n"
             "若要看某条 RSS 的正文，请读取 faustbot://plugins/rss-watcher/RSS-FEED-*.md。\n",
         )
-        ctx.vfs_write(
+        await ctx.vfs_write(
             "/plugins/rss-watcher/index.md", "# RSS Watcher\n\n暂无 RSS 更新。"
         )
 
@@ -423,10 +428,16 @@ class Plugin(FaustPlugin):
         if _PLUGIN is self:
             _PLUGIN = None
 
+    @hookimpl
+    async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
+        # 用 startup 保存的 self.ctx（hook 参数 ctx 可能为 None）
+        if self.ctx is not None:
+            self._configs_cache = await self.ctx.list_configs()
+
     def category_filter(self) -> str:
         if self.ctx is None:
             return "all"
-        return str(self.ctx.get_config("CATEGORY_FILTER", "all") or "all")
+        return str(self._get_config_sync("CATEGORY_FILTER", "all") or "all")
 
     def register_frontend(self) -> list[dict]:
         return [
@@ -443,7 +454,7 @@ class Plugin(FaustPlugin):
             if self.ctx is None or self.store is None:
                 return
             meta = self.store.load_meta()
-            interval_min = int(self.ctx.get_config("FETCH_INTERVAL_MIN", 15) or 15)
+            interval_min = int(self._get_config_sync("FETCH_INTERVAL_MIN", 15) or 15)
             if _now() - int(meta.get("last_fetch_ts") or 0) < interval_min * 60:
                 return
             _run_async_background(self.fetch_all_feeds())
@@ -463,7 +474,7 @@ class Plugin(FaustPlugin):
         fetched = 0
         inserted = 0
         errors: list[dict[str, Any]] = []
-        max_items = int(self.ctx.get_config("MAX_ITEMS", 500) or 500)
+        max_items = int(self._get_config_sync("MAX_ITEMS", 500) or 500)
         feeds = self.store.list_feeds()
         for feed in feeds:
             try:
@@ -473,7 +484,7 @@ class Plugin(FaustPlugin):
                     int(feed["id"]), items, max_items=max_items
                 )
                 for item in items:
-                    self._write_item_to_vfs(item, str(feed.get("name") or "RSS"))
+                    await self._write_item_to_vfs(item, str(feed.get("name") or "RSS"))
                 fetched += 1
             except Exception as exc:
                 self.store.mark_fetch_error(int(feed["id"]))
@@ -481,7 +492,7 @@ class Plugin(FaustPlugin):
         meta = self.store.load_meta()
         meta["last_fetch_ts"] = _now()
         self.store.save_meta(meta)
-        self._write_daily_index()
+        await self._write_daily_index()
         return {"fetched": fetched, "inserted": inserted, "errors": errors}
 
     async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
@@ -530,7 +541,7 @@ class Plugin(FaustPlugin):
             return {"status": "ok", **(await self.fetch_all_feeds())}
         return {"status": "error", "detail": f"unknown action: {action}"}
 
-    def _write_item_to_vfs(self, item: dict[str, Any], feed_name: str) -> None:
+    async def _write_item_to_vfs(self, item: dict[str, Any], feed_name: str) -> None:
         if self.ctx is None:
             return
         title = _sanitize_title(item.get("title") or "untitled")
@@ -545,9 +556,9 @@ class Plugin(FaustPlugin):
             f"- 时间: {stamp}\n\n"
             f"{item.get('summary') or ''}\n"
         )
-        self.ctx.vfs_write(path, content)
+        await self.ctx.vfs_write(path, content)
 
-    def _write_daily_index(self) -> None:
+    async def _write_daily_index(self) -> None:
         if self.ctx is None or self.store is None:
             return
         items = self.store.saved_items_for_last_day()
@@ -562,17 +573,17 @@ class Plugin(FaustPlugin):
             lines.append(
                 f"- {item.get('feed_name') or 'RSS'} | {item.get('title') or title} | faustbot://plugins/rss-watcher/RSS-FEED-{title}-{stamp}.md"
             )
-        self.ctx.vfs_write("/plugins/rss-watcher/index.md", "\n".join(lines) + "\n")
+        await self.ctx.vfs_write("/plugins/rss-watcher/index.md", "\n".join(lines) + "\n")
 
     def _in_quiet_hours(self) -> bool:
         if self.ctx is None:
             return False
         now_minutes = time.localtime().tm_hour * 60 + time.localtime().tm_min
         start = _parse_time_to_minutes(
-            str(self.ctx.get_config("QUIET_START", "23:00") or "23:00")
+            str(self._get_config_sync("QUIET_START", "23:00") or "23:00")
         )
         end = _parse_time_to_minutes(
-            str(self.ctx.get_config("QUIET_END", "08:00") or "08:00")
+            str(self._get_config_sync("QUIET_END", "08:00") or "08:00")
         )
         if start == end:
             return False
@@ -583,7 +594,7 @@ class Plugin(FaustPlugin):
     def _idle_seconds(self) -> int:
         return int(max(0, time.time() - self.last_user_activity_ts))
 
-    def _queue_digest_trigger(self, digest: dict[str, Any]) -> None:
+    async def _queue_digest_trigger(self, digest: dict[str, Any]) -> None:
         if self.store is None:
             return
         items = digest.get("items") or []
@@ -600,7 +611,7 @@ class Plugin(FaustPlugin):
                 "lifespan": 7200,
             }
             log.debug("Triggering RSS digest event: %s", payload)
-            self.ctx.trigger_create(payload)
+            await self.ctx.trigger_create(payload)
         except Exception:
             pass
         meta = self.store.load_meta()
@@ -654,11 +665,11 @@ class Plugin(FaustPlugin):
             self.write_saved_item_to_memory(item)
         return None
 
-    def heartbeat(self, ctx: PluginContext) -> None:
+    async def heartbeat(self, ctx: PluginContext) -> None:
         log.debug("RSS Watcher heartbeat check")
         if self.store is None or self.ctx is None:
             return
-        threshold = int(self.ctx.get_config("PUSH_THRESHOLD", 3) or 3)
+        threshold = int(self._get_config_sync("PUSH_THRESHOLD", 3) or 3)
         pending = self.store.count_unpushed_items(category=self.category_filter())
         log.debug("Pending unpushed items: %d, threshold: %d", pending, threshold)
         log.debug("Idle seconds: %d", self._idle_seconds())
@@ -675,8 +686,8 @@ class Plugin(FaustPlugin):
         log.debug("Digest built: %s", digest)
         if digest.get("count", 0) <= 0:
             return
-        self._write_daily_index()
-        self._queue_digest_trigger(digest)
+        await self._write_daily_index()
+        await self._queue_digest_trigger(digest)
 
     def register_prompt_suffix(self) -> list[str]:
         return [

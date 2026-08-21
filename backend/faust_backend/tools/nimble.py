@@ -19,13 +19,12 @@ from faust_backend.runtime.uri import (
 from faust_backend.tools.vfs import (
     get_faustbot_vfs,
     refresh_runtime_nodes,
-    run_coro_sync,
 )
 
 log = get_logger("faust.tools.nimble")
 
 
-def _resolve_path_html(spec: str) -> str:
+async def _resolve_path_html(spec: str) -> str:
     """把 `path:{URI}` 解析为原始 HTML 全文（不走 read 工具的摘要/截断逻辑）。"""
     ref = spec.split(":", 1)[1].strip()
     if not ref:
@@ -64,10 +63,10 @@ def _resolve_path_html(spec: str) -> str:
         return target.read_text(encoding="utf-8", errors="replace")
 
     if parsed.scheme == SCHEME_FAUSTBOT:
-        vfs = get_faustbot_vfs(refresh=True)
-        run_coro_sync(refresh_runtime_nodes(vfs))
+        vfs = await get_faustbot_vfs(refresh=True)
+        await refresh_runtime_nodes(vfs)
         normalized = "/" + parsed.path
-        content = run_coro_sync(vfs.read_text(normalized, default=""))
+        content = await vfs.read_text(normalized, default="")
         if not content:
             raise FileNotFoundError(f"faustbot 资源不存在或为空: {ref}")
         return content
@@ -75,7 +74,7 @@ def _resolve_path_html(spec: str) -> str:
     if parsed.scheme == SCHEME_MEMORY:
         from faust_backend.memory import get_memory
 
-        result = run_coro_sync(get_memory().file_read(parsed.path))
+        result = await get_memory().file_read(parsed.path)
         return str(result.get("content", ""))
 
     # 磁盘文件
@@ -95,7 +94,7 @@ def _resolve_path_html(spec: str) -> str:
 
 @register
 @tool
-def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: str = "用户仍在处理这个灵动窗口，请查看用户是否已完成操作。", lifespan: int = 1800, metadata_json: str = "{}", persistent: bool = False, persistent_id: str = "") -> str:
+async def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: str = "用户仍在处理这个灵动窗口，请查看用户是否已完成操作。", lifespan: int = 1800, metadata_json: str = "{}", persistent: bool = False, persistent_id: str = "") -> str:
     """
     Description:
         非阻塞地创建一个"灵动交互"窗口，并显示在前端虚拟形象旁边。
@@ -157,7 +156,7 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
     """
     try:
         if str(html or "").strip().startswith("path:"):
-            html = _resolve_path_html(str(html).strip())
+            html = await _resolve_path_html(str(html).strip())
         metadata = json.loads(metadata_json) if metadata_json else {}
         if persistent:
             if not persistent_id:
@@ -188,8 +187,8 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
             })
         else:
             nimble.save_persistent_session(session)
-        run_coro_sync(nimble.register_session_vfs_nodes(callback_id))
-        backend2frontend.FrontEndShowNimbleWindow(nimble.export_window_payload(callback_id))
+        await nimble.register_session_vfs_nodes(callback_id)
+        backend2frontend.FrontEndShowNimbleWindow(nimble.export_window_payload(callback_id) or {})
         return (
             f"灵动交互窗口已创建，callback_id={callback_id}。\n"
             f"通信节点: faustbot://nimble/{callback_id}/{{summary,console,code-readonly}}。\n"
@@ -201,7 +200,7 @@ def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: st
 
 @register
 @tool
-def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent") -> str:
+async def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent") -> str:
     """
     Description:
         主动关闭一个已存在的灵动交互窗口，并清理其关联的 trigger 与 VFS 通信节点

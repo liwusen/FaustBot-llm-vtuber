@@ -4,7 +4,7 @@ from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import rebuild_runtime
 
 router = APIRouter(tags=["admin-config"])
-router.description = "Config 管理：获取/保存/重载 FaustBot 配置（含 public + private 配置视图）"
+
 
 
 @router.get("/faust/admin/config")
@@ -31,7 +31,7 @@ async def admin_save_config(payload: dict):
 
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        pm._call_pluggy_hook('config_changed', key='all', old=old_config_copy, new=dict(new_config), ctx=None)
+        await pm._call_pluggy_hook('config_changed', key='all', old=old_config_copy, new=dict(new_config), ctx=None)
     return result
 
 
@@ -52,7 +52,7 @@ async def admin_reload_config(payload: dict | None = None):
     await check_and_manage_services(old_config_copy, dict(new_config))
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        pm._call_pluggy_hook('config_changed', key='all', old=old_config_copy, new=dict(new_config), ctx=None)
+        await pm._call_pluggy_hook('config_changed', key='all', old=old_config_copy, new=dict(new_config), ctx=None)
 
     return {
         "status": "ok",

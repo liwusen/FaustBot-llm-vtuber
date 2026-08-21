@@ -203,6 +203,15 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 - [x] 安全系统：限制 Agent 访问权限并审核模型命令
 - [x] 高效的工具实现
 
+### 语音
+- [x] Edge-TTS
+- [x] GPT-Sovits
+- [x] Whisper ASR
+- [x] Funasr ASR
+- [x] OpenAI ASR
+- [x] OpenAI TTS
+- [x] FaustBot Cloud Inference Server
+
 </details>
 
 ---

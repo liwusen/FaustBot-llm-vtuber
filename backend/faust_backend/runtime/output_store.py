@@ -56,7 +56,7 @@ class Artifact:
         preview = "\n".join(preview_lines)
         if len(preview) > max_chars:
             preview = preview[:max_chars] + "…"
-        footer = f"\n[完整输出: artifact://{self.output_id}]"
+        footer = f"\n[内容过长,已经截断.请使用行数选择器读取完整输出: artifact://{self.output_id}]"
         return preview + footer
 
     def get(self, offset: int = 0, limit: int | None = None) -> str:

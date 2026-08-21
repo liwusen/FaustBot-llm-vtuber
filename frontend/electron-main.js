@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -588,20 +588,71 @@ function registerGlobalShortcuts() {
   }
 }
 
+// 铺满主显示器但左/上各内缩 1px：破坏“起点贴齐 + size 等于 display”的完美全屏判定，
+// 规避 DWM/Chromium borderless-fullscreen / 遮挡优化带来的副作用（后台视频暂停、播放器卡顿、
+// 全屏窗口下桌宠被压/丢焦点）。真正置顶仍由 screen-saver 保证，鼠标穿透由 renderer 的 IPC 控制。
+function getPetBounds(display) {
+  const b = display && display.bounds ? display.bounds : { x: 0, y: 0, width: 1280, height: 720 };
+  return {
+    x: b.x + 1,
+    y: b.y + 1,
+    width: Math.max(1, b.width - 2),
+    height: Math.max(1, b.height - 2),
+  };
+}
+
+function fillDisplayBounds(win, bounds) {
+  try {
+    if (win && !win.isDestroyed()) win.setBounds(bounds);
+  } catch (e) { /* ignore */ }
+}
+
+// 多次重申窗口边界，抵消创建期被夹到 workArea 或跨 DPI 屏时 setBounds 算错的尺寸。
+function schedulePetBoundsRepair(win, targetBounds) {
+  if (!win || !targetBounds) return;
+  if (win._petBoundsRepairTimers) {
+    for (const t of win._petBoundsRepairTimers) clearTimeout(t);
+  }
+  win._petBoundsRepairTimers = [];
+  [0, 50, 300, 800].forEach((delay) => {
+    const id = setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      const b = win.getBounds();
+      const near = Math.abs(b.x - targetBounds.x) <= 2 && Math.abs(b.y - targetBounds.y) <= 2 &&
+        Math.abs(b.width - targetBounds.width) <= 2 && Math.abs(b.height - targetBounds.height) <= 2;
+      if (!near) fillDisplayBounds(win, targetBounds);
+    }, delay);
+    win._petBoundsRepairTimers.push(id);
+  });
+}
+
+function ensureTopMost(win) {
+  try {
+    if (win && !win.isDestroyed() && !win.isAlwaysOnTop()) {
+      win.setAlwaysOnTop(true, 'screen-saver');
+    }
+  } catch (e) { /* ignore */ }
+}
+
 function createWindow(){
   const windowIconPath = path.join(getFrontendAppDir(), 'FaustBot.icon.tiny.png');
+  const display = screen.getPrimaryDisplay();
+  const petBounds = getPetBounds(display);
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 700,
+    x: petBounds.x,
+    y: petBounds.y,
+    width: petBounds.width,
+    height: petBounds.height,
     title: 'FaustBot',
-    fullscreen: true,
-    fullscreenable: true,
+    // 不用 fullscreen:true —— 真全屏会触发 borderless-fullscreen / 遮挡优化，
+    // 导致其它窗口（如浏览器视频）合成被压制而黑屏。改为手工铺满 + 内缩 1px。
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     hasShadow: false,
     resizable: false,
-    alwaysOnTop: true,
+    movable: false,
+    skipTaskbar: true,
     icon: fs.existsSync(windowIconPath) ? windowIconPath : undefined,
     webPreferences: {
       preload: path.join(getFrontendAppDir(), 'preload.js'),
@@ -620,22 +671,21 @@ function createWindow(){
   mainWindow.webContents.on('did-finish-load', () => {
     flushCommandBuffer();
   });
-  // start fullscreen. mouse-ignore (click-through) is controlled from renderer via IPC
 
-  // Ensure the window remains fullscreen: if it ever leaves fullscreen or is resized,
-  // re-enter fullscreen shortly after. This keeps the app visually always-fullscreen.
-  mainWindow.on('leave-full-screen', () => {
-    try{
-      // small delay to avoid races
-      setTimeout(()=>{ if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setFullScreen(true); }, 120);
-    }catch(e){ console.error('Re-enter fullscreen failed', e); }
+  // 创建后多次重申边界，抵消创建期被夹到 workArea / 跨 DPI 屏尺寸错乱。
+  schedulePetBoundsRepair(mainWindow, petBounds);
+
+  // 显示器布局变化（插拔/改分辨率）时重新铺满主屏并保持置顶。
+  screen.on('display-metrics-changed', (_event, _display, changedMetrics) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const nb = getPetBounds(screen.getPrimaryDisplay());
+      schedulePetBoundsRepair(mainWindow, nb);
+    }
   });
 
-
-  // If window is resized or maximized/unmaximized, force fullscreen again
-  mainWindow.on('resize', () => {
-    try{ if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFullScreen()) mainWindow.setFullScreen(true); }catch(e){}
-  });
+  // 持续置顶：失焦或被压时重申 screen-saver 级别，防全屏窗口下桌宠丢失置顶/焦点。
+  mainWindow.on('blur', () => { ensureTopMost(mainWindow); });
+  setInterval(() => { ensureTopMost(mainWindow); }, 1000);
 
   mainWindow.on('closed', ()=>{ mainWindow = null });
 

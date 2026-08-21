@@ -9,7 +9,7 @@ log = get_logger("faust.tools.media")
 
 @register
 @tool
-def musicPlayTool(url: str) -> str:
+async def musicPlayTool(url: str) -> str:
     """
     Description:
         播放指定URL的音乐。
@@ -26,7 +26,7 @@ def musicPlayTool(url: str) -> str:
 
 @register
 @tool
-def bgPlayTool(url: str) -> str:
+async def bgPlayTool(url: str) -> str:
     """
     Description:
         播放指定URL的背景音乐。

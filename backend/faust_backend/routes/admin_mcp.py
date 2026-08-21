@@ -7,7 +7,7 @@ import faust_backend.config_loader as conf
 from faust_backend.mcp_manager import get_mcp_manager
 
 router = APIRouter(tags=["admin-mcp"])
-router.description = "MCP server 管理：配置、启停、状态与日志查看"
+
 
 
 def _normalize_server_id(server_id: str) -> str:

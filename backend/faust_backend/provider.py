@@ -68,7 +68,7 @@ async def auto_load_model_for_provider(provider: ModelProvider) -> List[str]:
         provider.models = await get_provider_models_by_api(provider)
     return provider.models
 
-async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:str="deepseek::deepseek-v4-pro",intensity:str|None = "medium")-> ReasoningChatOpenAI:
+async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:str="deepseek::deepseek-v4-pro",intensity:str|None = "medium")-> ReasoningChatOpenAI|ChatOpenAI:
     """Build a ReasoningChatOpenAI instance from a model specification string.
 
     Args:
@@ -110,14 +110,14 @@ async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:st
         model_kw = thinking_params.pop("model_kwargs", {})
         extra = {
             **thinking_params.pop("extra_body", {}),
-            **kwargs.get("extra_body", {}),
+            **kwargs.get("extra_body", {}),#type: ignore
         }
         if extra:
-            kwargs["extra_body"] = extra
-        kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}
-        return ReasoningChatOpenAI(**kwargs)
+            kwargs["extra_body"] = extra#type: ignore
+        kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}#type: ignore
+        return ReasoningChatOpenAI(**kwargs)#type: ignore
     else:
-        return ChatOpenAI(**kwargs)
+        return ChatOpenAI(**kwargs)#type: ignore
 
 def new_provider(ModelProviders: ModelProviders, name: str, base_url: str, key: Optional[str] = None) -> ModelProvider:
     """Create a new model provider and add it to the ModelProviders instance.

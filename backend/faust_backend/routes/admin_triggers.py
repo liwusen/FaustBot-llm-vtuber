@@ -4,7 +4,7 @@ import faust_backend.trigger_manager as trigger_manager
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-triggers"])
-router.description = "Trigger 管理：列出/查看/创建/更新/删除触发器"
+
 
 
 @router.get("/faust/admin/triggers")

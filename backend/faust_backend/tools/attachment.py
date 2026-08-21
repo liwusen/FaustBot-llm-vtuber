@@ -9,9 +9,9 @@ from faust_backend.memory.tools import (
 
 @register
 @tool
-def attachmentWriteTool(file_path: str, path: str = "", *,
-                        description: str = "",
-                        content_type: str = "") -> str:
+async def attachmentWriteTool(file_path: str, path: str = "", *,
+                              description: str = "",
+                              content_type: str = "") -> str:
     """
     Description:
         Write an image to memory from a local file path. Reads the image file
@@ -27,15 +27,5 @@ def attachmentWriteTool(file_path: str, path: str = "", *,
     Returns:
         str(json): {path, description, content_type}
     """
-    return _attachmentWriteTool(file_path, path, description=description,
-                                content_type=content_type)
-
-
-
-@tool
-def attachmentReadTool(path: str) -> str:
-    """[已弃用] 读取记忆图片 → 请使用 read("memory://path")。
-    直接转发给 read 工具（支持多模态图片输出）。
-    """
-    from faust_backend.tools.read import read
-    return read(f"memory://{path}")
+    return await _attachmentWriteTool(file_path, path, description=description,
+                                      content_type=content_type)

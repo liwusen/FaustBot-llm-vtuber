@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import threading
 import time
@@ -14,73 +15,106 @@ class PluginContext:
     plugin_data_dir: Path | None = None
     config: dict[str, Any] = field(default_factory=dict)
 
-    def trigger_create(self, payload: dict | str) -> Any:
+    async def trigger_create(self, payload: dict | str) -> Any:
         fn = self.config.get("trigger_create")
         if not callable(fn):
             raise RuntimeError("trigger_create is not available")
-        return fn(payload)
+        res = fn(payload)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def trigger_list(self) -> list[dict]:
+    async def trigger_list(self) -> list[dict]:
         fn = self.config.get("trigger_list")
         if not callable(fn):
             raise RuntimeError("trigger_list is not available")
-        return fn()  # type: ignore
+        res = fn()
+        if inspect.isawaitable(res):
+            return await res
+        return res  # type: ignore
 
-    def trigger_get(self, trigger_id: str) -> dict | None:
+    async def trigger_get(self, trigger_id: str) -> dict | None:
         fn = self.config.get("trigger_get")
         if not callable(fn):
             raise RuntimeError("trigger_get is not available")
-        return fn(trigger_id) # type: ignore
+        res = fn(trigger_id)
+        if inspect.isawaitable(res):
+            return await res
+        return res # type: ignore
 
-    def trigger_update(self, trigger_id: str, payload: dict | str) -> Any:
+    async def trigger_update(self, trigger_id: str, payload: dict | str) -> Any:
         fn = self.config.get("trigger_update")
         if not callable(fn):
             raise RuntimeError("trigger_update is not available")
-        return fn(trigger_id, payload)
+        res = fn(trigger_id, payload)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def trigger_delete(self, trigger_id: str) -> Any:
+    async def trigger_delete(self, trigger_id: str) -> Any:
         fn = self.config.get("trigger_delete")
         if not callable(fn):
             raise RuntimeError("trigger_delete is not available")
-        return fn(trigger_id)
+        res = fn(trigger_id)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def register_config(self, schema: str | list[dict[str, Any]]) -> Any:
+    async def register_config(self, schema: str | list[dict[str, Any]]) -> Any:
         fn = self.config.get("plugin_config_register")
         if not callable(fn):
             raise RuntimeError("plugin_config_register is not available")
-        return fn(schema)
+        res = fn(schema)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def get_config(self, key: str, default: Any = None) -> Any:
+    async def get_config(self, key: str, default: Any = None) -> Any:
         fn = self.config.get("plugin_config_get")
         if not callable(fn):
             raise RuntimeError("plugin_config_get is not available")
-        return fn(key, default)
+        res = fn(key, default)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def set_config(self, key: str, value: Any) -> Any:
+    async def set_config(self, key: str, value: Any) -> Any:
         fn = self.config.get("plugin_config_set")
         if not callable(fn):
             raise RuntimeError("plugin_config_set is not available")
-        return fn(key, value)
+        res = fn(key, value)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def list_configs(self) -> dict[str, Any]:
+    async def list_configs(self) -> dict[str, Any]:
         fn = self.config.get("plugin_config_list")
         if not callable(fn):
             raise RuntimeError("plugin_config_list is not available")
-        return fn() # type: ignore
+        res = fn()
+        if inspect.isawaitable(res):
+            return await res
+        return res # type: ignore
 
-    def vfs_read_text(self, path: str, default: str = "") -> str:
+    async def vfs_read_text(self, path: str, default: str = "") -> str:
         fn = self.config.get("vfs_read_text")
         if not callable(fn):
             raise RuntimeError("vfs_read_text is not available")
-        return fn(path, default) # type: ignore
+        res = fn(path, default)
+        if inspect.isawaitable(res):
+            return await res
+        return res # type: ignore
 
-    def vfs_write(self, path: str, content: Any) -> Any:
+    async def vfs_write(self, path: str, content: Any) -> Any:
         fn = self.config.get("vfs_write")
         if not callable(fn):
             raise RuntimeError("vfs_write is not available")
-        return fn(path, content)
+        res = fn(path, content)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True, writable: bool = False) -> Any:
+    async def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True, writable: bool = False) -> Any:
         """注册一个 symbol 节点：读取时调用 func(path)（支持同步或异步内容函数）。
 
         writable=True 时允许写入，配合 vfs_set_write_handler/vfs_set_edit_handler
@@ -89,33 +123,48 @@ class PluginContext:
         fn = self.config.get("vfs_write_symbolic")
         if not callable(fn):
             raise RuntimeError("vfs_write_symbolic is not available")
-        return fn(path, func, should_be_included_in_search, writable)
+        res = fn(path, func, should_be_included_in_search, writable)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def vfs_set_write_handler(self, path: str, func: Any) -> Any:
+    async def vfs_set_write_handler(self, path: str, func: Any) -> Any:
         """为节点设置自定义写处理器，签名 (node, content)，支持同步或异步函数。"""
         fn = self.config.get("vfs_set_write_handler")
         if not callable(fn):
             raise RuntimeError("vfs_set_write_handler is not available")
-        return fn(path, func)
+        res = fn(path, func)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def vfs_set_edit_handler(self, path: str, func: Any) -> Any:
+    async def vfs_set_edit_handler(self, path: str, func: Any) -> Any:
         """为节点设置自定义编辑处理器，签名 (node, content)，支持同步或异步函数。"""
         fn = self.config.get("vfs_set_edit_handler")
         if not callable(fn):
             raise RuntimeError("vfs_set_edit_handler is not available")
-        return fn(path, func)
+        res = fn(path, func)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def vfs_delete(self, path: str) -> Any:
+    async def vfs_delete(self, path: str) -> Any:
         fn = self.config.get("vfs_delete")
         if not callable(fn):
             raise RuntimeError("vfs_delete is not available")
-        return fn(path)
+        res = fn(path)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
-    def vfs_list(self, path: str = "/") -> list[str] | None:
+    async def vfs_list(self, path: str = "/") -> list[str] | None:
         fn: Callable[[str], list[str] | None] = self.config.get("vfs_list") # type: ignore
         if not callable(fn):
             raise RuntimeError("vfs_list is not available")
-        return fn(path)
+        res = fn(path)
+        if inspect.isawaitable(res):
+            return await res
+        return res
 
 
 @dataclass

@@ -73,7 +73,7 @@ def _get_model_type() -> str:
 
 @register
 @tool
-def listAvailableMotionsTool() -> str:
+async def listAvailableMotionsTool() -> str:
     """
     Description:
         获取当前模型可用的 Motion / Expression 名称列表。
@@ -119,34 +119,11 @@ def listAvailableMotionsTool() -> str:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-@tool
-def triggerMotionTool(motion_name: str) -> str:
-    """
-    Description:
-        [已弃用] 直接触发指定 Live2D Motion 或 VRM Expression。
-        现已改为在输出文本中包含 <{Motion_Name}> 由前端触发。
-        VRM 模式可用值：neutral, happy, angry, sad, relaxed, surprised。
-    Args:
-        motion_name (str): 要触发的 motion/expression 名称。
-    Returns:
-        str(json): 执行状态与名称。
-    """
-    name = str(motion_name or "").strip()
-    if not name:
-        return json.dumps({"status": "error", "error": "motion_name 不能为空"}, ensure_ascii=False)
-    try:
-        model_type = _get_model_type()
-        obj_type = "expression" if model_type == "vrm" else "motion"
-        log.info("Trigger %s: %s", obj_type, name)
-        backend2frontend.frontendSetMotion(name)
-        return json.dumps({"status": "ok", "deprecated": True, "command": "SET_MOTION", obj_type: name}, ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e), "motion": name}, ensure_ascii=False)
 
 
 @register
 @tool
-def listVRMGesturesTool() -> str:
+async def listVRMGesturesTool() -> str:
     """
     Description:
         获取 VRM 模型可用的手势名称列表（仅在 VRM 模式下有效）。
@@ -166,7 +143,7 @@ def listVRMGesturesTool() -> str:
 
 @register
 @tool
-def listVRMPosesTool() -> str:
+async def listVRMPosesTool() -> str:
     """
     Description:
         获取 VRM 模型已保存的动作预设名称列表（仅在 VRM 模式下有效）。
@@ -186,7 +163,7 @@ def listVRMPosesTool() -> str:
 
 @register
 @tool
-def triggerVRMPoseTool(pose_name: str, transition: float | None = None) -> str:
+async def triggerVRMPoseTool(pose_name: str, transition: float | None = None) -> str:
     """
     Description:
         应用 VRM 模型的某个动作预设（仅在 VRM 模式下有效）。预设由用户在编辑器中保存。
@@ -214,7 +191,7 @@ def triggerVRMPoseTool(pose_name: str, transition: float | None = None) -> str:
 
 @register
 @tool
-def triggerVRMGestureTool(gesture_name: str, duration: float = 1.5, auto_reset: bool = True) -> str:
+async def triggerVRMGestureTool(gesture_name: str, duration: float = 1.5, auto_reset: bool = True) -> str:
     """
     Description:
         触发 VRM 模型的手势动作（仅在 VRM 模式下有效）。
@@ -240,7 +217,7 @@ def triggerVRMGestureTool(gesture_name: str, duration: float = 1.5, auto_reset: 
 
 @register
 @tool
-def setVRMLookAtTool(x_or_dir, y=None, z=None) -> str:
+async def setVRMLookAtTool(x_or_dir, y=None, z=None) -> str:
     """
     Description:
         设置 VRM 模型的视线目标方向（仅在 VRM 模式下有效）。

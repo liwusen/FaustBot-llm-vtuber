@@ -129,7 +129,8 @@ async def test_ainvoke_subagent_streams_and_cleans_up():
     assert manager.subagents["worker"].lock.locked() is False
 
 
-def test_read_faustbot_subagent_resources(monkeypatch):
+@pytest.mark.asyncio
+async def test_read_faustbot_subagent_resources(monkeypatch):
     manager = subagent_manager.SubagentManager()
     worker = subagent_manager.Subagent(name="worker", systemPrompt="demo prompt")
     worker.toolsetNames = ["BASESET"]
@@ -148,11 +149,11 @@ def test_read_faustbot_subagent_resources(monkeypatch):
 
     monkeypatch.setattr(runtime_state, "subagent_manager", manager)
 
-    overview = read.func("faustbot://subagents/worker")
-    output = read.func("faustbot://subagents/worker/output.md")
-    final_result = read.func("faustbot://subagents/worker/finalResult.md")
-    index_doc = read.func("faustbot://subagenting.md")
-    avatoolset = read.func("faustbot://avatoolset")
+    overview = await read.coroutine("faustbot://subagents/worker")
+    output = await read.coroutine("faustbot://subagents/worker/output.md")
+    final_result = await read.coroutine("faustbot://subagents/worker/finalResult.md")
+    index_doc = await read.coroutine("faustbot://subagenting.md")
+    avatoolset = await read.coroutine("faustbot://avatoolset")
 
     assert "faustbot://subagents/worker/ 内容:\n  faustbot://subagents/worker/finalResult.md\n  faustbot://subagents/worker/output.md\n" in overview
     assert "# System Prompt Of Subagent(worker)" in output

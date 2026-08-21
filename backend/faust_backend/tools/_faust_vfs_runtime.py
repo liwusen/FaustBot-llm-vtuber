@@ -88,7 +88,7 @@ class VfsNode:
         self.is_directory = is_directory
         self.content = content
         self.children: dict[str, VfsNode] = {}
-        self.symbolic_func = symbolic_func
+        self.symbolic_func:SymbolicFunc = symbolic_func#type: ignore
         self.should_be_included_in_search = should_be_included_in_search
         self.writable = writable
         # handler 签名为 (node: VfsNode, content: Any)，支持 sync/async；
@@ -384,38 +384,7 @@ class AsyncVirtualFileSystem:
 
 
 _VFS_SINGLETON: AsyncVirtualFileSystem | None = None
-_VFS_INIT_LOCK = threading.Lock()
-
-
-def run_coro_sync(coro):
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    if not loop.is_running():
-        return loop.run_until_complete(coro)
-    result: dict[str, Any] = {}
-    done = threading.Event()
-
-    def runner() -> None:
-        inner_loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(inner_loop)
-            result['value'] = inner_loop.run_until_complete(coro)
-        except Exception as exc:
-            result['error'] = exc
-        finally:
-            try:
-                inner_loop.close()
-            except Exception:
-                pass
-            done.set()
-
-    threading.Thread(target=runner, daemon=True).start()
-    done.wait()
-    if 'error' in result:
-        raise result['error']
-    return result.get('value')
+_VFS_ASYNC_INIT_LOCK = asyncio.Lock()
 
 
 def _read_task_section(section_title: str) -> str:
@@ -523,7 +492,7 @@ async def _ensure_core_structure(vfs: AsyncVirtualFileSystem) -> None:
 
 
 async def refresh_runtime_nodes(vfs: AsyncVirtualFileSystem | None = None) -> AsyncVirtualFileSystem:
-    target = vfs or get_faustbot_vfs()
+    target = vfs or await get_faustbot_vfs()
     await target.mkdir('/subagents')
     existing = await target.list_dir('/subagents') or []
     for name in existing:
@@ -543,12 +512,13 @@ async def refresh_runtime_nodes(vfs: AsyncVirtualFileSystem | None = None) -> As
     return target
 
 
-def get_faustbot_vfs(refresh: bool = False) -> AsyncVirtualFileSystem:
+async def get_faustbot_vfs(refresh: bool = False) -> AsyncVirtualFileSystem:
     global _VFS_SINGLETON
-    with _VFS_INIT_LOCK:
-        if _VFS_SINGLETON is None:
-            _VFS_SINGLETON = AsyncVirtualFileSystem()
-            run_coro_sync(_ensure_core_structure(_VFS_SINGLETON))
-        if refresh:
-            run_coro_sync(refresh_runtime_nodes(_VFS_SINGLETON))
-        return _VFS_SINGLETON
+    if _VFS_SINGLETON is None:
+        async with _VFS_ASYNC_INIT_LOCK:
+            if _VFS_SINGLETON is None:
+                _VFS_SINGLETON = AsyncVirtualFileSystem()
+                await _ensure_core_structure(_VFS_SINGLETON)
+    if refresh:
+        await refresh_runtime_nodes(_VFS_SINGLETON)
+    return _VFS_SINGLETON

@@ -8,7 +8,9 @@ implement this as a tool-wrapper approach (compatible with all versions).
 
 from __future__ import annotations
 
+import asyncio
 import json
+from functools import wraps
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
@@ -19,6 +21,10 @@ from faust_backend.runtime import state
 
 log = get_logger("faust.tool_middleware")
 
+def _resolve_config(config: Any) -> Any:
+    """langchain 1.4+ 的 _run/_arun 要求 config 参数；直接调用时兜底为空 dict。"""
+    return config if config is not None else {}
+
 def wrap_tool_output(tool: BaseTool) -> BaseTool:
     """Wrap a LangChain tool so its output goes through OutputStore.
 
@@ -27,23 +33,21 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
     """
     store = get_output_store()
     tool_name = tool.name
-
-    # Capture original implementations.  A sync @tool has both _run (sync)
-    # and _arun (auto-generated async wrapper).  LangGraph may call either
-    # path, so we MUST wrap both; the old if/elif only wrapped _arun for
-    # sync tools, causing _run → self.func() to bypass OutputStore entirely.
-    original_func = tool.func if hasattr(tool, 'func') else getattr(tool, '_run', None)
-    original_coro = getattr(tool, 'coroutine', None) or getattr(tool, '_arun', None)
-
     import inspect as _inspect
 
-    if original_coro and _inspect.iscoroutinefunction(original_coro):
+    # async @tool：tool.coroutine 是原生 async 函数；包装 _arun 委托它。
+    # sync @tool：tool.coroutine 为 None，tool._run 是 StructuredTool._run
+    # （接受 config/run_manager 并委托 func）；包装 _run 和 _arun。
+    original_coro = getattr(tool, 'coroutine', None)
 
+    if original_coro and _inspect.iscoroutinefunction(original_coro):
+        # ── async @tool：只包装 _arun，委托 coroutine ──
+        @wraps(original_coro)
         async def _wrapped_arun(*args, **kwargs):
             pm = getattr(state, 'plugin_manager', None)
             if pm:
                 try:
-                    modified = pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
+                    modified = await pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
                     if modified and isinstance(modified, list) and modified[0] is not None:
                         kwargs = modified[0] if isinstance(modified[0], dict) else kwargs
                 except Exception:
@@ -52,7 +56,7 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
                 result = await original_coro(*args, **kwargs)
                 if pm:
                     try:
-                        post_results = pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
+                        post_results = await pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
                         if post_results and isinstance(post_results, list):
                             for r in post_results:
                                 if r is not None:
@@ -67,23 +71,31 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
                 return f"工具执行出错\n[完整输出: artifact://{output_id}]"
             return _store_and_summarize(store, tool_name, result, args, kwargs)
         tool._arun = _wrapped_arun
+        return tool
 
-    if original_func and not _inspect.iscoroutinefunction(original_func):
-
-        def _wrapped_run(*args, **kwargs):
+    # ── sync @tool：包装 _run（接受 config/run_manager），并让 _arun
+    # 委托 _wrapped_run 到线程池执行，避免阻塞事件循环 ──
+    original_run = getattr(tool, '_run', None)
+    if original_run and not _inspect.iscoroutinefunction(original_run):
+        log.warning("Wrapping sync tool %s._run for OutputStore", tool_name)
+        log.warning("SYNC TOOL WILL BE NO LONGER SUPPORTED IN FUTURE VERSIONS.")
+        # @wraps 保留原 _run 签名（含 config 注解），使 langchain 的
+        # invoke/ainvoke 能探测到 config 参数并注入。
+        @wraps(original_run)
+        def _wrapped_run(*args, config: Any = None, run_manager: Any = None, **kwargs):
             pm = getattr(state, 'plugin_manager', None)
             if pm:
                 try:
-                    modified = pm._call_pluggy_hook('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
+                    modified = pm._call_pluggy_hook_sync('tool_call_pre', name=tool_name, args=kwargs, ctx=None)
                     if modified and isinstance(modified, list) and modified[0] is not None:
                         kwargs = modified[0] if isinstance(modified[0], dict) else kwargs
                 except Exception:
                     pass
             try:
-                result = original_func(*args, **kwargs)
+                result = original_run(*args, config=_resolve_config(config), run_manager=run_manager, **kwargs)
                 if pm:
                     try:
-                        post_results = pm._call_pluggy_hook('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
+                        post_results = pm._call_pluggy_hook_sync('tool_call_post', name=tool_name, args=kwargs, result=result, ctx=None)
                         if post_results and isinstance(post_results, list):
                             for r in post_results:
                                 if r is not None:
@@ -99,6 +111,14 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
             return _store_and_summarize(store, tool_name, result, args, kwargs)
 
         tool._run = _wrapped_run
+
+        @wraps(original_run)
+        async def _wrapped_arun_sync(*args, config: Any = None, run_manager: Any = None, **kwargs):
+            return await asyncio.to_thread(
+                _wrapped_run, *args, config=config, run_manager=run_manager, **kwargs
+            )
+
+        tool._arun = _wrapped_arun_sync
 
     return tool
 

@@ -24,7 +24,7 @@ from lm import AgileLogManager
 from agile_base import AgileContext, AgileHookBase, AgileHookType, AgileModule, build_invoker
 import faust_backend.config_loader as conf
 from faust_backend.plugin_system import PluginContext
-from faust_backend.tools.vfs import get_faustbot_vfs, run_coro_sync
+from faust_backend.tools.vfs import get_faustbot_vfs
 
 MODULES: dict[str, AgileModule] = {}
 AGILE_INSTANCES: dict[str, dict[str, Any]] = {}
@@ -320,7 +320,7 @@ async def _unregister_hooks(instance: dict[str, Any]) -> None:
     for handle in instance.get("interval_handles", []):
         handle.stop()
     # 3. VFS 节点归属校验后删除
-    vfs = get_faustbot_vfs()
+    vfs = await get_faustbot_vfs()
     owned = set(instance.get("owned_funcs", []))
     for path in list(instance.get("vfs_paths", [])):
         try:
@@ -362,7 +362,7 @@ def _module_source(name: str) -> str:
 
 
 async def _register_mirror_nodes(name: str) -> list[str]:
-    vfs = get_faustbot_vfs()
+    vfs = await get_faustbot_vfs()
     await vfs.mkdir("/agile")
     await vfs.mkdir("/agile/modules")
     paths = [
@@ -506,14 +506,15 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
         return {"ok": False, "message": f"加载模块 {name} 失败: {exc}"}
 
 
-def load_module(name: str) -> dict[str, Any]:
+async def load_module(name: str) -> dict[str, Any]:
     name = str(name or "").strip()
     if not name:
         return {"ok": False, "message": "模块名不能为空"}
-    return run_coro_sync(_load_module_async(name))
+    return await _load_module_async(name)
 
 
-async def _unload_module_async(name: str) -> dict[str, Any]:
+async def unload_module(name: str) -> dict[str, Any]:
+    name = str(name or "").strip()
     instance = AGILE_INSTANCES.get(name)
     if instance is None:
         return {"ok": False, "message": f"模块 {name} 未加载"}
@@ -526,29 +527,24 @@ async def _unload_module_async(name: str) -> dict[str, Any]:
     return {"ok": True, "message": f"模块 {name} 已卸载"}
 
 
-def unload_module(name: str) -> dict[str, Any]:
-    name = str(name or "").strip()
-    return run_coro_sync(_unload_module_async(name))
-
-
-def reload_module(name: str) -> dict[str, Any]:
+async def reload_module(name: str) -> dict[str, Any]:
     name = str(name or "").strip()
     if name in AGILE_INSTANCES:
         old_limit = AGILE_INSTANCES[name].get("tpm_limit", DEFAULT_TPM_LIMIT)
-        result = unload_module(name)
+        result = await unload_module(name)
         if not result.get("ok"):
             return result
-        # reload 是热更新代码：把已设置的触发上限传给新实例（onload 之前生效）
-        return run_coro_sync(_load_module_async(name, preset_limit=old_limit))
-    return load_module(name)
+        # reload 是热更新代码：把已设置 of 触发上限传给新实例（onload 之前生效）
+        return await _load_module_async(name, preset_limit=old_limit)
+    return await load_module(name)
 
 
 # ─────────────────────────── 启用 / 禁用（文件名持久化） ───────────────────────────
 
-def disable_module(name: str) -> dict[str, Any]:
+async def disable_module(name: str) -> dict[str, Any]:
     name = str(name or "").strip()
     if name in AGILE_INSTANCES:
-        result = unload_module(name)
+        result = await unload_module(name)
         if not result.get("ok"):
             return result
     src, dst = _module_file(name), _module_file_disabled(name)
@@ -558,12 +554,12 @@ def disable_module(name: str) -> dict[str, Any]:
     return {"ok": False, "message": f"模块文件不存在: {src}"}
 
 
-def enable_module(name: str) -> dict[str, Any]:
+async def enable_module(name: str) -> dict[str, Any]:
     name = str(name or "").strip()
     src, dst = _module_file_disabled(name), _module_file(name)
     if src.exists():
         src.rename(dst)
-    return load_module(name)
+    return await load_module(name)
 
 
 # ─────────────────────────── 状态 / 列表 ───────────────────────────
@@ -646,11 +642,11 @@ async def format_module_logs(name: str, level: str | None = None) -> str:
     return "\n".join(await LM.formatLogs(logs))
 
 
-def register_overview_node() -> None:
+async def register_overview_node() -> None:
     """插件 startup 调用：注册 faustbot://agile/status 总览节点。"""
-    vfs = get_faustbot_vfs()
-    run_coro_sync(vfs.mkdir("/agile"))
-    run_coro_sync(vfs.write_symbolic(
+    vfs = await get_faustbot_vfs()
+    await vfs.mkdir("/agile")
+    await vfs.write_symbolic(
         "/agile/status", lambda _p: format_status_overview(),
         should_be_included_in_search=True, writable=False,
-    ))
+    )

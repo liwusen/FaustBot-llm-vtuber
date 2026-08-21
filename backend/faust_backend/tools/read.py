@@ -35,7 +35,6 @@ from faust_backend.logger import get_logger
 from faust_backend.tools.vfs import (
     get_faustbot_vfs,
     refresh_runtime_nodes,
-    run_coro_sync,
 )
 import faust_backend.config_loader as conf
 
@@ -46,7 +45,7 @@ IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", 
 
 @register
 @tool
-def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     """Read a file, directory, tool output, or memory document — the universal read tool.
 
     This is your PRIMARY tool for inspecting anything on disk or in memory.
@@ -161,7 +160,7 @@ def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = F
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_MEMORY:
-        result = _read_memory(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = await _read_memory(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_SKILL:
@@ -169,7 +168,7 @@ def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = F
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_FAUSTBOT:
-        result = _read_faustbot(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = await _read_faustbot(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_IMG_SOURCE:
@@ -211,7 +210,7 @@ def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: 
     return art.get()
 
 
-def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -228,7 +227,7 @@ def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bo
         ct = store._get_node_attr(nid, "content_type", "")
         if ct.startswith("image/"):
             try:
-                result = run_coro_sync(store.attachment_read(path))
+                result = await store.attachment_read(path)
             except Exception as e:
                 return f"读取记忆图片出错: {e}"
             desc = result.get("description") or f"记忆图片: {path}"
@@ -250,14 +249,14 @@ def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bo
     # empty path → tree
     if not path or parsed.is_dir:
         try:
-            tree = run_coro_sync(store.tree_list(path or "/"))
+            tree = await store.tree_list(path or "/")
             return _format_tree(tree)
         except Exception as e:
             return f"读取记忆树出错: {e}"
 
     # document read
     try:
-        result = run_coro_sync(store.file_read(path))
+        result = await store.file_read(path)
     except FileNotFoundError:
         return f"[记忆文档不存在: {path}]"
     except Exception as e:
@@ -332,31 +331,31 @@ def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: boo
     return _read_file(parse(file_uri))
 
 
-def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+async def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
     del force_plain_text
     raw_path = str(parsed.path or "").strip("/")
-    vfs = get_faustbot_vfs(refresh=True)
-    run_coro_sync(refresh_runtime_nodes(vfs))
+    vfs = await get_faustbot_vfs(refresh=True)
+    await refresh_runtime_nodes(vfs)
     if not raw_path or parsed.is_dir:
-        items = run_coro_sync(vfs.list_dir("/")) or []
+        items = await vfs.list_dir("/") or []
         lines = ["faustbot:// 可用资源:"]
         for item in items:
             child_path = "/" + item
-            suffix = "/" if run_coro_sync(vfs.is_dir(child_path)) else ""
+            suffix = "/" if await vfs.is_dir(child_path) else ""
             lines.append(f"  faustbot://{item}{suffix}")
         return "\n".join(lines)
 
     normalized = "/" + raw_path
-    if run_coro_sync(vfs.is_dir(normalized)):
-        items = run_coro_sync(vfs.list_dir(normalized)) or []
+    if await vfs.is_dir(normalized):
+        items = await vfs.list_dir(normalized) or []
         lines = [f"faustbot://{raw_path}/ 内容:"]
         for item in items:
             child_path = normalized.rstrip("/") + "/" + item
-            suffix = "/" if run_coro_sync(vfs.is_dir(child_path)) else ""
+            suffix = "/" if await vfs.is_dir(child_path) else ""
             lines.append(f"  faustbot://{raw_path}/{item}{suffix}")
         return "\n".join(lines)
 
-    content = run_coro_sync(vfs.read_text(normalized, default=""))
+    content = await vfs.read_text(normalized, default="")
     if not content:
         return f"[未知 faustbot 资源: {raw_path}]"
     return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)

@@ -137,7 +137,7 @@ def find_skill_root(extract_dir: Path) -> Path:
 
 
 def install_skill_from_slug(slug: str, overwrite: bool = False) -> dict:
-    api = f"https://wry-manatee-359.convex.site/api/v1/download?slug={requests.utils.quote(slug, safe='')}"
+    api = f"https://wry-manatee-359.convex.site/api/v1/download?slug={requests.utils.quote(slug, safe='')}" # type: ignore
     with tempfile.TemporaryDirectory(prefix="faust-skill-") as td:
         td_path = Path(td)
         zip_path = td_path / "skill.zip"

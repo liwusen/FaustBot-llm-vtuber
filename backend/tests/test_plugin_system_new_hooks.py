@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -14,6 +15,11 @@ from faust_backend.plugin_system.interfaces import PluginManifest
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'
 STATE_FILE = Path(__file__).resolve().parents[2] / 'logs' / 'plugin-test-state-hooks.json'
+
+
+def _run(coro):
+    """在同步测试中执行 async 调用。"""
+    return asyncio.run(coro)
 
 
 class LlmRewritePlugin(FaustPlugin):
@@ -70,9 +76,9 @@ def test_default_impl_noop():
 
 def test_llm_request_pre_hook_rewrites_messages():
     pm = _manager_with('llm-rewrite', LlmRewritePlugin())
-    results = pm._call_pluggy_hook(
+    results = _run(pm._call_pluggy_hook(
         "llm_request_pre", messages=[{"role": "user", "content": "hi"}], ctx=None
-    )
+    ))
     rewritten = [r for r in results if isinstance(r, list) and r]
     assert len(rewritten) == 1
     assert rewritten[0][0] == {"role": "system", "content": "rewritten"}
@@ -80,9 +86,9 @@ def test_llm_request_pre_hook_rewrites_messages():
 
 def test_llm_request_pre_absent_plugin_returns_none():
     pm = _manager_with('plain', FaustPlugin())
-    results = pm._call_pluggy_hook(
+    results = _run(pm._call_pluggy_hook(
         "llm_request_pre", messages=[{"role": "user", "content": "hi"}], ctx=None
-    )
+    ))
     assert all(r is None for r in results)
 
 
@@ -91,15 +97,76 @@ def test_llm_request_pre_absent_plugin_returns_none():
 
 def test_tts_text_hook_firstresult_wins():
     pm = _manager_with('tts-rewrite', TtsRewritePlugin())
-    results = pm._call_pluggy_hook("tts_text", text="你好", ctx=None)
+    results = _run(pm._call_pluggy_hook("tts_text", text="你好", ctx=None))
     assert results and results[0] == "[spoken] 你好"
 
 
 def test_tts_start_hook_notified():
     p = TtsStartPlugin()
     pm = _manager_with('tts-start', p)
-    pm._call_pluggy_hook("tts_start", text="hello", ctx=None)
+    _run(pm._call_pluggy_hook("tts_start", text="hello", ctx=None))
     assert p.started == ["hello"]
+
+
+# ── 同步桥接：_call_pluggy_hook_sync ──
+
+
+def test_sync_bridge_runs_async_hook():
+    class AsyncHookPlugin(FaustPlugin):
+        def __init__(self):
+            self.calls: list[str] = []
+
+        @hookimpl
+        async def tts_start(self, text, ctx):
+            self.calls.append(text)
+
+    pm = _manager_with('async-hook', AsyncHookPlugin())
+    pm._call_pluggy_hook_sync("tts_start", text="hello", ctx=None)
+    assert pm._plugins['async-hook']['plugin'].calls == ["hello"]
+
+
+def test_async_call_handles_sync_and_async_hooks():
+    class SyncNotifyPlugin(FaustPlugin):
+        def __init__(self):
+            self.calls: list[str] = []
+
+        @hookimpl
+        def tts_start(self, text, ctx):
+            self.calls.append(f"[sync] {text}")
+
+    class AsyncNotifyPlugin(FaustPlugin):
+        def __init__(self):
+            self.calls: list[str] = []
+
+        @hookimpl
+        async def tts_start(self, text, ctx):
+            self.calls.append(f"[async] {text}")
+
+    pm = _manager_with('sync-notify', SyncNotifyPlugin())
+    async_plugin = AsyncNotifyPlugin()
+    pm._pluggy_manager.register(async_plugin, name='async-notify')
+    pm._plugins['async-notify'] = {
+        "manifest": PluginManifest(plugin_id='async-notify', name='async-notify', enabled=True),
+        "plugin": async_plugin,
+        "ctx": object(),
+    }
+    # tts_start 非 firstresult：同步与异步实现都应被执行
+    _run(pm._call_pluggy_hook("tts_start", text="hello", ctx=None))
+    assert "[sync] hello" in pm._plugins['sync-notify']['plugin'].calls
+    assert "[async] hello" in pm._plugins['async-notify']['plugin'].calls
+
+
+def test_firstresult_async_hook_wins():
+    """firstresult hook：后注册（先执行）的异步实现胜出。"""
+
+    class AsyncRewritePlugin(FaustPlugin):
+        @hookimpl
+        async def tts_text(self, text, ctx):
+            return f"[async] {text}"
+
+    pm = _manager_with('async-rewrite', AsyncRewritePlugin())
+    results = _run(pm._call_pluggy_hook("tts_text", text="你好", ctx=None))
+    assert results == ["[async] 你好"]
 
 
 # ── 调用点：lifecycle._apply_llm_request_pre ──
@@ -109,14 +176,14 @@ def test_lifecycle_apply_llm_request_pre(monkeypatch):
     from faust_backend.runtime import lifecycle, state
 
     class FakePM:
-        def _call_pluggy_hook(self, name, **kw):
+        async def _call_pluggy_hook(self, name, **kw):
             if name == "llm_request_pre":
                 return [[{"role": "system", "content": "injected"}]]
             return []
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
     payload = {"messages": [{"role": "user", "content": "hi"}]}
-    out = lifecycle._apply_llm_request_pre(payload)
+    out = _run(lifecycle._apply_llm_request_pre(payload))
     assert out["messages"][0] == {"role": "system", "content": "injected"}
 
 
@@ -124,12 +191,12 @@ def test_lifecycle_apply_llm_request_pre_passthrough(monkeypatch):
     from faust_backend.runtime import lifecycle, state
 
     class FakePM:
-        def _call_pluggy_hook(self, name, **kw):
+        async def _call_pluggy_hook(self, name, **kw):
             return [None]
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
     payload = {"messages": [{"role": "user", "content": "hi"}]}
-    out = lifecycle._apply_llm_request_pre(payload)
+    out = _run(lifecycle._apply_llm_request_pre(payload))
     assert out["messages"] == [{"role": "user", "content": "hi"}]
 
 
@@ -138,7 +205,7 @@ def test_lifecycle_apply_llm_request_pre_no_pm(monkeypatch):
 
     monkeypatch.setattr(state, "plugin_manager", None)
     payload = {"messages": [{"role": "user", "content": "hi"}]}
-    out = lifecycle._apply_llm_request_pre(payload)
+    out = _run(lifecycle._apply_llm_request_pre(payload))
     assert out is payload
 
 
@@ -150,13 +217,13 @@ def test_synthesize_apply_tts_text_hook(monkeypatch):
     from faust_backend.speech.tts import synthesize
 
     class FakePM:
-        def _call_pluggy_hook(self, name, **kw):
+        async def _call_pluggy_hook(self, name, **kw):
             if name == "tts_text":
                 return ["[spoken] 你好"]
             return []
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
-    assert synthesize._apply_tts_text_hook("你好") == "[spoken] 你好"
+    assert _run(synthesize._apply_tts_text_hook("你好")) == "[spoken] 你好"
 
 
 def test_synthesize_apply_tts_text_hook_passthrough(monkeypatch):
@@ -164,11 +231,11 @@ def test_synthesize_apply_tts_text_hook_passthrough(monkeypatch):
     from faust_backend.speech.tts import synthesize
 
     class FakePM:
-        def _call_pluggy_hook(self, name, **kw):
+        async def _call_pluggy_hook(self, name, **kw):
             return [None]
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
-    assert synthesize._apply_tts_text_hook("你好") == "你好"
+    assert _run(synthesize._apply_tts_text_hook("你好")) == "你好"
 
 
 def test_synthesize_fire_tts_start(monkeypatch):
@@ -178,11 +245,11 @@ def test_synthesize_fire_tts_start(monkeypatch):
     seen: list[str] = []
 
     class FakePM:
-        def _call_pluggy_hook(self, name, **kw):
+        async def _call_pluggy_hook(self, name, **kw):
             if name == "tts_start":
                 seen.append(kw["text"])
             return []
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
-    synthesize._fire_tts_start("hello")
+    _run(synthesize._fire_tts_start("hello"))
     assert seen == ["hello"]

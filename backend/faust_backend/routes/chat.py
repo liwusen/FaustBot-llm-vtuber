@@ -255,7 +255,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
     abort_evt = state.reset_abort_event()
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        results = pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
+        results = await pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
         if results:
             for r in results:
                 if r is not None and isinstance(r, str):
@@ -265,7 +265,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
         log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
         done_payload = _main_event_payload("done")
         if pm:
-            pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=[], ctx=None)
+            await pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=[], ctx=None)
         await websocket.send_text(json.dumps(done_payload, ensure_ascii=False))
         return ""
     try:
@@ -280,7 +280,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
             if event.get("type") == "reasoning_delta":
                 payload = _main_event_payload("reasoning_delta", content=event.get("content", ""))
                 if pm:
-                    results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                    results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
                     if results:
                         for r in results:
                             if r == "__IGNORED__" or r == "__REMOVED__":
@@ -303,7 +303,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
                 log.debug("聊天增量: %s", delta_text[:80])
                 payload = _main_event_payload("delta", content=delta_text)
                 if pm:
-                    results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                    results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
                     if results:
                         for r in results:
                             if r is None:
@@ -321,7 +321,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
                 payload = dict(event)
                 payload["agent_id"] = "main"
                 if pm:
-                    results = pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                    results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
                     if results:
                         for r in results:
                             if r is None:
@@ -337,7 +337,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
         schedule_memory_record_sync(text, reply)
         done_payload = _main_event_payload("done")
         if pm:
-            pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=current_history, ctx=None)
+            await pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=current_history, ctx=None)
         await websocket.send_text(json.dumps(done_payload, ensure_ascii=False))
         log.debug("聊天流结束")
     except asyncio.CancelledError:
@@ -363,7 +363,7 @@ async def chat_post(payload: dict):
         events.ignore_trigger_event.set()
         pm = getattr(state, 'plugin_manager', None)
         if pm:
-            results = pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
+            results = await pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
             if results:
                 for r in results:
                     if r is not None and isinstance(r, str):
@@ -552,7 +552,7 @@ async def command_websocket(websocket: WebSocket):
                             "请结合当前游戏状态，决定是否调用 Minecraft 工具继续操作。"
                         )
                     elif ttype == "nimble-expire" and callback_id:
-                        nimble.finalize_close(callback_id, reason="expired")
+                        await nimble.finalize_close(callback_id, reason="expired")
                         trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
                 log.info('触发器激活，正在调用 Agent: %s', trigger_text[:120])
                 run_background = bool(task.get("run_background")) if isinstance(task, dict) else False

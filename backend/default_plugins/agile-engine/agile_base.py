@@ -34,27 +34,27 @@ class AgileContext:
         self._on_activity = on_activity
 
     async def vfs_write(self,path:str,content:Any):
-        self.ctx.vfs_write(path,content)
+        await self.ctx.vfs_write(path,content)
 
     async def vfs_read_text(self,path:str,default:str=""):
-        return self.ctx.vfs_read_text(path,default)
+        return await self.ctx.vfs_read_text(path,default)
 
     async def vfs_write_symbolic(self,path:str,func:Callable[...,Any],writable:bool=False,should_be_included_in_search:bool=True):
-        self.ctx.vfs_write_symbolic(path,func,writable=writable,should_be_included_in_search=should_be_included_in_search)
+        await self.ctx.vfs_write_symbolic(path,func,writable=writable,should_be_included_in_search=should_be_included_in_search)
 
     async def vfs_set_write_handler(self,path:str,func:Callable[...,Any]):
-        self.ctx.vfs_set_write_handler(path,func)
+        await self.ctx.vfs_set_write_handler(path,func)
 
     async def vfs_set_edit_handler(self,path:str,func:Callable[...,Any]):
-        self.ctx.vfs_set_edit_handler(path,func)
+        await self.ctx.vfs_set_edit_handler(path,func)
 
     async def vfs_delete(self,path:str):
-        self.ctx.vfs_delete(path)
+        await self.ctx.vfs_delete(path)
 
     async def event_fire(self,event_name:str,data:Any,recall_description:str="Agent 可读的描述",lifespan:int=7200):
         if self._trigger_limiter is not None:
             self._trigger_limiter()  # 超过每分钟触发上限时抛 RuntimeError
-        self.ctx.trigger_create({
+        await self.ctx.trigger_create({
             "id": f"agileEngine::{event_name}",
             "type": "event",
             "event_name": event_name,
