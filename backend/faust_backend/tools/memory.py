@@ -28,13 +28,13 @@ log = get_logger("faust.tools.memory")
 
 @register
 @tool
-def kbTagSetTool(path: str, tags_json: str, managed_by: str = "agent") -> str:
+async def kbTagSetTool(path: str, tags_json: str, managed_by: str = "agent") -> str:
     """为知识库文档设置标签。"""
     try:
         tags = json.loads(tags_json) if str(tags_json or "").strip() else []
         from faust_backend.memory import get_memory
         m = get_memory()
-        result = asyncio.run(m.set_tags(path, tags))
+        result = await m.set_tags(path, tags)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
@@ -42,11 +42,11 @@ def kbTagSetTool(path: str, tags_json: str, managed_by: str = "agent") -> str:
 
 @register
 @tool
-def kbScorePatchTool(path: str, score_patch: float, managed_by: str = "agent") -> str:
+async def kbScorePatchTool(path: str, score_patch: float, managed_by: str = "agent") -> str:
     """为知识库文档设置 score patch，范围为 -0.15 到 +0.15。"""
     try:
         from faust_backend.memory import get_memory
-        result = asyncio.run(get_memory().set_score_patch(path, score_patch))
+        result = await get_memory().set_score_patch(path, score_patch)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
@@ -54,11 +54,11 @@ def kbScorePatchTool(path: str, score_patch: float, managed_by: str = "agent") -
 
 @register
 @tool
-def kbChangedNodesTool(since_ts: float, scope: str = "", tags_json: str = "[]") -> str:
+async def kbChangedNodesTool(since_ts: float, scope: str = "", tags_json: str = "[]") -> str:
     """获取某个时间戳之后发生变更的知识库节点。"""
     try:
         from faust_backend.memory import get_memory
-        items = asyncio.run(get_memory().get_changed_nodes(since_ts, scope=scope))
+        items = await get_memory().get_changed_nodes(since_ts, scope=scope)
         return json.dumps(items, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)

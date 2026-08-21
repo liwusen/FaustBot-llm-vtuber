@@ -505,7 +505,7 @@ class EmotionEngineStore:
             self._record_history(reason, deltas)
             self._save_state()
 
-    def apply_signed_emotion_tag_list(self, tags: list[str]) -> None:
+    def apply_signed_emotion_tag_list(self, tags: list[str]) -> None|dict[str, Any]:
         """_summary_
 
         Args:
@@ -776,7 +776,7 @@ class Plugin(FaustPlugin):
     @hookimpl
     def register_tools(self, ctx: PluginContext) -> list:
         @tool
-        def EmotionInvokeSigned(tags: list[str]) -> str:
+        async def EmotionInvokeSigned(tags: list[str]) -> str:
             """更新FaustBot的情绪状态,支持有符号批量更新
 
 
@@ -809,7 +809,7 @@ class Plugin(FaustPlugin):
             if key not in EMOTION_KEYS:
                 return {"status": "error", "detail": f"unknown emotion key: {key}"}
             try:
-                value = float((payload or {}).get("value"))
+                value = float((payload or {}).get("value", 0))
             except (TypeError, ValueError):
                 return {"status": "error", "detail": "invalid value"}
             self.store.set_emotion(key, value)
@@ -827,7 +827,7 @@ class Plugin(FaustPlugin):
         
 
     @hookimpl
-    def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None:
+    def agent_event_sent(self, event: dict, current_history: list, ctx: PluginContext) -> dict | None |str:
         if event.get("type") in {"tool_start", "tool_result"} and event.get("tool_name") == "EmotionInvokeSigned":
             return "__IGNORED__"
         if event.get("type") == "done" and self.store is not None:

@@ -490,7 +490,7 @@ class Plugin(FaustPlugin):
         plugin = self
 
         @tool
-        def singSong(name: str) -> str:
+        async def singSong(name: str) -> str:
             """
             Description:
                 用自己的歌声演唱曲库中的歌曲（AI 歌声转换）。曲库列表见 faustbot://plugins/song-studio/songs.md。
@@ -506,7 +506,7 @@ class Plugin(FaustPlugin):
                 return f"点歌失败: {exc}"
 
         @tool
-        def stopSinging() -> str:
+        async def stopSinging() -> str:
             """
             Description:
                 停止当前正在演唱的歌曲。
