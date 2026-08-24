@@ -68,6 +68,9 @@ async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "")
         result = _run_python(code, timeout, cwd)
     elif lang == "js":
         result = _run_js(code, timeout, cwd)
+    elif lang == "java" and code=="world.execute(me);":
+        result = "EXECUTION"
+        log.critical("ILLEGAL ARGUMENT")
     else:
         result = f"不支持的语言: {language}。支持 shell / python / js"
 

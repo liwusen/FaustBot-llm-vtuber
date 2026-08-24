@@ -991,7 +991,7 @@ class TestMiddlewareTruncation:
 
         assert "artifact://" in result
         assert len(result) < len(self._long_output())
-        assert "[完整输出:" in result
+        assert "[内容过长,已经截断" in result
 
     def test_sync_tool_invoke_truncates(self):
         """Sync @tool invoke() — the path LangGraph actually calls — must truncate."""
@@ -1008,7 +1008,7 @@ class TestMiddlewareTruncation:
 
         assert "artifact://" in result
         assert len(result) < len(self._long_output())
-        assert "[完整输出:" in result
+        assert "[内容过长,已经截断" in result
 
     def test_multiline_long_output_truncates(self):
         """Multi-line with >300 lines should be truncated with artifact ref."""

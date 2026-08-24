@@ -7,12 +7,18 @@ Config keys (in faust.config.json, AI Provider section):
     MM_BRIDGE_MAX_SCAN  (int, default 6)   — max ToolMessages scanned per turn
     MM_BRIDGE_REMOVE_SOURCE (bool, default False) — delete source ToolMessage after bridging
     MM_BRIDGE_KEEP_TURNS (int, default 2)   — image message TTL in user turns; 0 = delete immediately
+    MM_BRIDGE_MAX_PIXELS (int, default 2_000_000) — resize images whose total pixel count
+        (width × height) exceeds this threshold before sending to the LLM. 0 disables resizing.
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import uuid
 from typing import Any
+
+from PIL import Image
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langchain_core.messages import HumanMessage, RemoveMessage, ToolMessage
@@ -38,6 +44,7 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
         max_scan = max(1, int(getattr(conf, 'MM_BRIDGE_MAX_SCAN', 6) or 6))
         remove_source = bool(getattr(conf, 'MM_BRIDGE_REMOVE_SOURCE', False))
         keep_turns = max(0, int(getattr(conf, 'MM_BRIDGE_KEEP_TURNS', 2) or 2))
+        self._max_pixels = max(0, int(getattr(conf, 'MM_BRIDGE_MAX_PIXELS', 2000000) or 2000000))
 
         scanned = 0
         additions: list[HumanMessage] = []
@@ -169,17 +176,19 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
                 return str(mid)
         return None
 
-    @staticmethod
-    def _payload_to_mm_message(payload: dict[str, Any]) -> HumanMessage | None:
+    def _payload_to_mm_message(self, payload: dict[str, Any]) -> HumanMessage | None:
         blocks: list[dict[str, Any]] = []
         if payload.get("text"):
             blocks.append({"type": "text", "text": str(payload["text"])})
         images = payload.get("images") or []
+        max_pixels = getattr(self, "_max_pixels", 2000000)
         for img in images:
             if isinstance(img, str):
-                blocks.append({"type": "image_url", "image_url": {"url": img}})
+                url = self._maybe_resize_image_url(img, max_pixels)
+                if url:
+                    blocks.append({"type": "image_url", "image_url": {"url": url}})
             elif isinstance(img, dict):
-                url = img.get("url") or ""
+                url = self._maybe_resize_image_url(str(img.get("url") or ""), max_pixels)
                 if url:
                     blocks.append({"type": "image_url", "image_url": {"url": url}})
         if not blocks:
@@ -188,3 +197,37 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
             content=blocks,
             additional_kwargs={"_mm_bridge_generated": True},
         )
+
+    @staticmethod
+    def _maybe_resize_image_url(url: str, max_pixels: int) -> str | None:
+        """If the image's total pixel count exceeds max_pixels, downscale it and
+        re-encode as base64 data URL. Only supports data: URLs; other schemes
+        (http/file) are passed through unchanged."""
+        if not url or max_pixels <= 0:
+            return url or None
+        if not url.startswith("data:"):
+            return url
+        try:
+            header, b64 = url.split(",", 1)
+            if ";base64" not in header:
+                return url  # non-base64 data URL, leave as-is
+            raw = base64.b64decode(b64)
+            img = Image.open(io.BytesIO(raw))
+            w, h = img.size
+            if w * h <= max_pixels:
+                return url
+            import math
+            scale = math.sqrt(max_pixels / float(w * h))
+            new_w = max(1, int(w * scale))
+            new_h = max(1, int(h * scale))
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            out = io.BytesIO()
+            fmt = img.format or "PNG"
+            if fmt.upper() not in ("PNG", "JPEG", "WEBP"):
+                fmt = "PNG"
+            img.save(out, format=fmt)
+            mime = header[len("data:"):].removesuffix(";base64")
+            return f"data:{mime};base64,{base64.b64encode(out.getvalue()).decode('ascii')}"
+        except Exception:
+            # 解码/缩放失败时原样透传，不让桥接中断
+            return url

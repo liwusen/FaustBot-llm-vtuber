@@ -68,7 +68,6 @@ async def edit(path: str, patch: str) -> str:
         path: File path (relative to project root) or memory:// URI.
         patch: Patch instructions in the described format.
     """
-    import asyncio as _asyncio
     from faust_backend.config_loader import WORKDIR_ROOT
 
     log.info("edit INPUT path=%s patch_len=%d", path, len(patch))
@@ -94,7 +93,7 @@ async def edit(path: str, patch: str) -> str:
         try:
             from faust_backend.memory import get_memory
             store = get_memory()
-            result = _asyncio.run(store.file_read(mem_path))
+            result = await store.file_read(mem_path)
             original = result.get("content", "")
         except FileNotFoundError:
             _msg = f"文档不存在: memory://{mem_path}\n"
@@ -177,7 +176,7 @@ async def edit(path: str, patch: str) -> str:
 
     if is_memory:
         try:
-            _asyncio.run(store.file_write(mem_path, result))
+            await store.file_write(mem_path, result)
             # 触发 LLM 实体抽取
             try:
                 from faust_backend.memory.tools import schedule_extract

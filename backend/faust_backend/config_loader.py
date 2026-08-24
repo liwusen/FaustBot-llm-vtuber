@@ -227,7 +227,7 @@ def load_configs():
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
-    global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS
+    global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS, MM_BRIDGE_MAX_PIXELS
     global REASONING_CONFIG
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
@@ -262,6 +262,7 @@ def load_configs():
     MM_BRIDGE_MAX_SCAN = int(config.get('MM_BRIDGE_MAX_SCAN', 6) or 6)
     MM_BRIDGE_REMOVE_SOURCE = bool(config.get('MM_BRIDGE_REMOVE_SOURCE', False))
     MM_BRIDGE_KEEP_TURNS = int(config.get('MM_BRIDGE_KEEP_TURNS', 2) or 2)
+    MM_BRIDGE_MAX_PIXELS = int(config.get('MM_BRIDGE_MAX_PIXELS', 2000000) or 2000000)
     MCP_SERVERS = copy.deepcopy(config.get('mcp_servers', {}) or {})
     ARAYA_IDLE_MINUTES = float(config.get('ARAYA_IDLE_MINUTES', 30) or 30)
     TTS_MODE = str(config.get('TTS_MODE', 'gpt-sovits') or 'gpt-sovits').strip().lower()
