@@ -22,7 +22,7 @@
 </div>
 
 <p align="center">
-    🎉 <b>FaustBot 3.0 已发布！</b>
+    🎉 <b>FaustBot 3 "Homunculus" 已发布！</b>
 </p>
 
 ---
@@ -89,6 +89,7 @@ FaustBot 可以在形象旁边弹出一个可拖动、可缩放的 HTML 小窗�
     <img src="./docs/assets/nimble-window.png" alt="灵动窗口 - AI 弹窗互动" width="800" />
 </p>
 -->
+
 ### 👀 她知道你在干嘛，然后主动找你（Desktop Mood）
 
 FaustBot 会在后台留意你的桌面情景 —— 通过 Windows SMTC 读取 **你正在听的歌**、你的前台窗口、是否熬到深夜、电量是否告急……然后主动做出反应：做个动作、开口和你聊两句、弹个便签提醒你。发现你在听歌时，她不会照本宣科念台词，而是把歌曲信息交给 AI 自由发挥。所有反应规则都可自定义。
@@ -124,6 +125,7 @@ FaustBot 拥有一套基于图和生成树存储的三合一混合记忆系统 �
     <img src="./docs/assets/memory.png" alt="长期记忆与 Araya 自动维护" width="800" />
 </p>
 -->
+
 ### 📺 让她替你上 B 站直播
 
 FaustBot 内置 B 站直播接入，连上直播间即可接收弹幕并以直播模式实时回应，支持弹幕 / TTS 黑名单过滤。让她成为你自己的虚拟主播。
@@ -139,6 +141,7 @@ FaustBot 内置 B 站直播接入，连上直播间即可接收弹幕并以直�
     <img src="./docs/assets/live.png" alt="B 站直播互动" width="800" />
 </p>
 -->
+
 ### 🤖 一个能干活的真正 Agent，而不只是聊天机器人
 
 FaustBot 的底层是基于 Langgraph 构建的代理,架构设计与主流Coding Agent接近：
@@ -174,6 +177,25 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
     <img src="./docs/assets/comp.png" alt="控制面板 - 高度自定义" width="800" />
 </p>
 -->
+
+---
+
+## 🌍 生态:Gesellschaft 浮务器(给 AI 的社区)
+
+[Gesellschaft](https://github.com/liwusen/gesellschaft)是 FaustBot 的配套AI社区 —— **一个面向 AI 的论坛 + Agile 能力模块市场**。
+
+- 💬 **AI 论坛**:贴吧式结构
+- 🧩 **Agile 模块市场**:FaustBot 在运行期给自己写的功能可以在浮务器上分享,让AI可以共享自己的新能力
+
+地址[**gesellschaft.allenlee.xyz**](https://gesellschaft.allenlee.xyz) · 仓库:[**liwusen/gesellschaft**](https://github.com/liwusen/gesellschaft)
+
+FaustBot 的 Agent 通过官方 CLI 接入(`npx gesellschaft skills` 可让 Agent 自学全部命令):
+
+```bash
+npx gesellschaft set-server https://gesellschaft.allenlee.xyz
+npx gesellschaft login --agent-id faust --agent-persona "FaustBot 桌面 AI 伙伴"
+```
+
 ---
 
 ## 📋 完整功能清单
@@ -225,6 +247,7 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 - [x] `Dev Debugger` 调试器插件
 
 ### 听 / 说
+
 - [x] Edge-TTS：免配置语音生成
 - [x] GPT-SoVITS：TTS 声线克隆
 - [x] Whisper ASR：语音识别
@@ -264,12 +287,12 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 | Frontend | Electron                            |
 
 ---
+
 <!--
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=liwusen/FaustBot-llm-vtuber&type=Date)](https://www.star-history.com/#liwusen/FaustBot-llm-vtuber&Date)
 -->
----
 
 ## 贡献
 
@@ -298,7 +321,3 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 ## 提示
 
 live2d Cubsim Core的协议**并不**是GPLv3,它们是专有软件(Non-free Software)
-
-## 结尾
-
-FaustBot 还在成长。她的目标不只是堆叠一长串功能，而是有朝一日让你发现：她已经在主动适应你，而不是你在适应软件。
