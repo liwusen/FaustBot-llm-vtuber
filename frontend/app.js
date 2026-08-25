@@ -3422,6 +3422,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   });
   // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
   initAutocomplete(textChatInput, sendTextChatMessage);
+  window.__chatComposer = composer; // 调试/CDP 验证句柄
 
   // 每帧统一布局：由小组件管理器驱动所有 managed 组件的定位/显隐
   // （内建 quick-controller/text-chat-bar/asr-bubble 通过各自 onLayout 钩子接入）
