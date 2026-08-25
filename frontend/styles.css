@@ -281,10 +281,11 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   max-width: min(54vw, 620px);
   padding: 10px 12px;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(244, 247, 252, 0.93));
-  border: 1px solid rgba(255,255,255,0.76);
-  box-shadow: 0 20px 36px rgba(32, 55, 91, 0.16), inset 0 1px 0 rgba(255,255,255,0.88);
-  backdrop-filter: blur(14px);
+  background: rgba(255,255,255,0.94);
+  border: 1px solid rgba(24,42,58,0.10);
+  border-radius: 16px;
+  box-shadow: 0 12px 30px -18px rgba(24,42,58,0.5);
+  color: #182a3a;
   transform: translate(-50%, -50%);
 }
 
@@ -319,11 +320,18 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   margin-top: 4px;
 }
 #textChatAttachBtn {
-  background: none;
-  border: none;
+  background: rgba(255,255,255,0.95);
+  border: 1px solid rgba(24,42,58,0.08);
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(32, 55, 91, 0.18);
   cursor: pointer;
   font-size: 14px;
-  padding: 2px 4px;
+  padding: 3px 8px;
+  transition: box-shadow 0.15s ease, transform 0.12s ease;
+}
+#textChatAttachBtn:hover {
+  box-shadow: 0 4px 10px rgba(32, 55, 91, 0.26);
+  transform: translateY(-1px);
 }
 #textChatHint {
   font-size: 10px;
@@ -331,28 +339,17 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   margin-right: auto;
 }
 
-#textChatBar::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.84), rgba(233, 240, 255, 0.22));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
 
 #textChatInput {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  background: rgba(255,255,255,0.96);
-  border: 1px solid rgba(213, 222, 234, 0.95);
-  color: var(--faust-text);
-  border-radius: 12px;
-  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  color: #182a3a;
+  font-size: 14px;
+  border-radius: 8px;
+  padding: 4px 6px;
   line-height: 24px;
   resize: none;
   overflow-y: hidden;
@@ -365,9 +362,7 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
 }
 
 #textChatInput:focus {
-  border-color: rgba(241, 177, 178, 0.92);
-  box-shadow: 0 0 0 3px rgba(229, 68, 71, 0.12);
-  background: rgba(255,255,255,1);
+  background: rgba(255,255,255,0.65);
 }
 
 #textChatInput:focus-visible,
@@ -383,20 +378,20 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
 }
 
 #textChatSendBtn {
-  background: linear-gradient(180deg, #ea5052, #d83f42);
+  background: #0ea474;
   color: #fff;
-  border: 1px solid rgba(255,255,255,0.24);
-  border-radius: 12px;
-  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 14px;
   cursor: pointer;
   font-weight: 700;
-  box-shadow: 0 10px 18px rgba(225, 71, 72, 0.24);
+  box-shadow: 0 4px 12px -4px rgba(14, 164, 116, 0.55);
   transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
 #textChatSendBtn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 14px 24px rgba(225, 71, 72, 0.32);
+  box-shadow: 0 6px 16px -4px rgba(14, 164, 116, 0.65);
   filter: brightness(1.04);
 }
 

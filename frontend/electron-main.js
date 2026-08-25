@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protoco
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
@@ -1455,12 +1456,14 @@ ipcMain.handle('composer-read-clipboard-image', async () => {
     const img = clipboard.readImage();
     if (!img || img.isEmpty()) return null;
     await fs.promises.mkdir(COMPOSER_UPLOADS_DIR, { recursive: true });
+    const png = img.toPNG();
+    const hash = crypto.createHash('sha256').update(png).digest('hex');
     const d = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const name = `clip-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
     const filePath = path.join(COMPOSER_UPLOADS_DIR, name);
-    await fs.promises.writeFile(filePath, img.toPNG());
-    return { path: filePath };
+    await fs.promises.writeFile(filePath, png);
+    return { path: filePath, hash };
   } catch (e) {
     console.warn('composer-read-clipboard-image failed', e);
     return null;

@@ -26,8 +26,9 @@ export function initChatComposer(opts) {
   } = opts;
 
   const attachments = []; // { path, isImage }
-  let lastClipSignature = null;
-  let lastClipAt = 0;
+  const attachedHashes = new Set(); // 已附加图片的内容哈希(防重复)
+  let lastAutoHash = null;          // 最近一次自动附加的图片哈希(30s 内不重复)
+  let lastAutoAt = 0;
 
   /* ── autogrow ── */
   function autogrow() {
@@ -83,20 +84,27 @@ export function initChatComposer(opts) {
     return added;
   }
 
+  function addImageAttachment(path, hash, { auto = false, highlight = true } = {}) {
+    if (hash && attachedHashes.has(hash)) return false; // 同一张图不重复附加
+    if (auto && hash && hash === lastAutoHash && Date.now() - lastAutoAt < CLIP_DEDUP_MS) return false;
+    if (addAttachments([path], { highlight }) <= 0) return false;
+    if (hash) attachedHashes.add(hash);
+    if (auto) { lastAutoHash = hash; lastAutoAt = Date.now(); }
+    return true;
+  }
+
   function clear() {
     attachments.length = 0;
+    attachedHashes.clear();
     renderChips(false);
   }
 
   /* ── clipboard ── */
-  async function attachClipboardImage() {
+  async function attachClipboardImage({ auto = false } = {}) {
     if (!window.api || !window.api.readClipboardImage) return false;
     const img = await window.api.readClipboardImage().catch(() => null);
     if (!img || !img.path) return false;
-    if (img.path === lastClipSignature && Date.now() - lastClipAt < CLIP_DEDUP_MS) return false;
-    lastClipSignature = img.path;
-    lastClipAt = Date.now();
-    return addAttachments([img.path], { highlight: true }) > 0;
+    return addImageAttachment(img.path, img.hash, { auto });
   }
 
   async function attachClipboardFilePaths() {
@@ -111,14 +119,14 @@ export function initChatComposer(opts) {
     const hasImage = items.some((it) => it.kind === 'file' && it.type.startsWith('image/'));
     if (!hasImage) return; // 文本走默认粘贴
     e.preventDefault();
-    const ok = await attachClipboardImage();
+    const ok = await attachClipboardImage({ auto: false });
     if (!ok && toast) toast('剪贴板中没有可用的图片');
   });
 
   textarea.addEventListener('focus', async () => {
     try {
       if (typeof getAutoAttachEnabled === 'function' && !getAutoAttachEnabled()) return;
-      await attachClipboardImage();
+      await attachClipboardImage({ auto: true });
       await attachClipboardFilePaths();
     } catch (e) { /* 静默:自动附加失败不打扰 */ }
   });
