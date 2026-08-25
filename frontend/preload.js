@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('api', {
   isNestedLive2DModelDir: (modelDir) => ipcRenderer.invoke('is-nested-live2d-model-dir', String(modelDir || '')),
   flattenNestedLive2DModelDir: (modelDir) => ipcRenderer.invoke('flatten-nested-live2d-model-dir', String(modelDir || '')),
   ensureModel3Declarations: (modelDir) => ipcRenderer.invoke('ensure-model3-declarations', String(modelDir || '')),
+  readClipboardImage: () => ipcRenderer.invoke('composer-read-clipboard-image'),
+  readClipboardFilePaths: () => ipcRenderer.invoke('composer-read-clipboard-file-paths'),
+  pickAttachments: () => ipcRenderer.invoke('composer-pick-attachments'),
 });
 
 // deeplink events

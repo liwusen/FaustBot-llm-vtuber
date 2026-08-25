@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1445,6 +1445,46 @@ ipcMain.handle('config-open-path', async (_event, targetPath) => {
 
 ipcMain.handle('get-faustbot-root', () => {
   return path.join(app.getPath('home'), '.faustbot');
+});
+
+// ── Chat composer: 剪贴板与附件 ──
+const COMPOSER_UPLOADS_DIR = path.join(os.homedir(), '.faustbot', 'uploads');
+
+ipcMain.handle('composer-read-clipboard-image', async () => {
+  try {
+    const img = clipboard.readImage();
+    if (!img || img.isEmpty()) return null;
+    await fs.promises.mkdir(COMPOSER_UPLOADS_DIR, { recursive: true });
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const name = `clip-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
+    const filePath = path.join(COMPOSER_UPLOADS_DIR, name);
+    await fs.promises.writeFile(filePath, img.toPNG());
+    return { path: filePath };
+  } catch (e) {
+    console.warn('composer-read-clipboard-image failed', e);
+    return null;
+  }
+});
+
+ipcMain.handle('composer-read-clipboard-file-paths', () => {
+  try {
+    const buf = clipboard.readBuffer('FileNameW'); // Windows CF_HDROP
+    if (!buf || !buf.length) return [];
+    return buf.toString('ucs2').split('\0').map((s) => s.trim()).filter(Boolean);
+  } catch (e) {
+    console.warn('composer-read-clipboard-file-paths failed', e);
+    return [];
+  }
+});
+
+ipcMain.handle('composer-pick-attachments', async () => {
+  const result = await dialog.showOpenDialog({
+    title: '选择附件',
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (result.canceled || !result.filePaths) return [];
+  return result.filePaths;
 });
 
 ipcMain.handle('restart-faust', () => {
