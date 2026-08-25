@@ -86,6 +86,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "FRONTEND_QUICK_CONTROLLER_X_OFFSET": -12,
     "FRONTEND_CLICK_THROUGH": True,
     "FRONTEND_DEFAULT_TTS_LANG": "zh",
+    "AUTO_IMAGE_ATTACH_ENABLED": True,
     "TTS_MODE": "gpt-sovits",
     "ASR_MODE": "whisper",
     "OPENAI_TTS_BASE_URL": "https://api.openai.com/v1",
