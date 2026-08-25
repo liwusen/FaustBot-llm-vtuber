@@ -1,4 +1,6 @@
 import asyncio
+import base64
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -53,6 +55,85 @@ def _prime_local_tts_reference() -> None:
 
 
 LOCAL_TTS_ENDPOINT = "http://127.0.0.1:5000/"
+
+MIMO_TTS_MODEL_BUILT_IN = "mimo-v2.5-tts"
+MIMO_TTS_MODEL_VOICE_DESIGN = "mimo-v2.5-tts-voicedesign"
+MIMO_TTS_MODEL_VOICE_CLONE = "mimo-v2.5-tts-voiceclone"
+
+
+def _resolve_mimo_api_key() -> str:
+    api_key = str(conf.MIMO_API_KEY or "").strip()
+    if not api_key:
+        raise SpeechRuntimeError("未配置 MIMO_API_KEY（faust.config.private.json）")
+    return api_key
+
+
+def _mimo_sample_data_uri(refer_path: str) -> tuple[str, str]:
+    """读取克隆参考音频，返回 (data URI, mime)。仅支持 mp3/wav（平台限制）。"""
+    sample = Path(str(refer_path or "").strip()).expanduser()
+    if not sample.is_absolute():
+        sample = Path(conf.CONFIG_ROOT) / sample
+    if not sample.exists():
+        raise SpeechRuntimeError(f"MiMo 克隆参考音频不存在: {sample}")
+    suffix = sample.suffix.lower()
+    if suffix in (".mp3", ".mpeg"):
+        mime = "audio/mpeg"
+    elif suffix == ".wav":
+        mime = "audio/wav"
+    else:
+        raise SpeechRuntimeError(f"MiMo 克隆参考音频仅支持 mp3/wav: {sample.name}")
+    raw = sample.read_bytes()
+    if len(raw) > 10 * 1024 * 1024:
+        raise SpeechRuntimeError(f"MiMo 克隆参考音频超过 10MB 上限: {sample.name}")
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}", mime
+
+
+async def _synthesize_mimo(payload_text: str) -> tuple[bytes, str]:
+    """小米 MiMo 开放平台 TTS（chat/completions 风格）。
+
+    - 配置了 MIMO_TTS_REFER_WAV_PATH → voiceclone 模型（样本以 data URI 传入 audio.voice）
+    - 否则按 MIMO_TTS_MODEL：内置音色传 voice；voicedesign 仅用风格描述（不传 voice）
+    """
+    api_key = _resolve_mimo_api_key()
+    base_url = str(conf.MIMO_TTS_BASE_URL or "https://api.xiaomimimo.com/v1")
+    model = str(conf.MIMO_TTS_MODEL or MIMO_TTS_MODEL_BUILT_IN).strip() or MIMO_TTS_MODEL_BUILT_IN
+    style_prompt = str(conf.MIMO_TTS_STYLE_PROMPT or "")
+    audio_cfg: dict[str, Any] = {"format": str(conf.MIMO_TTS_FORMAT or "wav")}
+
+    refer_path = str(conf.MIMO_TTS_REFER_WAV_PATH or "").strip()
+    if refer_path:
+        audio_cfg["voice"], _mime = _mimo_sample_data_uri(refer_path)
+        model = MIMO_TTS_MODEL_VOICE_CLONE
+    else:
+        voice = str(conf.MIMO_TTS_VOICE or "").strip()
+        if voice and model != MIMO_TTS_MODEL_VOICE_DESIGN:
+            audio_cfg["voice"] = voice
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": style_prompt},
+            {"role": "assistant", "content": payload_text},
+        ],
+        "audio": audio_cfg,
+    }
+    url = _resolve_api_url(base_url, "/chat/completions")
+    resp = await asyncio.to_thread(
+        requests.post,
+        url,
+        json=payload,
+        headers={"api-key": api_key, "Content-Type": "application/json"},
+        timeout=120,
+    )
+    if not resp.ok:
+        raise SpeechRuntimeError(f"MiMo TTS 服务错误: {resp.status_code} {resp.text}")
+    try:
+        data = resp.json()
+        b64_audio = str(data["choices"][0]["message"]["audio"]["data"])
+    except Exception as exc:
+        raise SpeechRuntimeError(f"MiMo TTS 响应格式异常: {resp.text[:200]}") from exc
+    fmt = str(audio_cfg.get("format") or "wav")
+    return base64.b64decode(b64_audio), f"audio/{fmt}"
 
 
 async def _apply_tts_text_hook(text: str) -> str:
@@ -147,6 +228,14 @@ async def _synthesize_impl(payload_text: str, lang: str | None) -> tuple[bytes, 
         if not resp.ok:
             raise SpeechRuntimeError(f"FaustBot Cloud TTS 服务错误: {resp.status_code} {resp.text}")
         return resp.content, (resp.headers.get("content-type") or "audio/wav")
+
+    if current_tts_mode() == "mimo":
+        try:
+            return await _synthesize_mimo(payload_text)
+        except SpeechRuntimeError:
+            raise
+        except Exception as exc:
+            raise SpeechRuntimeError(f"MiMo TTS 失败: {exc}") from exc
 
     from faust_backend.runtime import state as runtime_state
     from faust_backend.provider import get_main_credentials

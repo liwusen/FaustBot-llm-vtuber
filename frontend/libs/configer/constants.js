@@ -28,8 +28,8 @@ var META = {
   FRONTEND_QUICK_CONTROLLER_X_OFFSET: { label: "快捷控制栏 X 偏移", help: "控制快捷控制栏横向偏移，单位像素。" },
   FRONTEND_CLICK_THROUGH: { label: "前端点击穿透", help: "开启后桌宠窗口忽略鼠标点击。" },
   FRONTEND_DEFAULT_TTS_LANG: { label: "默认 TTS 语言", help: "前端发送 TTS 请求时默认使用的语言。" },
-  TTS_MODE: { label: "TTS 模式", help: "选择 GPT-SoVITS（本地）、OpenAI 兼容、FaustBot Cloud 或 Edge TTS。" },
-  ASR_MODE: { label: "ASR 模式", help: "选择 Whisper（本地，默认）、FunASR（本地）、OpenAI 兼容或 FaustBot Cloud。" },
+  TTS_MODE: { label: "TTS 模式", help: "选择 GPT-SoVITS（本地）、OpenAI 兼容、FaustBot Cloud、Edge TTS 或 MiMo（小米，支持语音克隆）。" },
+  ASR_MODE: { label: "ASR 模式", help: "选择 Whisper（本地，默认）、FunASR（本地）、OpenAI 兼容、FaustBot Cloud 或 MiMo（小米）。" },
   WHISPER_MODEL: { label: "Whisper 模型", help: "本地 Whisper 使用的模型大小，越大越准但越慢（tiny/base/small/medium/large 等）。" },
   WHISPER_LANGUAGE: { label: "Whisper 语言", help: "识别语言代码，如 zh、en、ja；留空则自动检测。" },
   WHISPER_INITIAL_PROMPT: { label: "Whisper 初始提示词", help: "传给 Whisper 的 initial_prompt，用于引导识别风格/术语，对中文识别质量影响较大。" },
@@ -48,6 +48,14 @@ var META = {
   OPENAI_ASR_RESPONSE_FORMAT: { label: "OpenAI ASR 返回格式", help: "识别结果返回格式。" },
   OPENAI_ASR_TEMPERATURE: { label: "OpenAI ASR 温度", help: "识别采样温度。" },
   OPENAI_ASR_TIMESTAMP_GRANULARITIES: { label: "OpenAI ASR 时间戳粒度", help: "verbose_json 模式下的时间戳粒度。" },
+  MIMO_TTS_BASE_URL: { label: "MiMo TTS 接口地址", help: "小米 MiMo 开放平台的 API Base URL。" },
+  MIMO_TTS_MODEL: { label: "MiMo TTS 模型", help: "内置音色用 mimo-v2.5-tts；仅风格描述用 voicedesign；配置下方克隆参考音频时自动切换 voiceclone。" },
+  MIMO_TTS_VOICE: { label: "MiMo TTS 音色", help: "MiMo 内置音色名称（使用克隆参考音频时忽略此项）。" },
+  MIMO_TTS_STYLE_PROMPT: { label: "MiMo TTS 风格描述", help: "描述语气/情感的风格提示，例如「用温柔的少女音色轻声说」。留空则不加风格控制。" },
+  MIMO_TTS_FORMAT: { label: "MiMo TTS 音频格式", help: "合成音频编码格式。" },
+  MIMO_TTS_REFER_WAV_PATH: { label: "MiMo 克隆参考音频", help: "3-10 秒 mp3/wav 参考音频路径（≤10MB）。配置后自动切换为语音克隆模式，用该音色说话；留空则使用内置音色。" },
+  MIMO_ASR_MODEL: { label: "MiMo ASR 模型", help: "小米 MiMo 识别模型名称。" },
+  MIMO_ASR_LANGUAGE: { label: "MiMo ASR 语言", help: "识别语言；auto 为自动检测。" },
   SEARCH_API_KEY: { label: "搜索密钥", help: "联网搜索工具使用的 API Key。" },
   EMBED_API_KEY: { label: "Embedding 密钥", help: "知识库 embedding 使用的 API Key。" },
   FAUSTBOT_CLOUD_SERVICE_KEY: { label: "FaustBot Cloud Service Key", help: "调用 FaustBot Cloud 所使用的 FSK- 前缀服务密钥。" },
@@ -70,6 +78,9 @@ var FIELD_OPTIONS = {
   MODEL_TYPE: ["live2d", "vrm", "images"],
   TTS_MODE: ["gpt-sovits", "openai", "faustbot-cloud", "edge-tts"],
   ASR_MODE: ["whisper", "funasr", "openai", "faustbot-cloud"],
+  MIMO_TTS_MODEL: ["mimo-v2.5-tts", "mimo-v2.5-tts-voicedesign"],
+  MIMO_TTS_FORMAT: ["wav", "pcm16"],
+  MIMO_ASR_LANGUAGE: ["auto", "zh", "en"],
   WHISPER_MODEL: ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "turbo"],
   WHISPER_LANGUAGE: ["zh", "en", "ja", "ko", "yue"],
   FRONTEND_DEFAULT_TTS_LANG: ["zh", "en", "ja", "ko", "yue"],
@@ -82,8 +93,8 @@ var FIELD_OPTIONS = {
 };
 
 var AGENT_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"];
-var TEXTAREA_KEYS = new Set(["OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_PROMPT", "TTS_PROMPT_TEXT", "WHISPER_INITIAL_PROMPT"]);
-var SECRET_KEYS = new Set(["SEARCH_API_KEY", "EMBED_API_KEY", "FAUSTBOT_CLOUD_SERVICE_KEY"]);
+var TEXTAREA_KEYS = new Set(["OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_PROMPT", "TTS_PROMPT_TEXT", "WHISPER_INITIAL_PROMPT", "MIMO_TTS_STYLE_PROMPT"]);
+var SECRET_KEYS = new Set(["SEARCH_API_KEY", "EMBED_API_KEY", "FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"]);
 
 var ADVANCED_KEYS = new Set([
   // OpenAI TTS 推理参数
@@ -112,7 +123,7 @@ var ADVANCED_KEYS = new Set([
 var AI_PUBLIC_KEYS = ["EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_REMOVE_SOURCE", "MM_BRIDGE_KEEP_TURNS", "MM_BRIDGE_MAX_PIXELS", "MD_BLOCK_ENABLED", "REASONING_CONFIG"];
 var AI_PRIVATE_KEYS = ["SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "LIVE2D_MOUSE_TRACKING_STRENGTH", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG"];
-var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "WHISPER_MODEL", "WHISPER_LANGUAGE", "WHISPER_INITIAL_PROMPT", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
+var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "ASR_MODE", "WHISPER_MODEL", "WHISPER_LANGUAGE", "WHISPER_INITIAL_PROMPT", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "MIMO_TTS_BASE_URL", "MIMO_TTS_MODEL", "MIMO_TTS_VOICE", "MIMO_TTS_STYLE_PROMPT", "MIMO_TTS_FORMAT", "MIMO_TTS_REFER_WAV_PATH", "MIMO_ASR_MODEL", "MIMO_ASR_LANGUAGE", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
 
 
 META.EDGE_TTS_VOICE = { label: "Edge TTS 音色", help: "Microsoft Edge TTS 使用的 voice 名称，例如 en-US-AriaNeural 或 zh-CN-shaanxi-XiaoniNeural。" };
@@ -121,7 +132,7 @@ META.EDGE_TTS_PITCH = { label: "Edge TTS 音高", help: "Edge TTS 的音高设�
 META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 Edge TTS 的超时秒数。" };
 META.MD_BLOCK_ENABLED = { label: "启用 Markdown 内容块", help: "开启后主 Agent 可使用 RenderMarkdownBlock 工具向气泡推送 Markdown 内容块（支持 mermaid 图表），内容仅展示不朗读。保存后立即生效。" };
 
-var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY"];
+var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"];
 var MODULES = [
   { id: "overview", title: "概览", desc: "当前角色、模型、状态概览。" },
   { id: "ai", title: "AI 服务商", desc: "模型、接口地址与密钥配置。" },

@@ -341,6 +341,8 @@ function pickModuleFields(moduleId) {
       publicKeys: pub.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k.startsWith("MIMO_TTS_") && modeTts !== "mimo") return false;
+        if (k.startsWith("MIMO_ASR_") && modeAsr !== "mimo") return false;
         if (k.startsWith("WHISPER_") && !isWhisperAsr) return false;
         if (k.startsWith("EDGE_TTS_") && modeTts !== "edge-tts") return false;
         if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
@@ -350,6 +352,7 @@ function pickModuleFields(moduleId) {
       privateKeys: pri.filter((k) => {
         if (k.startsWith("OPENAI_TTS_") && modeTts !== "openai") return false;
         if (k.startsWith("OPENAI_ASR_") && modeAsr !== "openai") return false;
+        if (k === "MIMO_API_KEY" && modeTts !== "mimo" && modeAsr !== "mimo") return false;
         if (k.startsWith("FAUSTBOT_CLOUD_") && !isCloud) return false;
         return true;
       }),

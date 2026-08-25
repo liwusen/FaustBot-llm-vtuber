@@ -226,6 +226,9 @@ def load_configs():
     global WHISPER_MODEL, WHISPER_LANGUAGE, WHISPER_INITIAL_PROMPT
     global TTS_REFER_WAV_PATH, TTS_PROMPT_TEXT, TTS_PROMPT_LANGUAGE
     global EDGE_TTS_VOICE, EDGE_TTS_RATE, EDGE_TTS_PITCH, EDGE_TTS_TIMEOUT_SECONDS
+    global MIMO_TTS_BASE_URL, MIMO_TTS_MODEL, MIMO_TTS_VOICE, MIMO_TTS_STYLE_PROMPT
+    global MIMO_TTS_FORMAT, MIMO_TTS_REFER_WAV_PATH, MIMO_ASR_BASE_URL, MIMO_ASR_MODEL, MIMO_ASR_LANGUAGE
+    global MIMO_API_KEY
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS, MM_BRIDGE_MAX_PIXELS
     global REASONING_CONFIG
@@ -250,6 +253,7 @@ def load_configs():
     EMBED_MODEL = str(config.get('EMBED_MODEL', 'text-embedding-3-small') or 'text-embedding-3-small').strip()
 
     SEARCH_API_KEY = private_config.get('SEARCH_API_KEY', '')
+    MIMO_API_KEY = str(private_config.get('MIMO_API_KEY', '') or '').strip()
     FAUSTBOT_CLOUD_SERVICE_KEY = private_config.get('FAUSTBOT_CLOUD_SERVICE_KEY', '')
 
     AGENT_NAME = config.get('AGENT_NAME', 'faust')
@@ -304,6 +308,20 @@ def load_configs():
     EDGE_TTS_RATE = str(config.get('EDGE_TTS_RATE', '0%') or '0%').strip()
     EDGE_TTS_PITCH = str(config.get('EDGE_TTS_PITCH', '0%') or '0%').strip()
     EDGE_TTS_TIMEOUT_SECONDS = int(config.get('EDGE_TTS_TIMEOUT_SECONDS', 120) or 120)
+    # MiMo（小米开放平台）TTS/ASR 配置
+    MIMO_TTS_BASE_URL = str(config.get('MIMO_TTS_BASE_URL', 'https://api.xiaomimimo.com/v1') or 'https://api.xiaomimimo.com/v1').strip()
+    MIMO_TTS_MODEL = str(config.get('MIMO_TTS_MODEL', 'mimo-v2.5-tts') or 'mimo-v2.5-tts').strip()
+    MIMO_TTS_VOICE = str(config.get('MIMO_TTS_VOICE', 'mimo_default') or 'mimo_default').strip()
+    MIMO_TTS_STYLE_PROMPT = str(config.get('MIMO_TTS_STYLE_PROMPT', '') or '')
+    MIMO_TTS_FORMAT = str(config.get('MIMO_TTS_FORMAT', 'wav') or 'wav').strip().lower()
+    if MIMO_TTS_FORMAT not in ('wav', 'pcm16'):
+        MIMO_TTS_FORMAT = 'wav'
+    MIMO_TTS_REFER_WAV_PATH = str(config.get('MIMO_TTS_REFER_WAV_PATH', '') or '').strip()
+    MIMO_ASR_BASE_URL = str(config.get('MIMO_ASR_BASE_URL', '') or '').strip() or str(config.get('MIMO_TTS_BASE_URL', 'https://api.xiaomimimo.com/v1') or 'https://api.xiaomimimo.com/v1').strip()
+    MIMO_ASR_MODEL = str(config.get('MIMO_ASR_MODEL', 'mimo-v2.5-asr') or 'mimo-v2.5-asr').strip()
+    MIMO_ASR_LANGUAGE = str(config.get('MIMO_ASR_LANGUAGE', 'auto') or 'auto').strip().lower()
+    if MIMO_ASR_LANGUAGE not in ('auto', 'zh', 'en'):
+        MIMO_ASR_LANGUAGE = 'auto'
     # 全局思考配置：off / low / medium / high（off = 关闭思考，其余为强度）。
     # 兼容迁移：旧 THINKING_ENABLED=False → "off"；否则沿用旧 THINKING_INTENSITY。
     if 'REASONING_CONFIG' in config and str(config.get('REASONING_CONFIG') or '').strip():

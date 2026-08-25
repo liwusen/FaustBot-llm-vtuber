@@ -104,6 +104,15 @@ PUBLIC_CONFIG_DEFAULTS = {
     "WHISPER_INITIAL_PROMPT": "以下是简体中文普通话的句子:",
     "FAUSTBOT_CLOUD_BASE_URL": "http://127.0.0.1:18980",
     "FAUSTBOT_CLOUD_TIMEOUT_SECONDS": 120,
+    # MiMo（小米开放平台）TTS/ASR
+    "MIMO_TTS_BASE_URL": "https://api.xiaomimimo.com/v1",
+    "MIMO_TTS_MODEL": "mimo-v2.5-tts",
+    "MIMO_TTS_VOICE": "mimo_default",
+    "MIMO_TTS_STYLE_PROMPT": "",
+    "MIMO_TTS_FORMAT": "wav",
+    "MIMO_TTS_REFER_WAV_PATH": "",
+    "MIMO_ASR_MODEL": "mimo-v2.5-asr",
+    "MIMO_ASR_LANGUAGE": "auto",
     # TTS 参考音频配置
     "TTS_REFER_WAV_PATH": str(Path(conf.PROJECT_ROOT) / "voices" / "neuro.wav"),
     "TTS_PROMPT_TEXT": "Hold on please, I'm busy. Okay, I think I heard him say he wants me to stream Hollow Knight on Tuesday and Thursday.",
@@ -114,6 +123,7 @@ PRIVATE_CONFIG_DEFAULTS = {
     "SEARCH_API_KEY": "",
     "EMBED_API_KEY": "",
     "FAUSTBOT_CLOUD_SERVICE_KEY": "",
+    "MIMO_API_KEY": "",
 }
 
 _AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -428,7 +438,7 @@ def get_agent_files(agent_name: str) -> Dict[str, Dict[str, Any]]:
             "readonly": agent_name == "faust" and filename in AGENT_TEMPLATE_FILES,
         }
     return result
-def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, str]:
+def save_agent_files(agent_name: str, files: Dict[str, str]) -> Dict[str, dict]:
     """Save editable agent files only. Template files (AGENT.md/ROLE.md/COREMEMORY.md) are rejected."""
     agent_dir = _agent_dir(agent_name)
     if not agent_dir.exists():
