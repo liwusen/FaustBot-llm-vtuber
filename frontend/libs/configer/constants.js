@@ -76,8 +76,8 @@ var META = {
 
 var FIELD_OPTIONS = {
   MODEL_TYPE: ["live2d", "vrm", "images"],
-  TTS_MODE: ["gpt-sovits", "openai", "faustbot-cloud", "edge-tts"],
-  ASR_MODE: ["whisper", "funasr", "openai", "faustbot-cloud"],
+  TTS_MODE: ["gpt-sovits", "openai", "faustbot-cloud", "edge-tts", "mimo"],
+  ASR_MODE: ["whisper", "funasr", "openai", "faustbot-cloud", "mimo"],
   MIMO_TTS_MODEL: ["mimo-v2.5-tts", "mimo-v2.5-tts-voicedesign"],
   MIMO_TTS_FORMAT: ["wav", "pcm16"],
   MIMO_ASR_LANGUAGE: ["auto", "zh", "en"],
