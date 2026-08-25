@@ -30,3 +30,7 @@ subagents.json
 .npm-cache/
 
 profile-generator.cjs
+# gesellschaft server runtime data
+gesellschaft/server/data/
+secret.key
+gesellschaft/
