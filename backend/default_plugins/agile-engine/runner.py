@@ -277,6 +277,7 @@ async def _register_hooks(agile_module: AgileModule, agile: AgileContext, name: 
     owned_funcs: list[Any] = []
     interval_handles: list[IntervalHandle] = []
     for hook in agile_module.getHooks().values():
+        assert hook.func is not None
         invoker = build_invoker(hook.func, agile)
         path = _norm_vfs_path(hook.name)
         if hook.hookType is AgileHookType.VFS_CONTENT:
@@ -462,6 +463,7 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
         agile_module = module.get_agile_module()
         if not isinstance(agile_module, AgileModule):
             raise TypeError(f"{name} 的 get_agile_module() 未返回 AgileModule 实例")
+        assert _CTX is not None
         agile = AgileContext(_CTX, LM, name,
                              trigger_limiter=lambda n=name: check_trigger_limit(n),
                              on_activity=lambda n=name: _stamp_activity(n))
@@ -496,6 +498,7 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
         MODULES[name] = agile_module
         for hook in agile_module.getHooks().values():
             if (hook.attr or {}).get("onload"):
+                assert hook.func != None
                 await _wrap_errors(build_invoker(hook.func, agile), name)()
         await LM.log(name, "INFO",
                      f"模块加载成功 (vfs节点={len(vfs_paths)}, interval={len(interval_handles)})",
@@ -636,7 +639,7 @@ def format_module_status(name: str) -> str:
 
 
 async def format_module_logs(name: str, level: str | None = None) -> str:
-    logs = await LM.getLog(agile_from=name, level=level)
+    logs = await LM.getLog(agile_from=name, level=level or "INFO")
     if not logs:
         return f"(模块 {name} 暂无日志)"
     return "\n".join(await LM.formatLogs(logs))

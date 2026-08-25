@@ -463,7 +463,7 @@ class ArayaRuntime:
                 return []
 
         @tool
-        async def arayaFileEditTool(path: str, patch: str) -> dict:
+        async def arayaFileEditTool(path: str, patch: str) -> dict|str:
             """
             Apply precise line-based edits to a file without rewriting the whole thing.
 
@@ -599,9 +599,9 @@ class ArayaRuntime:
         _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
         self._chat_model = ChatOpenAI(
             model=_model_name,
-            api_key=_api_key,
+            api_key=_api_key, # type: ignore
             base_url=_api_base,
-            request_timeout=30,
+        #    request_timeout=30,
             max_retries=1,
         )
         log.info("Creating Araya agent with model: %s", _model_name)
@@ -635,7 +635,9 @@ class ArayaRuntime:
     async def trigger_run(self, reason: str = "manual") -> dict[str, Any]:
         """Legacy trigger - schedules a background task. Prefer stream_once_async for SSE."""
         state = self._load_state()
-        if getattr(self, "_run_lock", None) and self._run_lock.locked():
+        # _run_lock 可能在懒初始化前被调用（如测试直接触发），用 getattr 防御而非断言
+        run_lock = getattr(self, "_run_lock", None)
+        if run_lock is not None and run_lock.locked():
             return {"accepted": False, "reason": str(reason or "manual"), "status": "already_running", "target_agent": self.refresh_target_agent(), "last_trigger_ts": float(state.get("last_trigger_ts") or 0.0)}
         log.info("Triggering Araya async run with reason: %s", reason)
         asyncio.create_task(self.run_once_async(reason))
@@ -751,6 +753,7 @@ class ArayaRuntime:
 
                 yield {"event": "step", "data": json.dumps({"type": "llm_start"})}
 
+                assert agt is not None
                 async for raw_event in agt.astream_events(payload, config=config, version="v2"):
                     if not isinstance(raw_event, dict):
                         continue

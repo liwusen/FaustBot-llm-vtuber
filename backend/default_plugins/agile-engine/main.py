@@ -114,7 +114,7 @@ class Plugin(FaustPlugin):
                 return f"未知操作: {action}（支持 list/load/reload/unload/enable/disable/status/limit）"
             except Exception as exc:  # noqa: BLE001
                 return f"agileOperate 执行失败: {exc}"
-
+        assert agileOperate.__doc__ is not None
         return [
             ToolSpec(name="agileOperate", tool=agileOperate, enabled_by_default=True,
                      description=agileOperate.__doc__),

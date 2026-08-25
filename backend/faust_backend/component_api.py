@@ -27,7 +27,7 @@ from faust_backend.logger import get_logger
 log = get_logger("faust.component.api")
 
 router = APIRouter(tags=["components"])
-router.description = "组件管理：查询 GPU、FunASR、TTS、Minecraft 桥状态与下载安装"
+
 
 
 class ComponentTaskCancelled(Exception):
