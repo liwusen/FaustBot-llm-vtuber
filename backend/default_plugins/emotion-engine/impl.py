@@ -437,7 +437,7 @@ class EmotionEngineStore:
             self._state.recent_user_modes.append(mode)
             self._state.recent_user_modes = self._state.recent_user_modes[-8:]
             self._save_state()
-        return "\n|[System]:当前情绪向量: "+ "; ".join(f"{EMOTION_LABELS[key]}={value:.1f}" for key, value in self._top_emotions(None)) + "\n"
+        return "\n|[System]:你的当前情绪向量: "+ "; ".join(f"{EMOTION_LABELS[key]}={value:.1f}" for key, value in self._top_emotions(None)) + "\n"
 
     def apply_emotion_tag(self, tag: str, ) -> dict[str, Any]:
         emotion_key = EMOTION_TAG_TO_KEY.get(str(tag or "").strip().upper())
