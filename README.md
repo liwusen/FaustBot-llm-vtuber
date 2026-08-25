@@ -247,6 +247,7 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=liwusen/FaustBot-llm-vtuber&type=Date)](https://www.star-history.com/#liwusen/FaustBot-llm-vtuber&Date)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fliwusen%2FFaustBot-llm-vtuber.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fliwusen%2FFaustBot-llm-vtuber?ref=badge_shield)
 
 ---
 
@@ -277,3 +278,7 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 ## 提示
 
 live2d Cubsim Core的协议**并不**是GPLv3,它们是专有软件(Non-free Software)
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fliwusen%2FFaustBot-llm-vtuber.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fliwusen%2FFaustBot-llm-vtuber?ref=badge_large)
