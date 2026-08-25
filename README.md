@@ -5,7 +5,7 @@
 <h1 align="center">FaustBot</h1>
 
 <p align="center">
-    <b>不只是会聊天的桌宠 —— 一个住在你桌面上、看得见你、能主动找你说话的 AI 伙伴。</b>
+    <b>会自己成长的桌面 AI 伙伴 —— 看得见你的生活，也懂得主动进化。</b>
 </p>
 
 <div align="center">
@@ -22,7 +22,7 @@
 </div>
 
 <p align="center">
-    🎉 <b>FaustBot 2.0 已发布！</b>
+    🎉 <b>FaustBot 3.0 已发布！</b>
 </p>
 
 ---
@@ -46,6 +46,18 @@ FaustBot 是一个 AI 驱动的 Vtuber / 桌面伙伴。她会用自己的声音
 ---
 
 ## ✨ 她能做什么
+
+### 🧬 她会主动写程序，让自己进化来适应你（Agile Engine）
+
+当你打开游戏、查询天气，或是想处理一些琐碎的小事时，她会主动理解你的需求、查找资料，并编写 Agile 模块来扩展自己。
+
+不需要安装插件，也不需要折腾配置 —— 几分钟后，她就可能拥有一项全新的能力。
+
+举个例子：当你打开《战争雷霆》时，她会主动查询游戏的开放接口，自己完成接入，然后开始播报对局数据。
+
+这背后是浏览器操作、虚拟文件系统、长期记忆等能力共同形成的闭环。
+
+从发现你的需求，到默默为你调研，再到把它实现出来、给你一个惊喜 —— 这整条链路，她都可以自己完成。
 
 ### 🎤 用她自己的音色唱歌（歌台 Song Studio）
 
@@ -172,9 +184,10 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 ### 感知
 
 - [x] ASR 语音识别（本地 / 云端）
-- [x] 多模态能力：读屏幕 / 摄像头 / 图片
+- [x] 多模态工具能力：读屏幕 / 摄像头 / 图片
 - [x] Desktop Mood：感知系统媒体（SMTC）、空闲、窗口、电量、时段等桌面情景
 - [x] 在线搜索，获取实时信息
+- [x] Emotion Engine：拟人化情感系统
 
 ### 记忆
 
@@ -199,18 +212,26 @@ FaustBot 更像一个工作台 —— 从外观到灵魂，每一层都交给你
 - [x] AI 自动操作浏览器
 - [x] AI 玩《我的世界》（基于 Mineflayer）
 - [x] MCP 客户端支持
-- [x] 兼容 Openclaw Skill && ClawHub 技能
+- [x] 兼容 Openclaw Skill / ClawHub 技能市场
 - [x] 安全系统：限制 Agent 访问权限并审核模型命令
 - [x] 高效的工具实现
 
-### 语音
-- [x] Edge-TTS
-- [x] GPT-Sovits
-- [x] Whisper ASR
-- [x] Funasr ASR
-- [x] OpenAI ASR
-- [x] OpenAI TTS
-- [x] FaustBot Cloud Inference Server
+### 自我进化 / 扩展性（实验性）
+
+- [x] 基于 Pluggy 的完整插件系统
+- [x] Agile Engine：Agent 可在运行期自建轻量模块
+- [x] 完善的自我进化 SKILL
+- [x] 插件市场：一键安装与更新
+- [x] `Dev Debugger` 调试器插件
+
+### 听 / 说
+- [x] Edge-TTS：免配置语音生成
+- [x] GPT-SoVITS：TTS 声线克隆
+- [x] Whisper ASR：语音识别
+- [x] FunASR：语音识别
+- [x] OpenAI 兼容 ASR：语音识别
+- [x] OpenAI TTS：语音生成
+- [x] FaustBot Cloud Inference Server：云端推理服务
 
 </details>
 
@@ -243,11 +264,11 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 | Frontend | Electron                            |
 
 ---
-
+<!--
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=liwusen/FaustBot-llm-vtuber&type=Date)](https://www.star-history.com/#liwusen/FaustBot-llm-vtuber&Date)
-
+-->
 ---
 
 ## 贡献
@@ -258,7 +279,7 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 
 ## 致谢
 
-- 参考了 [morettt/my-neuro](https://github.com/morettt/my-neuro)（asr_api.py, ASR.bat, TTS.bat）
+- 参考了 [morettt/my-neuro](https://github.com/morettt/my-neuro)
 - TTS 基于 [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)
 - 歌曲翻唱基于 [Plachtaa/seed-vc](https://github.com/Plachtaa/seed-vc)
 - mc-operator 基于 [PrismarineJS/mineflayer](https://github.com/PrismarineJS/mineflayer)
@@ -277,3 +298,7 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 ## 提示
 
 live2d Cubsim Core的协议**并不**是GPLv3,它们是专有软件(Non-free Software)
+
+## 结尾
+
+FaustBot 还在成长。她的目标不只是堆叠一长串功能，而是有朝一日让你发现：她已经在主动适应你，而不是你在适应软件。
