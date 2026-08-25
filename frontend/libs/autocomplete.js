@@ -40,6 +40,15 @@ async function acFetch(text, cursor) {
   } catch { return []; }
 }
 
+function acTrigger(inputEl) {
+  clearTimeout(acPending);
+  acPending = setTimeout(async () => {
+    acPending = null;
+    const items = await acFetch(inputEl.value, inputEl.selectionStart || inputEl.value.length);
+    acRender(items, inputEl);
+  }, 200);
+}
+
 function acRender(items, inputEl) {
   acRemoveDropdown();
   if (!items.length || !inputEl) return;
@@ -113,20 +122,20 @@ export function initAutocomplete(inputEl, onEnter) {
   inputEl.addEventListener('input', () => {
     const val = inputEl.value;
     if (!val.startsWith('/')) { acRemoveDropdown(); return; }
-    const cursor = inputEl.selectionStart || val.length;
-    clearTimeout(acPending);
-    acPending = setTimeout(async () => {
-      acPending = null;
-      const items = await acFetch(val, cursor);
-      acRender(items, inputEl);
-    }, 200);
+    acTrigger(inputEl);
   });
 
   // ── keydown: dropdown navigation and Enter send ──
   inputEl.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
     if (acDropdown) {
       if (e.key === 'ArrowDown') { e.preventDefault(); acHighlight(Math.min(acIndex + 1, acItems.length - 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); acHighlight(Math.max(acIndex - 1, 0)); return; }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        acSelect(acIndex >= 0 ? acIndex : 0, inputEl);
+        return;
+      }
       if (e.key === 'Enter') {
         if (acIndex >= 0 && acIndex < acItems.length) {
           e.preventDefault();
@@ -135,6 +144,11 @@ export function initAutocomplete(inputEl, onEnter) {
         }
       }
       if (e.key === 'Escape') { acRemoveDropdown(); return; }
+    }
+    if (e.key === 'Tab' && (inputEl.value || '').startsWith('/')) {
+      e.preventDefault();
+      acTrigger(inputEl);
+      return;
     }
     // Enter send (dropdown hidden or no selection)
     if (e.key === 'Enter' && !e.shiftKey) {
