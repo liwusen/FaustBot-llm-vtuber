@@ -1,10 +1,10 @@
 {
   "id": "emotion-engine",
   "name": "Emotion Engine",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "FaustBot 情绪插件：6 维情绪向量、主动对话调度、态度模板注入、无回应惩罚、离线回归；提供情绪状态、前端面板和主窗口表情浮层。",
   "author": "allenlee（FaustBot）",
-  "enabled": false,
+  "enabled": true,
   "entry": "impl.py",
   "priority": 320,
   "faustbot.internal.mark.builtin": true

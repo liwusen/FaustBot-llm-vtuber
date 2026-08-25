@@ -4,7 +4,7 @@
   "version": "1.1.1",
   "description": "FaustBot 情景插件",
   "author": "FaustBot",
-  "enabled": false,
+  "enabled": true,
   "entry": "impl.py",
   "priority": 340,
   "faustbot.internal.mark.builtin": true

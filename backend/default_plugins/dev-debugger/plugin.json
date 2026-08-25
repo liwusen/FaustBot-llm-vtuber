@@ -4,7 +4,7 @@
   "version": "0.1.3",
   "description": "开发调试插件：在 Configer 页面查看 AI 当前激活的全部工具，动态生成参数表单并 invoke，查看返回结果。",
   "author": "FaustBot",
-  "enabled": true,
+  "enabled": false,
   "entry": "impl.py",
   "priority": 100,
   "faustbot.internal.mark.builtin": true
