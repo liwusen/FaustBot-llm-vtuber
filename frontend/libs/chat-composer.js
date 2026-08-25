@@ -7,6 +7,7 @@
 const MAX_ATTACHMENTS = 10;
 const MAX_LINES = 6;
 const LINE_HEIGHT = 24;
+const CHROME_HEIGHT = 14; // padding + border
 const CLIP_DEDUP_MS = 30000;
 
 function isImagePath(p) {
@@ -31,7 +32,7 @@ export function initChatComposer(opts) {
   /* ── autogrow ── */
   function autogrow() {
     textarea.style.height = 'auto';
-    const maxH = MAX_LINES * LINE_HEIGHT;
+    const maxH = MAX_LINES * LINE_HEIGHT + CHROME_HEIGHT;
     const next = Math.min(textarea.scrollHeight, maxH);
     textarea.style.height = next + 'px';
     textarea.style.overflowY = textarea.scrollHeight > maxH ? 'auto' : 'hidden';

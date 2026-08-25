@@ -8,6 +8,7 @@ import { initHilApproval } from './libs/hil-approval.js';
 import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
 import { initAudioPlayback } from './libs/audio-playback.js';
 import { initAutocomplete } from './libs/autocomplete.js';
+import { initChatComposer } from './libs/chat-composer.js';
 import { createUiWidgetManager } from './libs/ui-widget-manager.js';
 import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
 import { initLayoutSidePanel } from './libs/layout-side-panel.js';
@@ -46,6 +47,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   const vadProbLabel = document.getElementById('vadProbLabel');
   const textChatInput = document.getElementById('textChatInput');
   const textChatSendBtn = document.getElementById('textChatSendBtn');
+  const textChatAttachments = document.getElementById('textChatAttachments');
+  const textChatAttachBtn = document.getElementById('textChatAttachBtn');
   const textChatStatus = document.getElementById('textChatStatus');
   const trayToggleBtn = document.getElementById('trayToggleBtn');
   const openConfigBtn = document.getElementById('openConfigBtn');
@@ -2495,6 +2498,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   async function sendTextChatMessage(){
     if (!textChatInput || !textChatSendBtn) return;
     const text = (textChatInput.value || '').trim();
+    const atts = composer ? composer.getAttachments() : [];
+    const fullText = atts.length
+      ? text + '\n' + atts.map((a) => `[附件] ${a.path}`).join('\n')
+      : text;
     if (!text || textChatSending) return;
     if (text === '/config') {
       textChatInput.value = '';
@@ -2539,9 +2546,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     textChatSending = true;
     textChatSendBtn.disabled = true;
     try{
-      showResultBubble('user', text);
-      await sendToChat(text);
+      showResultBubble('user', fullText);
+      await sendToChat(fullText);
       textChatInput.value = '';
+      if (composer) composer.clear();
     }finally{
       textChatSending = false;
       textChatSendBtn.disabled = false;
@@ -3166,7 +3174,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         const waistY = b.y + b.height * widget.coord.y + widget.offset.y;
         const size = uiWidgetManager.getWidgetSize('text-chat-bar', { width: 420, height: 64 });
         const chatScale = widget.scale || 1;
-        const clamped = clampToViewport(clientX, waistY, size.width * chatScale, size.height * chatScale, window.innerWidth, window.innerHeight, 12);
+        // 以默认高度 64px 的底边为锚:长高时只向上生长
+        const barHeight = (textChatBar.offsetHeight || size.height) * chatScale;
+        const centerY = waistY + (size.height * chatScale) / 2 - barHeight / 2;
+        const clamped = clampToViewport(clientX, centerY, size.width * chatScale, barHeight, window.innerWidth, window.innerHeight, 12);
         textChatBar.style.left = Math.round(clamped.left) + 'px';
         textChatBar.style.top = Math.round(clamped.top) + 'px';
         textChatBar.style.bottom = 'auto';
@@ -3183,7 +3194,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const waistY = anchor.y + widget.offset.y;
       const size = uiWidgetManager.getWidgetSize('text-chat-bar', { width: 420, height: 64 });
       const chatScale = widget.scale || 1;
-      const clamped = clampToViewport(clientX, waistY, size.width * chatScale, size.height * chatScale, window.innerWidth, window.innerHeight, 12);
+      // 以默认高度 64px 的底边为锚:长高时只向上生长
+      const barHeight = (textChatBar.offsetHeight || size.height) * chatScale;
+      const centerY = waistY + (size.height * chatScale) / 2 - barHeight / 2;
+      const clamped = clampToViewport(clientX, centerY, size.width * chatScale, barHeight, window.innerWidth, window.innerHeight, 12);
       textChatBar.style.left = Math.round(clamped.left) + 'px';
       textChatBar.style.top = Math.round(clamped.top) + 'px';
       textChatBar.style.bottom = 'auto';
@@ -3389,6 +3403,23 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
   });
 
+  // ── Chat composer: 多行/附件/剪贴板 (extracted to libs/chat-composer.js) ──
+  let composerToastTimer = null;
+  const composer = initChatComposer({
+    textarea: textChatInput,
+    chipContainer: textChatAttachments,
+    barElement: document.getElementById('textChatBar'),
+    pickButton: textChatAttachBtn,
+    getAutoAttachEnabled: () => String((runtimeLive2DConfig || {}).AUTO_IMAGE_ATTACH_ENABLED ?? 'true').toLowerCase() !== 'false',
+    onHeightChange: () => updateTextChatBarPosition(),
+    toast: (msg) => {
+      if (textChatStatus) {
+        textChatStatus.textContent = msg;
+        clearTimeout(composerToastTimer);
+        composerToastTimer = setTimeout(() => { if (textChatStatus) textChatStatus.textContent = '文字待命'; }, 2500);
+      }
+    },
+  });
   // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
   initAutocomplete(textChatInput, sendTextChatMessage);
 

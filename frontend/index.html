@@ -94,8 +94,13 @@
     <pre id="logContent"><div class="log-placeholder">等待后端日志…</div></pre>
   </div>
   <div id="textChatBar">
-    <input id="textChatInput" type="text" placeholder="输入文字与 Faust 对话" />
-    <button id="textChatSendBtn">发送</button>
+    <div id="textChatAttachments"></div>
+    <textarea id="textChatInput" rows="1" placeholder="输入文字与 Faust 对话"></textarea>
+    <div id="textChatBarFooter">
+      <button id="textChatAttachBtn" type="button" title="添加附件">📎</button>
+      <span id="textChatHint">Enter 发送 · Shift+Enter 换行</span>
+      <button id="textChatSendBtn">发送</button>
+    </div>
   </div>
 
   <div id="vrmConfigPanel" class="floating-panel" style="display:none;">
