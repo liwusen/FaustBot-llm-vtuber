@@ -336,7 +336,7 @@ async def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_nu
     raw_path = str(parsed.path or "").strip("/")
     vfs = await get_faustbot_vfs(refresh=True)
     await refresh_runtime_nodes(vfs)
-    if not raw_path or parsed.is_dir:
+    if not raw_path:
         items = await vfs.list_dir("/") or []
         lines = ["faustbot:// 可用资源:"]
         for item in items:
