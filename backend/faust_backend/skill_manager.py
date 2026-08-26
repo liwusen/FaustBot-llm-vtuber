@@ -17,6 +17,14 @@ import faust_backend.config_loader as conf
 _SAFE_SLUG = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}$")
 
 
+def _version_tuple(version: str) -> tuple:
+    """把版本号转为可比较元组('1.2.0' → ((1,1),(1,2),(1,0));非数字段按字符串排前)。"""
+    parts: list[tuple] = []
+    for seg in re.split(r"[.\-+]", str(version or "0").strip()):
+        parts.append((1, int(seg)) if seg.isdigit() else (0, seg))
+    return tuple(parts)
+
+
 class SkillError(RuntimeError):
     pass
 
@@ -469,13 +477,21 @@ def _ensure_builtin_skills(agent_name: str | None = None) -> None:
             continue
         slug = p.name
         target = user_skill_dir / slug
+        tpl_version = str(_read_skill_meta(p).get("version") or "0.0.0")
         if not target.exists():
             shutil.copytree(p, target)
+        else:
+            installed_version = str(_read_skill_meta(target).get("version") or "0.0.0")
+            if _version_tuple(tpl_version) > _version_tuple(installed_version):
+                # 模板版本更新 → 强制重拷(用户数据不在 skill 目录内,可安全覆盖)
+                shutil.rmtree(target)
+                shutil.copytree(p, target)
 
         st = state.setdefault("skills", {}).setdefault(slug, {})
         st["builtin"] = True
         st["enabled"] = True
-        st.setdefault("version", str(_read_skill_meta(p).get("version") or "0.0.0"))
+        if _version_tuple(tpl_version) >= _version_tuple(str(st.get("version") or "0.0.0")):
+            st["version"] = tpl_version
         st.setdefault("path", str(target.resolve()))
 
     _save_state(agent, state)
