@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 AGILE_DIR = Path(__file__).resolve().parents[1] / "default_plugins" / "agile-engine"
 sys.path.insert(0, str(AGILE_DIR))
 
+import faust_backend.config_loader as conf  # noqa: E402
 from faust_backend.plugin_system import PluginContext  # noqa: E402
 from faust_backend.tools.vfs import get_faustbot_vfs  # noqa: E402
 import pytest_asyncio
@@ -52,11 +53,12 @@ def _make_ctx(vfs, events):
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def agile_env(tmp_path):
+async def agile_env(tmp_path, monkeypatch):
     vfs = await get_faustbot_vfs()
     events: list[dict] = []
     ctx = _make_ctx(vfs, events)
     mods_dir = tmp_path / "agile-modules"
+    monkeypatch.setattr(conf, "PLUGIN_DATA_ROOT", str(tmp_path / "plugin_data"))
     runner.configure(ctx, modules_dir=mods_dir)
     await runner.register_overview_node()
     yield {"ctx": ctx, "vfs": vfs, "mods_dir": mods_dir, "events": events}
@@ -604,3 +606,97 @@ async def test_status_shows_idle_time(agile_env):
     status = await agile_env["vfs"].read_text("/agile/demo/status")
     assert "上次活动" in status
     assert "小时前" in status
+
+
+# ── AgileStorage(模块级 KV 持久存储)──
+
+
+STORAGE_MODULE = '''
+from agile_base import AgileModule, AgileContext
+
+module = AgileModule("sto", "storage test")
+
+@module.vfsContentFunc("/sto/count", cacheStrategy="nocache")
+def count(_path, agile: AgileContext):
+    n = agile.storage.get("count", 0)
+    agile.storage.set("count", n + 1)
+    return f"count={n + 1}"
+
+def get_agile_module():
+    return module
+'''
+
+
+@pytest.mark.asyncio
+async def test_storage_set_get_roundtrip_and_file(agile_env):
+    """set/get 同步可用(异步 hook 内直接调用),落盘到 plugin_data/agile-engine/<name>.json。"""
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "sto", STORAGE_MODULE)
+    assert (await runner.load_module("sto"))["ok"]
+    assert await agile_env["vfs"].read_text("/sto/count") == "count=1"
+    assert await agile_env["vfs"].read_text("/sto/count") == "count=2"
+    f = mods_dir.parent / "plugin_data" / "agile-engine" / "sto.json"
+    assert f.exists()
+    import json
+    assert json.loads(f.read_text(encoding="utf-8"))["count"] == 2
+    # 默认值:键不存在返回 default
+    agile = runner.AGILE_INSTANCES["sto"]["agile"]
+    assert agile.storage.get("missing", "dft") == "dft"
+
+
+@pytest.mark.asyncio
+async def test_storage_persists_across_reload_and_unload(agile_env):
+    """reload / unload→load 后数据仍在(文件持久,卸载不删除)。"""
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "sto", STORAGE_MODULE)
+    assert (await runner.load_module("sto"))["ok"]
+    assert await agile_env["vfs"].read_text("/sto/count") == "count=1"
+    assert (await runner.reload_module("sto"))["ok"]
+    assert await agile_env["vfs"].read_text("/sto/count") == "count=2"
+    assert (await runner.unload_module("sto"))["ok"]
+    f = mods_dir.parent / "plugin_data" / "agile-engine" / "sto.json"
+    assert f.exists()
+    assert (await runner.load_module("sto"))["ok"]
+    assert await agile_env["vfs"].read_text("/sto/count") == "count=3"
+
+
+@pytest.mark.asyncio
+async def test_storage_isolated_between_modules(agile_env):
+    """不同模块同名键互不干扰。"""
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "a", STORAGE_MODULE.replace('"sto"', '"a"').replace("/sto/count", "/a/count"))
+    _write_module(mods_dir, "b", STORAGE_MODULE.replace('"sto"', '"b"').replace("/sto/count", "/b/count"))
+    assert (await runner.load_module("a"))["ok"]
+    assert (await runner.load_module("b"))["ok"]
+    assert await agile_env["vfs"].read_text("/a/count") == "count=1"
+    assert await agile_env["vfs"].read_text("/b/count") == "count=1"
+    assert await agile_env["vfs"].read_text("/a/count") == "count=2"
+    assert await agile_env["vfs"].read_text("/b/count") == "count=2"  # b 未被 a 影响
+
+
+@pytest.mark.asyncio
+async def test_storage_thread_safe_under_interval(agile_env):
+    """interval 线程与主循环并发读写不丢数据(锁保护)。"""
+    import threading
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "sto", STORAGE_MODULE)
+    assert (await runner.load_module("sto"))["ok"]
+    agile = runner.AGILE_INSTANCES["sto"]["agile"]
+    errors: list[Exception] = []
+
+    def hammer():
+        try:
+            for _ in range(200):
+                with agile.storage:  # 跨 get/set 持锁,读改写原子化
+                    n = agile.storage.get("count", 0)
+                    agile.storage.set("count", n + 1)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert agile.storage.get("count") == 800  # 4 线程 × 200 次,无丢失

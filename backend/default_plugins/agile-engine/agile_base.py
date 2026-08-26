@@ -6,6 +6,60 @@ from abc import ABC, abstractmethod
 from lm import AgileLogManager
 from enum import Enum
 import inspect
+import json
+import threading
+from pathlib import Path
+
+
+class AgileStorage:
+    """模块级 KV 持久存储(单 JSON 文件:plugin_data/agile-engine/<模块名>.json)。
+
+    并发策略:同步实现 + threading.RLock。Agile 的调用方横跨主事件循环的
+    同步/异步 hook 与 interval 独立线程,同步加锁 API 在所有上下文都可
+    直接调用(异步 hook 无需 await);单文件极小,锁内完成读改写,
+    写盘为 tmp + replace 原子替换,跨线程不会读到半截文件。
+    """
+
+    _file_lock = threading.RLock()  # 串行化所有模块的磁盘读写(文件极小,足够)
+
+    def __init__(self, module_name: str, data_dir: Path):
+        self.name = str(module_name)
+        self.path = Path(data_dir) / f"{self.name}.json"
+        self._lock = threading.RLock()  # 本模块缓存与落盘的一致性
+        self._cache: Optional[dict] = None
+
+    def __enter__(self):
+        """`with agile.storage:` 跨 get/set 持锁,使读改写序列原子化(RLock 可重入)。"""
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._lock.release()
+        return False
+
+    def _ensure_loaded(self) -> None:
+        if self._cache is None:
+            with AgileStorage._file_lock:
+                try:
+                    self._cache = json.loads(self.path.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    self._cache = {}
+                self._cache = dict(self._cache)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        with self._lock:
+            self._ensure_loaded()
+            return self._cache.get(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._ensure_loaded()
+            self._cache[key] = value
+            with AgileStorage._file_lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(self._cache, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(self.path)
 
 
 class AgileHookType(str, Enum):
@@ -26,12 +80,14 @@ class AgileHookBase:
 class AgileContext:
     def __init__(self,ctx:PluginContext,alm:AgileLogManager,agile_name:str,
                  trigger_limiter:Optional[Callable[[],Any]]=None,
-                 on_activity:Optional[Callable[[],Any]]=None):
+                 on_activity:Optional[Callable[[],Any]]=None,
+                 storage:Optional[AgileStorage]=None):
         self.ctx = ctx
         self.alm = alm
         self.agile_name = agile_name
         self._trigger_limiter = trigger_limiter
         self._on_activity = on_activity
+        self.storage = storage  # AgileStorage:模块级 KV 持久存储(可为 None,如测试桩)
 
     async def vfs_write(self,path:str,content:Any):
         await self.ctx.vfs_write(path,content)

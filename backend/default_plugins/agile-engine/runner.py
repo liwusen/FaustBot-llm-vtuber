@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lm import AgileLogManager
-from agile_base import AgileContext, AgileHookBase, AgileHookType, AgileModule, build_invoker
+from agile_base import AgileContext, AgileHookBase, AgileHookType, AgileModule, AgileStorage, build_invoker
 import faust_backend.config_loader as conf
 from faust_backend.plugin_system import PluginContext
 from faust_backend.tools.vfs import get_faustbot_vfs
@@ -31,6 +31,7 @@ AGILE_INSTANCES: dict[str, dict[str, Any]] = {}
 LM = AgileLogManager()
 
 MODULES_DIR: Path = Path(conf.CONFIG_ROOT) / "agile-modules"
+STORAGE_DIR: Path = Path(conf.PLUGIN_DATA_ROOT) / "agile-engine"
 
 _CTX: PluginContext | None = None
 
@@ -48,6 +49,8 @@ def configure(ctx: PluginContext, modules_dir: Path | None = None) -> None:
     """插件 startup 调用：保存 PluginContext，初始化模块目录，注入 sys.path。"""
     global _CTX
     _CTX = ctx
+    global STORAGE_DIR
+    STORAGE_DIR = Path(getattr(ctx, "plugin_data_dir", None) or (Path(conf.PLUGIN_DATA_ROOT) / "agile-engine"))
     if modules_dir is not None:
         global MODULES_DIR
         MODULES_DIR = Path(modules_dir)
@@ -466,7 +469,8 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
         assert _CTX is not None
         agile = AgileContext(_CTX, LM, name,
                              trigger_limiter=lambda n=name: check_trigger_limit(n),
-                             on_activity=lambda n=name: _stamp_activity(n))
+                             on_activity=lambda n=name: _stamp_activity(n),
+                             storage=AgileStorage(name, STORAGE_DIR))
         vfs_paths, owned_funcs, interval_handles = await _register_hooks(agile_module, agile, name)
         mirror_paths = await _register_mirror_nodes(name)
         # 生效上限：reload 传入的 preset_limit > 磁盘持久化值 > 默认值

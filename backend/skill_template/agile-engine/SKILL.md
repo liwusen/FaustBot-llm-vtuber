@@ -120,6 +120,31 @@ AgileContext 方法（全部 async）：
 - `await agile.vfs_set_write_handler(path, func)` / `await agile.vfs_set_edit_handler(path, func)` / `await agile.vfs_delete(path)`
 - `await agile.event_fire(event_name, data, recall_description="Agent 可读的描述", lifespan=7200)` —— 触发事件唤醒你自己，之后 Agent 会收到 recall_description 描述的事件
 - `await agile.log(level, msg)` / `linfo` / `ldebug` / `lwarning` / `lerror` / `lcritical`
+- `agile.storage` —— 本模块的持久化 KV 存储（详见下节「AgileStorage」）
+
+### AgileStorage（模块级 KV 持久存储）
+
+`agile.storage` 是每个模块独立的键值存储，数据落盘在
+`~/.faustbot/plugin_data/agile-engine/<模块名>.json`，跨重启、reload、卸载/禁用均保留。
+
+两个方法（**同步**实现，同步/异步 hook、interval 线程里都可直接调用，无需 await；内部已加锁，多线程安全）：
+
+- `agile.storage.get(key, default=None)` —— 读取；键不存在返回 `default`
+- `agile.storage.set(key, value)` —— 写入并立即落盘；`value` 必须可 JSON 序列化
+
+跨 get/set 的读改写序列需要原子性时，用 `with agile.storage:` 持锁（可重入）：
+
+```python
+@module.registerInterval(60)
+async def poll(agile: AgileContext):
+    with agile.storage:
+        n = agile.storage.get("count", 0)
+        agile.storage.set("count", n + 1)
+```
+
+注意：
+- 不要在 `with agile.storage:` 块内做耗时操作（会阻塞其他线程的读写）
+- 卸载/禁用模块**不会**删除存储文件（数据持久保留，重装即恢复）
 
 ## cacheStrategy（内容节点缓存策略）
 
