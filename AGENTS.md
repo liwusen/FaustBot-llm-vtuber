@@ -33,45 +33,54 @@ faust/
 ### 核心组件
 
 1. **FastAPI 后端** (`backend/main.py`)
+   
    - 端口: 13900
    - 生命周期: `lifespan()` 管理启动/关闭
    - 路由: admin_config, chat, audio, plugins 等
 
 2. **LangGraph Agent** (`runtime/lifecycle.py`)
+   
    - 使用 `langchain.agents.create_agent()` 创建
    - 支持 tool calling、reasoning/thinking 模式
    - Checkpoint: SQLite 持久化 or InMemory
 
 3. **插件系统** (`plugin_system/`)
+   
    - 基于 `pluggy` 实现
    - Hook: `plugin_loaded`, `heartbeat`, `register_routes`, `register_tools` 等
    - 支持工具注入、中间件、前端资源
 
 4. **多模态记忆** (`memory/`)
+   
    - `GraphStore`: 知识图谱 + 向量存储
    - 支持文件写入、聊天记录同步
 
 5. **语音管道** (`speech/`)
+   
    - VAD: 语音活动检测 (`vad_runtime.py`)
    - ASR: 语音识别 (`speech/asr/`)
    - TTS: 语音合成 (`speech/tts/`)
    - 支持本地/云端模式
 
 6. **Agent 工具** (`tools/`)
+   
    - 文件操作: `read`, `write`, `edit`, `find`, `search`
    - 系统: `execute`, `system`, `datetime`
    - 记忆: `memory`, `diary`
    - 特殊: `skill`, `subagent`, `trigger`, `vfs`
 
 7. **触发器系统** (`trigger_manager.py`)
+   
    - 支持定时触发、事件触发
    - 与插件系统集成
 
 8. **虚拟文件系统** (`tools/vfs.py`)
+   
    - `faustbot://` 协议
    - 用于 Agent 读取插件数据、配置等
 
 9. **前端** (`frontend/`)
+   
    - Electron 桌面应用
    - Live2D/VRM 虚拟形象渲染
    - WebSocket 与后端实时通信
@@ -93,11 +102,11 @@ faust/
    异步策略:
    
    尽可能全部使用异步函数
-
+   
    当你想在一个函数中使用异步,结果发现这个这个函数的调用者是同步的,那么,(SHOULD)沿着调用链依次向上寻找,全部改为异步
-
+   
    当你确实无法使用异步时,(MUST)向用户报告,等待用户指示
-
+   
    使用With/async with:
    
    对于Lock和文件的Open,应该使用(异步)上下文管理器
@@ -105,17 +114,17 @@ faust/
    脏数据策略:
    
    保证这个项目的所有内部数据文件都只会被这个项目的程序读写,你无需过多考虑**运行时磁盘数据被其他程序修改**的脏数据
-
+   
    避免使用getattr获取依赖模块的函数/属性:
-
+   
    调用库/类的成员/attr时,你不应该使用getattr去猜测和试探,而是通过真实的代码读取获取到真正的成员名称
-
+   
    不要为FaustBot Agent添加冗余工具:
-  
+   
    对于简单的信息读取功能,使用 vfs 虚拟文件系统 中的文件放置数据
-
+   
    不要(MUST NOT)使用 紫黑色 UI风格:
-
+   
    所有前端页面使用和当前Configer一样的亮色简约设计风
 
 3. 当你修改了这个项目的依赖时，请修改 ` requirements.txt `
@@ -127,13 +136,13 @@ faust/
 6. 无论进行何种修改,都需要确保单元测试通过
 
 7. 在用户要求时,可以使用如下方法进行集成测试:
-
+   
    1. 启动后端服务
-
+   
    2. 在启动前端时附加命令行参数,让它打开CDP端口
-
-   2. 使用agent-browser命令(如有)或者Playwright连接到CDP端口
-
-   3. 进行操作
-
-   4. 关闭前端和后端
+   
+   3. 使用agent-browser命令(如有)或者Playwright连接到CDP端口
+   
+   4. 进行操作
+   
+   5. 关闭前端和后端
