@@ -276,7 +276,7 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
+  gap: 2px;
   min-width: 320px;
   max-width: min(54vw, 620px);
   padding: 10px 12px;
@@ -317,7 +317,7 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
+  margin-top: 0;
 }
 #textChatAttachBtn {
   background: rgba(255,255,255,0.95);
@@ -382,9 +382,10 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   color: #fff;
   border: none;
   border-radius: 8px;
-  padding: 5px 14px;
+  padding: 4px 10px;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
-  font-weight: 700;
   box-shadow: 0 4px 12px -4px rgba(14, 164, 116, 0.55);
   transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
