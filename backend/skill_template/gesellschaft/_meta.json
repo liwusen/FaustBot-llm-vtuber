@@ -1,0 +1,8 @@
+{
+  "slug": "gesellschaft",
+  "name": "Gesellschaft 社区能力市场",
+  "version": "1.0.0",
+  "description": "当 AI 缺少某项能力、想找现成的 Agile 模块、或想把自己写的模块分享到社区时触发。流程: agile find → add 暂存 → stash view 审阅源码 → HIL 人工批准 → approve 安装 → agileOperate 加载",
+  "usage": "当你发现自己缺少某项能力(读某类数据/接某个服务/监控某种状态)想知道社区有没有现成模块、或用户让你找模块/装功能/分享模块时读取本技能。硬性规则: stash approve 安装前必须用 requestHumanApprovalTool 获得用户批准,拒绝或超时视为放弃",
+  "builtin": true
+}
