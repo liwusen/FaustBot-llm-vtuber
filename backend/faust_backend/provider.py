@@ -18,7 +18,7 @@ class ModelProvider(BaseModel):
     base_url: str
     key: Optional[str] = None
     models: List[str] = []
-    thinking_type: str = "qwen"  # Default thinking type (qwen/deepseek/openai/none)
+    thinking_type: str = "qwen"  # Default thinking type (qwen/deepseek/openai/none/mimo/glm/minimax)
 
 ModelProvider.model_rebuild()  # Rebuild the model to resolve forward references
 ModelProviders.model_rebuild()  # Rebuild the model to resolve forward references
@@ -102,7 +102,7 @@ async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:st
     # （无论 intensity 传什么），与旧 THINKING_ENABLED=False 默认行为保持一致，
     # 避免重构后所有对话意外开启推理。
     if intensity is not None and provider.thinking_type != "none":
-        # provider.thinking_type 是 thinking 预设名（qwen/deepseek/openai/none），
+        # provider.thinking_type 是 thinking 预设名（qwen/deepseek/openai/none/mimo/glm/minimax），
         # 与 thinking.THINKING_PRESETS 的 key 对应；intensity 是低/中/高。
         thinking_params = get_thinking_params(provider.thinking_type, intensity)
         if "reasoning_effort" in thinking_params:

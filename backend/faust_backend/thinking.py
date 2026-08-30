@@ -28,6 +28,25 @@ THINKING_PRESETS = {
         "high":   {"extra_body": {"enable_thinking": True, "thinking_level": "high"}},
     },
     # DeepSeek enables thinking via extra_body too.
+    # MiMo (小米开放平台) thinking config via extra_body
+    "mimo": {#extra_body,thinking_level
+        "low":    {"extra_body": {"enable_thinking": True, "thinking_level": "low"}},
+        "medium": {"extra_body": {"enable_thinking": True, "thinking_level": "medium"}},
+        "high":   {"extra_body": {"enable_thinking": True, "thinking_level": "high"}},
+    },
+    # Zhipu AI GLM thinking config via extra_body
+    "glm": {#extra_body,thinking_level
+        "low":    {"extra_body": {"enable_thinking": True, "thinking_level": "low"}},
+        "medium": {"extra_body": {"enable_thinking": True, "thinking_level": "medium"}},
+        "high":   {"extra_body": {"enable_thinking": True, "thinking_level": "high"}},
+    },
+    # Minimax reasoning config
+    "minimax": {#reasoning_effort
+        "low":    {"reasoning_effort": "low"},
+        "medium": {"reasoning_effort": "medium"},
+        "high":   {"reasoning_effort": "high"},
+    },
+
     "deepseek": {#extra_body,reasoning_effort
         "low":    {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
         "medium": {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},

@@ -89,7 +89,7 @@ var FIELD_OPTIONS = {
   OPENAI_TTS_RESPONSE_FORMAT: ["mp3", "wav", "opus", "aac", "flac", "pcm"],
   OPENAI_ASR_RESPONSE_FORMAT: ["json", "text", "srt", "verbose_json", "vtt"],
   REASONING_CONFIG: ["off", "low", "medium", "high"],
-  THINKING_TYPE: ["none", "openai", "qwen", "deepseek"],
+  THINKING_TYPE: ["none", "openai", "qwen", "deepseek", "mimo", "glm", "minimax"],
   TTS_PROMPT_LANGUAGE: ["zh", "en", "ja", "ko", "yue", "中文", "英文", "日文", "韩文", "粤语"],
 };
 
