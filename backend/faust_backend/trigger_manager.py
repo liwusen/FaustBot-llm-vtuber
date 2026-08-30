@@ -89,6 +89,7 @@ def _emit_trigger(trigger_payload: dict):
 
 class BaseTrigger(BaseModel):
     id: str
+    remove_when: Optional[str] = None
     type: str
     recall_description: Optional[str] = None
     lifespan: Optional[int] = None

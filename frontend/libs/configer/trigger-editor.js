@@ -7,6 +7,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
     interval_seconds: 60,
     target: "",
     eval_code: "",
+    remove_when: "",
     recall_description: "",
     lifespan: "",
     run_background: false,
@@ -43,6 +44,10 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
   lifespanInput.type = "number";
   lifespanInput.placeholder = "存活秒数（可选，超时自动删除）";
   lifespanInput.value = source.lifespan === null || source.lifespan === undefined ? "" : String(source.lifespan);
+
+  const removeWhenInput = el("input", "input");
+  removeWhenInput.placeholder = "例如 after 24 hours, at midnight, 或时条件满足";
+  removeWhenInput.value = String(source.remove_when || "");
 
   // run_background 开关
   const bgRow = el("div", "switch-row");
@@ -122,6 +127,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
     makeField("类型", typeSelect, "决定触发方式：间隔、指定时间点或表达式条件。切换后下方参数会自动变化。"),
     makeField("描述", recallInput, "触发器的备注说明，触发时会作为提示回传给 Agent，便于其理解本次触发的意图。"),
     makeField("有效期", lifespanInput, "触发器的存活秒数，超时后自动删除；留空表示长期有效。"),
+    makeField("删除时间", removeWhenInput, "自然语言，表示应该在什么时候删除它，例如 'after 24 hours' 或 'at midnight'"),
     makeField("运行方式", bgRow, "后台任务的处理过程与结果不会推送给前端界面，适合静默执行的定时作业。"),
     dynamicWrap,
   );
