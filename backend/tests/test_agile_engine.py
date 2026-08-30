@@ -700,3 +700,43 @@ async def test_storage_thread_safe_under_interval(agile_env):
         t.join()
     assert not errors
     assert agile.storage.get("count") == 800  # 4 线程 × 200 次,无丢失
+
+
+@pytest.mark.asyncio
+async def test_communicate_handler_modules_and_logs(agile_env):
+    """面板 communicate_handler：get_modules / get_module_logs 返回只读状态。"""
+    import importlib.util
+
+    main_path = AGILE_DIR / "main.py"
+    spec = importlib.util.spec_from_file_location("agile_main_test", str(main_path))
+    assert spec is not None and spec.loader is not None
+    main = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(main)
+
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "sto", STORAGE_MODULE)
+    assert (await runner.load_module("sto"))["ok"]
+    # 写入一个存储键供面板读取
+    agile = runner.AGILE_INSTANCES["sto"]["agile"]
+    with agile.storage:
+        agile.storage.set("greeting", "hi")
+
+    plugin = main.Plugin()
+    ctx = agile_env["ctx"]
+
+    data = await plugin.communicate_handler({"action": "get_modules"}, ctx)
+    assert data["status"] == "ok"
+    item = next((m for m in data["items"] if m["name"] == "sto"), None)
+    assert item is not None
+    assert item["loaded"] is True
+    assert item["status"] == "loaded"
+    assert item["vfs_count"] == 1
+    assert item["storage_keys"] == ["greeting"]
+    assert item["log_count"] >= 1
+
+    logs = await plugin.communicate_handler({"action": "get_module_logs", "name": "sto"}, ctx)
+    assert logs["status"] == "ok"
+    assert any("模块加载成功" in line for line in logs["logs"])
+
+    # 未知 action → None（不拦截其它插件的消息）
+    assert await plugin.communicate_handler({"action": "unknown_action"}, ctx) is None

@@ -1,7 +1,7 @@
 {
   "id": "agile-engine",
   "name": "Agile Engine Plugin",
-  "version": "1.1.0",
+  "version": "1.2.3",
   "description": "FaustBot Agile Engine（Agent 可编程模块框架）",
   "enabled": true,
   "entry": "main.py",

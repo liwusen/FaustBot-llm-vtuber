@@ -41,6 +41,61 @@ class Plugin(FaustPlugin):
                 log.warning("agile 模块自动加载失败: %s", result.get("message"))
 
     @hookimpl
+    def register_frontend(self) -> list[dict]:
+        return [
+            {"type": "js", "path": "/faust/plugins/agile-engine/frontend/panel.js"},
+        ]
+
+    @hookimpl
+    async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
+        """Agile 配置面板数据接口（只读状态/日志/存储）。"""
+        action = str((payload or {}).get("action") or "").strip().lower()
+        try:
+            if action == "get_modules":
+                items = []
+                for item in runner.list_modules():
+                    name = item["name"]
+                    inst = runner.AGILE_INSTANCES.get(name)
+                    storage_keys: list[str] = []
+                    log_count = 0
+                    if inst is not None:
+                        storage = getattr(inst.get("agile"), "storage", None)
+                        if storage is not None:
+                            try:
+                                with storage:
+                                    storage.get("__agile_panel_probe__", None)  # 确保已从磁盘加载
+                                    storage_keys = list(storage._cache or {})
+                            except Exception:  # noqa: BLE001
+                                storage_keys = []
+                        logs = await runner.LM.getLog(agile_from=name)
+                        log_count = len(logs)
+                    items.append({
+                        "name": name,
+                        "disabled": item["disabled"],
+                        "loaded": inst is not None and not item["disabled"],
+                        "status": inst.get("status", "未加载") if inst else ("disabled" if item["disabled"] else "未加载"),
+                        "last_error": (inst.get("last_error") or None) if inst else None,
+                        "vfs_count": len(inst.get("vfs_paths", [])) if inst else 0,
+                        "interval_count": len(inst.get("interval_handles", [])) if inst else 0,
+                        "storage_keys": storage_keys,
+                        "log_count": log_count,
+                    })
+                return {"status": "ok", "items": items}
+
+            if action == "get_module_logs":
+                name = str((payload or {}).get("name") or "").strip()
+                if not name:
+                    return {"status": "ok", "logs": []}
+                level = str((payload or {}).get("level") or "").strip() or None
+                logs = await runner.LM.getLog(agile_from=name, level=level)
+                logs = logs[-50:]  # 最近 50 条
+                return {"status": "ok", "logs": await runner.LM.formatLogs(logs)}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("agile communicate_handler 失败: %s", exc)
+            return {"status": "error", "message": str(exc)}
+        return None
+
+    @hookimpl
     def plugin_loaded(self, ctx: PluginContext) -> None:
         global _PLUGIN
         _PLUGIN = self
@@ -58,6 +113,7 @@ class Plugin(FaustPlugin):
 
     def register_tools(self, ctx: PluginContext):
         from langchain.tools import tool
+
 
         @tool
         async def agileOperate(action: str, name: str = "", value: str = "") -> str:
