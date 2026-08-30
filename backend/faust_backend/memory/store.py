@@ -86,11 +86,15 @@ def _normalize_path(path: str) -> str:
     return "/" + "/".join(parts)
 
 
-def _atomic_write_json(path: Path, data: Any) -> None:
+def _atomic_write_json(path: Path, data: Any, compact: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # 唯一临时文件名，避免多线程写同一目标时在 tmp 文件上相互冲突（WinError 32）
     tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex[:8]}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    if compact:
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    else:
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+    tmp.write_text(payload, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -145,6 +149,8 @@ class GraphStore:
         self.index_file = self.index_dir / "chunks.vdb"
         self.chunks_index_file = self.meta_dir / "chunks_index.json"
         self.tasks_file = self.meta_dir / "tasks.json"
+        # 实体名称向量独立存储（1536 维浮点 JSON 体积大，拖慢 graph.json 全量保存）
+        self.vecs_file = self.index_dir / "entity_vecs.jsonl"
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._vdb: NanoVectorDB | None = None
         self._openai_client: AsyncOpenAI | None = None
@@ -189,6 +195,7 @@ class GraphStore:
         self._graph.clear()
         for nid, attrs in nodes.items():
             self._graph.add_node(nid, **attrs)
+        self._load_entity_vecs()
         for e in edges:
             src = str(e.get("source", ""))
             tgt = str(e.get("target", ""))
@@ -203,19 +210,59 @@ class GraphStore:
         self._repair_tree()
         self._ensure_vdb()
 
+    def _load_entity_vecs(self) -> None:
+        """读取实体名称向量侧车文件；兼容旧数据（向量内嵌在 graph.json 中）。"""
+        if self.vecs_file.exists():
+            try:
+                with open(self.vecs_file, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        rec = json.loads(line)
+                        nid = rec.get("id")
+                        vec = rec.get("v")
+                        if nid and vec is not None and self._graph.has_node(nid):
+                            self._graph.nodes[nid]["_name_vec"] = [float(x) for x in vec]
+            except Exception:  # noqa: BLE001 损坏的侧车文件不阻塞加载
+                pass
+        # 旧格式迁移：graph.json 内嵌 _name_vec → 下次 save() 移入侧车
+        for nid, ndata in self._graph.nodes(data=True):
+            if ndata.get("_name_vec") is not None:
+                self._dirty = True
+                break
+
+    def _write_entity_vecs(self, vecs: dict[str, list[float]]) -> None:
+        """原子写实体名称向量侧车文件（先写侧车再写图，旧图可读时数据不丢）。"""
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.vecs_file.with_suffix(self.vecs_file.suffix + f".{uuid.uuid4().hex[:8]}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for nid, vec in vecs.items():
+                f.write(json.dumps({"id": nid, "v": vec}, ensure_ascii=False,
+                                   separators=(",", ":")) + "\n")
+        os.replace(tmp, self.vecs_file)
+
     def save(self) -> None:
         # 同步工具在线程池中执行，save 可能被多线程并发调用，须串行化
         with self._save_lock:
             if not self._dirty:
                 return
             nodes = {}
+            vecs: dict[str, list[float]] = {}
             for nid, ndata in self._graph.nodes(data=True):
-                nodes[nid] = dict(ndata) if ndata else {}
+                d = dict(ndata) if ndata else {}
+                v = d.pop("_name_vec", None)
+                if v is not None:
+                    vecs[nid] = [float(x) for x in v]
+                nodes[nid] = d
             edges = []
             for src, tgt, k, edata in self._graph.edges(data=True, keys=True):
                 etype = str(edata.get("type", "relates_to")) if edata else "relates_to"
                 edges.append({"source": src, "target": tgt, "key": str(k), "type": etype})
-            _atomic_write_json(self.graph_file, {"nodes": nodes, "edges": edges})
+            if vecs:
+                self._write_entity_vecs(vecs)
+            _atomic_write_json(self.graph_file, {"nodes": nodes, "edges": edges},
+                               compact=True)
             self._dirty = False
             log.info("save wrote %d nodes, %d edges", len(nodes), len(edges))
 
@@ -228,6 +275,10 @@ class GraphStore:
     def flush(self) -> None:
         self.save()
         log.info("flush")
+
+    async def _flush_async(self) -> None:
+        """异步调用 flush（save 为全量磁盘写，移出事件循环避免卡顿）。"""
+        await asyncio.to_thread(self.flush)
 
     # ── node helpers ──
 
@@ -534,7 +585,8 @@ class GraphStore:
             old_ids = [cid for cid, item in chunks_index.items() if str(item.get("node_path")) == norm]
             for cid in old_ids:
                 chunks_index.pop(cid, None)
-            old_ids and self._delete_chunk_ids(old_ids)
+            if old_ids:
+                await self._delete_chunk_ids(old_ids)
 
             for idx, chunk_text in enumerate(chunks, 1):
                 cid = f"{norm}::chunk::{idx}::{uuid.uuid4().hex[:8]}"
@@ -553,7 +605,7 @@ class GraphStore:
                 await self._embed_and_index(chunk_items)
             self._mark_bm25_dirty()
 
-        self.flush()
+        await self._flush_async()
         log.info("file_write done path=%s chunks=%d", norm, len(chunks) if index else 0)
         result = {"path": norm, "meta": meta}
 
@@ -617,7 +669,7 @@ class GraphStore:
             await self._index_attachment_description(norm, content_type, description)
         self._mark_bm25_dirty()
 
-        self.flush()
+        await self._flush_async()
 
         log.info("attachment_write done path=%s size=%d desc_len=%d",
                  norm, len(image_bytes), len(description))
@@ -633,7 +685,8 @@ class GraphStore:
                        if str(item.get("node_path")) == norm]
             for cid in old_ids:
                 chunks_index.pop(cid, None)
-            old_ids and self._delete_chunk_ids(old_ids)
+            if old_ids:
+                await self._delete_chunk_ids(old_ids)
             for idx, chunk_text in enumerate(chunks, 1):
                 cid = f"{norm}::chunk::{idx}::{uuid.uuid4().hex[:8]}"
                 item = {
@@ -703,14 +756,14 @@ class GraphStore:
             for cid in old_ids:
                 chunks_index.pop(cid, None)
             self._save_chunks_index(chunks_index)
-            self._delete_chunk_ids(old_ids)
+            await self._delete_chunk_ids(old_ids)
             self._mark_bm25_dirty()
 
             if self._has_node(nid):
                 self._graph.remove_node(nid)
                 self._dirty = True
 
-        self.flush()
+        await self._flush_async()
         return {"path": norm}
 
     async def file_delete_tree(self, path: str) -> dict:
@@ -858,7 +911,7 @@ class GraphStore:
                 self._save_chunks_index(chunks_index)
             # 修复父目录边缘
             self._repair_tree()
-        self.flush()
+        await self._flush_async()
         log.info("file_rename path=%s -> new_path=%s type=%s", norm, new_path, ntype)
         return {"path": norm, "new_path": new_path, "type": ntype}
 
@@ -982,7 +1035,7 @@ class GraphStore:
             await self._embed_and_index(copied_chunk_items)
         self._mark_bm25_dirty()
         self._repair_tree()
-        self.flush()
+        await self._flush_async()
         log.info("file_copy path=%s -> dest=%s type=%s", norm, dest, ntype)
         return {"path": norm, "dest": dest, "type": ntype}
 
@@ -1097,7 +1150,7 @@ class GraphStore:
                 self._save_chunks_index(chunks_index)
             self._mark_bm25_dirty()
             self._repair_tree()
-        self.flush()
+        await self._flush_async()
         log.info("file_move path=%s -> dest=%s type=%s", norm, dest, ntype)
         return {"path": norm, "new_path": dest, "type": ntype}
 
@@ -1110,7 +1163,7 @@ class GraphStore:
         if not self._has_node(nid):
             self._add_node(nid, type="dir", name=Path(norm).name, description=str(description or ""))
         self._add_edge(parent_nid, nid, TREE_EDGE)
-        self.flush()
+        await self._flush_async()
         return {"path": norm, "type": "dir"}
 
     def _chunks_file(self, norm_path: str) -> Path:
@@ -1172,7 +1225,7 @@ class GraphStore:
         self._write_meta(norm, meta)
         nid = _path_id(norm)
         self._set_node_attr(nid, tags=meta["tags"])
-        self.flush()
+        await self._flush_async()
         return {"path": norm, "meta": meta}
 
     async def set_score_patch(self, path: str, score_patch: float) -> dict:
@@ -1190,7 +1243,7 @@ class GraphStore:
         self._write_meta(norm, meta)
         nid = _path_id(norm)
         self._set_node_attr(nid, score_patch=patch)
-        self.flush()
+        await self._flush_async()
         return {"path": norm, "meta": meta}
 
 
@@ -1553,15 +1606,15 @@ class GraphStore:
                 "text_preview": item["text_preview"],
             })
         vdb.upsert(rows)
-        vdb.save()
+        await asyncio.to_thread(vdb.save)
 
-    def _delete_chunk_ids(self, chunk_ids: list[str]) -> int:
+    async def _delete_chunk_ids(self, chunk_ids: list[str]) -> int:
         if not chunk_ids or not self.index_file.exists():
             return 0
         try:
             vdb = self._ensure_vdb()
             vdb.delete(chunk_ids)
-            vdb.save()
+            await asyncio.to_thread(vdb.save)
             return len(chunk_ids)
         except Exception:
             return 0
@@ -1583,7 +1636,7 @@ class GraphStore:
     def entity_add(self, name: str, entity_type: str = "custom",
                    description: str = "",
                    properties: dict | None = None, kb_refs: list[str] | None = None,
-                   name_embedding: list[float] | None = None) -> str:
+                   name_embedding: list[float] | None = None, flush: bool = True) -> str:
         eid = _ent_id()
         desc = str(description or "")
         entity_path = f"/entities/{eid}.md"
@@ -1601,19 +1654,21 @@ class GraphStore:
         if name_embedding:
             self._graph.nodes[eid]["_name_vec"] = [float(v) for v in name_embedding]
         self._dirty = True
-        self.flush()
+        if flush:
+            self.flush()
         log.info("entity_add name=%s type=%s eid=%s desc_len=%d refs=%d",
                  name, entity_type, eid[:16], len(desc), len(all_refs))
         return eid
 
-    def entity_delete(self, entity_id: str) -> bool:
+    def entity_delete(self, entity_id: str, flush: bool = True) -> bool:
         if not self._has_node(entity_id):
             return False
         if self._get_node_attr(entity_id, "type") != "entity":
             return False
         self._graph.remove_node(entity_id)
         self._dirty = True
-        self.flush()
+        if flush:
+            self.flush()
         log.info("entity_delete eid=%s", entity_id[:16])
         return True
 
@@ -1660,16 +1715,18 @@ class GraphStore:
         return results
 
     def relation_add(self, source_id: str, target_id: str,
-                     rel_type: str = "relates_to") -> str:
+                     rel_type: str = "relates_to", flush: bool = True) -> str:
         key = self._add_edge(source_id, target_id, rel_type)
-        self.flush()
+        if flush:
+            self.flush()
         log.info("relation_add src=%s tgt=%s type=%s key=%s",
                  source_id[:16], target_id[:16], rel_type, key[:8])
         return key
 
-    def relation_remove(self, source_id: str, target_id: str) -> None:
+    def relation_remove(self, source_id: str, target_id: str, flush: bool = True) -> None:
         self._remove_edge(source_id, target_id)
-        self.flush()
+        if flush:
+            self.flush()
         log.info("relation_remove src=%s tgt=%s", source_id[:16], target_id[:16])
 
     def relation_iter(self) -> list[dict]:
@@ -1739,7 +1796,7 @@ class GraphStore:
         for (nid, _), vec in zip(missing, vecs):
             self._graph.nodes[nid]["_name_vec"] = np.asarray(vec, dtype=np.float32).tolist()
             self._dirty = True
-        self.flush()
+        await self._flush_async()
 
     async def entity_find_similar(self, name_vecs: list[np.ndarray],
                                    threshold: float = 0.85) -> list[str | None]:
@@ -2260,7 +2317,7 @@ class GraphStore:
         prev = self._find_latest_entity(record_type, exclude=eid)
         if prev:
             self._add_edge(prev, eid, "next")
-        self.flush()
+        await self._flush_async()
 
     def _find_latest_entity(self, entity_type: str, exclude: str | None = None) -> str | None:
         best: str | None = None

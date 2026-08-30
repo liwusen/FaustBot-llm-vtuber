@@ -195,7 +195,8 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
                 else:
                     eid = m.entity_add(name, etype, description=desc,
                                        properties=props, kb_refs=refs,
-                                       name_embedding=name_vec.tolist())
+                                       name_embedding=name_vec.tolist(),
+                                       flush=False)  # 批量写入，末尾统一 flush
                     if m._has_node(doc_nid):
                         m._add_edge(doc_nid, eid, "from")
                 name_to_id[name] = eid
@@ -212,8 +213,9 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
                 source_id=src_id,
                 target_id=tgt_id,
                 rel_type=str(item.get("type", "relates_to")),
+                flush=False,  # 批量写入，末尾统一 flush
             )
-        m.flush()
+        await asyncio.to_thread(m.flush)
         log.info("_bg_extract_and_save done entities=%d relations=%d",
                  len(entities) if entities else 0, len(relations) if relations else 0)
         m.complete_extraction(doc_path, success=True)
