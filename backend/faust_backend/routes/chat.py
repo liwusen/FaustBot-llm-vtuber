@@ -464,9 +464,10 @@ async def chat_websocket(websocket: WebSocket):
                 continue
             handled, command_reply = await _handle_slash_command(text, websocket)
             if handled:
-                await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
+                # Send subagent summary before start/done per requirement
                 if state.subagent_manager and state.subagent_manager.consume_status_dirty():
                     await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
                 await websocket.send_text(json.dumps(_main_event_payload("delta", content=command_reply), ensure_ascii=False))
                 await websocket.send_text(json.dumps(_main_event_payload("done"), ensure_ascii=False))
                 log.info(f"Slash Command Result:{command_reply}")
