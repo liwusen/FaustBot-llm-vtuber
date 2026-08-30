@@ -3279,7 +3279,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       try{
         vadWs = new WebSocket(getVadWsUrl());
         vadWs.binaryType = 'arraybuffer';
-        vadWs.onopen = ()=>{ asrStatusEl.textContent = '已连接到主后端 VAD'; useVAD=true; console.log('VAD ws opened'); };
+        vadWs.onopen = ()=>{ asrStatusEl.textContent = '语音检测已连接'; useVAD=true; console.log('VAD ws opened'); };
         vadWs.onmessage = (ev)=>{
           try{
             const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : JSON.parse(new TextDecoder().decode(ev.data));
@@ -3287,9 +3287,9 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
             handleSpeechActivity(p > 0.5, p);
           }catch(err){ console.warn('VAD ws message parse err', err); }
         };
-        vadWs.onerror = (ev)=>{ console.warn('VAD ws error', ev); useVAD = false; asrStatusEl.textContent = '主后端 VAD 连接错误'; vadWs = null; };
-        vadWs.onclose = ()=>{ if (useVAD){ useVAD = false; asrStatusEl.textContent = '主后端 VAD 已断开'; vadWs = null; } };
-      }catch(e){ console.warn('open vad ws failed', e); useVAD = false; asrStatusEl.textContent = '无法连接主后端 VAD'; }
+        vadWs.onerror = (ev)=>{ console.warn('VAD ws error', ev); useVAD = false; asrStatusEl.textContent = '语音检测连接错误'; vadWs = null; };
+        vadWs.onclose = ()=>{ if (useVAD){ useVAD = false; asrStatusEl.textContent = '语音检测已断开'; vadWs = null; } };
+      }catch(e){ console.warn('open vad ws failed', e); useVAD = false; asrStatusEl.textContent = '无法连接语音检测'; }
     }catch(err){
       console.error('start mic failed', err);
       asrStatusEl.textContent = '麦克风权限或错误';
