@@ -34,22 +34,12 @@ async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "")
     - Security: commands are checked by the security module before execution.
       Dangerous operations (rm -rf, format, etc.) will be rejected.
 
-    **language="python":**
-    - Use for: computation, data processing, string manipulation, math,
-      JSON parsing, running quick scripts.
-    - Examples: "print(sum(range(100)))", "import json; print(json.dumps({...}))".
-    - Runs in a fresh subprocess — imports you need must be in the code.
-
-    **language="js":**
-    - Use for: quick JavaScript execution (node/bun required on system).
-    - Examples: "JSON.stringify({a:1})", "console.log(1+2)".
-
     IMPORTANT: The output may be truncated if very long.  You'll receive a
     summary with an artifact:// ID.  Use read("artifact://<id>") to see the
     full output.
 
     Args:
-        language: "shell", "python", or "js".
+        language: "shell"
         code: The code or command to execute.
         timeout: Maximum seconds (default 30, max 300).
         cwd: Working directory; defaults to the project root.
@@ -72,7 +62,7 @@ async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "")
         result = "EXECUTION"
         log.critical("ILLEGAL ARGUMENT")
     else:
-        result = f"不支持的语言: {language}。支持 shell / python / js"
+        result = f"不支持的语言: {language}。支持 shell"
 
     log.info("execute OUTPUT len=%d", len(result))
     return result
