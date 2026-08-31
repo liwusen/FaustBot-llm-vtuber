@@ -659,6 +659,8 @@ function createWindow(){
       preload: path.join(getFrontendAppDir(), 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 桌宠窗口失焦/被遮挡时仍保持全帧率渲染（呼吸、眨眼、lip-sync 不卡顿）。
+      backgroundThrottling: false,
     }
   });
 
@@ -1299,6 +1301,23 @@ function waitForBackend(maxAttempts = 200, interval = 1000) {
     };
     poll();
   });
+}
+
+// ── 提升前端渲染优先级 ──
+// Chromium 在窗口失焦/被遮挡时会后台化渲染进程、节流 rAF 与定时器、挂起被遮挡窗口的绘制。
+// 桌宠需常驻动画（Live2D/VRM 呼吸眨眼、lip-sync），这些开关禁掉三层节流，必须早于 app ready 生效。
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
+// Windows 上将本进程优先级提升一档；渲染子进程继承优先级类。
+// ABOVE_NORMAL(-4) 足够流畅，比 HIGH(-6) 温和，避免挤压其他应用。
+try {
+  if (process.platform === 'win32' && typeof os.setPriority === 'function') {
+    os.setPriority(process.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
+  }
+} catch (e) {
+  console.warn('[render-priority] 设置进程优先级失败（不影响启动）:', e && e.message ? e.message : e);
 }
 
 app.whenReady().then(async () => {
