@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
-import subprocess
+import asyncio
 
 from langchain.tools import tool
 
@@ -55,9 +55,9 @@ async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "")
     if lang == "shell":
         result = await _run_shell(code, timeout, cwd)
     elif lang == "python":
-        result = _run_python(code, timeout, cwd)
+        result = await _run_python(code, timeout, cwd)
     elif lang == "js":
-        result = _run_js(code, timeout, cwd)
+        result = await _run_js(code, timeout, cwd)
     elif lang == "java" and code=="world.execute(me);":
         result = "EXECUTION"
         log.critical("ILLEGAL ARGUMENT")
@@ -79,12 +79,12 @@ async def _run_shell(command: str, timeout: int, cwd: str) -> str:
     import faust_backend.config_loader as conf
     if not getattr(conf, 'SECURITY_SYS_ENABLED', False):
         # Security system is disabled — execute without checks
-        return _run_shell_no_check(command, timeout, cwd)
+        return await _run_shell_no_check(command, timeout, cwd)
 
     try:
         from faust_backend.security import security_check_command
     except ImportError:
-        return _run_shell_no_check(command, timeout, cwd)
+        return await _run_shell_no_check(command, timeout, cwd)
 
     try:
         ok = await security_check_command(command)
@@ -94,59 +94,94 @@ async def _run_shell(command: str, timeout: int, cwd: str) -> str:
         log.warning("安全检查调用失败，已拒绝执行: %s", e)
         return f"安全检查失败，拒绝执行命令: {e}"
 
-    return _run_shell_no_check(command, timeout, cwd)
+    return await _run_shell_no_check(command, timeout, cwd)
 
 
-def _run_shell_no_check(command: str, timeout: int, cwd: str) -> str:
+async def _terminate_proc(proc) -> None:
+    """终止子进程并回收。Windows 上杀进程树，避免 shell 遗留孙进程。"""
+    if proc.returncode is not None:
+        return
+    try:
+        if sys.platform == "win32" and proc.pid:
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill", "/F", "/T", "/PID", str(proc.pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(killer.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                killer.kill()
+        else:
+            proc.kill()
+    except Exception as e:
+        log.warning("终止子进程失败: %s", e)
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=5)
+    except Exception:
+        pass
+
+
+async def _run_shell_no_check(command: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
     try:
-        proc = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
-            timeout=timeout, cwd=work_dir,encoding='utf-8', errors='ignore'
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=work_dir,
         )
-    except subprocess.TimeoutExpired:
+    except FileNotFoundError:
+        return "找不到命令解释器"
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        await _terminate_proc(proc)
         return f"命令超时 ({timeout}s)"
 
     out = []
-    if proc.stdout:
-        out.append(proc.stdout.strip())
-    if proc.stderr:
-        out.append(f"[stderr]\n{proc.stderr.strip()}")
+    if stdout:
+        out.append(stdout.decode('utf-8', errors='ignore').strip())
+    if stderr:
+        out.append(f"[stderr]\n{stderr.decode('utf-8', errors='ignore').strip()}")
     if proc.returncode != 0:
         out.append(f"[exit code: {proc.returncode}]")
     return "\n".join(out) if out else "(无输出)"
 
 
-def _run_python(code: str, timeout: int, cwd: str) -> str:
+async def _run_python(code: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
     # Windows 默认 locale 常为 GBK，子进程 print 非 ASCII（emoji/特殊符号）会抛
     # UnicodeEncodeError；强制 PYTHONIOENCODING=utf-8 让子进程 stdout/stderr 用 UTF-8。
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
-        proc = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True,
-            timeout=timeout, cwd=work_dir,
-            encoding='utf-8', errors='replace',
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", code,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=work_dir,
             env=env,
         )
-    except subprocess.TimeoutExpired:
-        return f"Python 执行超时 ({timeout}s)"
     except FileNotFoundError:
         return "找不到 Python 解释器"
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        await _terminate_proc(proc)
+        return f"Python 执行超时 ({timeout}s)"
 
     out = []
-    if proc.stdout:
-        out.append(proc.stdout.strip())
-    if proc.stderr:
-        out.append(f"[stderr]\n{proc.stderr.strip()}")
+    if stdout:
+        out.append(stdout.decode('utf-8', errors='replace').strip())
+    if stderr:
+        out.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace').strip()}")
     if proc.returncode != 0:
         out.append(f"[exit code: {proc.returncode}]")
     return "\n".join(out) if out else "(无输出)"
 
 
-def _run_js(code: str, timeout: int, cwd: str) -> str:
+async def _run_js(code: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
     runtimes = ["bun"]
     env_node = str(os.environ.get("FAUST_NODEJS") or "").strip()
@@ -164,22 +199,25 @@ def _run_js(code: str, timeout: int, cwd: str) -> str:
             continue
         seen.add(runtime)
         try:
-            proc = subprocess.run(
-                [runtime, "-e", code],
-                capture_output=True, text=True,
-                timeout=timeout, cwd=work_dir,
-                encoding='utf-8', errors='replace',
+            proc = await asyncio.create_subprocess_exec(
+                runtime, "-e", code,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=work_dir,
             )
-            out = []
-            if proc.stdout:
-                out.append(proc.stdout.strip())
-            if proc.stderr:
-                out.append(f"[stderr]\n{proc.stderr.strip()}")
-            if proc.returncode != 0:
-                out.append(f"[exit code: {proc.returncode}]")
-            return "\n".join(out) if out else "(无输出)"
-        except subprocess.TimeoutExpired:
-            return f"JS 执行超时 ({timeout}s)"
         except FileNotFoundError:
             continue
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            await _terminate_proc(proc)
+            return f"JS 执行超时 ({timeout}s)"
+        out = []
+        if stdout:
+            out.append(stdout.decode('utf-8', errors='replace').strip())
+        if stderr:
+            out.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace').strip()}")
+        if proc.returncode != 0:
+            out.append(f"[exit code: {proc.returncode}]")
+        return "\n".join(out) if out else "(无输出)"
     return "找不到 JavaScript 运行时 (bun/node)"

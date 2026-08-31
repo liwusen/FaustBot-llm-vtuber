@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import asyncio
 import tempfile
 import textwrap
 from pathlib import Path
@@ -877,6 +878,32 @@ class TestExecuteTool:
         from faust_backend.tools.execute import execute
         result = await execute.ainvoke({"language": "python", "code": "import time; time.sleep(999)", "timeout": 1})
         assert "超时" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_shell_non_blocking(self):
+        """shell 执行不得阻塞事件循环：执行期间心跳任务持续 tick，无 >1.2s 空洞。"""
+        from faust_backend.tools.execute import execute
+
+        import time as _time
+        ticks: list[float] = []
+
+        async def heartbeat():
+            while True:
+                ticks.append(_time.perf_counter())
+                await asyncio.sleep(0.5)
+
+        hb = asyncio.create_task(heartbeat())
+        try:
+            result = await execute.ainvoke(
+                {"language": "shell", "code": 'python -c "import time; time.sleep(2)"', "timeout": 10}
+            )
+        finally:
+            hb.cancel()
+
+        assert result == "(无输出)"
+        gaps = [b - a for a, b in zip(ticks, ticks[1:])]
+        assert gaps, "心跳任务未运行"
+        assert max(gaps) < 1.2, f"事件循环被阻塞: 最长心跳空洞 {max(gaps):.2f}s"
 
     @pytest.mark.asyncio
     async def test_execute_unknown_language(self):
