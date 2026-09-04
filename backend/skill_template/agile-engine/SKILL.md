@@ -118,7 +118,7 @@ async def poll(agile: AgileContext):         # 只拿 agile
 AgileContext 方法（全部 async）：
 - `await agile.vfs_write_symbolic(path, func, writable=False, should_be_included_in_search=True)`
 - `await agile.vfs_set_write_handler(path, func)` / `await agile.vfs_set_edit_handler(path, func)` / `await agile.vfs_delete(path)`
-- `await agile.event_fire(event_name, data, recall_description="Agent 可读的描述", lifespan=7200, priority="normal")` —— 触发事件唤醒你自己，之后 Agent 会收到 recall_description 描述的事件；`priority` 三档：`interrupt`=立即唤醒（告警/紧急，如连续失败检测）、`normal`=常规行为事件（默认）、`batched`=高频低价值感知（弹幕、devwatch 提交、轮询摘要），消费侧按 30 秒窗口合并为一次唤醒
+- `await agile.event_fire(event_name, data, recall_description="Agent 可读的描述", lifespan=7200, priority="normal")` —— 触发事件唤醒你自己，之后 Agent 会收到 recall_description 描述的事件；`priority` 三档：`interrupt`=立即唤醒（告警/紧急，如连续失败检测）、`normal`=常规行为事件（默认）、`batched`=高频低价值感知（Git Commit、轮询摘要），消费侧按 30 秒窗口合并为一次唤醒
 - `await agile.log(level, msg)` / `linfo` / `ldebug` / `lwarning` / `lerror` / `lcritical`
 - `agile.storage` —— 本模块的持久化 KV 存储（详见下节「AgileStorage」）
 

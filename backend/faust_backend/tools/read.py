@@ -774,7 +774,7 @@ def _structural_summary(content: str, path: str) -> str:
         return _truncate_long(content)
     summary = "\n".join(result)
     total = len(lines)
-    footer = f'\n[文件 {path}: {total} 行, 显示结构摘要。用 read("{path}:N-M") 查看具体行范围]'
+    footer = f'\n[文件 {path}: {total} 行, 显示结构摘要。用 read("{path}:N-M") 查看具体行范围或用read("{path}:raw")关闭结构摘要]'
     return summary + footer
 
 
