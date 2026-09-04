@@ -1,8 +1,10 @@
 from typing import List, Union, Literal, Optional
+import builtins
 import datetime
 import time
 import queue
 import json
+import csv
 from pathlib import Path
 import threading
 import os
@@ -24,6 +26,8 @@ def _get_triggers_path() -> Path:
 
 exitflag = False
 trigger_queue: "queue.Queue[dict]" = queue.Queue()
+batched_queue: "queue.Queue[dict]" = queue.Queue()
+last_interaction_ts: float = 0.0  # 最近一次用户交互时刻（chat.py 更新），0=从未交互
 _append_filters = []
 _fire_filters = []
 
@@ -68,12 +72,47 @@ def _apply_fire_filters(trigger_payload: dict):
     return payload
 
 
+def _events_dir() -> Path:
+    return Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "events"
+
+
+def _source_from_id(trigger_id: str) -> str:
+    tid = str(trigger_id or "")
+    return tid.split("::", 1)[0] if "::" in tid else ""
+
+
+def _log_event_csv(payload: dict):
+    """事件留痕：任何触发器 fire 时追加一行 CSV。失败只记日志，不阻断主链路。"""
+    try:
+        d = _events_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        now = datetime.datetime.now()
+        path = d / f"{now:%Y%m%d}.csv"
+        row = [
+            now.isoformat(timespec="seconds"),
+            _source_from_id(payload.get("id")),
+            str(payload.get("type") or ""),
+            str(payload.get("priority") or "normal"),
+            str(payload.get("id") or ""),
+            str(payload.get("recall_description") or ""),
+            json.dumps(payload, ensure_ascii=False, default=str),
+        ]
+        with path.open("a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow(row)
+    except Exception as e:
+        log.warning("事件留痕写入失败: %s", e)
+
+
 def _emit_trigger(trigger_payload: dict):
     log.debug("触发 trigger: %s", trigger_payload)
     payload = _apply_fire_filters(trigger_payload)
     if payload is None:
         return False
-    trigger_queue.put(payload)
+    if payload.get("priority") == "batched":
+        batched_queue.put(payload)
+    else:
+        trigger_queue.put(payload)
+    _log_event_csv(payload)
     from faust_backend.runtime import state
     pm = state.plugin_manager
     if pm:
@@ -90,6 +129,7 @@ def _emit_trigger(trigger_payload: dict):
 class BaseTrigger(BaseModel):
     id: str
     remove_when: Optional[str] = None
+    priority: Literal["interrupt", "normal", "batched"] = "normal"
     type: str
     recall_description: Optional[str] = None
     lifespan: Optional[int] = None
@@ -230,7 +270,7 @@ def trigger_watchdog_thread_main(poll_interval: float = 0.5):
                             ensure_store.save()
                     elif trig.type == "py-eval":
                         try:
-                            if eval(trig.eval_code):
+                            if eval(trig.eval_code, {"__builtins__": builtins}, _pyeval_context()):
                                 _emit_trigger(trig.model_dump())
                         except Exception as e:
                             log.error("评估 trigger %s 时出错: %s", trig.id, e)
@@ -268,6 +308,59 @@ def get_next_trigger(timeout: Optional[float] = None):
         return trigger_queue.get(timeout=timeout)
     except queue.Empty:
         return None
+
+
+BATCH_WINDOW_SEC: float = 30.0  # batched 级事件合并窗口（秒）；修改此值调整打扰频率
+
+
+def drain_batched() -> list[dict]:
+    """取走 batched 队列全部积压（消费侧聚合用，非阻塞）。"""
+    out = []
+    while True:
+        try:
+            out.append(batched_queue.get_nowait())
+        except queue.Empty:
+            return out
+
+
+def has_batched() -> bool:
+    return not batched_queue.empty()
+
+
+def format_batch_injection(items: list[dict], first_ts: float) -> str:
+    """把 batched 队列积压打包为一条注入文本（消费侧调用）。"""
+    summaries = "\n".join(
+        f"· {it.get('recall_description') or it.get('event_name') or it.get('id') or str(it)[:80]}"
+        for it in items
+    )
+    first_hms = datetime.datetime.fromtimestamp(first_ts).strftime("%H:%M:%S")
+    return (
+        f"<Trigger>触发器唤醒了你。以下 {len(items)} 条 batched 级事件已合并"
+        f"（自 {first_hms} 起），请统一处理：\n{summaries}"
+    )
+
+
+def note_user_interaction():
+    global last_interaction_ts
+    last_interaction_ts = time.time()
+
+
+def _pyeval_context() -> dict:
+    """py-eval 触发器可用的只读常量快照（每次轮询重算）。"""
+    now = datetime.datetime.now()
+    now_epoch = time.time()
+    idle_sec = (now_epoch - last_interaction_ts) if last_interaction_ts > 0 else 1e9
+    return {
+        "HOUR": now.hour,
+        "MINUTE": now.minute,
+        "SECOND": now.second,
+        "WEEKDAY": now.weekday(),  # 0=周一 … 6=周日
+        "MONTH": now.month,
+        "DAY": now.day,
+        "EPOCH": now_epoch,
+        "FREETIME_MIN": idle_sec / 60.0,
+        "USER_IDLE_SEC": idle_sec,
+    }
 
 
 def append_trigger(trigger_dict_or_str: dict | str):
@@ -421,6 +514,17 @@ def clear_triggers():
             log.error("清理后保存失败: %s", e)
 def has_queue_task():
     return not trigger_queue.empty()
+
+
+def get_trigger_queue_snapshot() -> list[dict]:
+    """返回触发器队列当前内容的快照（不消费队列，供调试/监控使用）。合并 urgent 与 batched 两个队列。"""
+    with trigger_queue.mutex:
+        items = list(trigger_queue.queue)
+    with batched_queue.mutex:
+        items += list(batched_queue.queue)
+    return items
+
+
 if __name__ == "__main__":
     append_trigger({
         "id": "CORE_HEARTBEAT",

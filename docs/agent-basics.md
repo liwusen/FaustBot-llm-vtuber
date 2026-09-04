@@ -84,7 +84,7 @@ Embedding API的配置同样包括 Base URL,API和Model
 | ----------- | --------------- |
 | `read`      | 读取文件            |
 | `write`     | 创建/修改文件         |
-| `edit`      | 精确代码编辑 (diff)   |
+| `edit`      | 精确文本替换（old_str 唯一匹配） |
 | `execute`   | 运行 Python/系统命令  |
 | `search`    | 网页搜索            |
 | `find`      | 项目内文件搜索         |

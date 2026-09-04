@@ -130,3 +130,63 @@ def test_invoke_inside_running_loop(plugin, monkeypatch):
     assert r["status"] == "ok"
     assert r["result"] == "inner: hi"
     assert "running event loop" not in r.get("result", "")
+
+
+# ── 触发器队列调试 API（全局 debugging 路由，dev-debugger 前端调用展示） ──
+
+
+def test_get_trigger_queue_snapshot_returns_items_without_consuming():
+    """快照必须返回队列内容且不消费队列。"""
+    import faust_backend.trigger_manager as tm
+
+    with tm.trigger_queue.mutex:
+        tm.trigger_queue.queue.append({"id": "t1", "type": "event", "event_name": "test"})
+        tm.trigger_queue.queue.append({"id": "t2", "type": "interval", "interval_seconds": 60})
+        original = list(tm.trigger_queue.queue)
+
+    try:
+        snap = tm.get_trigger_queue_snapshot()
+        assert len(snap) == 2
+        assert snap[0]["id"] == "t1" and snap[1]["id"] == "t2"
+        # 快照不应消费队列
+        assert not tm.trigger_queue.empty()
+        assert list(tm.trigger_queue.queue) == original
+    finally:
+        with tm.trigger_queue.mutex:
+            tm.trigger_queue.queue.clear()
+        with tm.batched_queue.mutex:
+            tm.batched_queue.queue.clear()
+        with tm.batched_queue.mutex:
+            tm.batched_queue.queue.clear()
+
+
+def test_trigger_queue_route_returns_queue():
+    """GET /faust/debugging/trigger-queue 返回 queue_size + triggers 列表。"""
+    from faust_backend.routes import debugging as dbg_route
+    import faust_backend.trigger_manager as tm
+
+    with tm.trigger_queue.mutex:
+        tm.trigger_queue.queue.append({"id": "q1", "type": "datetime", "target": "2026-09-01T00:00:00Z"})
+    try:
+        resp = asyncio.run(dbg_route.trigger_queue())
+        assert resp["queue_size"] == 1
+        assert len(resp["triggers"]) == 1
+        assert resp["triggers"][0]["id"] == "q1"
+        assert resp["triggers"][0]["type"] == "datetime"
+    finally:
+        with tm.trigger_queue.mutex:
+            tm.trigger_queue.queue.clear()
+
+
+def test_trigger_queue_route_empty():
+    """空队列返回 queue_size=0。"""
+    from faust_backend.routes import debugging as dbg_route
+    import faust_backend.trigger_manager as tm
+
+    with tm.trigger_queue.mutex:
+        tm.trigger_queue.queue.clear()
+    with tm.batched_queue.mutex:
+        tm.batched_queue.queue.clear()
+    resp = asyncio.run(dbg_route.trigger_queue())
+    assert resp["queue_size"] == 0
+    assert resp["triggers"] == []

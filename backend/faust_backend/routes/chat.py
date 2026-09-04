@@ -1,5 +1,6 @@
 import json
 import asyncio
+import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.base import empty_checkpoint
@@ -462,6 +463,7 @@ async def chat_websocket(websocket: WebSocket):
             if not text:
                 await websocket.send_text(json.dumps(_main_event_payload("error", error="no text provided"), ensure_ascii=False))
                 continue
+            trigger_manager.note_user_interaction()
             handled, command_reply = await _handle_slash_command(text, websocket)
             if handled:
                 # Send subagent summary before start/done per requirement
@@ -514,12 +516,30 @@ async def command_websocket(websocket: WebSocket):
     backend2frontend.FrontEndSay("Hello World! 你好,世界!")
     nimble.push_persistent_sessions_to_frontend()
     try:
+        batch_buffer: list[tuple[float, dict]] = []  # (first_ts, item)
         while True:
             if backend2frontend.hasFrontEndTask():
                 task = await backend2frontend.popFrontEndTask()
                 log.debug("从 backend2frontend 队列发送前端任务: %s", task[:80] if isinstance(task, str) else str(task)[:80])
                 if task:
                     await websocket.send_text(task)
+            # 消费侧 batched 聚合：忙时积压，窗口到期或空闲时打包注入
+            for it in trigger_manager.drain_batched():
+                batch_buffer.append((time.time(), it))
+            if batch_buffer:
+                first_ts = min(ts for ts, _ in batch_buffer)
+                window_due = time.time() - first_ts >= trigger_manager.BATCH_WINDOW_SEC
+                idle_now = (
+                    not backend2frontend.hasFrontEndTask()
+                    and not trigger_manager.has_queue_task()
+                    and not events.ignore_trigger_event.is_set()
+                )
+                if (window_due or idle_now) and state.RUNTIME_READY and state.agent is not None:
+                    items = [it for _, it in batch_buffer]
+                    batch_buffer = []
+                    trigger_text = trigger_manager.format_batch_injection(items, first_ts)
+                    log.info('批量触发器注入 %d 条: %s', len(items), trigger_text[:120])
+                    await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
             if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
                 if not state.RUNTIME_READY or state.agent is None:
                     await asyncio.sleep(0.1)

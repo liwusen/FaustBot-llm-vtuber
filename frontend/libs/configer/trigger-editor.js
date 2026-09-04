@@ -49,6 +49,19 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
   removeWhenInput.placeholder = "例如 after 24 hours, at midnight, 或时条件满足";
   removeWhenInput.value = String(source.remove_when || "");
 
+  // 优先级选择
+  const prioritySelect = el("select", "input");
+  [
+    ["normal", "常规（默认）"],
+    ["interrupt", "立即唤醒"],
+    ["batched", "低优先级（合并）"],
+  ].forEach(([value, label]) => {
+    const opt = el("option", "", label);
+    opt.value = value;
+    prioritySelect.append(opt);
+  });
+  prioritySelect.value = String(source.priority || "normal");
+
   // run_background 开关
   const bgRow = el("div", "switch-row");
   const bgText = el("span", "switch-text", source.run_background ? "后台任务" : "前台任务");
@@ -98,6 +111,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
       type: typeSelect.value,
       recall_description: recallInput.value.trim(),
       run_background: Boolean(bgInput.checked),
+      priority: prioritySelect.value,
     };
     const lifespanRaw = lifespanInput.value.trim();
     if (lifespanRaw) payload.lifespan = Number(lifespanRaw);
@@ -128,6 +142,7 @@ function openTriggerEditorModal(initialTrigger, onSubmit) {
     makeField("描述", recallInput, "触发器的备注说明，触发时会作为提示回传给 Agent，便于其理解本次触发的意图。"),
     makeField("有效期", lifespanInput, "触发器的存活秒数，超时后自动删除；留空表示长期有效。"),
     makeField("删除时间", removeWhenInput, "自然语言，表示应该在什么时候删除它，例如 'after 24 hours' 或 'at midnight'"),
+    makeField("优先级", prioritySelect, "立即唤醒=告警/紧急事件；常规=默认；低优先级=高频感知事件，消费时按 30 秒窗口合并为一次唤醒。"),
     makeField("运行方式", bgRow, "后台任务的处理过程与结果不会推送给前端界面，适合静默执行的定时作业。"),
     dynamicWrap,
   );

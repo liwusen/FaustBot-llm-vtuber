@@ -1,0 +1,8 @@
+{
+  "slug": "advanced-conditional-trigger",
+  "name": "高级条件触发器",
+  "version": "1.0.0",
+  "description": "py-eval 条件触发器：用时间/空闲度常量组合 Python 表达式，在条件满足时唤醒自己",
+  "usage": "当需要按条件（如 HOUR==23 and FREETIME_MIN>30）自动唤醒自己时，先 read(skill://advanced-conditional-trigger/SKILL.md) 再用 triggerAddTool 创建 py-eval 触发器",
+  "builtin": true
+}

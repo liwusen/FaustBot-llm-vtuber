@@ -118,7 +118,7 @@ async def poll(agile: AgileContext):         # 只拿 agile
 AgileContext 方法（全部 async）：
 - `await agile.vfs_write_symbolic(path, func, writable=False, should_be_included_in_search=True)`
 - `await agile.vfs_set_write_handler(path, func)` / `await agile.vfs_set_edit_handler(path, func)` / `await agile.vfs_delete(path)`
-- `await agile.event_fire(event_name, data, recall_description="Agent 可读的描述", lifespan=7200)` —— 触发事件唤醒你自己，之后 Agent 会收到 recall_description 描述的事件
+- `await agile.event_fire(event_name, data, recall_description="Agent 可读的描述", lifespan=7200, priority="normal")` —— 触发事件唤醒你自己，之后 Agent 会收到 recall_description 描述的事件；`priority` 三档：`interrupt`=立即唤醒（告警/紧急，如连续失败检测）、`normal`=常规行为事件（默认）、`batched`=高频低价值感知（弹幕、devwatch 提交、轮询摘要），消费侧按 30 秒窗口合并为一次唤醒
 - `await agile.log(level, msg)` / `linfo` / `ldebug` / `lwarning` / `lerror` / `lcritical`
 - `agile.storage` —— 本模块的持久化 KV 存储（详见下节「AgileStorage」）
 
@@ -197,6 +197,7 @@ def get_agile_module():
 - 模块在 Agent 进程内执行，无沙箱；请只做数据读取与逻辑，**不要**在模块里执行任意系统命令或模拟键鼠
 - 模块代码异常不会拖垮系统：内容节点异常返回错误文本并记入 `log/errors`，interval 异常记录后继续
 - 每个模块默认**每分钟最多触发 60 次 trigger**（60 秒滑动窗口），超限时 `event_fire` 抛错并记入 `log/errors`；用 `agileOperate(action="limit", name="{name}", value="{n}")` 调整（0/负数 = 不限制）
+- 优先级与限流互补：限流防事件风暴（超过上限直接抛错），`batched` 合并防打扰（窗口内多事件合为一次唤醒）；两者都用时事件仍计入限流计数
 - 触发上限**持久化**在 `~/.faustbot/agile-modules/{name}.limit`：unload→load、disable→enable、reload、重启后端后均保留
 - 卸载/禁用会自动删除模块注册的 VFS 节点、取消定时任务（可逆转）
 - 同路径的 content + write hook 可以共存（内部按类型区分）

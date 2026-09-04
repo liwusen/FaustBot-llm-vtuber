@@ -532,86 +532,111 @@ class TestWriteTool:
 
 class TestEditTool:
     @pytest.mark.asyncio
-    async def test_swap_lines(self, tmp_path):
+    async def test_unique_replace(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
-        content = "\n".join(f"line {i}" for i in range(1, 6))
+        content = "def foo():\n    return 1\n\ndef bar():\n    return 2\n"
         f = tmp_path / "test.txt"
         f.write_text(content, encoding="utf-8")
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            patch = "SWAP 2.=3:\n+LINE TWO\n+LINE THREE\n"
-            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
+            result = await edit.ainvoke({
+                "path": "test.txt",
+                "old_str": "def foo():\n    return 1",
+                "new_str": "def foo():\n    return 42",
+            })
             assert "已编辑" in result
-            new_content = f.read_text()
-            assert "line 1" in new_content
-            assert "LINE TWO" in new_content
-            assert "LINE THREE" in new_content
-            assert "line 2" not in new_content
-            assert "line 4" in new_content
+            assert "return 42" in f.read_text()
+            assert "return 1" not in f.read_text()
+            assert "return 2" in f.read_text()  # 其余内容不受影响
         finally:
             conf.WORKDIR_ROOT = orig_root
 
     @pytest.mark.asyncio
-    async def test_delete_lines(self, tmp_path):
+    async def test_no_match_guidance(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
-        content = "\n".join(f"line {i}" for i in range(1, 6))
         f = tmp_path / "test.txt"
-        f.write_text(content, encoding="utf-8")
+        f.write_text("line 1\nline 2\n", encoding="utf-8")
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            patch = "DEL 2.=3\n"
-            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
-            assert "已编辑" in result
-            new = f.read_text().split("\n")
-            assert new == ["line 1", "line 4", "line 5"]
+            result = await edit.ainvoke({
+                "path": "test.txt",
+                "old_str": "line X",
+                "new_str": "line Y",
+            })
+            # 必须给出处理指引且不破坏文件
+            assert "0 处" in result and "read" in result
+            assert f.read_text() == "line 1\nline 2\n"
         finally:
             conf.WORKDIR_ROOT = orig_root
 
     @pytest.mark.asyncio
-    async def test_ins_pre(self, tmp_path):
+    async def test_multiple_match_guidance(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
-        content = "line 1\nline 2"
         f = tmp_path / "test.txt"
-        f.write_text(content, encoding="utf-8")
+        f.write_text("return 1\nreturn 1\nreturn 1\n", encoding="utf-8")
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            patch = "INS.PRE 2:\n+INSERTED\n"
-            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
-            assert "已编辑" in result
-            new = f.read_text().split("\n")
-            assert new == ["line 1", "INSERTED", "line 2"]
+            result = await edit.ainvoke({
+                "path": "test.txt",
+                "old_str": "return 1",
+                "new_str": "return 2",
+            })
+            # 必须报告匹配数并指引加上下文，文件保持不变
+            assert "3 处" in result and "上下文" in result
+            assert f.read_text() == "return 1\nreturn 1\nreturn 1\n"
         finally:
             conf.WORKDIR_ROOT = orig_root
 
     @pytest.mark.asyncio
-    async def test_ins_post(self, tmp_path):
+    async def test_empty_old_str_guidance(self, tmp_path):
         from faust_backend.tools.edit import edit
         import faust_backend.config_loader as conf
 
-        content = "line 1\nline 2"
         f = tmp_path / "test.txt"
-        f.write_text(content, encoding="utf-8")
+        f.write_text("content\n", encoding="utf-8")
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
         try:
-            patch = "INS.POST 1:\n+INSERTED\n"
-            result = await edit.ainvoke({"path": "test.txt", "patch": patch})
-            assert "已编辑" in result
-            new = f.read_text().split("\n")
-            assert new == ["line 1", "INSERTED", "line 2"]
+            result = await edit.ainvoke({
+                "path": "test.txt",
+                "old_str": "",
+                "new_str": "x",
+            })
+            assert "old_str 不能为空" in result and "write" in result
+            assert f.read_text() == "content\n"
+        finally:
+            conf.WORKDIR_ROOT = orig_root
+
+    @pytest.mark.asyncio
+    async def test_same_old_new_noop(self, tmp_path):
+        from faust_backend.tools.edit import edit
+        import faust_backend.config_loader as conf
+
+        f = tmp_path / "test.txt"
+        f.write_text("same\n", encoding="utf-8")
+
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
+        try:
+            result = await edit.ainvoke({
+                "path": "test.txt",
+                "old_str": "same",
+                "new_str": "same",
+            })
+            assert "无任何变更" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
 
@@ -623,7 +648,11 @@ class TestEditTool:
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = "/tmp"
         try:
-            result = await edit.ainvoke({"path": "nonexistent.txt", "patch": "SWAP 1.=1:\n+x\n"})
+            result = await edit.ainvoke({
+                "path": "nonexistent.txt",
+                "old_str": "a",
+                "new_str": "b",
+            })
             assert "不存在" in result or "出错" in result or "No such file" in result
         finally:
             conf.WORKDIR_ROOT = orig_root
@@ -903,7 +932,8 @@ class TestExecuteTool:
         assert result == "(无输出)"
         gaps = [b - a for a, b in zip(ticks, ticks[1:])]
         assert gaps, "心跳任务未运行"
-        assert max(gaps) < 1.2, f"事件循环被阻塞: 最长心跳空洞 {max(gaps):.2f}s"
+        # 心跳 0.5s：若事件循环被阻塞 2s，空洞必 ≥1.9s；1.6s 阈值容忍调度抖动
+        assert max(gaps) < 1.6, f"事件循环被阻塞: 最长心跳空洞 {max(gaps):.2f}s"
 
     @pytest.mark.asyncio
     async def test_execute_unknown_language(self):

@@ -107,7 +107,7 @@ class AgileContext:
     async def vfs_delete(self,path:str):
         await self.ctx.vfs_delete(path)
 
-    async def event_fire(self,event_name:str,data:Any,recall_description:str="Agent 可读的描述",lifespan:int=7200):
+    async def event_fire(self,event_name:str,data:Any,recall_description:str="Agent 可读的描述",lifespan:int=7200,priority:str="normal"):
         if self._trigger_limiter is not None:
             self._trigger_limiter()  # 超过每分钟触发上限时抛 RuntimeError
         await self.ctx.trigger_create({
@@ -117,6 +117,7 @@ class AgileContext:
             "payload": data,
             "recall_description": recall_description,
             "lifespan": lifespan,
+            "priority": priority,
         })
         if self._on_activity is not None:
             self._on_activity()  # 事件成功进入触发器 = 模块活动，打点 last_seen

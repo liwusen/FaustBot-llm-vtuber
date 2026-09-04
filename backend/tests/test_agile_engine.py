@@ -740,3 +740,28 @@ async def test_communicate_handler_modules_and_logs(agile_env):
 
     # 未知 action → None（不拦截其它插件的消息）
     assert await plugin.communicate_handler({"action": "unknown_action"}, ctx) is None
+
+
+PRIORITY_MODULE = '''
+from agile_base import AgileModule, AgileContext
+
+module = AgileModule("prio", "priority test")
+
+@module.onloadHook()
+async def boot(agile: AgileContext):
+    await agile.event_fire("prio-alarm", {"x": 1}, priority="interrupt")
+    await agile.event_fire("prio-soft", {"x": 2})
+
+def get_agile_module():
+    return module
+'''
+
+
+@pytest.mark.asyncio
+async def test_event_fire_priority_passthrough(agile_env):
+    """event_fire 的 priority 参数透传进 trigger payload；缺省为 normal。"""
+    events, mods_dir = agile_env["events"], agile_env["mods_dir"]
+    _write_module(mods_dir, "prio", PRIORITY_MODULE)
+    assert (await runner.load_module("prio"))["ok"]
+    prios = [e["priority"] for e in events if e["id"].startswith("agileEngine::prio")]
+    assert prios == ["interrupt", "normal"]

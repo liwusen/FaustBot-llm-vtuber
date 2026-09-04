@@ -1,11 +1,9 @@
 """
-Edit tool — surgical line-based edits to files.
+Edit tool — exact string replacement in files.
 
-Uses a patch language similar to the Oh-My-Pi Edit tool:
-  SWAP N.=M:  → replace lines N through M (inclusive)
-  DEL N.=M    → delete lines N through M
-  INS.PRE N:  → insert before line N
-  INS.POST N: → insert after line N
+Claude Code style: match old_str verbatim in the file and replace with new_str.
+Requires a UNIQUE match; on 0 or multiple matches returns actionable guidance
+instead of guessing.
 """
 
 from __future__ import annotations
@@ -17,60 +15,58 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 from faust_backend.logger import get_logger
 from faust_backend.tools.vfs import get_faustbot_vfs
-from ._patch_utils import _parse_patch,_parse_range
+from ._patch_utils import replace_exact
 log = get_logger("faust.tools.edit")
 
 
 @register
 @tool
-async def edit(path: str, patch: str) -> str:
-    """Apply precise line-based edits to a file without rewriting the whole thing.
+async def edit(path: str, old_str: str, new_str: str) -> str:
+    """Replace an exact text snippet in a file with new content.
 
-    Use this when you need to change a few lines in a file — it is much more
-    efficient and safer than reading the entire file and writing it back.
+    Reads the file, finds ALL occurrences of old_str, and replaces it with
+    new_str ONLY if old_str matches exactly once. This guarantees you never
+    accidentally corrupt unrelated parts of the file.
 
-    THE PATCH LANGUAGE (each operation begins with a header line):
-
-    **SWAP N.=M:** — Replace lines N through M (inclusive) with new content.
-        SWAP 10.=12:
-        +replacement line 1
-        +replacement line 2
-
-    **DEL N.=M** — Delete lines N through M.  No body lines needed.
-        DEL 5.=7
-
-    **INS.PRE N:** — Insert new lines BEFORE line N.
-        INS.PRE 3:
-        +new line inserted before line 3
-
-    **INS.POST N:** — Insert new lines AFTER line N.
-        INS.POST 3:
-        +new line inserted after line 3
-
-    CRITICAL RULES:
-    - Line numbers refer to the ORIGINAL file before any edits.
-    - Apply edits from BOTTOM to TOP (highest line numbers first) so earlier
-      edits don't shift the line numbers of later edits.
-    - Each body line MUST start with '+' (the '+' is stripped before writing).
-    - Separate operations with a blank line.
-    - The body after a header is the FINAL content — never include old/context lines.
+    MATCH RULES (strict):
+    - old_str must match the file content EXACTLY, character for character:
+      including indentation, trailing spaces, quotes, and comments.
+    - Content copied from `read` output may include line-number prefixes or
+      anchors (e.g. "42|", "->") — strip them; they are display-only.
+    - If old_str appears MORE THAN ONCE, the edit FAILS. Include more
+      surrounding lines in old_str to make it unique.
+    - To create a new file, use the write tool instead. To append, include
+      the anchor line in old_str.
 
     TYPICAL WORKFLOW:
-    1. read("src/main.py") to get a structural summary with line numbers.
-    2. read("src/main.py:40-60") to see the exact lines you want to edit.
-    3. edit("src/main.py", "SWAP 42.=44:\\n+new line 1\\n+new line 2\\n")
+    1. read("src/main.py") to see the file content.
+    2. edit("src/main.py", "def foo():\\n    return 1", "def foo():\\n    return 2")
 
     **Editing memory documents:**
-    - `edit("memory://notes/todo", "SWAP 3.=3:\\n+updated entry\\n")` — edits a memory doc.
-    - Works exactly like file edits but targets the memory store.
+    - `edit("memory://notes/todo", "old line", "new line")` — same rules apply.
 
     Args:
-        path: File path (relative to project root) or memory:// URI.
-        patch: Patch instructions in the described format.
+        path: File path (relative to project root), memory:// or faustbot:// URI.
+        old_str: Exact text to replace. Must be unique in the file.
+        new_str: Replacement text (empty string deletes old_str).
     """
     from faust_backend.config_loader import WORKDIR_ROOT
 
-    log.info("edit INPUT path=%s patch_len=%d", path, len(patch))
+    log.info("edit INPUT path=%s old_len=%d new_len=%d", path, len(old_str), len(new_str))
+
+    # ── 参数预检 ──
+    if old_str == "":
+        _msg = (
+            "edit: old_str 不能为空（空串会匹配整个文件）。\n"
+            "处理: 新建文件用 write(path, content)；在文件末尾追加时，old_str 应包含"
+            "文件末尾的锚点行（先用 read 确认最后一行）。"
+        )
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
+    if old_str == new_str:
+        _msg = "edit: old_str 与 new_str 完全相同，本次编辑无任何变更，未写入。"
+        log.info("edit OUTPUT %s", _msg[:120])
+        return _msg
 
     from faust_backend.runtime.uri import (
         detect_unsupported_protocol,
@@ -85,7 +81,7 @@ async def edit(path: str, patch: str) -> str:
         log.info("edit OUTPUT %s", _msg[:120])
         return _msg
 
-    # Detect memory:// scheme3
+    # ── 读取原文 + 绑定写回 ──
     is_memory = path.startswith("memory://")
     is_faustbot = path.startswith("faustbot://")
     if is_memory:
@@ -104,6 +100,19 @@ async def edit(path: str, patch: str) -> str:
             _msg = f"无法读取记忆文档 memory://{mem_path}: {e}"
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
+
+        async def write_back(content: str) -> str | None:
+            try:
+                await store.file_write(mem_path, content)
+                # 触发 LLM 实体抽取
+                try:
+                    from faust_backend.memory.tools import schedule_extract
+                    schedule_extract(content, mem_path)
+                except Exception:
+                    pass
+            except Exception as e:
+                return f"无法写入记忆文档 memory://{mem_path}: {e}"
+            return None
     elif is_faustbot:
         vfs_path = "/" + path[len("faustbot://"):].strip("/")
         try:
@@ -117,6 +126,13 @@ async def edit(path: str, patch: str) -> str:
             _msg = f"文档不存在: {path}"
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
+
+        async def write_back(content: str) -> str | None:
+            try:
+                await vfs.write(vfs_path, content)
+            except Exception as e:
+                return f"无法写入 faustbot 文档 {path}: {e}"
+            return None
     else:
         file_path = Path(path)
         if not file_path.is_absolute():
@@ -134,79 +150,41 @@ async def edit(path: str, patch: str) -> str:
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
 
-    # Parse patch
-    try:
-        ops = _parse_patch(patch)
-    except ValueError as e:
-        _msg = f"Patch 格式错误: {e}\n"
-        _msg += "支持的指令: SWAP N.=M:, DEL N.=M, INS.PRE N:, INS.POST N:\n"
-        _msg += "每行正文必须以 '+' 开头，多个操作以空行分隔。"
-        log.info("edit OUTPUT %s", _msg[:120])
-        return _msg
-
-    # Apply
-    lines = original.split("\n")
-    changes = 0
-    ops.sort(key=lambda o: o["offset"], reverse=True)  # apply from bottom up
-
-    for op in ops:
-        kind = op["kind"]
-        start = op["start"] - 1  # 0-indexed start
-        end = op["end"]          # inclusive, make exclusive below
-        body = op["body"]
-
-        if kind == "SWAP":
-            end_ex = min(end, len(lines))  # exclusive
-            lines[start:end_ex] = body
-            changes += abs(len(body) - (end_ex - start))
-        elif kind == "DEL":
-            end_ex = min(end, len(lines))
-            del lines[start:end_ex]
-            changes += (end_ex - start)
-        elif kind == "INS_PRE":
-            for i, b in enumerate(body):
-                lines.insert(start + i, b)
-            changes += len(body)
-        elif kind == "INS_POST":
-            for i, b in enumerate(body):
-                lines.insert(end + i, b)
-            changes += len(body)
-
-    result = "\n".join(lines)
-
-    if is_memory:
-        try:
-            await store.file_write(mem_path, result)
-            # 触发 LLM 实体抽取
+        async def write_back(content: str) -> str | None:
             try:
-                from faust_backend.memory.tools import schedule_extract
-                schedule_extract(result, mem_path)
-            except Exception:
-                pass
-        except Exception as e:
-            _msg = f"无法写入记忆文档 memory://{mem_path}: {e}"
+                file_path.write_text(content, encoding="utf-8")
+            except Exception as e:
+                return f"无法写入文件 {file_path}: {e}"
+            return None
+
+    # ── 精确替换 ──
+    result, match_count = replace_exact(original, old_str, new_str)
+    if result is None:
+        if match_count == 0:
+            _msg = (
+                f"edit: old_str 在 {path} 中匹配 0 处，文件未被修改。\n"
+                "处理: 1) 用 read(\"" + path + "\") 重新读取，从输出中逐字复制 old_str；"
+                "2) 检查缩进、行尾空格、全角/半角字符是否一致；"
+                "3) old_str 是普通字符串不是正则，不要包含 \\n 转义符——多行直接写真实换行。"
+            )
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
-        _msg = f"已编辑 memory://{mem_path}\n变更: {changes} 行 (原文件 {len(lines)} 行 → 新文件 {len(result.split(chr(10)))} 行)"
+        _msg = (
+            f"edit: old_str 在 {path} 中匹配 {match_count} 处"
+            f"（要求恰好 1 处），文件未被修改。\n"
+            f"处理: 在 old_str 前后多包含几行上下文使其唯一"
+            f"（可用 read(\"{path}\") 查看各处差异）；"
+            f"若确实要替换所有 {match_count} 处相同片段，"
+            f"请改为逐处编辑（每处 old_str 带不同上下文）。"
+        )
         log.info("edit OUTPUT %s", _msg[:120])
         return _msg
-    elif is_faustbot:
-        try:
-            await vfs.write(vfs_path, result)
-        except Exception as e:
-            _msg = f"无法写入 faustbot 文档 {path}: {e}"
-            log.info("edit OUTPUT %s", _msg[:120])
-            return _msg
-        _msg = f"已编辑 {path}\n变更: {changes} 行"
-        log.info("edit OUTPUT %s", _msg[:120])
-        return _msg
-    else:
-        try:
-            file_path.write_text(result, encoding="utf-8")
-        except Exception as e:
-            _msg = f"无法写入文件 {file_path}: {e}"
-            log.info("edit OUTPUT %s", _msg[:120])
-            return _msg
-        _msg = f"已编辑 {file_path}\n变更: {changes} 行 (原文件 {len(lines)} 行 → 新文件 {len(result.split(chr(10)))} 行)"
-        log.info("edit OUTPUT %s", _msg[:120])
-        return _msg
+
+    # ── 写回 ──
+    write_err = await write_back(result)
+    if write_err:
+        log.info("edit OUTPUT %s", write_err[:120])
+        return write_err
+    _msg = f"已编辑 {path} (1 处替换)"
+    log.info("edit OUTPUT %s", _msg[:120])
+    return _msg

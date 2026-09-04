@@ -9,7 +9,7 @@
 | **read** | 读文件/目录/artifact/记忆 | `read("src/main.py:50-100")` `read("artifact://shell_3")` `read("memory://notes/math")` |
 | **execute** | 运行 shell/python/js 代码 | `execute("python", "print(1+2)")` `execute("shell", "dir")` |
 | **write** | 写文件或记忆库 | `write("notes.md", "# Hi")` `write("memory://facts", "知识内容")` |
-| **edit** | 精确行编辑 | `edit("file.py", "SWAP 5.=7:\\n+新内容\\n")` |
+| **edit** | 精确文本替换（唯一匹配） | `edit("file.py", "def foo():\\n    return 1", "def foo():\\n    return 2")` `edit("memory://notes", "旧句", "新句")` |
 | **search** | 搜索文件系统或记忆库 | `search("关键词", paths=["src/", "memory://"])` |
 | **find** | glob 文件匹配 | `find(["src/**/*.py", "tests/**/*.ts"])` |
 

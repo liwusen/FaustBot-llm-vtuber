@@ -31,7 +31,10 @@ async def triggerAddTool(trigger_json: str) -> str:
     Description:
         添加一个新的触发器（同 id 会覆盖旧触发器）。
         通用字段: id, type, recall_description(可选), lifespan(可选,秒),
-        run_background(可选,默认 false)。
+        run_background(可选,默认 false), priority(可选,默认 "normal")。
+        priority 三档: "interrupt"=立即唤醒（告警/紧急事件）;
+        "normal"=常规（默认）; "batched"=低优先级（高频/低价值感知事件,
+        消费侧按 30 秒窗口合并为一次唤醒,不打扰但绝不丢失）。
         run_background=true 时触发器在后台运行，你被触发时输出的内容/工具调用不会被推送给用户，只有你知道；
         HEARTBEAT 触发器应该是 run_background=false 的
         false 时结果会通过聊天窗口流式展示给用户。
@@ -43,7 +46,8 @@ async def triggerAddTool(trigger_json: str) -> str:
             "type": "interval",
             "interval_seconds": 60,
             "recall_description": "每分钟触发一次",
-            "run_background": false
+            "run_background": false,
+            "priority": "normal"
         }
     Args:
         trigger_json (str): 触发器的JSON字符串表示。
