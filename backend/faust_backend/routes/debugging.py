@@ -70,3 +70,13 @@ async def snapshot():
         "async_tasks": (await status_get())["active_tasks"],
         "active_triggers": (await status_get())["active_triggers"]
     }
+
+
+@router.get("/faust/debugging/trigger-queue")
+async def trigger_queue():
+    """调试接口：显示当前触发器队列中的所有触发器（等待被 Agent 消费的触发任务）。"""
+    items = trigger_manager.get_trigger_queue_snapshot()
+    return {
+        "queue_size": len(items),
+        "triggers": items,
+    }

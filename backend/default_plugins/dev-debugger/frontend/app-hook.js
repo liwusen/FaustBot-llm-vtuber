@@ -8,6 +8,19 @@
   let selectedName = '';
   let lastResult = '';
 
+  // 调用全局后端 API（debugging 路由）。优先 window.api.configRequest（Electron 通道），
+  // 回退到全局 cfgApi（configer 提供），最后走原生 fetch。
+  function apiGet(path) {
+    if (window.api && typeof window.api.configRequest === 'function') {
+      return window.api.configRequest('GET', path);
+    }
+    if (typeof cfgApi === 'function') {
+      return cfgApi('GET', path);
+    }
+    const base = (window.api && window.api.backendBaseUrl) || api.backendBaseUrl || 'http://127.0.0.1:13900';
+    return fetch(base + path).then((r) => r.json());
+  }
+
   // ── UI helpers ──
   function el(tag, className, text) {
     const n = document.createElement(tag);
@@ -153,9 +166,76 @@
   function render(container) {
     container.innerHTML = '';
     const root = el('div');
+    const queueHost = el('div');
     const listHost = el('div');
     const detailHost = el('div');
 
+    // ── 触发器队列（全局 debugging API，见 routes/debugging.py） ──
+    let queueTimer = null;
+
+    function renderQueueRow(item, idx) {
+      const row = el('tr');
+      row.append(el('td', 'cell-primary', String(item.id || '-')));
+      row.append(el('td', '', String(item.type || '-')));
+      const extra = { ...item };
+      delete extra.id;
+      delete extra.type;
+      const keys = Object.keys(extra);
+      const summary = keys.length
+        ? keys.map((k) => {
+            let v = extra[k];
+            if (v === null || v === undefined) return k + ': -';
+            if (typeof v === 'object') v = JSON.stringify(v);
+            return k + ': ' + String(v);
+          }).join(' · ')
+        : '-';
+      const sumCell = el('td', '');
+      sumCell.style.cssText = 'font-family:monospace;font-size:12px;word-break:break-all;';
+      sumCell.textContent = summary;
+      row.append(sumCell);
+      row.append(el('td', '', String(item.run_background ? '后台' : '前台')));
+      row.append(el('td', '', String(idx + 1)));
+      return row;
+    }
+
+    async function refreshQueue() {
+      const countLine = queueCard.querySelector('[data-queue-count]');
+      const tableBody = queueCard.querySelector('[data-queue-body]');
+      const statusLine = queueCard.querySelector('[data-queue-status]');
+      try {
+        const resp = await apiGet('/faust/debugging/trigger-queue');
+        const items = (resp && Array.isArray(resp.triggers)) ? resp.triggers : [];
+        const size = resp && typeof resp.queue_size === 'number' ? resp.queue_size : items.length;
+        if (countLine) countLine.textContent = '队列长度: ' + size + '（等待 Agent 消费的触发任务）';
+        if (statusLine) statusLine.textContent = '';
+        if (tableBody) {
+          tableBody.innerHTML = '';
+          if (!items.length) {
+            const empty = el('tr', '');
+            const td = el('td', 'table-empty', '触发器队列为空');
+            td.colSpan = 5;
+            empty.append(td);
+            tableBody.append(empty);
+          } else {
+            items.forEach((item, i) => tableBody.append(renderQueueRow(item, i)));
+          }
+        }
+      } catch (e) {
+        if (statusLine) statusLine.textContent = '获取失败: ' + (e && e.message ? e.message : String(e));
+        if (countLine) countLine.textContent = '队列长度: -';
+      }
+    }
+
+    function startQueuePolling() {
+      refreshQueue();
+      queueTimer = setInterval(refreshQueue, 3000);
+    }
+
+    function stopQueuePolling() {
+      if (queueTimer) { clearInterval(queueTimer); queueTimer = null; }
+    }
+
+    // ── 工具列表 ──
     async function loadList() {
       listHost.innerHTML = '';
       const resp = await api.communicate(PLUGIN_ID, { action: 'list_tools' });
@@ -183,17 +263,42 @@
       listHost.appendChild(list);
     }
 
+    // 页面卸载/重渲染时停止轮询
+    const _origContainerCleanup = container.cleanup || null;
+    container.cleanup = () => {
+      stopQueuePolling();
+      if (typeof _origContainerCleanup === 'function') _origContainerCleanup();
+    };
+
     function showDetail() {
       renderToolForm(detailHost, null);
     }
 
+    // 队列区块
+    const queueCard = el('div', 'card');
+    const queueTitle = el('h3', 'card-title', '触发器队列');
+    const queueHelp = el('p', 'card-help', '当前 trigger_manager 中等待 Agent 消费的触发任务（3s 自动刷新）。');
+    const queueCount = el('div', 'card-help', '');
+    queueCount.dataset.queueCount = '1';
+    const queueStatus = el('div', 'card-help', '');
+    queueStatus.style.cssText = 'color:var(--danger,#d33);';
+    queueStatus.dataset.queueStatus = '1';
+    const qTable = el('table', 'simple-table');
+    qTable.innerHTML = '<thead><tr><th>ID</th><th>类型</th><th>内容</th><th>运行</th><th>#</th></tr></thead>';
+    const qTbody = el('tbody', '');
+    qTbody.dataset.queueBody = '1';
+    qTable.append(qTbody);
+    queueCard.append(queueTitle, queueHelp, queueCount, queueStatus, qTable);
+
     root.append(listHost);
     root.appendChild(el('hr'));
     root.appendChild(detailHost);
+    root.prepend(queueCard);
     container.appendChild(root);
     loadList().catch((e) => {
       listHost.appendChild(el('div', 'card-help', '加载出错: ' + String(e)));
     });
+    startQueuePolling();
   }
 
   api.addPage({
