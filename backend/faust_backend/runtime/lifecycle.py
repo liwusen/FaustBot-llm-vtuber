@@ -132,6 +132,19 @@ def start_services():
         log.info("其他后端服务已启动")
 
 
+async def _acquire_agent_lock(owner: str) -> None:
+    """获取主 Agent 锁，带超时兜底。超时说明出现了真死锁（不可重入二次获取、
+    持锁路径被意外阻塞等），此时抛错并报告当前持有者，而不是无限等待。"""
+    try:
+        await asyncio.wait_for(state.agent_lock.acquire(), timeout=state.AGENT_LOCK_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"等待主 Agent 锁超时（{state.AGENT_LOCK_TIMEOUT:g}s）：当前持有者 "
+            f"[{state.agent_lock_owner or '未知'}]。这可能意味着持锁方已死锁或被阻塞。"
+        ) from None
+    state.mark_agent_lock_acquired(owner)
+
+
 async def invoke_agent_locked(target_agent, payload, config=None):
     if config is None:
         config = {
@@ -141,20 +154,118 @@ async def invoke_agent_locked(target_agent, payload, config=None):
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
-        async with state.agent_lock:
-            log.debug("开始调用 LLM")
-            try:
-                payload = await _apply_llm_request_pre(payload)
-                res = await target_agent.ainvoke(payload, config)
-                log.debug("LLM 调用结束")
-                return res
-            except Exception as e:
-                if state.is_rate_limit_error(e) and attempt < max_attempts:
-                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
-                else:
-                    raise
+        await _acquire_agent_lock("invoke_agent_locked")
+        log.debug("开始调用 LLM")
+        try:
+            payload = await _apply_llm_request_pre(payload)
+            res = await target_agent.ainvoke(payload, config)
+            log.debug("LLM 调用结束")
+            return res
+        except Exception as e:
+            if state.is_rate_limit_error(e) and attempt < max_attempts:
+                log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
+            else:
+                raise
+        finally:
+            state.agent_lock.release()
+            state.mark_agent_lock_released()
         await _sleep_backoff(attempt)
     raise RuntimeError("agent invoke retries exhausted")
+
+
+class _StreamFailed:
+    """生产者→消费者队列的异常包装，由消费者重抛以保持原有错误语义。"""
+
+    def __init__(self, error: BaseException):
+        self.error = error
+
+
+_STREAM_DONE = object()  # 队列终结标记
+
+
+async def _stream_agent_producer(target_agent, payload, config, abort_event, queue):
+    """持有主 Agent 锁的流式生产任务：只负责推进 astream_events 并把解析后的
+    事件推入队列。锁的持有时间只覆盖 LLM 会话本身，与消费者（websocket 发送）
+    的节拍无关——修复前端停止读取或插件 hook 阻塞时全局锁被无限期持有的问题。"""
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        log.debug("等待 Agent 锁")
+        try:
+            await _acquire_agent_lock("stream_chat_agent_events")
+        except RuntimeError as e:
+            # 锁超时等获取失败：必须通知消费者，否则消费者在 queue.get() 上永久等待
+            await queue.put(_StreamFailed(e))
+            return
+        log.debug("开始调用 LLM")
+        try:
+            payload = await _apply_llm_request_pre(payload)
+            async for event in target_agent.astream_events(
+                payload, config=config, version="v2"
+            ):
+                if not isinstance(event, dict):
+                    continue
+                if abort_event and abort_event.is_set():
+                    log.info("Agent stream aborted by user")
+                    raise asyncio.CancelledError("User interrupted")
+                event_name = str(event.get("event") or "").strip().lower()
+                data = event.get("data") or {}
+                if event_name == "on_chat_model_stream":
+                    chunk = data.get("chunk")
+                    if not chunk or not state.is_ai_message_chunk(chunk):
+                        continue
+                    # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
+                    additional_kwargs = (
+                        getattr(chunk, "additional_kwargs", {}) or {}
+                    )
+                    reasoning = (
+                        additional_kwargs.get("reasoning_content")
+                        or additional_kwargs.get("reasoning")
+                        or additional_kwargs.get("think")
+                    )
+                    if reasoning:
+                        await queue.put({"type": "reasoning_delta", "content": reasoning})
+                    delta_text = state.message_content_to_text(chunk.content)
+                    if delta_text:
+                        await queue.put({"type": "delta", "content": delta_text})
+                    continue
+                if event_name == "on_tool_start":
+                    await queue.put({
+                        "type": "tool_start",
+                        "tool_name": str(
+                            event.get("name") or data.get("name") or "tool"
+                        ).strip(),
+                        "args": state.normalize_tool_args(data.get("input")),
+                        "call_id": str(event.get("run_id") or ""),
+                    })
+                    continue
+                if event_name == "on_tool_end":
+                    await queue.put({
+                        "type": "tool_result",
+                        "tool_name": str(
+                            event.get("name") or data.get("name") or "tool"
+                        ).strip(),
+                        "output": state.tool_value_to_text(data.get("output")),
+                        "call_id": str(event.get("run_id") or ""),
+                    })
+                    continue
+            log.debug("LLM 调用结束")
+            await queue.put(_STREAM_DONE)
+            return
+        except asyncio.CancelledError:
+            # 中断/消费者关闭：通知消费者（若还在等待），锁在 finally 中释放
+            await queue.put(_StreamFailed(asyncio.CancelledError("User interrupted")))
+            raise
+        except Exception as e:
+            if state.is_rate_limit_error(e) and attempt < max_attempts:
+                log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
+            else:
+                await queue.put(_StreamFailed(e))
+                return
+        finally:
+            state.agent_lock.release()
+            state.mark_agent_lock_released()
+        await _sleep_backoff(attempt)
+    await queue.put(_StreamFailed(RuntimeError("agent stream retries exhausted")))
 
 
 async def stream_chat_agent_events(
@@ -165,70 +276,28 @@ async def stream_chat_agent_events(
             "configurable": {"thread_id": state.THREAD_ID},
             "recursion_limit": 300,
         }
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        log.debug("等待 Agent 锁")
-        async with state.agent_lock:
-            log.debug("开始调用 LLM")
-            try:
-                payload = await _apply_llm_request_pre(payload)
-                async for event in target_agent.astream_events(
-                    payload, config=config, version="v2"
-                ):
-                    if not isinstance(event, dict):
-                        continue
-                    if abort_event and abort_event.is_set():
-                        log.info("Agent stream aborted by user")
-                        raise asyncio.CancelledError("User interrupted")
-                    event_name = str(event.get("event") or "").strip().lower()
-                    data = event.get("data") or {}
-                    if event_name == "on_chat_model_stream":
-                        chunk = data.get("chunk")
-                        if not chunk or not state.is_ai_message_chunk(chunk):
-                            continue
-                        # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
-                        additional_kwargs = (
-                            getattr(chunk, "additional_kwargs", {}) or {}
-                        )
-                        reasoning = (
-                            additional_kwargs.get("reasoning_content")
-                            or additional_kwargs.get("reasoning")
-                            or additional_kwargs.get("think")
-                        )
-                        if reasoning:
-                            yield {"type": "reasoning_delta", "content": reasoning}
-                        delta_text = state.message_content_to_text(chunk.content)
-                        if delta_text:
-                            yield {"type": "delta", "content": delta_text}
-                        continue
-                    if event_name == "on_tool_start":
-                        yield {
-                            "type": "tool_start",
-                            "tool_name": str(
-                                event.get("name") or data.get("name") or "tool"
-                            ).strip(),
-                            "args": state.normalize_tool_args(data.get("input")),
-                            "call_id": str(event.get("run_id") or ""),
-                        }
-                        continue
-                    if event_name == "on_tool_end":
-                        yield {
-                            "type": "tool_result",
-                            "tool_name": str(
-                                event.get("name") or data.get("name") or "tool"
-                            ).strip(),
-                            "output": state.tool_value_to_text(data.get("output")),
-                            "call_id": str(event.get("run_id") or ""),
-                        }
-                        continue
-                log.debug("LLM 调用结束")
+    # 立即向消费者反馈"等待锁/排队中"，前端可据此显示排队状态
+    yield {"type": "waiting_lock"}
+    queue: asyncio.Queue = asyncio.Queue()
+    producer = asyncio.create_task(
+        _stream_agent_producer(target_agent, payload, config, abort_event, queue),
+        name="stream_agent_producer",
+    )
+    try:
+        while True:
+            item = await queue.get()
+            if item is _STREAM_DONE:
                 return
-            except Exception as e:
-                if state.is_rate_limit_error(e) and attempt < max_attempts:
-                    log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
-                else:
-                    raise
-        await _sleep_backoff(attempt)
+            if isinstance(item, _StreamFailed):
+                raise item.error
+            yield item
+    finally:
+        if not producer.done():
+            producer.cancel()
+        try:
+            await producer
+        except asyncio.CancelledError:
+            pass
 
 
 def _compose_runtime_extensions():

@@ -2,6 +2,7 @@ import json
 import asyncio
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.base import empty_checkpoint
 
@@ -278,6 +279,10 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
         ):
             if not isinstance(event, dict):
                 continue
+            if event.get("type") == "waiting_lock":
+                # 主 Agent 忙/排队中：立即向前端反馈，避免无提示转圈
+                await websocket.send_text(json.dumps(_main_event_payload("pending", reason="waiting_lock"), ensure_ascii=False))
+                continue
             if event.get("type") == "reasoning_delta":
                 payload = _main_event_payload("reasoning_delta", content=event.get("content", ""))
                 if pm:
@@ -380,7 +385,16 @@ async def chat_post(payload: dict):
             events.ignore_trigger_event.clear()
             log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
             return {"reply": "", "suppressed": True}
-        resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": text}]})
+        try:
+            resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": text}]})
+        except RuntimeError as e:
+            if "等待主 Agent 锁超时" in str(e):
+                log.error("Chat POST 获取主 Agent 锁超时: %s", e)
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": str(e), "busy": True},
+                )
+            raise
         if not resp:
             raise RuntimeError()
         reply = state.message_content_to_text(resp["messages"][-1].content)

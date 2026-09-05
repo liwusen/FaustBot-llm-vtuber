@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,22 @@ log = get_logger("faust.runtime.state")
 agent: "CompiledStateGraph | None" = None
 agent_lock = asyncio.Lock()
 THREAD_ID = "main"  # langgraph checkpointer 需要这个ID,保持不变即可
+
+# 主 Agent 锁等待上限（秒）。正常 LLM 长任务合法占用可达数分钟，
+# 该超时仅兜底真死锁（不可重入锁的二次获取、持锁路径意外阻塞）。
+AGENT_LOCK_TIMEOUT = 600.0
+# 当前锁持有者描述（由 mark_agent_lock_acquired/released 维护），供超时报错诊断
+agent_lock_owner: str = ""
+
+
+def mark_agent_lock_acquired(owner: str) -> None:
+    global agent_lock_owner
+    agent_lock_owner = f"{owner}@{time.strftime('%H:%M:%S')}"
+
+
+def mark_agent_lock_released() -> None:
+    global agent_lock_owner
+    agent_lock_owner = ""
 
 # ── 中断信号 ──
 _agent_abort: asyncio.Event | None = None

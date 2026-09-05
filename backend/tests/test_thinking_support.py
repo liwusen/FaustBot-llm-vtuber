@@ -285,6 +285,7 @@ class TestStreamReasoningDelta:
         results = []
         async for evt in stream_chat_agent_events(agent, {"messages": []}):
             results.append(evt)
+        results = [e for e in results if e.get("type") != "waiting_lock"]
         assert len(results) == 0
 
     @pytest.mark.asyncio
@@ -299,6 +300,7 @@ class TestStreamReasoningDelta:
         results = []
         async for evt in stream_chat_agent_events(agent, {"messages": []}):
             results.append(evt)
+        results = [e for e in results if e.get("type") != "waiting_lock"]
         assert len(results) == 0
 
     @pytest.mark.asyncio
@@ -308,6 +310,7 @@ class TestStreamReasoningDelta:
         results = []
         async for evt in stream_chat_agent_events(agent, {"messages": []}):
             results.append(evt)
+        results = [e for e in results if e.get("type") != "waiting_lock"]
         assert len(results) == 0
 
     @pytest.mark.asyncio
