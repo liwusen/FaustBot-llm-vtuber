@@ -344,6 +344,12 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
     except asyncio.CancelledError:
         await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
         log.info("聊天流被用户中断")
+    except Exception as e:
+        log.error("Chat agent stream 错误: %s", e, exc_info=True)
+        try:
+            await websocket.send_text(json.dumps(_main_event_payload("error", error=state.format_chat_error(e)), ensure_ascii=False))
+        except Exception:
+            log.error("向 websocket 发送错误事件失败（连接可能已关闭）")
     return reply
 
 
@@ -493,7 +499,13 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
                 agent_task = asyncio.create_task(_run_agent_stream(websocket, text))
-                agent_task.add_done_callback(lambda _: events.ignore_trigger_event.clear())
+
+                def _on_agent_task_done(t: asyncio.Task):
+                    events.ignore_trigger_event.clear()
+                    if not t.cancelled() and t.exception() is not None:
+                        log.error("agent_task 未处理异常: %s", t.exception(), exc_info=t.exception())
+
+                agent_task.add_done_callback(_on_agent_task_done)
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
