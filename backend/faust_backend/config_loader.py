@@ -234,6 +234,7 @@ def load_configs():
     global REASONING_CONFIG
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
+    global AUTO_FORCE_INTERRUPT
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
@@ -334,6 +335,9 @@ def load_configs():
         REASONING_CONFIG = 'medium'
     PLUGIN_MARKET_USE_GH_PROXY = bool(config.get('PLUGIN_MARKET_USE_GH_PROXY', False))
     MD_BLOCK_ENABLED = bool(config.get('MD_BLOCK_ENABLED', True))
+    # 用户发起对话时, 若主 Agent 正被前台/后台触发器占用:
+    # 强制取消触发器任务(前台触发器补发 done), 并将用户消息标记为"(用户插话)"
+    AUTO_FORCE_INTERRUPT = bool(config.get('AUTO_FORCE_INTERRUPT', True))
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
 

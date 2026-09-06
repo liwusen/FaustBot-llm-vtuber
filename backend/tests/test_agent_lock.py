@@ -86,6 +86,8 @@ async def test_waiting_lock_event_emitted_first():
     try:
         first = await _next(agen)
         assert first == {"type": "waiting_lock"}
+        acquired = await _next(agen)
+        assert acquired == {"type": "lock_acquired"}
         delta = await _next(agen)
         assert delta["type"] == "delta"
         assert delta["content"] == "你好"
@@ -101,6 +103,7 @@ async def test_consumer_pause_does_not_hold_lock():
     )
     try:
         assert (await _next(agen))["type"] == "waiting_lock"
+        assert (await _next(agen))["type"] == "lock_acquired"
         delta = await _next(agen)
         assert delta["type"] == "delta"
         # 故意不推进消费（模拟前端停止读取/hook 阻塞）
@@ -154,6 +157,7 @@ async def test_stream_error_propagates_and_releases_lock():
     )
     try:
         assert (await _next(agen))["type"] == "waiting_lock"
+        assert (await _next(agen))["type"] == "lock_acquired"
         with pytest.raises(ValueError, match="boom"):
             await _next(agen)
     finally:
@@ -170,6 +174,7 @@ async def test_stream_abort_propagates_cancelled():
     )
     try:
         assert (await _next(agen))["type"] == "waiting_lock"
+        assert (await _next(agen))["type"] == "lock_acquired"
         assert (await _next(agen))["type"] == "delta"
         abort.set()
         gate.set()  # 唤醒生产者使其在下一事件检查 abort

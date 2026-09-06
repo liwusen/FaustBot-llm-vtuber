@@ -197,6 +197,8 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
             await queue.put(_StreamFailed(e))
             return
         log.debug("开始调用 LLM")
+        # 通知消费者已获取锁（前端据此清除"排队等待中"状态）
+        await queue.put({"type": "lock_acquired"})
         try:
             payload = await _apply_llm_request_pre(payload)
             async for event in target_agent.astream_events(

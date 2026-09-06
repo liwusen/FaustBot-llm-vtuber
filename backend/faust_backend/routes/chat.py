@@ -251,8 +251,69 @@ def _main_event_payload(event_type: str, **kwargs) -> dict:
 # 活跃的 /faust/chat websocket 连接，供前台触发器流式推送复用
 _active_chat_websockets: set = set()
 
+# 当前占用主 Agent 的触发器调用任务（前台流 / 后台 invoke），供用户插话强制取消
+_active_trigger_task: asyncio.Task | None = None
+# 正在执行用户插话强制打断（前台触发器被取消时改发 done(forced) 而非 interrupted）
+_force_interrupting: bool = False
 
-async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
+
+def _register_trigger_task(task: asyncio.Task) -> None:
+    global _active_trigger_task
+    _active_trigger_task = task
+
+
+def _clear_trigger_task(task: asyncio.Task) -> None:
+    global _active_trigger_task
+    if _active_trigger_task is task:
+        _active_trigger_task = None
+
+
+async def _force_interrupt_trigger() -> bool:
+    """用户插话：强制取消当前触发器任务并等待其退出（确保主 Agent 锁释放）。
+
+    返回是否实际发生了打断。"""
+    global _force_interrupting
+    task = _active_trigger_task
+    if task is None or task.done():
+        return False
+    log.info("用户插话：强制打断触发器任务")
+    _force_interrupting = True
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        log.warning("强制打断触发器任务时出错: %s", e)
+    finally:
+        _force_interrupting = False
+        _clear_trigger_task(task)
+    return True
+
+
+async def _apply_user_interjection(text: str) -> str:
+    """AUTO_FORCE_INTERRUPT 开启时，若主 Agent 正被触发器占用：
+    强制取消触发器任务，并给用户消息加"(用户插话)"标记。"""
+    if not conf.AUTO_FORCE_INTERRUPT:
+        return text
+    if await _force_interrupt_trigger():
+        return f"(用户插话){text}"
+    return text
+
+
+async def _run_trigger_stream_frontend(chat_ws, trigger_text: str) -> None:
+    """前台触发器流式推送；失败时降级为后台执行。"""
+    try:
+        await chat_ws.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
+        await _run_agent_stream(chat_ws, trigger_text)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.error("触发器流式推送失败，降级为后台执行: %s", e)
+        await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+
+
+async def _run_agent_stream(websocket: WebSocket, text: str, agent=None) -> str:
     reply = ""
     abort_evt = state.reset_abort_event()
     pm = getattr(state, 'plugin_manager', None)
@@ -272,74 +333,82 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
         return ""
     try:
         current_history: list[dict] = []
-        async for event in stream_chat_agent_events(
-            state.agent,
+        agen = stream_chat_agent_events(
+            agent if agent is not None else state.agent,
             {"messages": [{"role": "user", "content": text}]},
             abort_event=abort_evt,
-        ):
-            if not isinstance(event, dict):
-                continue
-            if event.get("type") == "waiting_lock":
-                # 主 Agent 忙/排队中：立即向前端反馈，避免无提示转圈
-                await websocket.send_text(json.dumps(_main_event_payload("pending", reason="waiting_lock"), ensure_ascii=False))
-                continue
-            if event.get("type") == "reasoning_delta":
-                payload = _main_event_payload("reasoning_delta", content=event.get("content", ""))
-                if pm:
-                    results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
-                    if results:
-                        for r in results:
-                            if r == "__IGNORED__" or r == "__REMOVED__":
-                                log.debug("Agent event hook returned empty string, discarding payload")
-                                payload = None
-                                break
-                            if isinstance(r, dict):
-                                payload = r
-                if payload:
-                    current_history.append(payload)
-                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
-                continue
-            if event.get("type") == "delta":
-                delta_text = state.message_content_to_text(event.get("content"))
-                if not delta_text:
+        )
+        try:
+            async for event in agen:
+                if not isinstance(event, dict):
                     continue
-                reply += delta_text
-                log.debug("聊天增量: %s", delta_text[:80])
-                payload = _main_event_payload("delta", content=delta_text)
-                if pm:
-                    results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
-                    if results:
-                        for r in results:
-                            if r is None:
-                                payload = None
-                                break
-                            if isinstance(r, dict):
-                                payload = r
-                if payload:
-                    current_history.append(payload)
-                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
-                continue
-            if event.get("type") in {"tool_start", "tool_result"}:
-                payload = dict(event)
-                payload["agent_id"] = "main"
-                if pm:
-                    results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
-                    if results:
-                        for r in results:
-                            if r is None:
-                                payload = None
-                                break
-                            if isinstance(r, dict):
-                                payload = r
-                if payload:
-                    current_history.append(payload)
-                    await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-                if state.subagent_manager and state.subagent_manager.consume_status_dirty():
-                    await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                if event.get("type") == "waiting_lock":
+                    # 主 Agent 忙/排队中：立即向前端反馈，避免无提示转圈
+                    await websocket.send_text(json.dumps(_main_event_payload("pending", reason="waiting_lock"), ensure_ascii=False))
+                    continue
+                if event.get("type") == "lock_acquired":
+                    # 已获取主 Agent 锁：清除前端"排队等待中"状态
+                    await websocket.send_text(json.dumps(_main_event_payload("streaming"), ensure_ascii=False))
+                    continue
+                if event.get("type") == "reasoning_delta":
+                    payload = _main_event_payload("reasoning_delta", content=event.get("content", ""))
+                    if pm:
+                        results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                        if results:
+                            for r in results:
+                                if r == "__IGNORED__" or r == "__REMOVED__":
+                                    log.debug("Agent event hook returned empty string, discarding payload")
+                                    payload = None
+                                    break
+                                if isinstance(r, dict):
+                                    payload = r
+                    if payload:
+                        current_history.append(payload)
+                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                    continue
+                if event.get("type") == "delta":
+                    delta_text = state.message_content_to_text(event.get("content"))
+                    if not delta_text:
+                        continue
+                    reply += delta_text
+                    log.debug("聊天增量: %s", delta_text[:80])
+                    payload = _main_event_payload("delta", content=delta_text)
+                    if pm:
+                        results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                        if results:
+                            for r in results:
+                                if r is None:
+                                    payload = None
+                                    break
+                                if isinstance(r, dict):
+                                    payload = r
+                    if payload:
+                        current_history.append(payload)
+                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+                    continue
+                if event.get("type") in {"tool_start", "tool_result"}:
+                    payload = dict(event)
+                    payload["agent_id"] = "main"
+                    if pm:
+                        results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                        if results:
+                            for r in results:
+                                if r is None:
+                                    payload = None
+                                    break
+                                if isinstance(r, dict):
+                                    payload = r
+                    if payload:
+                        current_history.append(payload)
+                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    if state.subagent_manager and state.subagent_manager.consume_status_dirty():
+                        await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
+        finally:
+            await agen.aclose()
         schedule_memory_record_sync(text, reply)
         done_payload = _main_event_payload("done")
         if pm:
@@ -347,8 +416,16 @@ async def _run_agent_stream(websocket: WebSocket, text: str) -> str:
         await websocket.send_text(json.dumps(done_payload, ensure_ascii=False))
         log.debug("聊天流结束")
     except asyncio.CancelledError:
-        await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
-        log.info("聊天流被用户中断")
+        # 消费者在自身 await 处被打断时生成器停在 yield，需显式取消生产者任务以释放锁
+        for t in asyncio.all_tasks():
+            if t.get_name() == "stream_agent_producer" and not t.done():
+                t.cancel()
+        if _force_interrupting:
+            # 用户插话强制打断前台触发器：补发 done(forced)，前端据此清理触发器会话
+            await websocket.send_text(json.dumps(_main_event_payload("done", forced=True), ensure_ascii=False))
+        else:
+            await websocket.send_text(json.dumps(_main_event_payload("interrupted"), ensure_ascii=False))
+            log.info("聊天流被用户中断")
     except Exception as e:
         log.error("Chat agent stream 错误: %s", e, exc_info=True)
         try:
@@ -498,6 +575,9 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps(_main_event_payload("error", error=state.runtime_not_ready_message(), runtime=state.runtime_status_payload()), ensure_ascii=False))
                 continue
 
+            # 用户插话: 触发器占用主 Agent 时强制打断并标记消息 (AUTO_FORCE_INTERRUPT)
+            text = await _apply_user_interjection(text)
+
             # Cancel any running agent task before starting a new one
             if agent_task is not None and not agent_task.done():
                 state.get_abort_event().set()
@@ -565,7 +645,18 @@ async def command_websocket(websocket: WebSocket):
                     batch_buffer = []
                     trigger_text = trigger_manager.format_batch_injection(items, first_ts)
                     log.info('批量触发器注入 %d 条: %s', len(items), trigger_text[:120])
-                    await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+                    batch_task = asyncio.create_task(
+                        invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+                    )
+                    _register_trigger_task(batch_task)
+                    try:
+                        await batch_task
+                    except asyncio.CancelledError:
+                        if not batch_task.cancelled():
+                            raise
+                        log.info('批量触发器被用户插话打断')
+                    finally:
+                        _clear_trigger_task(batch_task)
             if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
                 if not state.RUNTIME_READY or state.agent is None:
                     await asyncio.sleep(0.1)
@@ -606,16 +697,31 @@ async def command_websocket(websocket: WebSocket):
                 chat_ws = next(iter(_active_chat_websockets), None)
                 if run_background or chat_ws is None:
                     # 后台触发器（或无前端连接时降级）：仅执行，不推送前端
-                    await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
-                    log.debug('后台触发器执行完成: %s', trigger_text[:80])
+                    bg_task = asyncio.create_task(
+                        invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+                    )
+                    _register_trigger_task(bg_task)
+                    try:
+                        await bg_task
+                        log.debug('后台触发器执行完成: %s', trigger_text[:80])
+                    except asyncio.CancelledError:
+                        if not bg_task.cancelled():
+                            raise
+                        log.info('后台触发器被用户插话打断: %s', trigger_text[:80])
+                    finally:
+                        _clear_trigger_task(bg_task)
                 else:
                     # 前台触发器：通过 chat websocket 流式推送
+                    fg_task = asyncio.create_task(_run_trigger_stream_frontend(chat_ws, trigger_text))
+                    _register_trigger_task(fg_task)
                     try:
-                        await chat_ws.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
-                        await _run_agent_stream(chat_ws, trigger_text)
-                    except Exception as e:
-                        log.error("触发器流式推送失败，降级为后台执行: %s", e)
-                        await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+                        await fg_task
+                    except asyncio.CancelledError:
+                        if not fg_task.cancelled():
+                            raise
+                        log.info('前台触发器被用户插话打断: %s', trigger_text[:80])
+                    finally:
+                        _clear_trigger_task(fg_task)
             if not state.forward_queue.empty():
                 command = await state.forward_queue.get()
                 log.debug("从队列转发命令: %s", command[:80])
