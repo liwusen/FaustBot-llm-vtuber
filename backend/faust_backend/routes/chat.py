@@ -575,21 +575,23 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps(_main_event_payload("error", error=state.runtime_not_ready_message(), runtime=state.runtime_status_payload()), ensure_ascii=False))
                 continue
 
-            # 用户插话: 触发器占用主 Agent 时强制打断并标记消息 (AUTO_FORCE_INTERRUPT)
-            text = await _apply_user_interjection(text)
-
-            # Cancel any running agent task before starting a new one
-            if agent_task is not None and not agent_task.done():
-                state.get_abort_event().set()
-                agent_task.cancel()
-                try:
-                    await agent_task
-                except asyncio.CancelledError:
-                    pass
-
+            # 用户插话: 触发器占用主 Agent 时强制打断并标记消息 (AUTO_FORCE_INTERRUPT)。
+            # 放在 ignore_trigger_event 置位之后，确保插话瞬间消费循环不再捡起
+            # 队列中的下一个触发器抢在用户消息前获取锁。
             try:
                 araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
                 events.ignore_trigger_event.set()
+                text = await _apply_user_interjection(text)
+
+                # Cancel any running agent task before starting a new one
+                if agent_task is not None and not agent_task.done():
+                    state.get_abort_event().set()
+                    agent_task.cancel()
+                    try:
+                        await agent_task
+                    except asyncio.CancelledError:
+                        pass
+
                 await websocket.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
                 agent_task = asyncio.create_task(_run_agent_stream(websocket, text))
@@ -640,7 +642,11 @@ async def command_websocket(websocket: WebSocket):
                     and not trigger_manager.has_queue_task()
                     and not events.ignore_trigger_event.is_set()
                 )
-                if (window_due or idle_now) and state.RUNTIME_READY and state.agent is not None:
+                if (
+                    (window_due or idle_now)
+                    and not events.ignore_trigger_event.is_set()
+                    and state.RUNTIME_READY and state.agent is not None
+                ):
                     items = [it for _, it in batch_buffer]
                     batch_buffer = []
                     trigger_text = trigger_manager.format_batch_injection(items, first_ts)
