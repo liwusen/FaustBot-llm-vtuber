@@ -1,4 +1,5 @@
 import json
+import uuid
 from pydantic import BaseModel
 from typing import List, Optional
 from langchain_openai import ChatOpenAI
@@ -7,6 +8,21 @@ from faust_backend.thinking import (
             get_thinking_params,
             THINKING_PRESETS
         )
+
+# OpenCode Go 要求每个会话携带稳定 session ID（用于路由优化与 prompt 缓存），
+# 并要求客户端用可识别的 User-Agent。进程生命周期内保持稳定，重启后更换。
+_OPENCODE_SESSION_ID = uuid.uuid4().hex
+OPENCODE_DEFAULT_HEADERS = {
+    "x-opencode-session": _OPENCODE_SESSION_ID,
+    "User-Agent": "FaustBot/1.0 (desktop-pet-agent)",
+}
+
+
+def _opencode_headers(extra: dict | None = None) -> dict:
+    headers = dict(OPENCODE_DEFAULT_HEADERS)
+    if extra:
+        headers.update(extra)
+    return headers
 
 class ModelProviders(BaseModel):
     providers: List['ModelProvider'] = []
@@ -19,6 +35,7 @@ class ModelProvider(BaseModel):
     key: Optional[str] = None
     models: List[str] = []
     thinking_type: str = "qwen"  # Default thinking type (qwen/deepseek/openai/none/mimo/glm/minimax)
+    opencode_go: bool = False  # OpenCode Go 订阅适配: 自动附带 x-opencode-session 会话头
 
 ModelProvider.model_rebuild()  # Rebuild the model to resolve forward references
 ModelProviders.model_rebuild()  # Rebuild the model to resolve forward references
@@ -31,6 +48,8 @@ async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
     """
     import httpx
     headers = {"Authorization": f"Bearer {provider.key}"} if provider.key else {}
+    if provider.opencode_go:
+        headers.update(_opencode_headers())
     try:
         # 注意：不能用 urljoin(base_url, "/models")——"/models" 是绝对路径会
         # 丢弃 base_url 的路径前缀（如 /v1、/compatible-mode/v1），导致 404/502。
@@ -98,6 +117,8 @@ async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:st
             request_timeout=60,
             max_retries=1,
     )
+    if provider.opencode_go:
+        kwargs["default_headers"] = _opencode_headers(kwargs.get("default_headers"))
     # [R5] thinking 开关语义：provider.thinking_type == "none" 时强制关闭思考
     # （无论 intensity 传什么），与旧 THINKING_ENABLED=False 默认行为保持一致，
     # 避免重构后所有对话意外开启推理。
