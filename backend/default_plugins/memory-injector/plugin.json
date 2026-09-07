@@ -1,0 +1,11 @@
+{
+  "id": "memory-injector",
+  "name": "Memory Injector",
+  "version": "0.1.0",
+  "description": "在用户消息送达 LLM 前检索并注入记忆文档元数据；lite=纯BM25，full=混合检索；支持 n 轮去重与低信息熵过滤",
+  "author": "allenlee（FaustBot）",
+  "enabled": true,
+  "entry": "impl.py",
+  "priority": 320,
+  "faustbot.internal.mark.builtin": true
+}
