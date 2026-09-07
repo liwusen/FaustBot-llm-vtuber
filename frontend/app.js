@@ -1,5 +1,5 @@
 import { resampleFloat32, concatFloat32Arrays, floatTo16BitPCM, writeString, encodeWAV, interleaveAndEncodeWav } from './libs/audio-utils.js';
-import { normalizeTtsText, decodeWsPayload, extractCompletedSentences } from './libs/text-utils.js';
+import { normalizeTtsText, decodeWsPayload } from './libs/text-utils.js';
 import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries, entryKey, entryHash, renderBubbleEntryHtml } from './libs/bubble-utils.js';
 import { initLogPanel } from './libs/log-panel.js';
 import { initLiveMode } from './libs/live-mode.js';
@@ -1683,6 +1683,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     return (speechRuntimeConfig && speechRuntimeConfig.frontend_default_tts_lang) || ((ttsLang && ttsLang.value) ? ttsLang.value : 'zh');
   }
 
+  function getTtsChunkIdealTokens(){
+    return Number(speechRuntimeConfig && speechRuntimeConfig.tts_chunk_ideal_tokens) || 30;
+  }
+
   function updateSpeechProbabilityUi(probability){
     try{
       const clamped = Math.max(0, Math.min(1, Number(probability) || 0));
@@ -2220,7 +2224,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           passiveChatRequest = {
             passive: true,
             replyText: '',
-            pendingBuffer: '',
+            ttsChunker: null,
             motionTokenBuffer: '',
             pendingMotions: [],
             visibleLen: 0,
@@ -2237,7 +2241,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       // 收到新消息：立刻停止上一条消息的 TTS（清空待播队列并停掉正在播放的音频）
       interruptPlayback();
       req.replyText = '';
-      req.pendingBuffer = '';
+      req.ttsChunker = null; // 新会话重置流式分块器（偏移从 0 重新累计）
       req.motionTokenBuffer = '';
       req.pendingMotions = [];
       req.visibleLen = 0;
@@ -2331,7 +2335,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         return;
       }
       req.replyText += visibleChunk;
-      req.pendingBuffer += visibleChunk;
       if (!req.entries) req.entries = [];
       const lastEntry = req.entries[req.entries.length - 1];
       if (lastEntry && lastEntry.type === 'text') {
@@ -2340,15 +2343,11 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         req.entries.push({ type: 'text', text: visibleChunk });
       }
       showResultBubble('ai', req.entries);
-      const beforeSplitLen = req.pendingBuffer.length;
-      const split = extractCompletedSentences(req.pendingBuffer);
-      req.pendingBuffer = split.rest;
-//      console.log("收到增量回复，当前累计文本：", req.replyText);
-      // pendingBuffer 起点的全局可见文本偏移：已处理总长 - 本次切分前残余长度
-      const baseOffset = (req.visibleLen || 0) - beforeSplitLen;
-      for (const sentence of split.completed){
-        const motions = takeMotionsForSentence(req, baseOffset + sentence.start, baseOffset + sentence.end);
-        enqueueStreamTtsSentence(sentence.text, getCurrentTtsLang(), motions);
+      // TTS 流式分块：按理想块长(Token)在标点/换行处把句子合并成块
+      if (!req.ttsChunker) req.ttsChunker = TtsSplitter.createChunker(getTtsChunkIdealTokens());
+      for (const chunk of req.ttsChunker.feed(visibleChunk)){
+        const motions = takeMotionsForSentence(req, chunk.start, chunk.end);
+        enqueueStreamTtsSentence(chunk.text, getCurrentTtsLang(), motions);
       }
       return;
     }
@@ -2360,41 +2359,36 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       request.motionTokenBuffer = '';
 
       // If there were no delta messages (entries empty), chunk the final reply
-      // into sentences, display them and enqueue TTS for each chunk.
+      // into TTS chunks, display them and enqueue TTS for each chunk.
       if ((!request.entries || request.entries.length === 0) && reply && reply.trim()){
         try{
-          const split = extractCompletedSentences(reply);
+          const chunker = TtsSplitter.createChunker(getTtsChunkIdealTokens());
+          const chunks = [...chunker.feed(reply), ...chunker.flush()];
           request.entries = [];
-          for (const sentence of split.completed){
-            const visible = stripMotionTokens(sentence.text);
+          for (const chunk of chunks){
+            const visible = stripMotionTokens(chunk.text);
             if (!visible) continue;
             request.entries.push({ type: 'text', text: visible });
             // show bubble immediately
             showResultBubble('ai', request.entries);
             // fire-and-forget TTS so UI updates are immediate
-            enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsForSentence(request, sentence.start, sentence.end)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
-          }
-          if (split.rest && split.rest.trim()){
-            const visible = stripMotionTokens(split.rest);
-            if (visible){
-              request.entries.push({ type: 'text', text: visible });
-              showResultBubble('ai', request.entries);
-              enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsFrom(request, split.completed.length ? split.completed[split.completed.length - 1].end : 0)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
-            }
+            enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsForSentence(request, chunk.start, chunk.end)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
           }
         }catch(e){ console.warn('chunking done reply failed', e); }
       } else {
-        if (request.pendingBuffer && request.pendingBuffer.trim()){
-          // 尾部句子无标点结束：分配偏移在 pendingBuffer 起点之后的所有剩余动作
-          const baseOffset = (request.visibleLen || 0) - request.pendingBuffer.length;
-          await enqueueStreamTtsSentence(request.pendingBuffer.trim(), getCurrentTtsLang(), takeMotionsFrom(request, baseOffset));
+        // 流式路径：flush 分块器残余（尾部无标点结束的文本）
+        if (request.ttsChunker){
+          for (const chunk of request.ttsChunker.flush()){
+            const visible = stripMotionTokens(chunk.text);
+            if (!visible) continue;
+            await enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsForSentence(request, chunk.start, chunk.end));
+          }
         }
       }
 
       // 兜底：回复末尾仍未分配的动作（无对应句子的 token）立即触发
       for (const item of (request.pendingMotions || [])) triggerModelMotion(item.motion);
       request.pendingMotions = [];
-      request.pendingBuffer = '';
       if (!request.passive) agentIsProcessing = false;
       showResultBubble('ai', request.entries);
       if (request.passive){
@@ -2478,7 +2472,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           reject,
           text,
           replyText: '',
-          pendingBuffer: '',
+          ttsChunker: null,
           motionTokenBuffer: '',
           pendingMotions: [],
           visibleLen: 0,
