@@ -952,6 +952,33 @@ body {
 	border: 1px solid rgba(213, 222, 234, 0.74);
 }
 
+.tts-split-preview {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	padding: 10px;
+	border: 1px solid rgba(213, 222, 234, 0.74);
+	border-radius: 10px;
+	background: rgba(247, 249, 252, 0.96);
+	font-size: 12px;
+	line-height: 1.6;
+	max-height: 150px;
+	overflow-y: auto;
+}
+
+.tts-split-seg {
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: #e8f0fe;
+	color: #1a3c6e;
+	white-space: pre-wrap;
+}
+
+.tts-split-seg.alt {
+	background: #e6f6ec;
+	color: #1d5c37;
+}
+
 .range-input {
 	-webkit-appearance: none;
 	appearance: none;

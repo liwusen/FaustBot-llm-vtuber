@@ -49,6 +49,7 @@ def frontend_speech_config() -> dict[str, Any]:
         "asr_detection_mode": "vad",
         "vad_ws_path": "/faust/audio/ws/vad",
         "frontend_default_tts_lang": _conf_get("FRONTEND_DEFAULT_TTS_LANG", "zh") or "zh",
+        "tts_chunk_ideal_tokens": int(conf.TTS_CHUNK_IDEAL_TOKENS),
         "openai_asr_energy_threshold": float(conf.OPENAI_ASR_ENERGY_THRESHOLD or 0.02),
         "openai_asr_silence_ms": int(conf.OPENAI_ASR_SILENCE_MS or 700),
         "openai_asr_min_speech_ms": int(conf.OPENAI_ASR_MIN_SPEECH_MS or 250),

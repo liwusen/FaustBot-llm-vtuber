@@ -6,14 +6,19 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 from dataclasses import dataclass, field
+
+if TYPE_CHECKING:
+    from faust_backend.plugin_system.plugin_storage import PluginStorage
 @dataclass
 class PluginContext:
     plugin_id: str
     plugin_dir: Path
     plugin_data_dir: Path | None = None
     config: dict[str, Any] = field(default_factory=dict)
+    # 插件 KV 持久存储（GLOBAL 常驻 / SESSION per-Agent, clear/compact 时重置）
+    storage: "PluginStorage | None" = None
 
     async def trigger_create(self, payload: dict | str) -> Any:
         fn = self.config.get("trigger_create")

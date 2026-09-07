@@ -76,6 +76,19 @@ function openProviderModal(existing) {
   }
   thinkingSelect.value = existing && existing.thinking_type ? existing.thinking_type : "qwen";
 
+  // OpenCode Go 适配头：启用后请求自动附带 x-opencode-session 会话头
+  const ogCheckbox = el("input");
+  ogCheckbox.type = "checkbox";
+  ogCheckbox.checked = !!(existing && existing.opencode_go);
+  const ogText = el("span", "switch-text", ogCheckbox.checked ? "已启用" : "已禁用");
+  const ogLabel = el("label", "switch");
+  ogLabel.append(ogCheckbox, el("span", "switch-slider"));
+  ogCheckbox.addEventListener("change", () => {
+    ogText.textContent = ogCheckbox.checked ? "已启用" : "已禁用";
+  });
+  const ogRow = el("div", "switch-row");
+  ogRow.append(ogText, ogLabel);
+
   const field = (label, node) => {
     const box = el("div", "form-field");
     box.append(el("label", "form-field-label", label));
@@ -104,6 +117,7 @@ function openProviderModal(existing) {
         key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null,
         models: [],
         thinking_type: thinkingSelect.value,
+        opencode_go: ogCheckbox.checked,
       };
       providers.push(target);
       _saveProvidersToState(providers);
@@ -129,11 +143,12 @@ function openProviderModal(existing) {
       const providers = JSON.parse(JSON.stringify(state.providers || []));
       let target = providers.find((p) => p.name === name);
       if (!target) {
-        providers.push({ name, base_url: base, key: key || null, models: [], thinking_type: thinkingSelect.value });
+        providers.push({ name, base_url: base, key: key || null, models: [], thinking_type: thinkingSelect.value, opencode_go: ogCheckbox.checked });
       } else {
         target.base_url = base;
         if (key) target.key = key;
         target.thinking_type = thinkingSelect.value;
+        target.opencode_go = ogCheckbox.checked;
       }
       state.providers = providers;
       await cfgApi("POST", "/faust/admin/config", {
@@ -168,10 +183,11 @@ function openProviderModal(existing) {
           target.base_url = base;
           if (keyInput.value && keyInput.value !== "********") target.key = keyInput.value;
           target.thinking_type = thinkingSelect.value;
+          target.opencode_go = ogCheckbox.checked;
         }
       } else {
         if (providers.some((p) => p.name === name)) { showBanner("error", "Provider 已存在"); return; }
-        providers.push({ name, base_url: base, key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null, models: [], thinking_type: thinkingSelect.value });
+        providers.push({ name, base_url: base, key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null, models: [], thinking_type: thinkingSelect.value, opencode_go: ogCheckbox.checked });
       }
       _saveProvidersToState(providers);
       closeModal();
@@ -181,12 +197,13 @@ function openProviderModal(existing) {
     makeButton("关闭", closeModal)
   );
 
-  const tip = el("p", "card-help", "新增 Provider 后可在下方 Models 列表勾选主模型与 Subagent 模型；所有改动随顶部「保存」统一生效。");
+  const tip = el("p", "card-help", "新增 Provider 后可在下方 Models 列表勾选主模型与 Subagent 模型；所有改动随顶部「保存」统一生效。「Opencode Go 适配头」适用于 OpenCode Go 订阅端点：启用后每个请求自动附带 x-opencode-session 会话头（用于路由优化与提示缓存）。");
   openModal(isEdit ? `编辑 Provider - ${existing.name}` : "添加 AI Provider", [
     field("名称", nameInput),
     field("Base URL", urlInput),
     field("API Key", keyInput),
     field("Thinking 格式", thinkingSelect),
+    field("Opencode Go 适配头", ogRow),
     loadBtn,
     el("h4", "card-title", "模型管理"),
     modelRow,

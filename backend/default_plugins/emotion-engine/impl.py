@@ -583,10 +583,10 @@ class EmotionEngineStore:
             tier = self.tier()
             lines = [
                 "[Emotion Engine]",
-                "FaustBot 具有情绪系统。你可以在回复的最后调用 EmotionInvokeSigned(tags) 工具来更新情绪状态。",
+                "FaustBot 具有情绪系统。",
                 "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。",
-                "你应该(SHOULD)在每次回复中调用 EmotionInvokeSigned 来反映你的情绪状态,并且根据附加的情绪标签来输出消息。",
-                "你绝对不可以(MUST NOT)在回复中提到'情绪向量'或类似的内部信息",
+                "你应该(SHOULD)在每次回复最后调用一次 EmotionInvokeSigned 来反映你的情绪状态,并且用户消息根据附加的情绪标签来输出",
+                "你绝对不可以(MUST NOT)在回复中q提到'情绪向量'或类似的内部信息",
                 "",
                 "[Emotion Engine - 当前情绪状态]",
                 f"当前档位: {TIER_LABELS.get(tier, '正常')}（{tier}）",

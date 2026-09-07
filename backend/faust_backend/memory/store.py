@@ -23,6 +23,7 @@ from rank_bm25 import BM25Okapi
 
 import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
+from faust_backend.memory.tokenize_pool import jieba_tokenize, jieba_tokenize_batch
 from faust_backend.memory.config import (
     EMBED_MODEL, EMBED_DIM, MAX_CHUNK_CHARS, CHUNK_OVERLAP_CHARS,
     MIN_SCORE_PATCH, MAX_SCORE_PATCH,
@@ -58,23 +59,6 @@ def _is_path_id(nid: str) -> bool:
 def _ent_id() -> str:
     return f"ent_{uuid.uuid4().hex}"
 
-
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"\w+", str(text).lower())
-
-
-def _bm25_score_worker(args: tuple) -> list[dict]:
-    corpus, doc_metas, query_tokens, top_k = args
-    bm25 = BM25Okapi(corpus)
-    scores = bm25.get_scores(query_tokens)
-    ps: dict[str, list[float]] = {}
-    for dm, sc in zip(doc_metas, scores):
-        ps.setdefault(dm["path"], []).append(sc)
-    ranked = sorted(
-        [{"path": p, "score": sum(sl) / len(sl), "_source": "bm25"} for p, sl in ps.items()],
-        key=lambda x: x["score"], reverse=True,
-    )
-    return ranked[:top_k]
 
 
 def _normalize_path(path: str) -> str:
@@ -1413,7 +1397,7 @@ class GraphStore:
 
     # ── BM25 index ──
 
-    def _ensure_bm25_index(self) -> None:
+    async def _ensure_bm25_index(self) -> None:
         if self._bm25_index is not None and not self._bm25_dirty:
             return
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1504,17 +1488,17 @@ class GraphStore:
             self._mark_bm25_clean()
             return
 
-        tokenized = [_tokenize(d["text"]) for d in docs]
+        tokenized = await jieba_tokenize_batch([d["text"] for d in docs])
         self._bm25_corpus = tokenized
         self._bm25_index = BM25Okapi(tokenized)
         self._bm25_docs = docs
         self._mark_bm25_clean()
 
-    def _bm25_search(self, query: str, top_k: int) -> list[dict]:
-        self._ensure_bm25_index()
+    async def _bm25_search(self, query: str, top_k: int) -> list[dict]:
+        await self._ensure_bm25_index()
         if self._bm25_index is None or not self._bm25_docs:
             return []
-        query_tokens = _tokenize(query)
+        query_tokens = await jieba_tokenize(query)
         scores = self._bm25_index.get_scores(query_tokens)
         path_scores: dict[str, list[float]] = {}
         for doc, score in zip(self._bm25_docs, scores):
@@ -1524,20 +1508,6 @@ class GraphStore:
             results.append({"path": path, "score": sum(sc_list) / len(sc_list), "_source": "bm25"})
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:top_k]
-
-    def _bm25_search_batch(self, queries: list[str], top_k: int) -> list[list[dict]]:
-        self._ensure_bm25_index()
-        if self._bm25_index is None or not self._bm25_corpus:
-            return [[] for _ in queries]
-        import multiprocessing as _mp
-        from concurrent.futures import ProcessPoolExecutor
-        q_tokens = [_tokenize(q) for q in queries]
-        n_workers = min(len(queries), _mp.cpu_count() or 4)
-        if n_workers <= 1:
-            return [self._bm25_search(q, top_k) for q in queries]
-        args_list = [(self._bm25_corpus, self._bm25_docs, toks, top_k) for toks in q_tokens]
-        with ProcessPoolExecutor(max_workers=n_workers) as ex:
-            return list(ex.map(_bm25_score_worker, args_list))
 
     # ── vector index ──
 
@@ -1951,7 +1921,7 @@ class GraphStore:
     async def _hybrid_search(self, query: str, scope_prefix: str,
                               tags: list[str] | None, top_k: int) -> list[dict]:
         if getattr(conf, 'BM25_ONLY', False):
-            bm25_results = self._bm25_search(query, top_k * 2)
+            bm25_results = await self._bm25_search(query, top_k * 2)
             filtered: list[dict] = []
             required_tags = {t.casefold() for t in (tags or [])}
             for item in bm25_results:
@@ -1979,7 +1949,7 @@ class GraphStore:
             return filtered[:top_k]
 
         vector_results = await self._vector_search(query, scope_prefix, tags, top_k)
-        bm25_results = self._bm25_search(query, top_k * 2)
+        bm25_results = await self._bm25_search(query, top_k * 2)
 
         required_tags = {t.casefold() for t in (tags or [])}
         bm25_filtered = []
@@ -2086,6 +2056,22 @@ class GraphStore:
         reranked = await self._rerank(q, merged, top_k)
         reranked.sort(key=lambda x: x.get("score", 0), reverse=True)
         return reranked[:top_k * 2]
+
+    async def search_bm25(self, query_tokens: list[str], top_k: int = 3) -> list[dict]:
+        """Lite 模式入口：接受已分词的 query token（jieba），纯 BM25 检索。"""
+        await self._ensure_bm25_index()
+        if self._bm25_index is None or not self._bm25_docs or not query_tokens:
+            return []
+        scores = self._bm25_index.get_scores(list(query_tokens))
+        path_scores: dict[str, list[float]] = {}
+        for doc, score in zip(self._bm25_docs, scores):
+            path_scores.setdefault(doc["path"], []).append(score)
+        results = [
+            {"path": path, "score": sum(sc_list) / len(sc_list), "_source": "bm25"}
+            for path, sc_list in path_scores.items()
+        ]
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
 
     def _is_binary_path(self, path: str) -> bool:
         """检测文件后缀是否为图片/二进制文件"""

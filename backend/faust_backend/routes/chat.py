@@ -148,6 +148,9 @@ async def _clear_current_session() -> str:
     if state.subagent_manager is not None:
         await state.subagent_manager.reset_persistent_state()
     reset_output_store(clear_persisted=True)
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm.reset_all_plugin_sessions()
     info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
     return f"已清空当前会话并重建运行时。ready={info.get('ready')} status={info.get('status')}"
 
@@ -206,6 +209,9 @@ async def _replace_session_with_summary(summary: str) -> None:
         "ls_integration": "faust_slash_compact",
     }
     await state.checkpointer.aput(config, checkpoint, metadata, {"messages": 1}) # type: ignore
+    pm = getattr(state, 'plugin_manager', None)
+    if pm:
+        pm.reset_all_plugin_sessions()
 
 
 async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -> tuple[bool, str]:

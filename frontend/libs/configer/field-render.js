@@ -239,6 +239,24 @@ function makeFieldCard(scope, key, value) {
         input.style.setProperty("--range-fill", `${Math.max(0, Math.min(100, ratio))}%`);
       };
       syncSlider();
+      // 理想TTS块单位长：滑块上方动态预览分段效果（与 app.js 播放管线同一套分块逻辑）
+      if (key === "TTS_CHUNK_IDEAL_TOKENS" && window.TtsSplitter) {
+        const SAMPLE_TEXT = "你好呀。今天天气真不错，我们一起去公园散步，顺便聊聊最近的生活吧！据说周末会有短暂降雨，出门记得带伞哦。LSTM networks are widely used for sequence modeling tasks in modern deep learning systems.";
+        const preview = el("div", "tts-split-preview");
+        const renderPreview = () => {
+          const n = Math.round(Number(input.value) || 30);
+          preview.textContent = "";
+          window.TtsSplitter.demoSplit(SAMPLE_TEXT, n).forEach((seg, i) => {
+            const span = document.createElement("span");
+            span.className = "tts-split-seg" + (i % 2 ? " alt" : "");
+            span.textContent = seg;
+            preview.append(span);
+          });
+        };
+        input.addEventListener("input", renderPreview);
+        sliderWrap.append(preview);
+        renderPreview();
+      }
       input.addEventListener("input", () => {
         const parsed = normalizeNumberInput(input.value, value);
         syncSlider();

@@ -18,6 +18,7 @@ import faust_backend.trigger_manager as trigger_manager
 from faust_backend.tools.vfs import get_faustbot_vfs
 
 from .hooks import CoreHooks, hookimpl
+from .plugin_storage import PluginStorage
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 from .plugin_base import FaustPlugin
 
@@ -104,6 +105,8 @@ class PluginManager:
         self._last_reload_ts = 0.0
         self._plugin_fingerprint: dict[str, float] = {}
         self._plugin_enable_fingerprint: str = ""
+        # 插件 KV 存储实例（GLOBAL/SESSION 生命周期，见 plugin_storage.py）
+        self._plugin_storages: dict[str, PluginStorage] = {}
         # ── pluggy integration ──
         self._pluggy_manager = pluggy.PluginManager("faustbot")
         self._pluggy_manager.add_hookspecs(CoreHooks)
@@ -214,10 +217,14 @@ class PluginManager:
         async def _vfs_list(path="/"):
             return await vfs.list_dir(path)
 
+        storage = PluginStorage(plugin_id, Path(conf.PLUGIN_DATA_ROOT) / plugin_id,
+                                agent_name=str(conf.AGENT_NAME or "faust"))
+        self._plugin_storages[plugin_id] = storage
         return PluginContext(
             plugin_id=plugin_id,
             plugin_dir=plugin_dir,
             plugin_data_dir=Path(conf.PLUGIN_DATA_ROOT) / plugin_id,
+            storage=storage,
             config={
                 "trigger_create": trigger_manager.append_trigger,
                 "trigger_list": trigger_manager.list_triggers,
@@ -885,6 +892,14 @@ class PluginManager:
         except Exception as exc:
             log.warning("插件 hook 调用失败 %s: %s", hook_name, exc)
             return []
+
+    def reset_all_plugin_sessions(self) -> None:
+        """会话 clear/compact 时重置所有插件的 SESSION 作用域存储。"""
+        for storage in list(self._plugin_storages.values()):
+            try:
+                storage.reset_session()
+            except Exception:
+                log.exception("重置插件 SESSION 存储失败: %s", storage.plugin_id)
 
     async def _call_pluggy_hook(self, hook_name: str, **kwargs) -> list:
         """调用 pluggy hook 并收集所有结果；异步实现会被逐个 await。"""
