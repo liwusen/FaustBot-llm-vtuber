@@ -234,6 +234,7 @@ def load_configs():
     global REASONING_CONFIG
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
+    global TTS_CHUNK_IDEAL_TOKENS
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
@@ -334,6 +335,8 @@ def load_configs():
         REASONING_CONFIG = 'medium'
     PLUGIN_MARKET_USE_GH_PROXY = bool(config.get('PLUGIN_MARKET_USE_GH_PROXY', False))
     MD_BLOCK_ENABLED = bool(config.get('MD_BLOCK_ENABLED', True))
+    # TTS 流式分块的理想块长(单位 Token, 10~100): 1字母=0.5 Token, 1汉字=1 Token
+    TTS_CHUNK_IDEAL_TOKENS = int(config.get('TTS_CHUNK_IDEAL_TOKENS', 30) or 30)
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
 
