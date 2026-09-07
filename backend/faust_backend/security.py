@@ -30,11 +30,18 @@ def _get_checker_agent():
     global _checker_agent
     if _checker_agent is None:
         from faust_backend.runtime import state as runtime_state
-        from faust_backend.provider import get_main_credentials
-        _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
+        from faust_backend.provider import (
+            get_main_credentials, get_main_provider, opencode_headers,
+        )
+        providers = runtime_state.get_model_providers()
+        _model_name, _api_key, _api_base = get_main_credentials(providers)
         if not _model_name:
             raise RuntimeError("main_model 未配置（provider.private.json），无法创建安全审核模型")
-        _checker_agent = ChatOpenAI(model=_model_name, base_url=_api_base, api_key=_api_key)
+        kwargs: dict = {}
+        if get_main_provider(providers).opencode_go:
+            # OpenCode Go 要求每个会话携带稳定 session 头
+            kwargs["default_headers"] = opencode_headers()
+        _checker_agent = ChatOpenAI(model=_model_name, base_url=_api_base, api_key=_api_key, **kwargs)
     return _checker_agent
 def setSecurityLevel(level):
     """设置安全级别
@@ -188,13 +195,18 @@ async def extract_command_information(command:str):
             }
         ]
     }
-    
-    指令正文
-    指令:"""+command
-    result = await _get_checker_agent().ainvoke([
-        SystemMessage(content=prompt)
-    ], config={"callbacks": []})
-    raw_content = result.content if isinstance(result.content, str) else json.dumps(result.content, ensure_ascii=False)
+    """
+    # Omen Alpha/Console Go 等上游要求消息数组包含 user 消息，仅 system 会被拒绝。
+    # 另: openai 3.8 的 aiohttp 传输层对非流式响应读取挂死(Connection error),
+    # 主 Agent 全部走 astream, 此处同样用 astream 拼接以绕开该问题。
+    chunks: list[str] = []
+    async for chunk in _get_checker_agent().astream([
+        SystemMessage(content=prompt),
+        HumanMessage(content=command),
+    ], config={"callbacks": []}):
+        content = chunk.content
+        chunks.append(content if isinstance(content, str) else json.dumps(content, ensure_ascii=False))
+    raw_content = "".join(chunks)
     cleaned = raw_content.strip()
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL | re.IGNORECASE)
     if fenced:

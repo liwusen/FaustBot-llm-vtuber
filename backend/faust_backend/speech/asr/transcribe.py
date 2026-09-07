@@ -1,6 +1,7 @@
 from typing import Any
 
 import base64
+import time
 
 import requests
 
@@ -96,6 +97,19 @@ def transcribe_audio(filename: str, audio_bytes: bytes, content_type: str | None
             headers={"api-key": api_key, "Content-Type": "application/json"},
             timeout=120,
         )
+        # 429 速率限制：退避重试两次（2s / 5s）
+        for _retry in range(2):
+            if resp.status_code != 429:
+                break
+            time.sleep(2 if _retry == 0 else 5)
+            resp = requests.post(
+                url,
+                json=payload,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                timeout=120,
+            )
+        if resp.status_code == 429:
+            raise SpeechRuntimeError("MiMo ASR 速率限制(重试2次仍429)，请稍后再说")
         if not resp.ok:
             raise SpeechRuntimeError(f"MiMo ASR 服务错误: {resp.status_code} {resp.text}")
         try:

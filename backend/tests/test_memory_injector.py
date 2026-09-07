@@ -35,6 +35,10 @@ _FAKE_TOKENS = {
 class FakeCtx:
     def __init__(self, values=None):
         self.values = dict(values or {})
+        import tempfile
+        from faust_backend.plugin_system.plugin_storage import PluginStorage
+        self.storage = PluginStorage("memory-injector-test",
+                                     Path(tempfile.mkdtemp()), agent_name="faust")
 
     async def get_config(self, key, default=None):
         return self.values.get(key, default)
@@ -132,3 +136,17 @@ async def test_no_hits_returns_original_message_untouched(monkeypatch):
     plugin = _make_plugin(monkeypatch, fm)
     out = await plugin.message_received("介绍一下记忆系统", [], plugin.ctx)
     assert out is None  # 无命中不注入，消息保持原样
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_session_reset_clears_dedup_window(monkeypatch):
+    """SESSION 存储重置（会话 clear/compact）后，去重窗口清空，同 path 可再次注入。"""
+    fm = FakeMemory([{"path": "/kb/m.md", "description": "记忆系统笔记", "line_count": 5, "score": 1.0}])
+    plugin = _make_plugin(monkeypatch, fm, {"DEDUP_TURNS": 2})
+    first = await plugin.message_received("介绍一下记忆系统", [], plugin.ctx)
+    second = await plugin.message_received(" again about memory system ", [], plugin.ctx)
+    assert first is not None and second is None
+    # 模拟会话 clear/compact 的 SESSION 重置
+    plugin.ctx.storage.reset_session()
+    third = await plugin.message_received(" again about memory system ", [], plugin.ctx)
+    assert third is not None

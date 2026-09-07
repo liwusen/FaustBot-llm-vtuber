@@ -18,7 +18,7 @@ OPENCODE_DEFAULT_HEADERS = {
 }
 
 
-def _opencode_headers(extra: dict | None = None) -> dict:
+def opencode_headers(extra: dict | None = None) -> dict:
     headers = dict(OPENCODE_DEFAULT_HEADERS)
     if extra:
         headers.update(extra)
@@ -49,7 +49,7 @@ async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
     import httpx
     headers = {"Authorization": f"Bearer {provider.key}"} if provider.key else {}
     if provider.opencode_go:
-        headers.update(_opencode_headers())
+        headers.update(opencode_headers())
     try:
         # 注意：不能用 urljoin(base_url, "/models")——"/models" 是绝对路径会
         # 丢弃 base_url 的路径前缀（如 /v1、/compatible-mode/v1），导致 404/502。
@@ -118,7 +118,7 @@ async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:st
             max_retries=1,
     )
     if provider.opencode_go:
-        kwargs["default_headers"] = _opencode_headers(kwargs.get("default_headers"))
+        kwargs["default_headers"] = opencode_headers(kwargs.get("default_headers"))
     # [R5] thinking 开关语义：provider.thinking_type == "none" 时强制关闭思考
     # （无论 intensity 传什么），与旧 THINKING_ENABLED=False 默认行为保持一致，
     # 避免重构后所有对话意外开启推理。
