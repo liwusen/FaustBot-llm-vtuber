@@ -1806,6 +1806,15 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let chatWsReady = null;
   let currentChatRequest = null;
   let passiveChatRequest = null;
+  // 主 Agent 排队提示（pending/waiting_lock）：延迟 1s 展示，收到 start 前取消
+  let pendingWaitingTimer = null;
+
+  function cancelPendingWaitingNotice() {
+    if (pendingWaitingTimer) {
+      clearTimeout(pendingWaitingTimer);
+      pendingWaitingTimer = null;
+    }
+  }
   let streamTtsDrainPromise = null;
   let streamTtsSentenceId = 0;
   let streamTtsNextPlayId = 0;
@@ -2210,6 +2219,24 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       return;
     }
 
+    // 主 Agent 排队反馈（waiting_lock）：延迟 1s 展示；1s 内收到 start 则不展示。
+    // 仅更新状态栏，不写入 replyText/entries，因此不会被 TTS 朗读。
+    if (msg.type === 'pending' && String(msg.reason || '') === 'waiting_lock') {
+      cancelPendingWaitingNotice();
+      pendingWaitingTimer = setTimeout(() => {
+        pendingWaitingTimer = null;
+        if (chatStatusEl) chatStatusEl.textContent = '主 Agent 正忙，排队等待中...';
+      }, 1000);
+      return;
+    }
+
+    // 已获取主 Agent 锁（lock_acquired → streaming）：清除"排队等待中"
+    if (msg.type === 'streaming') {
+      cancelPendingWaitingNotice();
+      if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
+      return;
+    }
+
     // 后端主动推送的流（触发器唤醒、Nimble 消息等）没有对应的主动请求。
     // 此时为流式消息创建一个临时被动会话，复用同一套累积/气泡/TTS 逻辑，
     // 否则 start/delta/done 会被直接丢弃，既不显示也不发声。
@@ -2238,6 +2265,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     const req = currentChatRequest || passiveChatRequest;
 
     if (msg.type === 'start'){
+      cancelPendingWaitingNotice();
       // 收到新消息：立刻停止上一条消息的 TTS（清空待播队列并停掉正在播放的音频）
       interruptPlayback();
       req.replyText = '';
@@ -2353,6 +2381,16 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
 
     if (msg.type === 'done'){
+      // 触发器被用户插话强制打断的 done：仅清理触发器被动会话与状态栏，
+      // 不触碰用户当前的 active 请求
+      if (msg.forced){
+        cancelPendingWaitingNotice();
+        if (chatStatusEl) chatStatusEl.textContent = '就绪';
+        if (textChatStatus) textChatStatus.textContent = '就绪';
+        passiveChatRequest = null;
+        return;
+      }
+      cancelPendingWaitingNotice();
       const request = currentChatRequest || passiveChatRequest;
       let reply = stripMotionTokens(request.replyText || '');
       request.replyText = reply;
@@ -2411,6 +2449,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
 
     if (msg.type === 'interrupted'){
+      cancelPendingWaitingNotice();
       if (chatStatusEl) chatStatusEl.textContent = '已中断';
       if (textChatStatus) textChatStatus.textContent = '已中断';
       const reqI = currentChatRequest || passiveChatRequest;
@@ -2436,6 +2475,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
 
     if (msg.type === 'error'){
+      cancelPendingWaitingNotice();
       if (chatStatusEl) chatStatusEl.textContent = '聊天错误';
       if (textChatStatus) textChatStatus.textContent = '聊天错误';
       showResultBubble('error', msg.error || '未知聊天错误');
