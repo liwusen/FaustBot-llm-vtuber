@@ -819,3 +819,26 @@ class TestEntityVecSidecarAndBatchFlush:
         d2 = json.loads(graph_path.read_text(encoding="utf-8"))
         assert "_name_vec" not in d2["nodes"][eid]
         assert vecs_file.exists()
+
+
+# ── BM25 jieba 化 + search_bm25 ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_search_bm25_chinese_match(memory_store):
+    await memory_store.file_write("/notes/映射.md", "LSTM 是长短期记忆网络，用于序列建模。", index=True)
+    await memory_store.file_write("/notes/无关.md", "今天天气很好，适合出门散步。", index=True)
+    # rank_bm25 在 N<3 的语料下 IDF 退化（零/负分），补充 filler 使排序有意义
+    await memory_store.file_write("/notes/f1.md", "会议记录：讨论了季度预算分配与人员安排。", index=True)
+    await memory_store.file_write("/notes/f2.md", "读书笔记：三体讲述了宇宙文明间的接触。", index=True)
+    await memory_store.file_write("/notes/f3.md", "菜谱：红烧肉需要焯水、炒糖色、炖煮两小时。", index=True)
+    await memory_store.file_write("/notes/f4.md", "旅行计划：明年春天去云南看洱海和雪山。", index=True)
+    res = await memory_store.search_bm25(["LSTM", "序列"], top_k=3)
+    assert res, "中文词命中文档失败"
+    assert "映射" in res[0]["path"], "相关文档应排第一"
+    assert res[0]["_source"] == "bm25"
+    assert res[0]["score"] > res[-1]["score"]
+
+
+@pytest.mark.asyncio
+async def test_search_bm25_empty_tokens(memory_store):
+    assert await memory_store.search_bm25([], top_k=3) == []
