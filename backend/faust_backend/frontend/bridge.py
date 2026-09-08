@@ -147,3 +147,6 @@ class FrontendBridge:
 
     def reload_plugin_assets(self) -> None:
         self._push("RELOAD_PLUGIN_ASSETS")
+
+    def reload_settings(self) -> None:
+        self._push("RELOAD_FRONTEND_SETTING")

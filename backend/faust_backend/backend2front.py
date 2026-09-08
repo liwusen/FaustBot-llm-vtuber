@@ -111,3 +111,7 @@ def frontendSetVRMLookAt(x_or_dir, y=None, z=None) -> None:
 
 def FrontEndReloadPluginAssets() -> None:
     _bridge.reload_plugin_assets()
+
+
+def FrontEndReloadSettings() -> None:
+    _bridge.reload_settings()
