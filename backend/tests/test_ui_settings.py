@@ -76,3 +76,37 @@ def test_ui_settings_onboarding_explicitly_cleared(tmp_path, monkeypatch):
     ui_settings.save_ui_settings({"widgets": {}, "onboarding": {"done": True}})
     saved = ui_settings.save_ui_settings({"widgets": {}, "onboarding": {}})
     assert saved["onboarding"] == {}
+
+def test_ui_settings_widget_change_pushes_reload(monkeypatch, tmp_path):
+    """widgets 实际变化时必须触发 RELOAD_FRONTEND_SETTING"""
+    import faust_backend.backend2front as b2f
+
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    calls = []
+    monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
+    ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": True}}})
+    assert calls == [1]
+
+
+def test_ui_settings_identical_save_no_reload(monkeypatch, tmp_path):
+    """内容不变（前端自己回存）时不触发"""
+    import faust_backend.backend2front as b2f
+
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    calls = []
+    monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
+    ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": True}}})
+    ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": True}}})
+    assert calls == [1]
+
+
+def test_ui_settings_onboarding_only_no_reload(monkeypatch, tmp_path):
+    """仅 onboarding 变化不触发"""
+    import faust_backend.backend2front as b2f
+
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    calls = []
+    monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
+    ui_settings.save_ui_settings({"widgets": {}})
+    ui_settings.save_ui_settings({"widgets": {}, "onboarding": {"done": True}})
+    assert calls == []

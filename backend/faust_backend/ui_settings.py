@@ -52,4 +52,9 @@ def save_ui_settings(payload: Any) -> dict[str, Any]:
         json.dumps(normalized, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if normalized.get("widgets") != (existing.get("widgets") or {}):
+        # UI 参数实际变化：通知前端立即重载（懒导入避免加载环）
+        from faust_backend.backend2front import FrontEndReloadSettings
+
+        FrontEndReloadSettings()
     return normalized
