@@ -106,6 +106,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let _vrmModulePromise = null;
   let appPluginAssetsLoaded = false;
   let persistedUiWidgetSettings = {};
+  let lastLocalUiSaveTs = 0;
   // ── 响应式布局：脏标记驱动，变化才重绘（模型/视口/组件/编辑态） ──
   const layoutDirty = { model: false, viewport: false, widget: false, edit: false };
   function markLayoutDirty(kind) {
@@ -127,15 +128,19 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     },
   });
 
+  function applyUiWidgetSettings(widgets) {
+    Object.entries(widgets || {}).forEach(([id, payload]) => {
+      try { uiWidgetManager.updateWidget(id, payload || {}); } catch (_e) {}
+    });
+  }
+
   async function loadUiWidgetSettings() {
     if (!window.api || typeof window.api.configRequest !== 'function') return;
     try {
       const data = await window.api.configRequest('GET', '/faust/ui-setting');
       const widgets = (data && data.settings && data.settings.widgets) || {};
       persistedUiWidgetSettings = widgets;
-      Object.entries(widgets).forEach(([id, payload]) => {
-        try { uiWidgetManager.updateWidget(id, payload || {}); } catch (_e) {}
-      });
+      applyUiWidgetSettings(widgets);
     } catch (e) {
       console.warn('loadUiWidgetSettings failed', e);
     }
@@ -156,6 +161,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         props: widget.props || {},
       };
     });
+    lastLocalUiSaveTs = Date.now();
     try {
       await window.api.configRequest('POST', '/faust/ui-setting', { widgets });
     } catch (e) {
@@ -576,6 +582,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     const x = Math.round(clampModelRelCoord(currentModel.x / app.renderer.width) * 1000) / 1000;
     const y = Math.round(clampModelRelCoord(currentModel.y / app.renderer.height) * 1000) / 1000;
     if (!force && lastPersistedModelPosition && lastPersistedModelPosition.x === x && lastPersistedModelPosition.y === y) return;
+    lastLocalUiSaveTs = Date.now();
     try{
       const r = await fetch(ADMIN_CONFIG_ENDPOINT, {
         method: 'POST',
@@ -1831,6 +1838,81 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   //   STOP
   let bgAudio = null;
 
+  // RELOAD_FRONTEND_SETTING：后端检测到 UI 相关设置变化后通知前端立即重载。
+  // 不重载模型文件，除非模型路径/类型发生变化。
+  async function reloadFrontendSettings(){
+    try{
+      // 自己刚保存过（拖拽回写/布景台回存）→ 后端推送只是本端保存的回声，跳过
+      if (Date.now() - lastLocalUiSaveTs < 2000){
+        console.info('RELOAD_FRONTEND_SETTING skipped: local save echo');
+        return;
+      }
+      const fetchUiSettings = async () => {
+        if (!window.api || typeof window.api.configRequest !== 'function') return {};
+        const data = await window.api.configRequest('GET', '/faust/ui-setting');
+        return (data && data.settings) || {};
+      };
+      const [, , runtimeCfg] = await Promise.all([
+        fetchUiSettings().then((settings) => {
+          const widgets = (settings && settings.widgets) || {};
+          persistedUiWidgetSettings = widgets;
+          applyUiWidgetSettings(widgets);
+        }),
+        refreshSpeechRuntimeConfig(true),
+        loadRuntimeLive2DConfig(),
+      ]);
+      const cfg = runtimeCfg || {};
+      const num = (key) => {
+        const v = cfg[key];
+        if (v === undefined || v === null || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const textChatY = num('TEXT_CHAT_BAR_Y_FACTOR');
+      if (textChatY !== null) {
+        textChatBarYFactor = Math.min(2.0, Math.max(-1.0, textChatY));
+        try { uiWidgetManager.updateWidget('text-chat-bar', { coord: { x: 0.5, y: textChatBarYFactor } }); } catch (e) {}
+      }
+      const qcOffset = num('FRONTEND_QUICK_CONTROLLER_X_OFFSET');
+      if (qcOffset !== null) {
+        quickControllerXOffset = Math.max(-400, Math.min(400, qcOffset));
+        try { uiWidgetManager.updateWidget('quick-controller', { offset: { x: quickControllerXOffset, y: 0 } }); } catch (e) {}
+        updateQuickControllerPosition();
+      }
+      const scale = num('LIVE2D_MODEL_SCALE');
+      if (scale !== null && scale > 0) {
+        scaleFactor = scale;
+        if (modelScaleSlider) modelScaleSlider.value = String(scaleFactor);
+        if (modelScaleValue) modelScaleValue.textContent = scaleFactor.toFixed(2) + 'x';
+        if (modelType === 'vrm' && vrmScene) vrmScene.setScale(scale);
+        else applyModelScale();
+      }
+      const pos = readConfiguredModelRelPosition();
+      if (modelType === 'vrm' && vrmScene) {
+        if (pos.x !== null && pos.y !== null) vrmScene.setPosition(pos.x, pos.y);
+      } else if (currentModel && app && app.renderer) {
+        if (pos.x !== null) currentModel.x = pos.x * app.renderer.width;
+        if (pos.y !== null) currentModel.y = pos.y * app.renderer.height;
+        if (pos.x !== null && pos.y !== null) lastPersistedModelPosition = { x: pos.x, y: pos.y };
+        updateQuickControllerPosition();
+      }
+      // 模型路径/类型变化才重载模型文件（避免闪烁）
+      const cfgType = cfg.MODEL_TYPE ? String(cfg.MODEL_TYPE).trim().toLowerCase() : 'live2d';
+      const desired = cfgType === 'images'
+        ? '__faust_images__'
+        : cfgType === 'vrm'
+          ? (String(cfg.VRM_MODEL_PATH || '').trim() || (modelPathInput && modelPathInput.value.trim()) || defaultModel)
+          : (String(cfg.LIVE2D_MODEL_PATH || '').trim() || defaultModel);
+      const current = modelPathInput ? String(modelPathInput.value || '').trim() : '';
+      if (desired && current && desired !== current) {
+        if (modelPathInput) modelPathInput.value = cfgType === 'images' ? '__faust_images__' : desired;
+        loadModel(desired);
+      }
+    }catch(e){
+      console.warn('reloadFrontendSettings failed', e);
+    }
+  }
+
   async function handleFaustCommand(raw){
     if (!raw || typeof raw !== 'string') return;
     const parts = raw.trim().split(' ');
@@ -2039,6 +2121,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       } else if (cmd === 'RELOAD_PLUGIN_ASSETS'){
         //window.location.reload();
         window.api.recreateFrontendWindow();
+      } else if (cmd === 'RELOAD_FRONTEND_SETTING'){
+        reloadFrontendSettings();
       }
       else {
         console.warn('Unknown faust command', raw);
