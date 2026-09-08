@@ -477,6 +477,45 @@ def runtime_summary() -> Dict[str, Any]:
     }
 
 
+# UI 相关配置键：变化时向前端推送 RELOAD_FRONTEND_SETTING（前端即时重载 UI 参数）
+UI_RELOAD_CONFIG_KEYS: tuple[str, ...] = (
+    "TTS_CHUNK_IDEAL_TOKENS",
+    "FRONTEND_DEFAULT_TTS_LANG",
+    "MODEL_TYPE",
+    "LIVE2D_MODEL_PATH",
+    "VRM_MODEL_PATH",
+    "LIVE2D_MODEL_X",
+    "LIVE2D_MODEL_Y",
+    "LIVE2D_MODEL_SCALE",
+    "TEXT_CHAT_BAR_Y_FACTOR",
+    "FRONTEND_QUICK_CONTROLLER_X_OFFSET",
+)
+
+
+def push_reload_if_ui_changed(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> bool:
+    """比较新旧 config 的 UI 相关键，有变化时向前端推送重载命令并返回 True。"""
+    old_cfg = old_config or {}
+    new_cfg = new_config or {}
+
+    def _norm(value: Any) -> Any:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return value
+        try:
+            return float(value)  # 等值字符串/数字归一，避免类型差异误触发
+        except (TypeError, ValueError):
+            return value
+
+    changed = any(
+        _norm(old_cfg.get(key)) != _norm(new_cfg.get(key))
+        for key in UI_RELOAD_CONFIG_KEYS
+    )
+    if changed:
+        backend2frontend.FrontEndReloadSettings()
+    return changed
+
+
 def apply_live2d_to_frontend(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = payload or {}
     public_cfg = get_public_config()
