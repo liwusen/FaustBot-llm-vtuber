@@ -4328,6 +4328,18 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         return false;
       }
 
+      function isPointOverToast(x, y){
+        // 全局更新 Toast（#toastContainer）：穿透状态下也必须可点击
+        try {
+          const container = document.getElementById('toastContainer');
+          if (!container || !container.childElementCount) return false;
+          const rect = container.getBoundingClientRect();
+          if (!rect.width || !rect.height) return false;
+          return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        } catch (_e) {}
+        return false;
+      }
+
       let mouseRafId = null;
       let mouseX = 0;
       let mouseY = 0;
@@ -4347,7 +4359,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         const overNimble = nimbleWin.isPointOverNimble(e.clientX, e.clientY);
         const onNimbleWindow = nimbleWin.isPointOverWindow(e.clientX, e.clientY);
         const overWidget = isPointOverAnyWidget(e.clientX, e.clientY);
-        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || overWidget || dragging || interactionLocked || uiWidgetManager.isEditMode();
+        const overToast = isPointOverToast(e.clientX, e.clientY);
+        const overInteractive = hoverQuickController||hoverModel || overAsrBubble || overSubagentSummary || overSubagentPanel || overHilApproval || overVRMConfig || overTextChatBar || overNimble || onNimbleWindow || overWidget || overToast || dragging || interactionLocked || uiWidgetManager.isEditMode();
         if (devToolsLikelyOpen) {
           interactiveActive = true;
           setIgnore(false);
@@ -4683,6 +4696,11 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const data = await window.api.configRequest('POST', '/faust/update/check', {});
       if (!data || !data.has_update) return;
       if (!String(data.release_body || '').includes('CRITICAL')) return;
+      // 同一个更新只提示一次：已提示过的 tag 持久化在 Electron 本地存储
+      const shownTagKey = 'faust_update_toast_shown_tag';
+      let shownTag = null;
+      try { shownTag = localStorage.getItem(shownTagKey); } catch (e) { /* 存储不可用时按未提示处理 */ }
+      if (shownTag && shownTag === data.latest_tag) return;
       const label = `新版本 ${data.latest_tag || ''}`.trim();
       showFaustToast({
         title: '需要更新',
@@ -4695,6 +4713,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           body: `${label} 包含重要变更 (CRITICAL)，请在 Configer 中更新。`,
         });
       }
+      try { localStorage.setItem(shownTagKey, String(data.latest_tag || '')); } catch (e) { console.warn('persist shown update tag failed', e); }
     } catch (e) {
       console.warn('startup update check failed', e);
     }
