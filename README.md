@@ -321,3 +321,23 @@ FaustBot已经为Windows准备了安装包,无需折腾,一键开用
 ## 提示
 
 live2d Cubsim Core的协议**并不**是GPLv3,它们是专有软件(Non-free Software)
+
+---
+
+## Roadmap
+
+## V3.4.0 计划
+
+1. 类似聊天软件的对话方式,支持历史记录
+2. EmotionEngine改为使用特殊情绪Token的工作方式
+
+## 中期
+
+1. 补全安全系统
+2. 对非OpenAI Completion API的支持
+
+## 长期
+
+1. Computer Use或类似UI操作能力
+2. 支持使用更高效的向量数据库
+3. 对全模态(实时)模型的支持
