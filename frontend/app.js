@@ -1724,6 +1724,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
 
   function handleSpeechActivity(active, probability){
     updateSpeechProbabilityUi(probability);
+    if (pttActive) return; // PTT 按住中：全量收集，VAD 不做开始/结束判定
     if (active){
       noVoiceCnt = 0;
       speechFrameCnt += 1;
@@ -1862,6 +1863,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         loadRuntimeLive2DConfig(),
       ]);
       const cfg = runtimeCfg || {};
+      setPttEnabled(cfg.PTT_MODE);
       const num = (key) => {
         const v = cfg[key];
         if (v === undefined || v === null || v === '') return null;
@@ -2055,6 +2057,10 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         stopRecording();
       } else if (cmd === 'TOGGLE_ASR'){
         toggleAsr();
+      } else if (cmd === 'PTT_DOWN'){
+        startPttHold();
+      } else if (cmd === 'PTT_UP'){
+        endPttHold();
       } else if (cmd === 'STOP_AUDIO'){
         interruptAll();
       } else if (cmd === 'INTERRUPT_SPEECH'){
@@ -3492,6 +3498,65 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     updateQuickAsrButton();
   }
 
+  // --- PTT（按住说话）---
+  let pttEnabled = false;     // 配置开关（配置热重载更新）
+  let pttActive = false;      // 当前是否按住
+  let pttOwnedMic = false;    // 麦克风是否由本次 PTT 打开（用户手动开的监听不代关）
+  let pttSafetyTimer = null;  // 钩子丢 keyup 时的兜底上限
+
+  const normalizePtt = (v) => v === true || v === 1 || v === 'true';
+
+  function startPttHold(){
+    if (pttActive) return;
+    pttActive = true;
+    clearTimeout(pttSafetyTimer);
+    pttSafetyTimer = setTimeout(() => {
+      console.warn('PTT hold failsafe timeout (120s), force release');
+      endPttHold();
+    }, 120000);
+    if (asrRunning){
+      pttOwnedMic = false; // 用户手动开启的监听，松开后不代为关闭
+    } else {
+      pttOwnedMic = true;
+      startRecording().catch((e) => {
+        console.error('PTT startRecording failed', e);
+        pttOwnedMic = false;
+        pttActive = false;
+        clearTimeout(pttSafetyTimer);
+        pttSafetyTimer = null;
+      });
+    }
+    // 按住期间旁路 VAD：全部帧进入上传缓冲，不设自动切断
+    inSpeech = true;
+    speechFrameCnt = Math.max(speechFrameCnt, 1);
+    if (uploadFrames.length === 0) { uploadFrames = preBufferFrames.slice(); preBufferFrames = []; }
+    asrStatusEl.textContent = '按住说话中...';
+  }
+
+  function endPttHold(){
+    if (!pttActive) return;
+    pttActive = false;
+    clearTimeout(pttSafetyTimer);
+    pttSafetyTimer = null;
+    if (!asrRunning) return; // 麦克风未成功打开，无内容可发
+    finalizeSpeechSegment(1); // 内含语音过短护栏：过短不上传
+    inSpeech = false;
+    if (pttOwnedMic) { stopMicAsr(); pttOwnedMic = false; }
+  }
+
+  function setPttEnabled(enabled){
+    const want = !!normalizePtt(enabled);
+    if (want === pttEnabled) return;
+    pttEnabled = want;
+    if (!want && pttActive) endPttHold(); // 切换瞬间若还按着，立即释放
+    if (window.api && typeof window.api.setPttMode === 'function') {
+      window.api.setPttMode(pttEnabled).then((ok) => {
+        if (ok === false) console.warn('setPttMode: 主进程启用 PTT 失败（回退 TOGGLE_ASR）');
+      }).catch((e) => console.error('setPttMode IPC failed', e));
+    }
+    console.info('PTT mode:', pttEnabled ? 'ON' : 'OFF');
+  }
+
   function setVoiceBargeIn(enabled){
     voiceBargeInEnabled = !!enabled;
   }
@@ -4143,6 +4208,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       loadUiWidgetSettings().catch((e) => { console.warn('loadUiWidgetSettings failed', e); }),
     ]);
     const configuredModel = runtimeCfg && runtimeCfg.LIVE2D_MODEL_PATH ? String(runtimeCfg.LIVE2D_MODEL_PATH).trim() : '';
+    setPttEnabled(runtimeCfg && runtimeCfg.PTT_MODE);
     const configuredScale = runtimeCfg && runtimeCfg.LIVE2D_MODEL_SCALE !== undefined && runtimeCfg.LIVE2D_MODEL_SCALE !== null && runtimeCfg.LIVE2D_MODEL_SCALE !== ''
       ? Number(runtimeCfg.LIVE2D_MODEL_SCALE)
       : null;
