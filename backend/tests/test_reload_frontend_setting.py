@@ -60,3 +60,22 @@ def test_push_reload_if_ui_changed_normalization(monkeypatch):
         {"TTS_CHUNK_IDEAL_TOKENS": 30}, {"TTS_CHUNK_IDEAL_TOKENS": "30"}
     ) is False
     assert calls == []
+
+
+def test_ptt_mode_default_is_true():
+    import faust_backend.admin_runtime as admin_runtime
+
+    assert admin_runtime.PUBLIC_CONFIG_DEFAULTS["PTT_MODE"] is True
+
+
+def test_push_reload_if_ui_changed_on_ptt_mode(monkeypatch):
+    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.backend2front as b2f
+
+    calls = []
+    monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
+    changed = admin_runtime.push_reload_if_ui_changed(
+        {"PTT_MODE": True}, {"PTT_MODE": False}
+    )
+    assert changed is True
+    assert calls == [1]

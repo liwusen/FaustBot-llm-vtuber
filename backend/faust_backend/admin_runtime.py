@@ -88,6 +88,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "FRONTEND_QUICK_CONTROLLER_X_OFFSET": -12,
     "FRONTEND_CLICK_THROUGH": True,
     "FRONTEND_DEFAULT_TTS_LANG": "zh",
+    "PTT_MODE": True,
     "AUTO_IMAGE_ATTACH_ENABLED": True,
     "TTS_MODE": "gpt-sovits",
     "ASR_MODE": "whisper",
@@ -481,6 +482,7 @@ def runtime_summary() -> Dict[str, Any]:
 UI_RELOAD_CONFIG_KEYS: tuple[str, ...] = (
     "TTS_CHUNK_IDEAL_TOKENS",
     "FRONTEND_DEFAULT_TTS_LANG",
+    "PTT_MODE",
     "MODEL_TYPE",
     "LIVE2D_MODEL_PATH",
     "VRM_MODEL_PATH",
