@@ -3503,12 +3503,20 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let pttActive = false;      // 当前是否按住
   let pttOwnedMic = false;    // 麦克风是否由本次 PTT 打开（用户手动开的监听不代关）
   let pttSafetyTimer = null;  // 钩子丢 keyup 时的兜底上限
+  let pttReleasePending = false; // 松开先于麦克风启动完成：启动完成后立即收尾
 
   const normalizePtt = (v) => v === true || v === 1 || v === 'true';
+
+  function finishPttRelease(){
+    finalizeSpeechSegment(1); // 内含语音过短护栏：过短不上传
+    inSpeech = false;
+    if (pttOwnedMic) { stopMicAsr(); pttOwnedMic = false; }
+  }
 
   function startPttHold(){
     if (pttActive) return;
     pttActive = true;
+    pttReleasePending = false;
     clearTimeout(pttSafetyTimer);
     pttSafetyTimer = setTimeout(() => {
       console.warn('PTT hold failsafe timeout (120s), force release');
@@ -3518,8 +3526,14 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       pttOwnedMic = false; // 用户手动开启的监听，松开后不代为关闭
     } else {
       pttOwnedMic = true;
-      startRecording().catch((e) => {
+      startRecording().then(() => {
+        // startRecording 可能先 await 打断流程；期间已松手则立即收尾，
+        // 避免麦克风卡在监听态（按钮亮但已松手）
+        if (pttReleasePending) { pttReleasePending = false; finishPttRelease(); }
+        else updateQuickAsrButton();
+      }).catch((e) => {
         console.error('PTT startRecording failed', e);
+        pttReleasePending = false;
         pttOwnedMic = false;
         pttActive = false;
         clearTimeout(pttSafetyTimer);
@@ -3538,10 +3552,12 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     pttActive = false;
     clearTimeout(pttSafetyTimer);
     pttSafetyTimer = null;
-    if (!asrRunning) return; // 麦克风未成功打开，无内容可发
-    finalizeSpeechSegment(1); // 内含语音过短护栏：过短不上传
-    inSpeech = false;
-    if (pttOwnedMic) { stopMicAsr(); pttOwnedMic = false; }
+    if (!asrRunning){
+      // 麦克风可能仍在启动中：标记待释放，start 完成后立即收尾
+      if (pttOwnedMic) pttReleasePending = true;
+      return;
+    }
+    finishPttRelease();
   }
 
   function setPttEnabled(enabled){
