@@ -154,10 +154,9 @@ def detect_components() -> dict[str, Any]:
                 break
     components["tts"] = tts
 
-    # Minecraft 桥
+    # Minecraft 桥（无条件启用，MC_BRIDGE_ENABLED 配置已删除）
     mc_status = service_manager.service_status("mc_operator")
     components["minecraft_bridge"] = {
-        "enabled": False,
         "is_running": mc_status.get("is_running", False),
     }
 
@@ -276,15 +275,6 @@ def get_service_guard() -> ServiceGuard:
 
 # ── Phase D3: 自动启动触发器 ──
 
-def get_mc_bridge_enabled() -> bool:
-    """读取 MC_BRIDGE_ENABLED 配置值。"""
-    try:
-        from faust_backend.config_loader import config
-        return bool(config.get("MC_BRIDGE_ENABLED", False))
-    except Exception:
-        return False
-
-
 async def on_component_installed(component: str, details: dict | None = None) -> None:
     """组件安装完成后的回调。"""
     from faust_backend.config_loader import config
@@ -355,11 +345,4 @@ async def check_and_manage_services(old_config: dict, new_config: dict) -> None:
             log.info("Stopping TTS service due to config change (%s -> %s)...", old_tts, new_tts)
             service_manager.stop_service("tts")
 
-    # MC_BRIDGE_ENABLED
-    if old_config.get("MC_BRIDGE_ENABLED") != new_config.get("MC_BRIDGE_ENABLED"):
-        if new_config.get("MC_BRIDGE_ENABLED"):
-            log.info("Booting Minecraft Operator service due to config change...")
-            await guard.start_with_guard("mc_operator")
-        else:
-            log.info("Stopping Minecraft Operator service due to config change...")
-            service_manager.stop_service("mc_operator")
+    # MC_BRIDGE_ENABLED 配置已删除：mc-operator 无条件随服务启动

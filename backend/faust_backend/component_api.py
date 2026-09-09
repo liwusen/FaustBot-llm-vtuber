@@ -18,7 +18,6 @@ from pydantic import BaseModel
 from faust_backend.component_manager import (
     detect_components,
     detect_gpu,
-    get_mc_bridge_enabled,
     on_component_installed,
 )
 import faust_backend.service_manager as service_manager
@@ -86,9 +85,6 @@ async def get_component_status() -> ComponentStatusResponse:
     """查询 GPU、组件安装状态和服务运行状态。"""
     gpu = detect_gpu()
     components = detect_components()
-
-    # 填充 minecraft_bridge.enabled
-    components["minecraft_bridge"]["enabled"] = get_mc_bridge_enabled()
 
     services = {
         "asr": service_manager.service_status("asr"),

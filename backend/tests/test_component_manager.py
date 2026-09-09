@@ -225,13 +225,12 @@ class TestStatusApi:
         fake_components = {
             "funasr": {"installed": False, "version": None, "torch_version": None, "torch_variant": None},
             "tts": {"installed": False, "path": None, "variant": None},
-            "minecraft_bridge": {"enabled": False, "is_running": False},
+            "minecraft_bridge": {"is_running": False},
         }
         fake_service = {"is_running": False}
 
         with patch("faust_backend.component_api.detect_gpu", return_value=fake_gpu), \
              patch("faust_backend.component_api.detect_components", return_value=fake_components), \
-             patch("faust_backend.component_api.get_mc_bridge_enabled", return_value=False), \
              patch.object(service_manager, "service_status", return_value=fake_service):
             response = await get_component_status()
 
@@ -299,37 +298,6 @@ class TestConfigChangeTrigger:
                 mock_guard.return_value = guard
                 await check_and_manage_services(old, new)
                 mock_stop.assert_called_once_with("asr")
-
-    @pytest.mark.asyncio
-    async def test_mc_bridge_enabled_triggers_start(self):
-        """MC_BRIDGE_ENABLED true -> start_with_guard('mc_operator') called."""
-        from faust_backend.component_manager import check_and_manage_services
-
-        old = {"MC_BRIDGE_ENABLED": False}
-        new = {"MC_BRIDGE_ENABLED": True}
-
-        with patch("faust_backend.component_manager.get_service_guard") as mock_guard:
-            guard = AsyncMock()
-            mock_guard.return_value = guard
-            with patch("faust_backend.service_manager.stop_service"):
-                await check_and_manage_services(old, new)
-                guard.start_with_guard.assert_called_once_with("mc_operator")
-
-    @pytest.mark.asyncio
-    async def test_mc_bridge_disabled_triggers_stop(self):
-        """MC_BRIDGE_ENABLED false -> stop_service('minecraft') called."""
-        from faust_backend.component_manager import check_and_manage_services
-        from faust_backend import service_manager
-
-        old = {"MC_BRIDGE_ENABLED": True}
-        new = {"MC_BRIDGE_ENABLED": False}
-
-        with patch.object(service_manager, "stop_service") as mock_stop:
-            with patch("faust_backend.component_manager.get_service_guard") as mock_guard:
-                guard = AsyncMock()
-                mock_guard.return_value = guard
-                await check_and_manage_services(old, new)
-                mock_stop.assert_called_once_with("mc_operator")
 
 
 # ── Test download_torch module ──

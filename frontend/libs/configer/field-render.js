@@ -376,7 +376,7 @@ function pickModuleFields(moduleId) {
       }),
     };
   }
-  const moduleManagedPublic = new Set(["MC_OPERATOR_URL", "MC_EVENT_TRIGGER_ENABLED", "MC_BRIDGE_ENABLED", "mcp_servers"]);
+  const moduleManagedPublic = new Set(["MC_OPERATOR_URL", "MC_EVENT_TRIGGER_ENABLED", "mcp_servers"]);
   const usedPublic = new Set([...AI_PUBLIC_KEYS, ...LIVE2D_KEYS, ...SPEECH_PUBLIC_KEYS, ...moduleManagedPublic]);
   const usedPrivate = new Set([...AI_PRIVATE_KEYS, ...SPEECH_PRIVATE_KEYS]);
   return {

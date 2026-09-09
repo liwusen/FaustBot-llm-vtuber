@@ -313,7 +313,6 @@ function renderMinecraftCard(container) {
 
   const svcText = _serviceStatusText(svc);
   const portText = svc?.port ? `端口 ${svc.port}` : "";
-  const enabled = data.enabled || false;
 
   const card = _card("🎮 Minecraft 操作桥");
   card.append(_row("状态", `${svcText} ${portText}`));
@@ -321,15 +320,13 @@ function renderMinecraftCard(container) {
   const actions = document.createElement("div");
   actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
 
-  actions.append(_toggle("启用 Minecraft 桥", enabled, (val) => toggleMcBridge(val)));
-
   actions.append(_btn("▶ 启动服务", () => startService("minecraft")));
   actions.append(_btn("⏹ 停止服务", () => stopService("minecraft"), { danger: true }));
   actions.append(_btn("📋 日志", () => _showServiceLog("minecraft")));
 
   const note = document.createElement("div");
   note.style.cssText = "font-size:11px;color:var(--muted);margin-top:6px";
-  note.textContent = "无需下载，启用后自动启停";
+  note.textContent = "后端启动时自动运行，无需下载";
   card.append(actions, note);
   container.append(card);
 }
@@ -502,21 +499,6 @@ async function stopService(serviceKey) {
   }
 }
 
-
-async function toggleMcBridge(enabled) {
-  try {
-    // 保存配置
-    const config = await cfgApi("GET", "/faust/admin/config");
-    const publicCfg = config?.public || {};
-    publicCfg.MC_BRIDGE_ENABLED = enabled;
-    await cfgApi("POST", "/faust/admin/config", { public: publicCfg });
-    // 重载配置触发服务启停
-    await cfgApi("POST", "/faust/admin/config/reload", {});
-    await refreshComponentStatus();
-  } catch (e) {
-    console.warn("切换 Minecraft 桥状态失败", e);
-  }
-}
 
 async function refreshComponentStatus() {
   try {
