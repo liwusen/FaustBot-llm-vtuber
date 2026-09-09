@@ -41,6 +41,7 @@
     "@soullink-emotion/live2d-pixi": "0.1.0-beta.1",
     "@soullink-emotion/profile-generator": "0.1.0-beta.1",
     "three": "^0.184.0",
+    "uiohook-napi": "^1.5.5",
     "ws": "^8.19.0"
   },
   "build": {

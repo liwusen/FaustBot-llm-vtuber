@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen, clipboard, Notification } = require('electron');
 const path = require('path');
+const { uIOhook, UiohookKey } = require('uiohook-napi');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
@@ -587,6 +588,78 @@ function registerGlobalShortcuts() {
       console.error('[shortcut] register error:', item.accelerator, item.command, e);
     }
   }
+}
+
+// --- PTT（按住说话）模式切换 ---
+// PTT_MODE=true 时 Ctrl+Alt+A 从 TOGGLE_ASR 切换为全局钩子长按语义；
+// Electron globalShortcut 没有 keyup 事件，必须用 uiohook-napi。
+const PTT_ACCELERATOR = 'CommandOrControl+Alt+A';
+let pttModeActive = false;   // 主进程当前是否处于 PTT 模式
+let pttHookStarted = false;  // uiohook 是否已注册监听
+let pttKeyHeld = false;      // 本次按住是否已发过 PTT_DOWN（防 auto-repeat 重复发）
+
+function onPttKeyDown(e) {
+  if (!pttModeActive) return;
+  if (e.keycode !== UiohookKey.A || !e.ctrlKey || !e.altKey) return;
+  if (pttKeyHeld) return; // 按住期间的 auto-repeat keydown 忽略
+  pttKeyHeld = true;
+  sendFaustCommand('PTT_DOWN');
+}
+
+function onPttKeyUp(e) {
+  if (!pttModeActive) return;
+  if (e.keycode !== UiohookKey.A) return;
+  if (!pttKeyHeld) return;
+  pttKeyHeld = false;
+  sendFaustCommand('PTT_UP');
+}
+
+function enablePttMode() {
+  try { globalShortcut.unregister(PTT_ACCELERATOR); } catch (e) {
+    console.error('[ptt] unregister TOGGLE_ASR failed', e);
+  }
+  if (!pttHookStarted) {
+    try {
+      uIOhook.on('keydown', onPttKeyDown);
+      uIOhook.on('keyup', onPttKeyUp);
+      uIOhook.start();
+      pttHookStarted = true;
+    } catch (e) {
+      // 显式报错并回退为 TOGGLE_ASR，不让麦克风控制静默失效
+      console.error('[ptt] hook start failed, fallback to TOGGLE_ASR', e);
+      try {
+        const ok = globalShortcut.register(PTT_ACCELERATOR, () => sendFaustCommand('TOGGLE_ASR'));
+        if (!ok) console.warn('[ptt] fallback register failed:', PTT_ACCELERATOR);
+      } catch (e2) {
+        console.error('[ptt] fallback register error', e2);
+      }
+      return false;
+    }
+  }
+  pttModeActive = true;
+  console.info('[ptt] PTT mode enabled (Ctrl+Alt+A = hold to talk)');
+  return true;
+}
+
+function disablePttMode() {
+  // 切换瞬间若还按着，先补发 PTT_UP 防止渲染端麦克风卡开
+  if (pttKeyHeld) { pttKeyHeld = false; sendFaustCommand('PTT_UP'); }
+  if (pttHookStarted) {
+    try { uIOhook.stop(); } catch (e) { console.error('[ptt] hook stop failed', e); }
+    try { uIOhook.removeAllListeners('keydown'); uIOhook.removeAllListeners('keyup'); } catch (e) {
+      console.error('[ptt] hook removeAllListeners failed', e);
+    }
+    pttHookStarted = false;
+  }
+  try {
+    const ok = globalShortcut.register(PTT_ACCELERATOR, () => sendFaustCommand('TOGGLE_ASR'));
+    if (!ok) console.warn('[shortcut] re-register failed:', PTT_ACCELERATOR);
+  } catch (e) {
+    console.error('[shortcut] re-register error:', PTT_ACCELERATOR, e);
+  }
+  pttModeActive = false;
+  console.info('[ptt] PTT mode disabled (Ctrl+Alt+A = TOGGLE_ASR)');
+  return true;
 }
 
 // 铺满主显示器但左/上各内缩 1px：破坏“起点贴齐 + size 等于 display”的完美全屏判定，
@@ -1377,6 +1450,12 @@ ipcMain.handle('set-ignore-mouse-events', (evt, ignore) => {
   }
 });
 
+ipcMain.handle('set-ptt-mode', (_evt, enabled) => {
+  const want = !!enabled;
+  if (want === pttModeActive) return pttModeActive;
+  return want ? enablePttMode() : disablePttMode();
+});
+
 ipcMain.handle('show-notification', (_event, options) => {
   const opts = options && typeof options === 'object' ? options : {};
   const title = String(opts.title || 'FaustBot');
@@ -1581,6 +1660,7 @@ app.on('window-all-closed', ()=>{
 
 app.on('will-quit', ()=>{
   try{ globalShortcut.unregisterAll(); }catch(e){ console.error('unregisterAll failed', e); }
+  try { uIOhook.stop(); } catch(e) { /* hook 可能未启动 */ }
   try{ if (tray) { tray.destroy(); tray = null; } }catch(e){ console.error('tray destroy failed', e); }
 });
 

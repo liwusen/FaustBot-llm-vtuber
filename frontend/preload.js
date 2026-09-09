@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   setIgnoreMouseEvents: (v) => ipcRenderer.invoke('set-ignore-mouse-events', !!v),
   focusMainWindow: () => ipcRenderer.invoke('focus-main-window'),
   showNotification: (options) => ipcRenderer.invoke('show-notification', options),
+  setPttMode: (enabled) => ipcRenderer.invoke('set-ptt-mode', !!enabled),
   hideToTray: () => ipcRenderer.invoke('hide-to-tray'),
   showFromTray: () => ipcRenderer.invoke('show-from-tray'),
   openConfigWindow: () => ipcRenderer.invoke('open-config-window'),
