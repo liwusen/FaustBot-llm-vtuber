@@ -294,7 +294,7 @@ async def on_component_installed(component: str, details: dict | None = None) ->
 def init_component_guard() -> None:
     """后端启动时初始化组件守护。"""
     guard = get_service_guard()
-    log.info("组件守护已初始化 (mc_operator=%s)", guard.get_count("mc_operator"))
+    log.info("组件守护已初始化")
 
 
 async def check_and_manage_services(old_config: dict, new_config: dict) -> None:
