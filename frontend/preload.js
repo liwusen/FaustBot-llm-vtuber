@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   backendBaseUrl: 'http://127.0.0.1:13900',
   setIgnoreMouseEvents: (v) => ipcRenderer.invoke('set-ignore-mouse-events', !!v),
   focusMainWindow: () => ipcRenderer.invoke('focus-main-window'),
+  showNotification: (options) => ipcRenderer.invoke('show-notification', options),
   hideToTray: () => ipcRenderer.invoke('hide-to-tray'),
   showFromTray: () => ipcRenderer.invoke('show-from-tray'),
   openConfigWindow: () => ipcRenderer.invoke('open-config-window'),

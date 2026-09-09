@@ -4564,4 +4564,60 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   // 唤醒 Agent 的回复能实时推送到前端显示与 TTS。
   ensureChatWsPersistent();
 
+  // ── 全局 Toast ──
+  function showFaustToast({ title, body, onClick }) {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = 'faust-toast';
+    const content = document.createElement('div');
+    content.className = 'faust-toast-content';
+    if (title) {
+      const t = document.createElement('div');
+      t.className = 'faust-toast-title';
+      t.textContent = title;
+      content.append(t);
+    }
+    const b = document.createElement('div');
+    b.className = 'faust-toast-body';
+    b.textContent = body;
+    content.append(b);
+    const close = document.createElement('button');
+    close.className = 'faust-toast-close';
+    close.textContent = '×';
+    close.addEventListener('click', (e) => { e.stopPropagation(); toast.remove(); });
+    toast.append(content, close);
+    if (onClick) {
+      toast.addEventListener('click', () => { onClick(); toast.remove(); });
+    }
+    container.append(toast);
+    setTimeout(() => toast.remove(), 15000);
+  }
+
+  // ── 启动时异步检查更新：仅 release_body 含 CRITICAL 时提示 ──
+  async function checkUpdateOnStartup() {
+    if (!window.api || typeof window.api.configRequest !== 'function') return;
+    try {
+      const data = await window.api.configRequest('POST', '/faust/update/check', {});
+      if (!data || !data.has_update) return;
+      if (!String(data.release_body || '').includes('CRITICAL')) return;
+      const label = `新版本 ${data.latest_tag || ''}`.trim();
+      showFaustToast({
+        title: '需要更新',
+        body: `${label} 包含重要变更 (CRITICAL)，点击打开 Configer 进行更新。`,
+        onClick: () => { if (window.api.openConfigWindow) window.api.openConfigWindow(); },
+      });
+      if (typeof window.api.showNotification === 'function') {
+        window.api.showNotification({
+          title: 'FaustBot 需要更新',
+          body: `${label} 包含重要变更 (CRITICAL)，请在 Configer 中更新。`,
+        });
+      }
+    } catch (e) {
+      console.warn('startup update check failed', e);
+    }
+  }
+
+  checkUpdateOnStartup();
+
 })();

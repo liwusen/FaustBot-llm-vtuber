@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen, clipboard, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1320,6 +1320,8 @@ try {
   console.warn('[render-priority] 设置进程优先级失败（不影响启动）:', e && e.message ? e.message : e);
 }
 
+app.setAppUserModelId('com.faustbot.desktop');
+
 app.whenReady().then(async () => {
   registerStaticProtocol();
   registerFaustProtocolClient();
@@ -1373,6 +1375,17 @@ ipcMain.handle('set-ignore-mouse-events', (evt, ignore) => {
     console.error(e);
     return false;
   }
+});
+
+ipcMain.handle('show-notification', (_event, options) => {
+  const opts = options && typeof options === 'object' ? options : {};
+  const title = String(opts.title || 'FaustBot');
+  const body = String(opts.body || '');
+  if (!Notification.isSupported()) return false;
+  const n = new Notification({ title, body });
+  n.on('click', () => showMainWindow());
+  n.show();
+  return true;
 });
 
 ipcMain.handle('focus-main-window', () => {
