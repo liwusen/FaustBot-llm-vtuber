@@ -720,6 +720,9 @@ async def command_websocket(websocket: WebSocket):
                         if not bg_task.cancelled():
                             raise
                         log.info('后台触发器被用户插话打断: %s', trigger_text[:80])
+                    except Exception as e:
+                        # Agent 调用失败（如 LLM 连接错误）不应炸掉整个命令 WS 循环
+                        log.error('后台触发器 Agent 调用失败: %s', e)
                     finally:
                         _clear_trigger_task(bg_task)
                 else:
@@ -732,6 +735,9 @@ async def command_websocket(websocket: WebSocket):
                         if not fg_task.cancelled():
                             raise
                         log.info('前台触发器被用户插话打断: %s', trigger_text[:80])
+                    except Exception as e:
+                        # Agent 流式调用失败（如 LLM 连接错误）不应炸掉整个命令 WS 循环
+                        log.error('前台触发器流式调用失败: %s', e)
                     finally:
                         _clear_trigger_task(fg_task)
             if not state.forward_queue.empty():

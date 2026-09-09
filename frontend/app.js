@@ -3381,7 +3381,12 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           preBufferFrames.push(frame.slice(0));
           if (preBufferFrames.length > preRollFrameLimit) preBufferFrames.shift();
           // if speech active, also collect into uploadFrames
-          if (inSpeech) uploadFrames.push(frame.slice(0));
+          if (inSpeech){
+            uploadFrames.push(frame.slice(0));
+            // PTT 按住期间 VAD 判定被旁路，speechFrameCnt 按收集帧计数，
+            // 否则 finalizeSpeechSegment 恒判"语音过短"导致 ASR 永不上传
+            if (pttActive) speechFrameCnt += 1;
+          }
           offset += VAD_WINDOW_SIZE;
         }
         // leftover samples
