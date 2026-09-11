@@ -1,9 +1,9 @@
 import { resampleFloat32, concatFloat32Arrays, floatTo16BitPCM, writeString, encodeWAV, interleaveAndEncodeWav } from './libs/audio-utils.js';
 import { normalizeTtsText, decodeWsPayload } from './libs/text-utils.js';
-import { formatResultBubbleText, formatToolBubbleValue, escapeHtml, renderResultBubbleHtml, cloneBubbleEntries, entryKey, entryHash, renderBubbleEntryHtml } from './libs/bubble-utils.js';
 import { initLogPanel } from './libs/log-panel.js';
 import { initLiveMode } from './libs/live-mode.js';
 import { initNimbleWindows } from './libs/nimble-window.js';
+import { initSubagentPanel } from './libs/subagent-panel.js';
 import { initHilApproval } from './libs/hil-approval.js';
 import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
 import { initAudioPlayback } from './libs/audio-playback.js';
@@ -13,6 +13,10 @@ import { createUiWidgetManager } from './libs/ui-widget-manager.js';
 import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
 import { initLayoutSidePanel } from './libs/layout-side-panel.js';
 import { clampToViewport } from './libs/ui-widget-manager.js';
+import { checkUpdateOnStartup } from './libs/toast.js';
+import { initModelMotion } from './libs/model-motion.js';
+import { initMouseTracking } from './libs/mouse-tracking.js';
+import { initAsrBubble } from './libs/asr-bubble.js';
 
 
 
@@ -75,30 +79,13 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   let textChatSending = false;
   let availableMotions = [];
   let availableExpressions = [];
-  let mouseTrackingStrength = 0.5; // LIVE2D_MOUSE_TRACKING_STRENGTH（0=关闭头部跟踪）
-  let mouseTrackingInited = false;
   let hoverModel = false;
   let hoverQuickController = false;
   let interactionLocked = false;
   let clickThroughController = null;
-  let asrBubbleCurrentX = 0;
-  let asrBubbleCurrentY = 0;
-  let asrBubbleTargetX = 0;
-  let asrBubbleTargetY = 0;
-  let asrBubbleInitialized = false;
-  let asrBubbleAnimating = false;
-  const ASR_SNAP_THRESHOLD = 0.5;
-  let asrBubbleSource = 'ai';
-  let asrBubbleState = { source: 'ai', entries: [] };
-  let subagentStatuses = [];
-  let subagentEventCache = {};
-  let selectedSubagentName = '';
   let devToolsLikelyOpen = false;
-  let asrTextPinnedToBottom = true;
   let currentLipSyncParamIds = ['ParamMouthOpenY'];
   let activeModelLoadRequestId = 0;
-  const motionTriggerCooldownMs = 100;
-  const recentMotionTriggers = new Map();
   let textChatBarYFactor = 0.53;
   let quickControllerXOffset = -12;
   let vrmScene = null;
@@ -200,7 +187,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       offset: { x: 0, y: -108 },
       scale: 1,
       hidden: false,
-      onLayout: () => updateAsrTextPosition(false),
+      onLayout: () => bubble.updateAsrTextPosition(false),
       schema: {
         bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean',
         props: {
@@ -426,11 +413,11 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       },
 
       showBubble(text, source = 'ai'){
-        showResultBubble(source, text);
+        bubble.showResultBubble(source, text);
       },
 
       triggerMotion(name){
-        return triggerModelMotion(name);
+        return motion.triggerModelMotion(name);
       },
 
       communicate(pluginId, payload){
@@ -876,222 +863,21 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     bgAudio = null;
   }
 
-  function playMotionByName(name){
-    if (!currentModel || !name) return false;
-    try{
-      currentModel.motion(name);
-      return true;
-    }catch(e){
-      console.warn('播放 motion 失败', name, e);
-      return false;
-    }
-  }
+  // 模型动作/表情触发 + <{...}> token 解析（见 libs/model-motion.js）
+  const motion = initModelMotion({
+    getModel: () => currentModel,
+    getModelType: () => modelType,
+    getVrmScene: () => vrmScene,
+    getAvailableMotions: () => availableMotions,
+    getAvailableExpressions: () => availableExpressions
+  });
 
-  // 鼠标跟踪强度：监听 pixi EventSystem 的 globalpointermove，把目标点按强度向模型中心
-  // 收缩后调用 model.focus（强度 0 = 完全不跟随鼠标）。
-  // 说明：soullink 无 autoFocus 逻辑；默认跟踪来自 pixi-live2d-display 的 Automator，
-  // 已在 Live2DModel.from 里以 autoFocus:false 关闭，这里自建按强度控制的轻量跟踪。
-  function currentMouseTrackingStrength(){
-    const raw = runtimeLive2DConfig && runtimeLive2DConfig.LIVE2D_MOUSE_TRACKING_STRENGTH;
-    const parsed = Number(raw);
-    mouseTrackingStrength = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.5;
-    return mouseTrackingStrength;
-  }
-
-  function initMouseTracking(){
-    if (mouseTrackingInited) return;
-    mouseTrackingInited = true;
-    // 注意：pixi v7 的 globalpointermove 只派发给 interactive 显示对象（EventBoundary.all），
-    // renderer.events.on('globalpointermove') 永远不会触发。
-    // 因此改用原生 window pointermove（必定触发），用 canvas 布局矩形把 clientX/Y 换算成世界坐标。
-    window.addEventListener('pointermove', (e) => {
-      if (!currentModel || typeof currentModel.focus !== 'function') return;
-      const strength = currentMouseTrackingStrength();
-      if (strength <= 0) return;
-      const canvas = app && app.renderer && app.renderer.view;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
-      // autoDensity 下 canvas CSS 尺寸 = pixi 逻辑尺寸 → clientX - rect.left 即世界坐标
-      const gx = e.clientX - rect.left;
-      const gy = e.clientY - rect.top;
-      if (!Number.isFinite(gx) || !Number.isFinite(gy)) return;
-      // 目标点按强度向模型中心收缩（模型中心 = 当前舞台坐标）
-      const targetX = currentModel.x + (gx - currentModel.x) * strength;
-      const targetY = currentModel.y + (gy - currentModel.y) * strength;
-      currentModel.focus(targetX, targetY);
-    });
-  }
-
-  // 鼠标跟踪的最终覆盖参数：pixi 的 updateFocus()（addParameterValueById）发生在
-  // beforeModelUpdate 之前，会被 soullink 注入（setParameterValueById）覆盖，导致跟踪不生效。
-  // 这里把 focusController 的方向按 pixi 同款公式换算，合并进 inject 的 getParams 结果
-  // （作为同键覆盖值），保证渲染的是"跟踪后的头部/视线"。
-  function focusParamOverrides(model){
-    if (currentMouseTrackingStrength() <= 0) return {};
-    const internal = model && model.internalModel;
-    if (!internal || !internal.focusController) return {};
-    const fc = internal.focusController;
-    if (!fc.x && !fc.y) return {};
-    const out = {};
-    if (internal.idParamEyeBallX) out[internal.idParamEyeBallX] = fc.x;
-    if (internal.idParamEyeBallY) out[internal.idParamEyeBallY] = fc.y;
-    if (internal.idParamAngleX) out[internal.idParamAngleX] = fc.x * 30;
-    if (internal.idParamAngleY) out[internal.idParamAngleY] = fc.y * 30;
-    if (internal.idParamAngleZ) out[internal.idParamAngleZ] = fc.x * fc.y * -30;
-    if (internal.idParamBodyAngleX) out[internal.idParamBodyAngleX] = fc.x * 10;
-    return out;
-  }
-
-  function playRandomMotion(){
-    const pool = availableMotions.length ? availableMotions : ['Idle'];
-    const picked = pool[Math.floor(Math.random() * pool.length)];
-    return playMotionByName(picked);
-  }
-
-  function triggerModelMotion(name){
-    const motionName = String(name || '').trim();
-    if (!motionName) return false;
-    // EXPRESSION: 前缀 → 触发表情（Live2D Expression / VRM Expression）
-    if (motionName.toUpperCase().startsWith('EXPRESSION:')) {
-      return triggerModelExpression(motionName.slice('EXPRESSION:'.length).trim());
-    }
-    const now = Date.now();
-    const cooldownKey = `${modelType}:${motionName}`;
-    const lastTs = recentMotionTriggers.get(cooldownKey) || 0;
-    if (now - lastTs < motionTriggerCooldownMs) return false;
-
-    let triggered = false;
-    if (modelType === 'vrm' && vrmScene) {
-      const expressions = Array.isArray(vrmScene.getAvailableExpressions?.()) ? vrmScene.getAvailableExpressions() : [];
-      if (expressions.includes(motionName)) {
-        triggered = !!vrmScene.setExpression(motionName);
-      }
-    } else if (modelType === 'images' && currentModel && currentModel._faustImageModel) {
-      triggered = !!currentModel._faustImageModel.setEmotion(motionName);
-    } else {
-      if (availableMotions.includes(motionName)) {
-        triggered = playMotionByName(motionName);
-      }
-    }
-    if (triggered) {
-      recentMotionTriggers.set(cooldownKey, now);
-    }
-    return triggered;
-  }
-
-  // 触发 Live2D Expression / VRM Expression（带冷却，与 motion 共用触发频率控制）
-  function triggerModelExpression(name){
-    const exprName = String(name || '').trim();
-    if (!exprName) return false;
-    const now = Date.now();
-    const cooldownKey = `${modelType}:expr:${exprName}`;
-    const lastTs = recentMotionTriggers.get(cooldownKey) || 0;
-    if (now - lastTs < motionTriggerCooldownMs) return false;
-
-    let triggered = false;
-    if (modelType === 'vrm' && vrmScene) {
-      const expressions = Array.isArray(vrmScene.getAvailableExpressions?.()) ? vrmScene.getAvailableExpressions() : [];
-      if (expressions.includes(exprName)) {
-        triggered = !!vrmScene.setExpression(exprName);
-      }
-    } else if (modelType === 'live2d' && currentModel) {
-      if (availableExpressions.includes(exprName) && typeof currentModel.expression === 'function') {
-        try {
-          const result = currentModel.expression(exprName);
-          if (result && typeof result.catch === 'function') result.catch(() => {});
-          triggered = true;
-        } catch (e) {
-          console.warn('播放 expression 失败', exprName, e);
-        }
-      }
-    }
-    if (triggered) {
-      recentMotionTriggers.set(cooldownKey, now);
-    }
-    return triggered;
-  }
-
-  function consumeMotionTokens(request, chunk){
-    // 累积未决文本 + 新 chunk，在完整拼接文本上匹配 <{...}> 表情 token。
-    // 支持跨 delta 分片送达的 token（如 '<' 与 '{Flick}>' 分两次到达）：
-    //  - 匹配到完整 <{xxx}> 即收集到 request.pendingMotions（不立即触发，
-    //    等 TTS 播到对应句子时再触发，保证动作穿插在语音中）
-    //  - 未闭合的 '<{' 前缀保留到下一个 chunk
-    //  - 尾部孤立 '<' 也保留（可能是下一个 chunk 中 '<{' 的开头）
-    const combined = String(request.motionTokenBuffer || '') + String(chunk || '');
-    let visible = '';
-    let cursor = 0;
-    const baseLen = request.visibleLen || 0;
-    if (!Array.isArray(request.pendingMotions)) request.pendingMotions = [];
-
-    while (cursor < combined.length) {
-      const start = combined.indexOf('<{', cursor);
-      if (start === -1) {
-        // 没有 <{：若文本以孤立 '<' 结尾，可能是下一个 chunk 中 '<{' 的开头，保留它
-        const lastLt = combined.lastIndexOf('<', combined.length - 1);
-        if (lastLt >= cursor && lastLt === combined.length - 1) {
-          visible += combined.slice(cursor, lastLt);
-          request.motionTokenBuffer = '<';
-        } else {
-          visible += combined.slice(cursor);
-          request.motionTokenBuffer = '';
-        }
-        request.visibleLen = baseLen + visible.length;
-        return visible;
-      }
-
-      visible += combined.slice(cursor, start);
-      const end = combined.indexOf('}>', start + 2);
-      if (end === -1) {
-        // <{ 已出现但未闭合：保留从 <{ 起的未决文本，等待后续 chunk
-        request.motionTokenBuffer = combined.slice(start);
-        request.visibleLen = baseLen + visible.length;
-        return visible;
-      }
-
-      const motionName = combined.slice(start + 2, end).trim();
-      if (motionName && !/\s/.test(motionName)) {
-        // pos = token 在完整可见文本流中的偏移（用于按句子分配触发时机）
-        request.pendingMotions.push({ motion: motionName, pos: baseLen + visible.length });
-      }
-      cursor = end + 2;
-    }
-
-    request.motionTokenBuffer = '';
-    request.visibleLen = baseLen + visible.length;
-    return visible;
-  }
-
-  // 取出落在 [globalStart, globalEnd) 区间内的待触发动作（属于该句子的 token）
-  function takeMotionsForSentence(request, globalStart, globalEnd){
-    const pending = Array.isArray(request.pendingMotions) ? request.pendingMotions : [];
-    const taken = [];
-    const keep = [];
-    for (const item of pending){
-      if (item.pos >= globalStart && item.pos < globalEnd) taken.push(item.motion);
-      else keep.push(item);
-    }
-    request.pendingMotions = keep;
-    return taken;
-  }
-
-  // 取出偏移 >= minPos 的全部待触发动作（用于回复尾部无标点句子的兜底分配）
-  function takeMotionsFrom(request, minPos){
-    const pending = Array.isArray(request.pendingMotions) ? request.pendingMotions : [];
-    const taken = [];
-    const keep = [];
-    for (const item of pending){
-      if (item.pos >= minPos) taken.push(item.motion);
-      else keep.push(item);
-    }
-    request.pendingMotions = keep;
-    return taken;
-  }
-
-  function stripMotionTokens(text){
-    return String(text || '').replace(/<\{[^}]*\}>/g, '');
-  }
+  // 鼠标头部跟踪（见 libs/mouse-tracking.js）
+  const mouseTracking = initMouseTracking({
+    getModel: () => currentModel,
+    getApp: () => app,
+    getRuntimeLive2DConfig: () => runtimeLive2DConfig
+  });
 
   function interruptPlayback(){
     try{ audio.stopAudio(); }catch(e){}
@@ -1291,7 +1077,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       soullinkInjection = window.Soullink.attachModelInjection(model, () => {
         const base = soullinkLayer ? soullinkLayer.getParams() : {};
         // 鼠标跟踪覆盖（focus 参数最终生效，避免被 soullink 注入覆盖）
-        const focusOverrides = focusParamOverrides(model);
+        const focusOverrides = mouseTracking.focusParamOverrides(model);
         return focusOverrides ? { ...base, ...focusOverrides } : base;
       }, true);
       if (!soullinkInjection) {
@@ -1761,34 +1547,34 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       try{ j = JSON.parse(raw); }catch(e){ j = null }
       if (!r.ok){
         asrStatusEl.textContent = `识别服务错误 (${r.status})`;
-        showResultBubble('error', 'ASR服务返回错误: ' + raw);
+        bubble.showResultBubble('error', 'ASR服务返回错误: ' + raw);
         return;
       }
       if (j && j.status === 'success'){
         const text = j.text || '';
         if (text && text.length > 0){
-          showResultBubble('user', text);
+          bubble.showResultBubble('user', text);
           asrStatusEl.textContent = '识别成功';
           // send recognized text to chat websocket if available
           try{ sendToChat(text); }catch(e){}
         } else {
           asrStatusEl.textContent = '识别成功但无文本';
-          showResultBubble('error', 'ASR返回但文本为空');
+          bubble.showResultBubble('error', 'ASR返回但文本为空');
         }
       } else if (j && j.status === 'error'){
         asrStatusEl.textContent = '识别失败';
-        showResultBubble('error', 'ASR失败: ' + (j.message || JSON.stringify(j)));
+        bubble.showResultBubble('error', 'ASR失败: ' + (j.message || JSON.stringify(j)));
       } else if (j && j.text){
-        showResultBubble('user', j.text);
+        bubble.showResultBubble('user', j.text);
         asrStatusEl.textContent = '识别完成';
       } else {
         asrStatusEl.textContent = '无返回或未知格式';
-        showResultBubble('error', 'ASR返回未知格式: ' + raw);
+        bubble.showResultBubble('error', 'ASR返回未知格式: ' + raw);
       }
     }catch(err){
       console.error('upload error', err);
       asrStatusEl.textContent = '网络或服务错误';
-      showResultBubble('error', '上传或网络错误: ' + String(err));
+      bubble.showResultBubble('error', '上传或网络错误: ' + String(err));
     }
   }
   //console.log("ASR Result:", asrResult);
@@ -1954,7 +1740,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         // use existing synthesizeAndPlay TTS function; prefer UI-selected lang
         const lang = getCurrentTtsLang();
         useVAD = false;
-        showResultBubble('ai', arg);
+        bubble.showResultBubble('ai', arg);
         await audio.synthesizeAndPlay(arg, lang);
       } else if (cmd === 'STOP'){
         // stop audio and optionally stop asr
@@ -1997,18 +1783,19 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         const entry = { type: 'md', text: content };
         if (currentChatRequest && Array.isArray(currentChatRequest.entries)) {
           currentChatRequest.entries.push(entry);
-          showResultBubble('ai', currentChatRequest.entries);
+          bubble.showResultBubble('ai', currentChatRequest.entries);
         } else {
           const bubbleVisible = asrBubbleEl && asrBubbleEl.style.display !== 'none';
-          const base = (bubbleVisible && asrBubbleState.source === 'ai') ? asrBubbleState.entries : [];
-          showResultBubble('ai', base.concat([entry]));
+          const bubbleState = bubble.getState();
+          const base = (bubbleVisible && bubbleState.source === 'ai') ? bubbleState.entries : [];
+          bubble.showResultBubble('ai', base.concat([entry]));
         }
       } else if (cmd=="SET_MOTION"){
         if (!arg) return;
         if (modelType === 'vrm' && vrmScene) {
           vrmScene.setExpression(arg);
         } else {
-          playMotionByName(arg);
+          motion.playMotionByName(arg);
         }
       } else if (cmd === 'LOAD_MODEL' || cmd === 'SET_MODEL_PATH'){
         if (!arg) return;
@@ -2075,7 +1862,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           const picked = exps[Math.floor(Math.random() * exps.length)];
           vrmScene.setExpression(picked);
         } else {
-          playRandomMotion();
+          motion.playRandomMotion();
         }
       } else if (cmd === 'SCALE_UP'){
         nudgeScale(0.05);
@@ -2229,7 +2016,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         streamTtsPending.delete(streamTtsNextPlayId);
         if (item.status === 'ready' && item.blob){
           // 动作穿插在 TTS 中：播到这一句时触发该句挂载的情绪动作
-          for (const m of (item.motions || [])) triggerModelMotion(m);
+          for (const m of (item.motions || [])) motion.triggerModelMotion(m);
           await audio.playOrdered(item.blob);
         }
         streamTtsNextPlayId += 1;
@@ -2282,7 +2069,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     if (msg.agent_id === 'subagents') {
       if (msg.type === 'subagents_summary') {
         console.debug(' MSG ==> Subagents summary received');
-        setSubagentStatuses(Array.isArray(msg.items) ? msg.items : []);
+        subagent.applySummary(Array.isArray(msg.items) ? msg.items : []);
       }
       return;
     }
@@ -2292,19 +2079,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       if (agentId && agentId.startsWith('subagent-')) {
         console.debug(' MSG ==> Subagent event received');
         const name = agentId.slice('subagent-'.length);
-        if (!subagentEventCache[name]) subagentEventCache[name] = [];
-        const cached = subagentEventCache[name];
-        const last = cached[cached.length - 1];
-        if ((msg.type === 'reasoning_delta' || msg.type === 'delta') && last && last.type === msg.type) {
-          last.content = (last.content || '') + (msg.content || '');
-          last.ts = msg.ts || Date.now();
-        } else {
-          cached.push({ ...msg, ts: msg.ts || Date.now() });
-        }
-        if (cached.length > 500) cached.splice(0, cached.length - 500);
-        if (selectedSubagentName === name) {
-          renderSubagentPanelFromCache(name);
-        }
+        subagent.appendEvent(name, msg);
       }
       return;
     }
@@ -2383,7 +2158,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         done: false,
         expanded: false,
       });
-      showResultBubble('ai', req.entries);
+      bubble.showResultBubble('ai', req.entries);
       return;
     }
 
@@ -2423,7 +2198,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
       target.output = String(msg.output || '');
       target.done = true;
-      showResultBubble('ai', req.entries);
+      bubble.showResultBubble('ai', req.entries);
       return;
     }
 
@@ -2432,23 +2207,24 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const lastEntry = req.entries[req.entries.length - 1];
       if (lastEntry && lastEntry.type === 'reasoning') {
         lastEntry.text = String(lastEntry.text || '') + (msg.content || '');
-        // Preserve expanded state from asrBubbleState
-        if (Array.isArray(asrBubbleState.entries)) {
+        // Preserve expanded state from the bubble state
+        const bubbleState = bubble.getState();
+        if (Array.isArray(bubbleState.entries)) {
           const idx = req.entries.indexOf(lastEntry);
-          if (idx >= 0 && asrBubbleState.entries[idx]) {
-            lastEntry.expanded = !!asrBubbleState.entries[idx].expanded;
+          if (idx >= 0 && bubbleState.entries[idx]) {
+            lastEntry.expanded = !!bubbleState.entries[idx].expanded;
           }
         }
       } else {
         req.entries.push({ type: 'reasoning', text: msg.content || '', expanded: false });
       }
-      showResultBubble('ai', req.entries);
+      bubble.showResultBubble('ai', req.entries);
       return;
     }
 
     if (msg.type === 'delta'){
       const chunk = normalizeTtsText(msg.content || '');
-      const visibleChunk = consumeMotionTokens(req, chunk);
+      const visibleChunk = motion.consumeMotionTokens(req, chunk);
       if (!visibleChunk) {
         return;
       }
@@ -2460,11 +2236,11 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       } else {
         req.entries.push({ type: 'text', text: visibleChunk });
       }
-      showResultBubble('ai', req.entries);
+      bubble.showResultBubble('ai', req.entries);
       // TTS 流式分块：按理想块长(Token)在标点/换行处把句子合并成块
       if (!req.ttsChunker) req.ttsChunker = TtsSplitter.createChunker(getTtsChunkIdealTokens());
       for (const chunk of req.ttsChunker.feed(visibleChunk)){
-        const motions = takeMotionsForSentence(req, chunk.start, chunk.end);
+        const motions = motion.takeMotionsForSentence(req, chunk.start, chunk.end);
         enqueueStreamTtsSentence(chunk.text, getCurrentTtsLang(), motions);
       }
       return;
@@ -2482,7 +2258,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
       cancelPendingWaitingNotice();
       const request = currentChatRequest || passiveChatRequest;
-      let reply = stripMotionTokens(request.replyText || '');
+      let reply = motion.stripMotionTokens(request.replyText || '');
       request.replyText = reply;
       request.motionTokenBuffer = '';
 
@@ -2494,31 +2270,31 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           const chunks = [...chunker.feed(reply), ...chunker.flush()];
           request.entries = [];
           for (const chunk of chunks){
-            const visible = stripMotionTokens(chunk.text);
+            const visible = motion.stripMotionTokens(chunk.text);
             if (!visible) continue;
             request.entries.push({ type: 'text', text: visible });
             // show bubble immediately
-            showResultBubble('ai', request.entries);
+            bubble.showResultBubble('ai', request.entries);
             // fire-and-forget TTS so UI updates are immediate
-            enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsForSentence(request, chunk.start, chunk.end)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
+            enqueueStreamTtsSentence(visible, getCurrentTtsLang(), motion.takeMotionsForSentence(request, chunk.start, chunk.end)).catch((e)=>{ console.warn('enqueue TTS failed', e); });
           }
         }catch(e){ console.warn('chunking done reply failed', e); }
       } else {
         // 流式路径：flush 分块器残余（尾部无标点结束的文本）
         if (request.ttsChunker){
           for (const chunk of request.ttsChunker.flush()){
-            const visible = stripMotionTokens(chunk.text);
+            const visible = motion.stripMotionTokens(chunk.text);
             if (!visible) continue;
-            await enqueueStreamTtsSentence(visible, getCurrentTtsLang(), takeMotionsForSentence(request, chunk.start, chunk.end));
+            await enqueueStreamTtsSentence(visible, getCurrentTtsLang(), motion.takeMotionsForSentence(request, chunk.start, chunk.end));
           }
         }
       }
 
       // 兜底：回复末尾仍未分配的动作（无对应句子的 token）立即触发
-      for (const item of (request.pendingMotions || [])) triggerModelMotion(item.motion);
+      for (const item of (request.pendingMotions || [])) motion.triggerModelMotion(item.motion);
       request.pendingMotions = [];
       if (!request.passive) agentIsProcessing = false;
-      showResultBubble('ai', request.entries);
+      bubble.showResultBubble('ai', request.entries);
       if (request.passive){
         // 后端主动推送的流（触发器/Nimble）：展示完成后仅清被动会话，
         // 不触碰主动聊天的 currentChatRequest，也不 resolve。
@@ -2568,7 +2344,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       cancelPendingWaitingNotice();
       if (chatStatusEl) chatStatusEl.textContent = '聊天错误';
       if (textChatStatus) textChatStatus.textContent = '聊天错误';
-      showResultBubble('error', msg.error || '未知聊天错误');
+      bubble.showResultBubble('error', msg.error || '未知聊天错误');
       const reqE = currentChatRequest || passiveChatRequest;
       if (reqE && reqE.resumeAfter){
         resumeRecording();
@@ -2631,12 +2407,12 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       textChatInput.value = '';
       if (textChatStatus) textChatStatus.textContent = '正在打开配置中心';
       try {
-        showResultBubble('user', text);
+        bubble.showResultBubble('user', text);
         if (window.api && window.api.openConfigWindow) {
           await window.api.openConfigWindow();
-          showResultBubble('ai', '已打开配置中心');
+          bubble.showResultBubble('ai', '已打开配置中心');
         } else {
-          showResultBubble('error', '当前环境不支持打开配置中心');
+          bubble.showResultBubble('error', '当前环境不支持打开配置中心');
         }
       } finally {
         if (textChatStatus) textChatStatus.textContent = '文字待命';
@@ -2647,20 +2423,20 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     const motionCmd = text.match(/^\/motion\s+(.+)$/);
     if (motionCmd) {
       textChatInput.value = '';
-      showResultBubble('user', text);
+      bubble.showResultBubble('user', text);
       const name = String(motionCmd[1] || '').trim();
-      const ok = name ? triggerModelMotion(name) : false;
-      showResultBubble(ok ? 'ai' : 'error', ok ? `已触发动作: ${name}` : `动作不存在或不可用: ${name}`);
+      const ok = name ? motion.triggerModelMotion(name) : false;
+      bubble.showResultBubble(ok ? 'ai' : 'error', ok ? `已触发动作: ${name}` : `动作不存在或不可用: ${name}`);
       return;
     }
     // /expression <名称>：触发指定 Expression（Live2D exp3 / VRM Expression）
     const exprCmd = text.match(/^\/expression\s+(.+)$/);
     if (exprCmd) {
       textChatInput.value = '';
-      showResultBubble('user', text);
+      bubble.showResultBubble('user', text);
       const name = String(exprCmd[1] || '').trim();
-      const ok = name ? triggerModelExpression(name) : false;
-      showResultBubble(ok ? 'ai' : 'error', ok ? `已触发表情: ${name}` : `表情不存在或不可用: ${name}`);
+      const ok = name ? motion.triggerModelExpression(name) : false;
+      bubble.showResultBubble(ok ? 'ai' : 'error', ok ? `已触发表情: ${name}` : `表情不存在或不可用: ${name}`);
       return;
     }
     // Auto-interrupt if agent is currently processing
@@ -2670,7 +2446,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     textChatSending = true;
     textChatSendBtn.disabled = true;
     try{
-      showResultBubble('user', fullText);
+      bubble.showResultBubble('user', fullText);
       await sendToChat(fullText);
       textChatInput.value = '';
       if (composer) composer.clear();
@@ -2681,604 +2457,25 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     }
   }
 
-  function handleResultBubbleToggle(ev){
-    // 折叠/展开改变气泡尺寸 → 几何重绘（置于最前，任何 details toggle 都覆盖）
-    markLayoutDirty('widget');
-    const details = ev.target;
-    if (!details || !details.classList) return;
-    // Tool call details
-    if (details.dataset && details.dataset.callId) {
-      const callId = String(details.dataset.callId || '');
-      if (!callId || !Array.isArray(asrBubbleState.entries)) return;
-      for (const entry of asrBubbleState.entries){
-        if (entry && entry.type === 'tool' && String(entry.callId || '') === callId) {
-          entry.expanded = details.open;
-          break;
-        }
-      }
-      return;
-    }
-    // Reasoning card details
-    if (details.dataset && details.dataset.r !== undefined) {
-      const rIdx = parseInt(details.dataset.r, 10);
-      if (!isNaN(rIdx) && Array.isArray(asrBubbleState.entries)) {
-        let count = -1;
-        for (const entry of asrBubbleState.entries) {
-          if (entry && entry.type === 'reasoning') {
-            count++;
-            if (count === rIdx) {
-              entry.expanded = details.open;
-              break;
-            }
-          }
-        }
-      }
-      return;
-    }
-  }
+  // ── ASR/结果气泡（已抽取到 libs/asr-bubble.js） ──
+  const bubble = initAsrBubble({
+    uiWidgetManager,
+    onLayoutDirty: () => markLayoutDirty('widget'),
+    onHideSubagentSummary: () => subagent.hideSummary(),
+    getModelType: () => modelType,
+    getVrmScene: () => vrmScene,
+    getCurrentModel: () => currentModel,
+    getApp: () => app,
+    live2DToClient,
+    updateHilPosition: () => hil.updatePosition(),
+  });
 
-  function rememberAsrScrollIntent(){
-    if (!asrTextEl) return;
-    const threshold = 18;
-    const distanceToBottom = asrTextEl.scrollHeight - asrTextEl.scrollTop - asrTextEl.clientHeight;
-    asrTextPinnedToBottom = distanceToBottom <= threshold;
-  }
-
-  function scrollAsrTextToBottom(force = false){
-    if (!asrTextEl) return;
-    if (force || asrTextPinnedToBottom){
-      asrTextEl.scrollTop = asrTextEl.scrollHeight;
-      asrTextPinnedToBottom = true;
-    }
-  }
-
-  function hideResultBubble(){
-    if (!asrBubbleEl) return;
-    asrBubbleEl.style.display = 'none';
-    if (subagentSummaryEl) subagentSummaryEl.style.display = 'none';
-    asrBubbleInitialized = false;
-  }
-
-  // AsrBubble 用户可调属性（布景台可编辑，持久化到 /faust/ui-setting）
-  function getAsrBubbleProps(){
-    const widget = uiWidgetManager.getWidget('asr-bubble');
-    const p = (widget && widget.props) || {};
-    return {
-      fontSize: Number(p.fontSize) > 0 ? Number(p.fontSize) : 20,
-      textColor: String(p.textColor || '#000000'),
-      whiteBackground: p.whiteBackground !== false,
-      aspectRatio: String(p.aspectRatio || '').trim(),
-      showReasoning: p.showReasoning !== false,
-      showTools: p.showTools !== false,
-      showSubagents: p.showSubagents !== false,
-    };
-  }
-
-  // 把 AsrBubble 属性应用到元素（字体大小 / 白色背景 / 长宽比）
-  function applyAsrBubbleProps(){
-    if (!asrBubbleEl || !asrTextEl) return;
-    const props = getAsrBubbleProps();
-    asrTextEl.style.fontSize = props.fontSize + 'px';
-    asrTextEl.style.color = props.textColor;
-    asrBubbleEl.classList.toggle('asr-bubble-no-bg', !props.whiteBackground);
-    // 长宽比：CSS aspect-ratio 对由内容撑开的 flex 容器不生效，
-    // 改为按固定宽度(350px)显式计算高度
-    const parts = String(props.aspectRatio || '').split('/').map((s) => parseFloat(s.trim()));
-    if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
-      const w = asrBubbleEl.offsetWidth || 350;
-      asrBubbleEl.style.height = Math.round(w * parts[1] / parts[0]) + 'px';
-      asrBubbleEl.style.aspectRatio = 'auto';
-    } else {
-      asrBubbleEl.style.height = '';
-      asrBubbleEl.style.aspectRatio = '';
-    }
-  }
-
-  // 按 entry key/hash 对齐更新气泡子元素；仅 append 新 entry / replace 变化 entry / 移除多余节点
-  function applyBubbleEntriesDiff(source, entries) {
-    const keys = entries.map((e, i) => entryKey(source, e, i));
-    const hashes = entries.map((e) => entryHash(e, source));
-    const children = Array.from(asrTextEl.children);
-    let changed = false;
-    let reasoningIdx = 0;
-
-    for (let i = 0; i < keys.length; i++) {
-      const el = children[i];
-      const key = keys[i];
-      const hash = hashes[i];
-      const isReasoning = !!(entries[i] && entries[i].type === 'reasoning');
-      const entryReasoningIdx = isReasoning ? reasoningIdx++ : reasoningIdx;
-      if (!el) {
-        const node = document.createElement('div');
-        node.dataset.entryKey = key;
-        node.dataset.entryHash = hash;
-        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i, entryReasoningIdx);
-        asrTextEl.appendChild(node);
-        hydrateNewBubbleNode(node);
-        changed = true;
-        continue;
-      }
-      if (el.dataset.entryKey !== key || el.dataset.entryHash !== hash) {
-        const node = document.createElement('div');
-        node.dataset.entryKey = key;
-        node.dataset.entryHash = hash;
-        node.innerHTML = renderBubbleEntryHtml(source, entries[i], i, entryReasoningIdx);
-        el.replaceWith(node);
-        hydrateNewBubbleNode(node);
-        changed = true;
-      }
-    }
-    for (let i = keys.length; i < children.length; i++) {
-      children[i].remove();
-      changed = true;
-    }
-    if (changed) updateAsrTextPosition(true);
-    return changed;
-  }
-
-  // 只 hydrate 新插入/更新的 md-block（局部），不再全量
-  function hydrateNewBubbleNode(node) {
-    const isMdBlock = !!(node.classList && node.classList.contains('md-block'));
-    if (!isMdBlock && !node.querySelector('.md-block')) return;
-    try {
-      hydrateMermaidBlocks(node, { rootIsMdBlock: isMdBlock });
-    } catch (e) {
-      console.warn('[md-block] hydrate failed（不影响显示）', e);
-    }
-  }
-
-  function showResultBubble(source, entries){
-    if (!asrTextEl || !asrBubbleEl) return;
-    const widget = uiWidgetManager.getWidget('asr-bubble');
-    if (widget && widget.hidden && !uiWidgetManager.isEditMode()) return;
-    asrBubbleSource = source || 'ai';
-    asrBubbleEl.dataset.source = asrBubbleSource;
-    const normalizedEntries = Array.isArray(entries)
-      ? entries
-      : (String(entries || '').trim() ? [{ type: 'text', text: String(entries || '') }] : []);
-    asrBubbleState = {
-      source: asrBubbleSource,
-      entries: cloneBubbleEntries(normalizedEntries),
-    };
-    // 按用户属性过滤渲染内容（推理 / 工具调用）
-    const props = getAsrBubbleProps();
-    let renderEntries = asrBubbleState.entries;
-    if (props.showReasoning === false) renderEntries = renderEntries.filter((e) => e.type !== 'reasoning');
-    if (props.showTools === false) renderEntries = renderEntries.filter((e) => e.type !== 'tool');
-    // 增量渲染：按 entry key/hash 对齐更新，避免每次全量 innerHTML + markdown 重解析
-    const html = renderResultBubbleHtml(asrBubbleSource, renderEntries);
-    rememberAsrScrollIntent();
-    asrBubbleEl.style.display = html ? 'flex' : 'none';
-    if (html) {
-      applyBubbleEntriesDiff(asrBubbleSource, renderEntries);
-    } else {
-      asrTextEl.innerHTML = '';
-    }
-    markLayoutDirty('widget');
-    if (html) {
-      applyAsrBubbleProps();
-      updateAsrTextPosition(true);
-      scrollAsrTextToBottom(true);
-    }
-  }
-
-  let mermaidInitialized = false;
-  let mermaidSeq = 0;
-
-  // 把备份的 <pre><code> 元素重新插回 DOM（mermaid 渲染失败/节点脱离时恢复原文）
-  function restoreMermaidCodeBlock(holder, backupHtml){
-    if (!holder || !backupHtml) return;
-    try {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = backupHtml;
-      const restored = tmp.firstElementChild;
-      if (restored) holder.replaceWith(restored);
-    } catch (e) {
-      console.warn('[md-block] restore code block failed', e);
-    }
-  }
-
-  function hydrateMermaidBlocks(root, opts = {}){
-    const fm = window.FaustMarkdown;
-    if (!root || !fm || !fm.mermaid) return;
-    // md entry 节点本身即 .md-block（增量路径传入单节点）：直接查 code.language-mermaid；
-    // 全量路径传入容器：查 .md-block 后代
-    const codes = opts.rootIsMdBlock
-      ? root.querySelectorAll('code.language-mermaid')
-      : root.querySelectorAll('.md-block code.language-mermaid');
-    if (!codes.length) return;
-    if (!mermaidInitialized) {
-      fm.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
-      mermaidInitialized = true;
-    }
-    const nodes = [];
-    const backups = [];
-    for (const code of codes) {
-      const holder = document.createElement('div');
-      holder.className = 'mermaid';
-      holder.id = `md-mermaid-${++mermaidSeq}`;
-      holder.textContent = code.textContent || '';
-      const pre = code.closest('pre') || code;
-      const backupHtml = pre.outerHTML;
-      pre.replaceWith(holder);
-      nodes.push(holder);
-      backups.push({ holder, backupHtml });
-    }
-    fm.mermaid.run({ nodes })
-      .then(() => {
-        // 渲染完成：若节点已脱离文档（气泡被后续消息覆盖），SVG 不可见，
-        // 把原代码块恢复回当前 DOM，保证内容可见
-        for (const { holder, backupHtml } of backups) {
-          if (!holder.isConnected) restoreMermaidCodeBlock(holder, backupHtml);
-        }
-      })
-      .catch((err) => {
-        console.warn('[md-block] mermaid render failed:', err);
-        // 渲染失败：恢复所有占位节点为原代码块（内容不丢失）
-        for (const { holder, backupHtml } of backups) {
-          if (holder.isConnected) restoreMermaidCodeBlock(holder, backupHtml);
-        }
-      });
-  }
-
-  function formatSubagentEventSummary(item){
-    if (!item) return '';
-    return String(item.last_event_summary || item.last_error || '').trim();
-  }
-
-  function setSubagentStatuses(items){
-    subagentStatuses = Array.isArray(items) ? items.map((item)=> ({ ...item })) : [];
-    renderSubagentSummary();
-    if (selectedSubagentName) {
-      const next = subagentStatuses.find((item)=> String(item.name || '') === selectedSubagentName);
-      if (next) {
-        // WS 推送的 subagents_summary 是轻量状态（不含 recent_events），
-        // 直接用 next 渲染会把事件列表清空为"暂无事件"。
-        // 优先合并事件缓存，保留已显示的流式事件。
-        renderSubagentPanel({
-          ...next,
-          recent_events: subagentEventCache[selectedSubagentName] || next.recent_events || [],
-        });
-      }
-    }
-  }
-
-  function renderSubagentSummary(){
-    if (!subagentSummaryEl) return;
-    // 用户可在布景台关闭 Subagents Summary 组件
-    if (getAsrBubbleProps().showSubagents === false) {
-      subagentSummaryEl.style.display = 'none';
-      subagentSummaryEl.innerHTML = '';
-      return;
-    }
-    const STATUS_CN= {
-      idle: '空闲', pending: '排队中', running: '运行中',
-      stopping: '停止中', stopped: '已停止', error: '错误',
-    };
-    const visibleItems = Array.isArray(subagentStatuses) ? subagentStatuses : [];
-    if (!visibleItems.length){
-      subagentSummaryEl.style.display = 'none';
-      subagentSummaryEl.innerHTML = '';
-      // 如果 asrText 也没有内容，隐藏整个气泡
-      if (asrBubbleEl && asrBubbleEl.style.display !== 'none' && asrTextEl && !asrTextEl.textContent.trim()) {
-        asrBubbleEl.style.display = 'none';
-      }
-      return;
-    }
-    subagentSummaryEl.style.display = 'flex';
-    if (asrBubbleEl && asrBubbleEl.style.display === 'none'){
-      asrBubbleEl.style.display = 'flex';
-    }
-    subagentSummaryEl.innerHTML = visibleItems.map((item)=>{
-      const name = escapeHtml(String(item.name || 'Unnamed'));
-      const rawStatus = String(item.status || 'unknown').trim().toLowerCase();
-      const status = escapeHtml(STATUS_CN[rawStatus] || rawStatus);
-      const title = escapeHtml(formatSubagentEventSummary(item));
-      return `<div class="subagent-summary-item" data-subagent-name="${name}" title="${title}"><span class="subagent-summary-name">${name}:${status}</span></div>`;
-    }).join('');
-  }
-
-  function renderSubagentPanelFromCache(name){
-    const status = subagentStatuses.find(s => String(s.name || '') === name);
-    const events = subagentEventCache[name] || [];
-    if (status) {
-      renderSubagentPanel({ ...status, recent_events: events });
-    } else {
-      // subagent 已不在状态列表（如已移除/尚未推送 summary），
-      // 仍用缓存事件渲染，避免事件被静默丢弃。
-      renderSubagentPanel({ name, status: 'unknown', recent_events: events });
-    }
-  }
-
-  function normalizeSubagentPanelEvents(events){
-    const source = Array.isArray(events) ? events : [];
-    const normalized = [];
-    for (const event of source){
-      if (!event || typeof event !== 'object') continue;
-      const eventType = String(event.type || '').trim();
-      if (!eventType) continue;
-      const last = normalized[normalized.length - 1];
-      if ((eventType === 'reasoning_delta' || eventType === 'delta') && last && last.type === eventType) {
-        last.content = String(last.content || '') + String(event.content || '');
-        last.ts = event.ts;
-        continue;
-      }
-      normalized.push({ ...event });
-    }
-    return normalized;
-  }
-
-  function formatSubagentPanelEvent(event){
-    const eventType = String(event.type || '').trim();
-    if (eventType === 'reasoning_delta') return { label: '思考', body: String(event.content || '') };
-    if (eventType === 'delta') return { label: '输出', body: String(event.content || '') };
-    if (eventType === 'tool_start') return { label: '调用工具', body: String(event.tool_name || '') };
-    if (eventType === 'queued') {
-      const content = (((event.message || {}).messages || [])[0] || {}).content || '';
-      return { label: '排队中', body: String(content) };
-    }
-    if (eventType === 'input') {
-      const content = (((event.message || {}).messages || [])[0] || {}).content || '';
-      return { label: '主Agent消息', body: String(content) };
-    }
-    if (eventType === 'error') return { label: '错误', body: String(event.content || event.error || '') };
-    if (eventType === 'stopping') return { label: '停止中', body: '已发送停止请求' };
-    if (eventType === 'stopped') return { label: '已停止', body: 'Subagent 已停止' };
-    return { label: eventType || 'event', body: typeof event === 'object' ? JSON.stringify(event, null, 2) : String(event || '') };
-  }
-
-  function subagentEventKey(events, index) {
-    const event = events[index];
-    const eventType = String((event && event.type) || 'event');
-    // normalize 已在源头折叠相邻同类型事件（reasoning_delta/delta），索引即稳定 key
-    return eventType + ':' + index;
-  }
-
-  function subagentEventHash(event) {
-    if (!event || typeof event !== 'object') return 'null';
-    const eventType = String(event.type || '');
-    let body = '';
-    if (eventType === 'reasoning_delta' || eventType === 'delta') body = String(event.content || '');
-    else if (eventType === 'tool_start') body = String(event.tool_name || '');
-    else if (eventType === 'queued' || eventType === 'input') body = JSON.stringify((((event.message || {}).messages || [])[0] || {}).content || '');
-    else if (eventType === 'error') body = String(event.content || event.error || '');
-    else body = JSON.stringify(event);
-    return eventType + ':' + body;
-  }
-
-  function applySubagentPanelDiff(item, events){
-    if (!subagentPanelBody) return;
-    // ── meta 区全量刷新（字段少且低频） ──
-    const metaHtml = [
-      '<div class="subagent-panel-meta">',
-      `<div class="subagent-panel-meta-key">状态</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.status || 'unknown'))}</div>`,
-      `<div class="subagent-panel-meta-key">工具组</div><div class="subagent-panel-meta-value">${escapeHtml((item.toolsets || []).join(', ') || '(none)')}</div>`,
-      `<div class="subagent-panel-meta-key">Prompt</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.system_prompt_summary || ''))}</div>`,
-      `<div class="subagent-panel-meta-key">错误</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.last_error || ''))}</div>`,
-      '</div>',
-    ].join('');
-    let eventsEl = subagentPanelBody.querySelector('.subagent-panel-events');
-    if (!eventsEl) {
-      subagentPanelBody.innerHTML = metaHtml + '<div class="subagent-panel-events"></div>';
-      eventsEl = subagentPanelBody.querySelector('.subagent-panel-events');
-    } else {
-      // 只替换 meta 容器（保留 events 容器与已渲染事件 DOM）
-      const existingMeta = subagentPanelBody.querySelector('.subagent-panel-meta');
-      if (existingMeta) existingMeta.outerHTML = metaHtml;
-    }
-    // ── events 区 diff 更新 ──
-    const keys = events.map((e, i) => subagentEventKey(events, i));
-    const hashes = events.map((e) => subagentEventHash(e));
-    const children = Array.from(eventsEl.children);
-    const childCountBefore = children.length;
-    for (let i = 0; i < keys.length; i++) {
-      const el = children[i];
-      const key = keys[i];
-      const hash = hashes[i];
-      if (!el) {
-        const node = document.createElement('div');
-        node.className = 'subagent-panel-event';
-        node.dataset.eventKey = key;
-        node.dataset.eventHash = hash;
-        const formatted = formatSubagentPanelEvent(events[i]);
-        node.innerHTML = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
-        eventsEl.appendChild(node);
-        continue;
-      }
-      if (el.dataset.eventKey !== key || el.dataset.eventHash !== hash) {
-        const node = document.createElement('div');
-        node.className = 'subagent-panel-event';
-        node.dataset.eventKey = key;
-        node.dataset.eventHash = hash;
-        const formatted = formatSubagentPanelEvent(events[i]);
-        node.innerHTML = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
-        el.replaceWith(node);
-      }
-    }
-    for (let i = keys.length; i < children.length; i++) {
-      children[i].remove();
-    }
-    if (!events.length) {
-      eventsEl.innerHTML = '<div class="subagent-panel-event"><div class="subagent-panel-event-body">暂无事件</div></div>';
-    }
-    return childCountBefore !== keys.length;
-  }
-
-  function renderSubagentPanel(item){
-    if (!subagentPanel || !subagentPanelBody || !item) return;
-    selectedSubagentName = String(item.name || '');
-    if (subagentPanelTitle) subagentPanelTitle.textContent = `Subagent: ${selectedSubagentName}`;
-    const events = normalizeSubagentPanelEvents(item.recent_events);
-    applySubagentPanelDiff(item, events);
-    subagentPanel.style.display = 'flex';
-    if (clickThroughController) clickThroughController.forceInteractive();
-  }
-
-  function hideSubagentPanel(){
-    if (!subagentPanel) return;
-    subagentPanel.style.display = 'none';
-  }
-
-  async function openSubagentPanelByName(name){
-    if (subagentEventCache[name] && subagentEventCache[name].length > 0) {
-      renderSubagentPanelFromCache(name);
-      return;
-    }
-    try {
-      const r = await fetch(SUBAGENT_STATUS_ENDPOINT);
-      const j = await r.json();
-      console.info(":subagent status:",j)
-      const items = Array.isArray(j.items) ? j.items : [];
-      const target = items.find(item => String(item.name || '') === name);
-      if (target) {
-        subagentEventCache[name] = Array.isArray(target.recent_events) ? target.recent_events.map(e => ({...e})) : [];
-        renderSubagentPanel(target);
-      }
-    } catch(e) {
-      console.warn('openSubagentPanelByName failed', e);
-    }
-  }
-
-  async function stopSelectedSubagent(){
-    if (!selectedSubagentName) return;
-    const r = await fetch(`${SUBAGENT_DELETE_ENDPOINT}/${encodeURIComponent(selectedSubagentName)}`, { method: 'DELETE' });
-    if (!r.ok){
-      const txt = await r.text();
-      throw new Error(txt || `HTTP ${r.status}`);
-    }
-    await refreshSubagentStatuses();
-    hideSubagentPanel();
-  }
-
-  async function refreshSubagentStatuses(){
-    try{
-      const r = await fetch(SUBAGENT_STATUS_ENDPOINT);
-      const j = await r.json().catch(()=>({}));
-      console.log(":subagent status:",j)
-      setSubagentStatuses(Array.isArray(j.items) ? j.items : []);
-    }catch(e){
-      console.warn('refreshSubagentStatuses failed', e);
-    }
-  }
-
-  function initSubagentPanelDrag(){
-    if (!subagentPanel || !subagentPanelHeader) return;
-    let draggingPanel = false;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    const onMove = (ev)=>{
-      if (!draggingPanel) return;
-      subagentPanel.style.left = `${Math.max(8, ev.clientX - offsetX)}px`;
-      subagentPanel.style.top = `${Math.max(8, ev.clientY - offsetY)}px`;
-      subagentPanel.style.right = 'auto';
-    };
-    const onUp = ()=>{
-      draggingPanel = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    subagentPanelHeader.addEventListener('mousedown', (ev)=>{
-      if (ev.target && ev.target.closest('button')) return;
-      const rect = subagentPanel.getBoundingClientRect();
-      draggingPanel = true;
-      offsetX = ev.clientX - rect.left;
-      offsetY = ev.clientY - rect.top;
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-    });
-  }
-
-  function showAsrText(text){
-    if (!asrTextEl || !asrBubbleEl) return;
-    rememberAsrScrollIntent();
-    asrBubbleEl.style.display = text ? 'flex' : 'none';
-    asrBubbleEl.dataset.source = 'ai';
-    asrBubbleSource = 'ai';
-    asrTextEl.textContent = formatResultBubbleText('ai', text || '');
-    updateAsrTextPosition(true);
-    scrollAsrTextToBottom(true);
-  }
-
-  function updateAsrTextPosition(forceSnap = false){
-    if (!asrBubbleEl || !asrTextEl) return;
-    applyAsrBubbleProps();
-    const widget = uiWidgetManager.getWidget('asr-bubble') || { coord: { x: 0.5, y: 0 }, offset: { x: 0, y: -108 }, scale: 1 };
-    const editMode = uiWidgetManager.isEditMode();
-    asrBubbleEl.classList.toggle('ui-widget-hidden-preview', !!(editMode && widget.hidden));
-    if (widget.hidden && !editMode) {
-      asrBubbleEl.style.display = 'none';
-      return;
-    }
-    if (modelType === 'vrm' && vrmScene) {
-      try{
-        const b = vrmScene.getBounds();
-        const clientX = b.x + b.width * widget.coord.x;
-        const clientY = b.y + b.height * widget.coord.y;
-        const bubbleWidth = Math.max(uiWidgetManager.getWidgetSize('asr-bubble', { width: 220, height: 120 }).width, 220);
-        asrBubbleTargetX = clientX - bubbleWidth / 2;
-        asrBubbleTargetY = clientY + widget.offset.y;
-        if (!asrBubbleInitialized || forceSnap){
-          asrBubbleCurrentX = asrBubbleTargetX;
-          asrBubbleCurrentY = asrBubbleTargetY;
-          asrBubbleInitialized = true;
-        } else {
-          const dx = asrBubbleTargetX - asrBubbleCurrentX;
-          const dy = asrBubbleTargetY - asrBubbleCurrentY;
-          if (Math.abs(dx) < ASR_SNAP_THRESHOLD && Math.abs(dy) < ASR_SNAP_THRESHOLD) {
-            asrBubbleCurrentX = asrBubbleTargetX;
-            asrBubbleCurrentY = asrBubbleTargetY;
-            asrBubbleAnimating = false;
-          } else {
-            asrBubbleCurrentX += dx * 0.2;
-            asrBubbleCurrentY += dy * 0.2;
-            asrBubbleAnimating = true;
-          }
-        }
-        if (asrBubbleAnimating || forceSnap || !asrBubbleInitialized) {
-          asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
-          asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
-          asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
-          hil.updatePosition();
-        }
-      }catch(e){/*ignore*/}
-      return;
-    }
-    if (!currentModel || !app || !app.renderer) return;
-    try{
-      const b = currentModel.getBounds();
-      const anchor = live2DToClient(b.x + b.width * widget.coord.x, b.y + b.height * widget.coord.y);
-      if (!anchor) return;
-      const clientX = anchor.x;
-      const clientY = anchor.y;
-      const bubbleWidth = Math.max(uiWidgetManager.getWidgetSize('asr-bubble', { width: 220, height: 120 }).width, 220);
-      asrBubbleTargetX = clientX - bubbleWidth / 2;
-      asrBubbleTargetY = clientY + widget.offset.y;
-      if (!asrBubbleInitialized || forceSnap){
-        asrBubbleCurrentX = asrBubbleTargetX;
-        asrBubbleCurrentY = asrBubbleTargetY;
-        asrBubbleInitialized = true;
-      } else {
-        const dx = asrBubbleTargetX - asrBubbleCurrentX;
-        const dy = asrBubbleTargetY - asrBubbleCurrentY;
-        if (Math.abs(dx) < ASR_SNAP_THRESHOLD && Math.abs(dy) < ASR_SNAP_THRESHOLD) {
-          asrBubbleCurrentX = asrBubbleTargetX;
-          asrBubbleCurrentY = asrBubbleTargetY;
-          asrBubbleAnimating = false;
-        } else {
-          asrBubbleCurrentX += dx * 0.2;
-          asrBubbleCurrentY += dy * 0.2;
-          asrBubbleAnimating = true;
-        }
-      }
-      if (asrBubbleAnimating || forceSnap || !asrBubbleInitialized) {
-        asrBubbleEl.style.left = Math.round(asrBubbleCurrentX) + 'px';
-        asrBubbleEl.style.top = Math.round(asrBubbleCurrentY) + 'px';
-        asrBubbleEl.style.transform = `translate3d(0,0,0) scale(${widget.scale || 1})`;
-        hil.updatePosition();
-      }
-    }catch(e){/*ignore*/}
-  }
+  const subagent = initSubagentPanel({
+    getBubbleProps: () => bubble.getAsrBubbleProps(),
+    forceInteractive: () => { if (clickThroughController) clickThroughController.forceInteractive(); },
+    statusEndpoint: SUBAGENT_STATUS_ENDPOINT,
+    deleteEndpoint: SUBAGENT_DELETE_ENDPOINT,
+  });
 
   function updateTextChatBarPosition(){
     const textChatBar = document.getElementById('textChatBar');
@@ -3733,7 +2930,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
           }
           updateQuickControllerPosition();
           updateTextChatBarPosition();
-          updateAsrTextPosition();
+          bubble.updateAsrTextPosition();
         };
         const onWheel = (e) => {
           e.preventDefault();
@@ -3774,7 +2971,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
     } catch (err) {
       if (String(err && err.message || '') === 'stale model load request') return;
-      showResultBubble('error', 'VRM 模型加载失败：' + String(err && err.message ? err.message : err));
+      bubble.showResultBubble('error', 'VRM 模型加载失败：' + String(err && err.message ? err.message : err));
       console.error(err);
       if (loadRequestId === activeModelLoadRequestId) showModelLoadFallback();
     }
@@ -4062,7 +3259,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     const ext = String(path || '').toLowerCase().trim();
     if (ext === '__faust_images__') {
       loadImageModel(runtimeImageModelConfig || (runtimeLive2DConfig && runtimeLive2DConfig.IMAGE_MODEL_CONFIG) || {}).catch((err) => {
-        showResultBubble('error', 'Images 模型加载失败：' + String(err && err.message ? err.message : err));
+        bubble.showResultBubble('error', 'Images 模型加载失败：' + String(err && err.message ? err.message : err));
         console.error(err);
         showModelLoadFallback();
       });
@@ -4078,7 +3275,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       try {
         if (await window.api.isNestedLive2DModelDir(nestedModelDir)) {
           console.warn('[loadModel] 嵌套目录模型已拒绝加载:', nestedModelDir);
-          showResultBubble('error', `模型目录「${nestedModelDir}」为嵌套结构（*.model3.json 位于子目录），已拒绝加载。\n请在下次启动时选择「自动摊平」，或手动把模型文件移到目录顶层。`);
+          bubble.showResultBubble('error', `模型目录「${nestedModelDir}」为嵌套结构（*.model3.json 位于子目录），已拒绝加载。\n请在下次启动时选择「自动摊平」，或手动把模型文件移到目录顶层。`);
           showModelLoadFallback();
           return;
         }
@@ -4094,7 +3291,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     // determine Live2DModel constructor (try window.Live2DModel, then PIXI.live2d)
     Live2DModel = (typeof window !== 'undefined' && window.Live2DModel) ? window.Live2DModel : (PIXI && PIXI.live2d && PIXI.live2d.Live2DModel);
     if (!Live2DModel) {
-      showResultBubble('error', '未检测到 pixi-live2d-display 库，请检查网络或依赖。');
+      bubble.showResultBubble('error', '未检测到 pixi-live2d-display 库，请检查网络或依赖。');
       showModelLoadFallback();
       return;
     }
@@ -4185,7 +3382,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       // keep reference for mouth sync
       model._faustLive2D = { mouthValue: 0 };
       // 鼠标跟踪监听（幂等注册；autoFocus 已在 from 里关闭）
-      initMouseTracking();
+      mouseTracking.init();
       // soullink 表演层（异步初始化，不阻塞模型展示）
       setupSoullinkForModel(model, path);
 
@@ -4197,7 +3394,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       }
     }).catch(err => {
       if (String(err && err.message || '') === 'stale model load request') return;
-      showResultBubble('error', 'Live2D 模型加载失败：' + String(err && err.message ? err.message : err));
+      bubble.showResultBubble('error', 'Live2D 模型加载失败：' + String(err && err.message ? err.message : err));
       console.error(err);
       if (loadRequestId === activeModelLoadRequestId) showModelLoadFallback();
     });
@@ -4460,7 +3657,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     toggleAsr();
   });
   if (quickStopBtn) quickStopBtn.addEventListener('click', ()=>{ interruptAll(); });
-  if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ playRandomMotion(); });
+  if (quickRandomMotionBtn) quickRandomMotionBtn.addEventListener('click', ()=>{ motion.playRandomMotion(); });
   if (quickEditLayoutBtn) {
     quickEditLayoutBtn.addEventListener('click', () => {
       if (window.faustAppUI && typeof window.faustAppUI.toggleWidgetEditMode === 'function') {
@@ -4480,8 +3677,8 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     });
   }
   if (asrBubbleEl){
-    asrBubbleEl.addEventListener('toggle', handleResultBubbleToggle, true);
-    asrTextEl.addEventListener('scroll', ()=>{ rememberAsrScrollIntent(); });
+    asrBubbleEl.addEventListener('toggle', bubble.handleResultBubbleToggle, true);
+    asrTextEl.addEventListener('scroll', ()=>{ bubble.rememberAsrScrollIntent(); });
     asrBubbleEl.addEventListener('mouseenter', ()=>{
       if (clickThroughController) clickThroughController.forceInteractive();
     });
@@ -4497,20 +3694,20 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
       const item = ev.target && ev.target.closest ? ev.target.closest('[data-subagent-name]') : null;
       if (!item) return;
       const name = String(item.getAttribute('data-subagent-name') || '');
-      renderSubagentPanelFromCache(name);
+      subagent.renderFromCache(name);
     });
   }
   if (hideAsrBubbleBtn){
     hideAsrBubbleBtn.addEventListener('click', ()=>{
-      hideResultBubble();
+      bubble.hideResultBubble();
     });
   }
-  if (subagentPanelCloseBtn) subagentPanelCloseBtn.addEventListener('click', ()=>{ hideSubagentPanel(); });
+  if (subagentPanelCloseBtn) subagentPanelCloseBtn.addEventListener('click', ()=>{ subagent.hide(); });
   if (subagentStopBtn) subagentStopBtn.addEventListener('click', async ()=>{
-    try{ await stopSelectedSubagent(); }catch(e){ showResultBubble('error', '停止 Subagent 失败: ' + String(e && e.message ? e.message : e)); }
+    try{ await subagent.stopSelected(); }catch(e){ bubble.showResultBubble('error', '停止 Subagent 失败: ' + String(e && e.message ? e.message : e)); }
   });
-  initSubagentPanelDrag();
-  refreshSubagentStatuses();
+  subagent.init();
+  subagent.refresh();
   if (trayToggleBtn) trayToggleBtn.addEventListener('click', async ()=>{
     try{
       if (window.api && window.api.hideToTray) await window.api.hideToTray();
@@ -4541,7 +3738,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
 
   function refreshUiWidgetLayout() {
     uiWidgetManager.applyLayout();
-    updateAsrTextPosition(true);
+    bubble.updateAsrTextPosition(true);
     refreshQuickControllerVisibility();
     nimbleWin.layoutWindows();
   }
@@ -4558,9 +3755,9 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
     onPropChange: () => {
       // 编辑模式属性面板修改 AsrBubble props 后：样式已由 refreshLayout 应用，
       // 这里补 HTML 过滤（推理/工具）与 Subagents 摘要重渲染
-      applyAsrBubbleProps();
-      showResultBubble(asrBubbleSource, asrBubbleState.entries);
-      renderSubagentSummary();
+      bubble.applyAsrBubbleProps();
+      bubble.refresh();
+      subagent.renderSummary();
     },
   });
 
@@ -4630,7 +3827,7 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         '<label class="lsp-switch"><input type="checkbox" data-k="showTools"><span class="lsp-switch-slider"></span></label></div>' +
       '<div class="lsp-prop-row"><span>显示 Subagents</span>' +
         '<label class="lsp-switch"><input type="checkbox" data-k="showSubagents"><span class="lsp-switch-slider"></span></label></div>';
-    const props = getAsrBubbleProps();
+    const props = bubble.getAsrBubbleProps();
     panel.querySelectorAll('[data-k]').forEach((el) => {
       const k = el.dataset.k;
       if (el.type === 'checkbox') el.checked = !!props[k];
@@ -4645,9 +3842,9 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
         else if (el.type === 'number') next[k] = Number(el.value) > 0 ? Number(el.value) : 20;
         else next[k] = el.value;
         uiWidgetManager.updateWidget('asr-bubble', { props: next });
-        applyAsrBubbleProps();
-        showResultBubble(asrBubbleSource, asrBubbleState.entries);
-        renderSubagentSummary();
+        bubble.applyAsrBubbleProps();
+        bubble.refresh();
+        subagent.renderSummary();
         refreshUiWidgetLayout();
         saveUiWidgetSettings();
       });
@@ -4663,66 +3860,6 @@ import { clampToViewport } from './libs/ui-widget-manager.js';
   // 保持 /faust/chat 连接，使后端触发器（Nimble / Public API / 定时任务等）
   // 唤醒 Agent 的回复能实时推送到前端显示与 TTS。
   ensureChatWsPersistent();
-
-  // ── 全局 Toast ──
-  function showFaustToast({ title, body, onClick }) {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'faust-toast';
-    const content = document.createElement('div');
-    content.className = 'faust-toast-content';
-    if (title) {
-      const t = document.createElement('div');
-      t.className = 'faust-toast-title';
-      t.textContent = title;
-      content.append(t);
-    }
-    const b = document.createElement('div');
-    b.className = 'faust-toast-body';
-    b.textContent = body;
-    content.append(b);
-    const close = document.createElement('button');
-    close.className = 'faust-toast-close';
-    close.textContent = '×';
-    close.addEventListener('click', (e) => { e.stopPropagation(); toast.remove(); });
-    toast.append(content, close);
-    if (onClick) {
-      toast.addEventListener('click', () => { onClick(); toast.remove(); });
-    }
-    container.append(toast);
-    setTimeout(() => toast.remove(), 15000);
-  }
-
-  // ── 启动时异步检查更新：仅 release_body 含 CRITICAL 时提示 ──
-  async function checkUpdateOnStartup() {
-    if (!window.api || typeof window.api.configRequest !== 'function') return;
-    try {
-      const data = await window.api.configRequest('POST', '/faust/update/check', {});
-      if (!data || !data.has_update) return;
-      if (!String(data.release_body || '').includes('CRITICAL')) return;
-      // 同一个更新只提示一次：已提示过的 tag 持久化在 Electron 本地存储
-      const shownTagKey = 'faust_update_toast_shown_tag';
-      let shownTag = null;
-      try { shownTag = localStorage.getItem(shownTagKey); } catch (e) { /* 存储不可用时按未提示处理 */ }
-      if (shownTag && shownTag === data.latest_tag) return;
-      const label = `新版本 ${data.latest_tag || ''}`.trim();
-      showFaustToast({
-        title: '需要更新',
-        body: `${label} 包含重要变更 (CRITICAL)，点击打开 Configer 进行更新。`,
-        onClick: () => { if (window.api.openConfigWindow) window.api.openConfigWindow(); },
-      });
-      if (typeof window.api.showNotification === 'function') {
-        window.api.showNotification({
-          title: 'FaustBot 需要更新',
-          body: `${label} 包含重要变更 (CRITICAL)，请在 Configer 中更新。`,
-        });
-      }
-      try { localStorage.setItem(shownTagKey, String(data.latest_tag || '')); } catch (e) { console.warn('persist shown update tag failed', e); }
-    } catch (e) {
-      console.warn('startup update check failed', e);
-    }
-  }
 
   checkUpdateOnStartup();
 
