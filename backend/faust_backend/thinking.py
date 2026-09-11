@@ -47,10 +47,11 @@ THINKING_PRESETS = {
         "high":   {"reasoning_effort": "high"},
     },
 
-    "deepseek": {#extra_body,reasoning_effort
-        "low":    {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
+    "deepseek": {#extra_body,reasoning_effort,low,high,max,
+        #reference: https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+        "low":    {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "low"},
         "medium": {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
-        "high":   {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "high"},
+        "high":   {"extra_body": {"thinking": {"type": "enabled"}},"reasoning_effort": "max"},
     },
 }
 
