@@ -34,7 +34,8 @@ nano-vectordb
 networkx>=3.0
 
 #Langchain Agent Framework
-langchain>1
+# ModelRetryMiddleware 需要 >=1.3
+langchain>=1.3
 langchain-openai
 langchain-deepseek==1.0.1
 langchain-community

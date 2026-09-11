@@ -304,6 +304,7 @@ async def stream_chat_agent_events(
 
 def _compose_runtime_extensions():
     from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
+    from faust_backend.runtime.model_retry import with_model_retry
     from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
 
     base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
@@ -329,6 +330,8 @@ def _compose_runtime_extensions():
         m for m in middlewares if not isinstance(m, ToolCallRepairMiddleware)
     ]
     middlewares.append(ToolCallRepairMiddleware())
+    # Always-on: 瞬时模型故障统一退避重试（最内层，只重放模型请求本身）
+    middlewares = with_model_retry(middlewares)
     return tools, middlewares
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from faust_backend.logger import get_logger
+from faust_backend.runtime.model_retry import with_model_retry
 
 log = get_logger("faust.subagents")
 
@@ -153,24 +154,13 @@ class SubagentManager:
                                 middlewares: list[AgentMiddleware],
                                 checkpointer: AsyncSqliteSaver,
                                 model: Any | None = None):
-        kwargs: dict[str, Any] = {
-            "model": model if model is not None else self.chatModel,
-            "tools": tools,
-            "checkpointer": checkpointer,
-            "system_prompt": systemPrompt,
-        }
-        if middlewares:
-            try:
-                kwargs["middleware"] = middlewares
-                return create_agent(**kwargs)
-            except TypeError:
-                kwargs.pop("middleware", None)
-            try:
-                kwargs["middlewares"] = middlewares
-                return create_agent(**kwargs)
-            except TypeError:
-                kwargs.pop("middlewares", None)
-        return create_agent(**kwargs)
+        return create_agent(
+            model=model if model is not None else self.chatModel,
+            tools=tools,
+            checkpointer=checkpointer,
+            system_prompt=systemPrompt,
+            middleware=with_model_retry(middlewares),
+        )
         
     def newToolset(self, toolSetName: str = "Unnamed Toolset",
                    tools: list[StructuredTool] | set[StructuredTool] | tuple[StructuredTool, ...] | None = None):

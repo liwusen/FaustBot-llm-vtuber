@@ -586,7 +586,7 @@ class EmotionEngineStore:
                 "FaustBot 具有情绪系统。",
                 "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。",
                 "你应该(SHOULD)在每次回复最后调用一次 EmotionInvokeSigned 来反映你的情绪状态,并且用户消息根据附加的情绪标签来输出",
-                "你绝对不可以(MUST NOT)在回复中q提到'情绪向量'或类似的内部信息",
+                "你绝对不可以(MUST NOT)在回复中提到'情绪向量'或类似的内部信息",
                 "",
                 "[Emotion Engine - 当前情绪状态]",
                 f"当前档位: {TIER_LABELS.get(tier, '正常')}（{tier}）",
@@ -690,7 +690,7 @@ class Plugin(FaustPlugin):
             "# Emotion Engine\n\n"
             "Emotion Engine 通过 EmotionInvokeSigned(tags) 工具更新情绪状态。\n"
             "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。\n"
-            "调用后返回当前完整情绪向量。该工具的 tool_start/tool_result 对用户不可见，\n"
+            "调用后返回当前完整情绪向量。该工具的调用对用户不可见，\n"
             "请大胆使用。当前状态也可通过 faustbot://plugins/emotion-engine-state.json 读取。\n",
         )
         await ctx.vfs_write_symbolic(
@@ -784,7 +784,6 @@ class Plugin(FaustPlugin):
             Args:
                 tags (list[str]): 情绪标签列表, 例子:["++JOY","-BOREDOM","+SHARPNESS"]
                                   每一个情绪标签可以带有符号前缀, "+"表示增加, "-"表示减少, "++"表示大幅增加, "--"表示大幅减少。
-                                  当你和用户对话时,每一轮对话都需要调用一次EmotionInvokeSigned来更新情绪状态
 
             Returns:
                 str: 修改后的情绪向量

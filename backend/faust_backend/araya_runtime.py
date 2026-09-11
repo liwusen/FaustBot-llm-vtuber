@@ -17,6 +17,7 @@ from langchain_openai import ChatOpenAI
 
 import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
+from faust_backend.runtime.model_retry import with_model_retry
 
 import traceback
 
@@ -573,6 +574,7 @@ class ArayaRuntime:
         self._agent = create_agent(
             model=self._chat_model,
             tools=self._build_tools(),
+            middleware=with_model_retry(),
         )
 
     async def _close_model(self) -> None:
