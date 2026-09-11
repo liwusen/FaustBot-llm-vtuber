@@ -1,0 +1,8 @@
+{
+  "slug": "desktop-mood-rules",
+  "name": "桌面心情规则引擎",
+  "version": "1.0.0",
+  "description": "编辑 desktop-mood 情景规则：让 Faust 在特定桌面环境下自动做动作/说话/弹便签/唤醒自己",
+  "usage": "用户要求新增、修改或停用桌面自动规则时：先 read(skill://desktop-mood-rules/SKILL.md) 了解 schema，再 edit faustbot://plugins/desktop-mood/rules.json 草稿，最后 read faustbot://plugins/desktop-mood/reload 提交生效",
+  "builtin": true
+}

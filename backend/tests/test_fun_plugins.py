@@ -85,6 +85,89 @@ async def test_desktop_context_and_vfs():
     assert (await vfs.read_text('/plugins/desktop-mood.md', default='')).startswith('# Desktop Mood')
 
 
+@pytest.fixture
+def _isolate_home(tmp_path, monkeypatch):
+    """把 Path.home() 指到 tmp_path，避免 desktop-mood 规则文件写入真实 ~/.faustbot。"""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    return tmp_path
+
+
+async def _desktop_mood_plugin(pm: PluginManager):
+    pm.set_plugin_enabled('desktop-mood', True)
+    await pm.reload(force=True)
+    return pm._plugins['desktop-mood']['plugin']
+
+
+@pytest.mark.asyncio
+async def test_desktop_mood_rule_draft_then_reload(_isolate_home):
+    pm = await _build_manager()
+    plugin = await _desktop_mood_plugin(pm)
+    vfs = await get_faustbot_vfs(refresh=True)
+    rules_file = Path.home() / '.faustbot' / 'desktop-mood.rules.json'
+    draft_path = '/plugins/desktop-mood/rules.json'
+    reload_path = '/plugins/desktop-mood/reload'
+
+    draft = json.loads(await vfs.read_text(draft_path, default='[]'))
+    assert draft and any(rule['id'] == 'idle_yawn' for rule in draft)
+    disk_before = rules_file.read_text(encoding='utf-8')
+
+    new_rule = {
+        "id": "test_hydrate", "label": "测试喝水", "enabled": True, "cooldown_sec": 900,
+        "kind": "speech",
+        "condition": {"type": "window_contains", "value": "Code"},
+        "action": {"speech": "喝水"},
+    }
+    await vfs.write(draft_path, json.dumps(list(draft) + [new_rule], ensure_ascii=False, indent=2))
+
+    # 草稿阶段：内存与磁盘都还没变
+    assert not any(rule['id'] == 'test_hydrate' for rule in plugin.store.snapshot()['rules'])
+    assert rules_file.read_text(encoding='utf-8') == disk_before
+
+    # 读 reload 节点 → 提交生效
+    report = await vfs.read(reload_path)
+    assert 'Desktop Mood 规则提交: 成功' in report
+    assert '草稿与生效: 已同步' in report
+    assert any(rule['id'] == 'test_hydrate' for rule in plugin.store.snapshot()['rules'])
+    assert any(rule['id'] == 'test_hydrate' for rule in json.loads(rules_file.read_text(encoding='utf-8')))
+
+    # 非法草稿：提交失败且不污染已生效规则
+    await vfs.write(draft_path, '{ not json')
+    failed = await vfs.read(reload_path)
+    assert 'Desktop Mood 规则提交: 失败' in failed
+    assert '草稿: 保留未提交' in failed
+    assert any(rule['id'] == 'test_hydrate' for rule in plugin.store.snapshot()['rules'])
+
+    # 写入 reload 节点同样提交（内容被忽略）
+    await vfs.write(draft_path, json.dumps(draft, ensure_ascii=False, indent=2))
+    await vfs.write(reload_path, 'apply')
+    assert not any(rule['id'] == 'test_hydrate' for rule in plugin.store.snapshot()['rules'])
+    assert not any(rule['id'] == 'test_hydrate' for rule in json.loads(rules_file.read_text(encoding='utf-8')))
+
+    # edit 草稿节点走 edit_handler，同样只暂存
+    text = await vfs.read_text(draft_path)
+    await vfs.edit(draft_path, text.replace('idle_yawn', 'idle_yawn_renamed'))
+    assert any(rule['id'] == 'idle_yawn_renamed' for rule in json.loads(await vfs.read_text(draft_path)))
+    assert not any(rule['id'] == 'idle_yawn_renamed' for rule in plugin.store.snapshot()['rules'])
+
+
+@pytest.mark.asyncio
+async def test_desktop_mood_probability_gate(_isolate_home):
+    pm = await _build_manager()
+    plugin = await _desktop_mood_plugin(pm)
+    context = {'window_title': 'Visual Studio Code'}
+
+    def rule(probability=None):
+        condition = {"type": "window_contains", "value": "code"}
+        if probability is not None:
+            condition["probability"] = probability
+        return {"id": "p", "kind": "speech", "condition": condition, "action": {"speech": "hi"}}
+
+    assert plugin._match_rule(rule(0.0), context, 'active', 'active') is False
+    assert plugin._match_rule(rule(1.0), context, 'active', 'active') is True
+    assert plugin._match_rule(rule(), context, 'active', 'active') is True
+    assert plugin._match_rule(rule(0.5), {'window_title': 'Notepad'}, 'active', 'active') is False
+
+
 @pytest.mark.asyncio
 async def test_plugin_reload_skips_when_unchanged():
     pm = await _build_manager()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import json
+import random
 import threading
 import time
 import urllib.parse
@@ -29,6 +30,17 @@ except Exception:
 _PLUGIN: "Plugin | None" = None
 STATE_FILE_NAME = 'desktop_mood_state.json'
 RULES_FILE = Path.home() / '.faustbot' / 'desktop-mood.rules.json'
+
+# ── 规则编辑 VFS 三节点（草稿 → 提交 → 指南） ──
+RULES_NODE_PATH = '/plugins/desktop-mood/rules.json'   # 草稿节点：AI 只改这里，改完不生效
+RULES_GUIDE_PATH = '/plugins/desktop-mood/rules.md'    # 指南节点：schema + 工作流（symbolic）
+RULES_RELOAD_PATH = '/plugins/desktop-mood/reload'     # 提交节点：read/write 都触发草稿生效
+
+CONDITION_TYPES = (
+    'idle_over', 'return_active', 'cpu_over', 'memory_over',
+    'battery_under', 'hour_range', 'window_contains', 'smtc_playing',
+)
+ACTION_KINDS = ('motion', 'speech', 'nimble', 'event-trigger')
 DEFAULT_RULES = [
     {"id": "idle_yawn", "label": "空闲打哈欠", "enabled": True, "cooldown_sec": 1800, "kind": "motion", "condition": {"type": "idle_over", "seconds": 600}, "action": {"motion": "yawn"}},
     {"id": "idle_voice", "label": "空闲提醒", "enabled": True, "cooldown_sec": 1800, "kind": "speech", "condition": {"type": "idle_over", "seconds": 600}, "action": {"speech": "你很久没说话了。"}},
@@ -287,6 +299,8 @@ class Plugin(FaustPlugin):
         # SMTC 播放状态边沿检测：只在 非Playing -> Playing 时触发一次
         self._last_smtc_playing: bool | None = None
         self._smtc_rising_edge = False
+        # 规则草稿是否有未提交改动
+        self._draft_dirty = False
 
     async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
@@ -306,8 +320,144 @@ class Plugin(FaustPlugin):
             "Desktop Mood 会持续把桌面环境写入 faustbot://plugins/desktop-context.json。\n"
             "其中 window_title / window_process 是当前活动窗口标题与所属进程（如游戏 exe），可用来感知用户在做什么。\n"
             "当你想根据用户环境主动提醒、播报、关心用户时，请先读取这个上下文文件。\n"
-            "规则文件位于 ~/.faustbot/desktop-mood.rules.json，插件会按规则自动触发动作或 event-trigger。\n",
+            "规则（自动触发动作）的编辑入口见 faustbot://plugins/desktop-mood/rules.md"
+            "，改规则必须走「编辑 rules.json 草稿 → 读/写 reload 节点提交」。\n",
         )
+        await self._install_rule_nodes(ctx)
+
+    async def _install_rule_nodes(self, ctx: PluginContext) -> None:
+        """注册规则草稿节点、指南节点、提交节点。
+
+        - rules.json：草稿内容节点，write/edit handler 只暂存原文（不校验、不落盘）；
+        - rules.md：symbolic 指南（schema + 工作流）；
+        - reload：symbolic 节点，read 即提交草稿；write 也提交（内容被忽略）。
+        每次插件启动无条件重播种草稿，丢弃上一次未提交的改动。
+        """
+        rules = self.store.snapshot().get('rules', []) if self.store is not None else []
+        await ctx.vfs_write(RULES_NODE_PATH, json.dumps(rules, ensure_ascii=False, indent=2))
+        await ctx.vfs_set_write_handler(RULES_NODE_PATH, self._on_rules_draft_write)
+        await ctx.vfs_set_edit_handler(RULES_NODE_PATH, self._on_rules_draft_write)
+        await ctx.vfs_write_symbolic(
+            RULES_GUIDE_PATH,
+            lambda _path: self._rules_guide_text(),
+            should_be_included_in_search=False,
+        )
+        await ctx.vfs_write_symbolic(
+            RULES_RELOAD_PATH,
+            self._on_reload_read,
+            should_be_included_in_search=False,
+        )
+        await ctx.vfs_set_write_handler(RULES_RELOAD_PATH, self._on_reload_write)
+        self._draft_dirty = False
+
+    async def _on_rules_draft_write(self, node, content) -> None:
+        """草稿写入：只替换草稿原文并标记 dirty，不做任何校验，不落盘。"""
+        text = content.decode('utf-8', errors='replace') if isinstance(content, bytes) else str(content)
+        node.content = text
+        self._draft_dirty = True
+        log.info("desktop-mood draft staged: %d chars", len(text))
+
+    def _rules_guide_text(self) -> str:
+        snapshot = self.store.snapshot() if self.store is not None else {}
+        rules = snapshot.get('rules', []) or []
+        ids = [str(rule.get('id') or '?') for rule in rules]
+        return '\n'.join([
+            '# Desktop Mood 规则编辑',
+            '',
+            '| 节点 | 作用 |',
+            '|---|---|',
+            f'| faustbot://{RULES_NODE_PATH.lstrip("/")} | 草稿 JSON。write/edit 只改这里的草稿，不生效、不落盘 |',
+            f'| faustbot://{RULES_RELOAD_PATH.lstrip("/")} | 提交节点。**read 一次**即把草稿提交生效（内存+磁盘） |',
+            f'| faustbot://{RULES_GUIDE_PATH.lstrip("/")} | 本指南 |',
+            '',
+            '工作流：',
+            f'1. read("faustbot://{RULES_NODE_PATH.lstrip("/")}") 查看当前草稿。',
+            f'2. edit/write 该草稿节点，改成想要的规则；不生效也没关系，可反复改。',
+            f'3. read("faustbot://{RULES_RELOAD_PATH.lstrip("/")}") 提交；返回「成功/失败 + 原因」。',
+            '   失败时草稿保留，改完再提交即可；失败不会污染已生效规则。',
+            f'4. write("faustbot://{RULES_RELOAD_PATH.lstrip("/")}", "apply") 与 read 等价，写入内容被忽略。',
+            '',
+            f'当前生效规则: {len(rules)} 条 ({", ".join(ids) if ids else "无"})',
+            '',
+            '详细 schema、条件类型、动作类型与示例见 skill://desktop-mood-rules/SKILL.md。',
+            '磁盘文件 ~/.faustbot/desktop-mood.rules.json 由提交动作写入，不要直接改它。',
+        ])
+
+    def _validate_rules(self, data: Any) -> tuple[list[dict[str, Any]] | None, str | None]:
+        """校验规则结构；返回 (rules, None) 或 (None, 错误说明)。"""
+        if not isinstance(data, list):
+            return None, f'顶层必须是 JSON 数组，当前是 {type(data).__name__}'
+        seen: set[str] = set()
+        for index, rule in enumerate(data):
+            where = f'规则 #{index + 1}'
+            if not isinstance(rule, dict):
+                return None, f'{where}: 必须是 JSON 对象'
+            rule_id = rule.get('id')
+            if not isinstance(rule_id, str) or not rule_id.strip():
+                return None, f'{where}: 缺少非空字符串字段 id'
+            if rule_id in seen:
+                return None, f'{where}: id 重复: {rule_id}'
+            seen.add(rule_id)
+            kind = rule.get('kind')
+            if kind not in ACTION_KINDS:
+                return None, f'{where} ({rule_id}): kind 非法: {kind!r}（支持: {", ".join(ACTION_KINDS)}）'
+            condition = rule.get('condition')
+            if not isinstance(condition, dict):
+                return None, f'{where} ({rule_id}): 缺少 condition 对象'
+            ctype = condition.get('type')
+            if ctype not in CONDITION_TYPES:
+                return None, f'{where} ({rule_id}): condition.type 非法: {ctype!r}（支持: {", ".join(CONDITION_TYPES)}）'
+            action = rule.get('action')
+            if not isinstance(action, dict):
+                return None, f'{where} ({rule_id}): 缺少 action 对象'
+            if kind == 'motion' and not str(action.get('motion') or '').strip():
+                return None, f'{where} ({rule_id}): kind=motion 需要 action.motion'
+            if kind == 'speech' and not str(action.get('speech') or '').strip():
+                return None, f'{where} ({rule_id}): kind=speech 需要 action.speech'
+            if kind == 'nimble' and not str(action.get('note') or '').strip():
+                return None, f'{where} ({rule_id}): kind=nimble 需要 action.note'
+        return list(data), None
+
+    async def _commit_draft(self) -> str:
+        """解析草稿并提交生效（内存 + 磁盘）。返回给 AI 看的三段式状态文本。"""
+        current = len(self.store.snapshot().get('rules', []) or []) if self.store is not None else 0
+        draft_text = await self.ctx.vfs_read_text(RULES_NODE_PATH, default='') if self.ctx is not None else ''
+        try:
+            data = json.loads(draft_text)
+        except Exception as exc:  # noqa: BLE001
+            return '\n'.join([
+                'Desktop Mood 规则提交: 失败',
+                f'原因: JSON 解析错误: {exc}',
+                f'生效规则: {current} 条(未变更)',
+                '草稿: 保留未提交',
+            ])
+        rules, error = self._validate_rules(data)
+        if error is not None:
+            return '\n'.join([
+                'Desktop Mood 规则提交: 失败',
+                f'原因: {error}',
+                f'生效规则: {current} 条(未变更)',
+                '草稿: 保留未提交',
+            ])
+        assert rules is not None
+        had_changes = self._draft_dirty
+        self.store.set_rules(rules)
+        self._draft_dirty = False
+        log.info("desktop-mood rules committed: %d rules (changed=%s)", len(rules), had_changes)
+        return '\n'.join([
+            'Desktop Mood 规则提交: 成功',
+            f'生效规则: {len(rules)} 条',
+            f'草稿与生效: 已同步（本次提交: {"有改动" if had_changes else "无改动"}）',
+        ])
+
+    async def _on_reload_read(self, _path: str) -> str:
+        """读取 reload 节点 = 提交草稿。"""
+        return await self._commit_draft()
+
+    async def _on_reload_write(self, _node, _content) -> None:
+        """写入 reload 节点 = 提交草稿，写入内容被忽略。"""
+        report = await self._commit_draft()
+        log.info("desktop-mood reload write -> %s", report.splitlines()[0])
 
     @hookimpl
     def plugin_loaded(self, ctx: PluginContext) -> None:
@@ -332,6 +482,9 @@ class Plugin(FaustPlugin):
             "\n[Desktop Mood 情景感知]\n"
             "桌面环境实时快照在 faustbot://plugins/desktop-context.json( 包含天气,前台窗口标题/进程,播放的媒体 等有用信息)，使用指南在 faustbot://plugins/desktop-mood.md。"
             "在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
+            "当用户要求新增/修改/关闭桌面自动规则时：edit faustbot://plugins/desktop-mood/rules.json 草稿，"
+            "再 read faustbot://plugins/desktop-mood/reload 提交生效；规则 schema 与工作流见 "
+            "skill://desktop-mood-rules/SKILL.md 或 faustbot://plugins/desktop-mood/rules.md。\n"
         ]
 
     async def _maybe_refresh_weather(self) -> None:
@@ -504,6 +657,23 @@ class Plugin(FaustPlugin):
                 pass
 
     def _match_rule(self, rule: dict[str, Any], context: dict[str, Any], last_idle_state: str, next_idle_state: str) -> bool:
+        """条件匹配 + 可选 probability 概率门控。
+
+        condition.probability（0~1）存在时，条件命中后还要过一次概率：
+        probability=0.2 表示命中后只有 20% 概率真正触发。缺省/非法值视为必然触发。
+        """
+        if not self._match_condition(rule, context, last_idle_state, next_idle_state):
+            return False
+        probability = (rule.get('condition') or {}).get('probability')
+        if probability is None:
+            return True
+        try:
+            p = float(probability)
+        except (TypeError, ValueError):
+            return True
+        return random.random() < max(0.0, min(1.0, p))
+
+    def _match_condition(self, rule: dict[str, Any], context: dict[str, Any], last_idle_state: str, next_idle_state: str) -> bool:
         condition = rule.get('condition') or {}
         ctype = str(condition.get('type') or '')
         if ctype == 'idle_over':

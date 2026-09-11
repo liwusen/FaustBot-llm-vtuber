@@ -94,6 +94,10 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
   `AgileContext`、缓存策略,以及涉及触发频率时的每分钟触发上限)。
 - 用户桌面环境(前台窗口/进程)可读 `faustbot://plugins/desktop-context.json`,可作为判断
   "用户此刻在做什么"的输入。
+- 想让 Faust 在特定桌面情景下**自动**动作/说话,用 desktop-mood 规则:读
+  `faustbot://plugins/desktop-mood/rules.md` 或 `skill://desktop-mood-rules/SKILL.md`,
+  编辑 `faustbot://plugins/desktop-mood/rules.json` 草稿,再 `read`
+  `faustbot://plugins/desktop-mood/reload` 提交生效(改草稿本身不生效)。
 - 模块副作用小,不用了就 `agileOperate(action="disable", name="{name}")` 停用即可;
   需要改逻辑时先 `reload`,修改完再用 `reload` 生效。
 
