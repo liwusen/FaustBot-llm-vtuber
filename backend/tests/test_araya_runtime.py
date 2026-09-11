@@ -43,12 +43,10 @@ def test_araya_run_once_updates_state_and_log(monkeypatch, tmp_path):
     monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "faust")
     monkeypatch.setattr(araya_runtime.conf, "ARAYA_ENABLED", True)
     monkeypatch.setattr(araya_runtime.conf, "ARAYA_IDLE_MINUTES", 30)
-    monkeypatch.setattr(araya_runtime.conf, "CHAT_MODEL", "fake-model")
-    monkeypatch.setattr(araya_runtime.conf, "CHAT_API_KEY", "fake-key")
-    monkeypatch.setattr(araya_runtime.conf, "CHAT_API_BASE", "http://example.test/v1")
     class FakeChatOpenAI:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            self.model_name = kwargs.get("model")
 
     class FakeAgent:
         async def ainvoke(self, payload):
@@ -61,7 +59,13 @@ def test_araya_run_once_updates_state_and_log(monkeypatch, tmp_path):
                 content = "maintained"
             yield {"event": "on_chat_model_stream", "data": {"chunk": FakeAIMessageChunk()}}
 
-    monkeypatch.setattr(araya_runtime, "ChatOpenAI", FakeChatOpenAI)
+    import faust_backend.provider as provider_mod
+
+    async def _fake_build_main_chat_model(providers, intensity=None):
+        # Araya 必须经 provider.build_main_chat_model 获取统一配置的 LLM
+        return FakeChatOpenAI(model="fake-model")
+
+    monkeypatch.setattr(provider_mod, "build_main_chat_model", _fake_build_main_chat_model)
     monkeypatch.setattr(araya_runtime, "create_agent", lambda **kwargs: FakeAgent())
     monkeypatch.setattr(araya_runtime.ArayaRuntime, "_build_tools", lambda self: [])
 

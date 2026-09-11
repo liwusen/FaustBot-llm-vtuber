@@ -35,7 +35,7 @@ set "MC_OPERATOR_DIR=%CD%\backend\minecraft\mc-operator"
 set "BACKEND_DIR=%CD%\backend"
 
 echo -----------------------------------------
-echo FaustBot 安装程序
+echo FaustBot 环境安装程序
 echo 使用命令行参数安装 Python、PyTorch、Python 依赖、Node.js 依赖和 TTS 模型。
 echo -----------------------------------------
 

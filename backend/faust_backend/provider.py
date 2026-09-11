@@ -76,14 +76,17 @@ async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
         raise ValueError(f"无法从 {provider.base_url}/models 解析模型列表")
     return res
 
-async def auto_load_model_for_provider(provider: ModelProvider) -> List[str]:
+async def auto_load_model_for_provider(provider: ModelProvider, force: bool = False) -> List[str]:
     """自动从 provider API 拉取模型列表并写入 provider.models。
 
     前端"交互式模型添加向导"在用户填完 name/base_url/key 后调用本函数，
     通过 provider 的 GET {base_url}/models 接口获取可用模型列表。
-    已在 models 中的不会重复拉取（幂等）。
+
+    force=False（默认，构建 LLM 的热路径）：已有 models 时跳过网络请求（幂等）。
+    force=True（前端「自动加载模型」按钮）：丢弃已有 models 后重新拉取，保证
+    列表与 Provider 端一致；拉取失败时抛错，旧列表不被清空。
     """
-    if not provider.models:
+    if force or not provider.models:
         provider.models = await get_provider_models_by_api(provider)
     return provider.models
 
@@ -139,6 +142,28 @@ async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:st
         return ReasoningChatOpenAI(**kwargs)#type: ignore
     else:
         return ChatOpenAI(**kwargs)#type: ignore
+
+async def build_main_chat_model(
+    providers: ModelProviders, intensity: str | None = None
+) -> ReasoningChatOpenAI | ChatOpenAI:
+    """按 main_model 构建统一配置的 LLM（含 opencode_go 头、thinking 参数）。
+
+    供主 Agent 之外的内部功能（Araya、安全审核等）复用，确保所有基于
+    main_model 的功能都走同一套 provider 配置逻辑，不各自拼装 ChatOpenAI。
+
+    Args:
+        providers: 模型 provider 集合。
+        intensity: thinking 强度；None 表示不启用思考。
+
+    Raises:
+        RuntimeError: main_model 未配置。
+    """
+    if not providers or not providers.main_model:
+        raise RuntimeError("main_model is not configured (provider.private.json)")
+    return await build_ReasoningChatOpenAI_from_spec(
+        providers, spec=providers.main_model, intensity=intensity
+    )
+
 
 def new_provider(ModelProviders: ModelProviders, name: str, base_url: str, key: Optional[str] = None) -> ModelProvider:
     """Create a new model provider and add it to the ModelProviders instance.

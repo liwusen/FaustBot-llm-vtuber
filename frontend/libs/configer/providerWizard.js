@@ -156,10 +156,10 @@ function openProviderModal(existing) {
         main_model: state.mainModel,
         subagent_models: state.subagentModels,
       });
-      // 2) 再加载模型（此时后端已能解析该 provider）
+      // 2) 再加载模型（后端会清空该 provider 已有模型后重新拉取）
       const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(name)}/load-models`,
         null, null);
-      // 3) 仅把返回的模型合并进该 provider（不覆盖其它 provider 的未保存改动）
+      // 3) 用最新列表覆盖该 provider 的 models（不覆盖其它 provider 的未保存改动）
       const next = JSON.parse(JSON.stringify(state.providers || []));
       const t = next.find((p) => p.name === name);
       if (t) t.models = (r.models || []).slice();

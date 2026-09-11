@@ -8,8 +8,8 @@ import traceback
 
 from faust_backend.logger import get_logger
 from faust_backend.memory import get_memory
+from langchain_core.messages import HumanMessage, SystemMessage
 from faust_backend.memory import GraphStore
-from openai import AsyncOpenAI
 log = get_logger("faust.memory.tools")
 
 
@@ -114,61 +114,31 @@ async def attachmentReadTool(path: str) -> str:
 async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
     log.info("_bg_extract_and_save doc_path=%s text_len=%d", doc_path, len(text))
     try:
-        import faust_backend.config_loader as conf
         from pathlib import Path
         from faust_backend.memory.store import _path_id
         from faust_backend.memory.config import ENTITY_DEDUP_THRESHOLD
-        import httpx
         prompt_path = Path(__file__).parent / "extraction_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
         from faust_backend.runtime import state as runtime_state
-        from faust_backend.provider import get_main_credentials
-        api_model, api_key, api_base_raw = get_main_credentials(runtime_state.get_model_providers())
-        api_base = api_base_raw.rstrip("/") if api_base_raw else None
-        api_key = api_key or None
-        api_model = api_model or None
-        if not api_key or not api_base or not api_model:
+        from faust_backend.provider import build_main_chat_model
+        providers = runtime_state.get_model_providers()
+        if not providers or not providers.main_model:
             log.critical("LLM extraction API not configured, skipping extraction")
             raise ValueError("LLM extraction API not configured")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
         doc_path = ("/" + str(doc_path).strip("/")) if doc_path else ""
         m = get_memory()
         if doc_path:
             m.register_extraction(doc_path)
 
-        # async with httpx.AsyncClient(timeout=120.0) as hc:
-        #     payload = {
-        #         "model": api_model,
-        #         "messages": [
-        #             {"role": "system", "content": system_prompt},
-        #             {"role": "user", "content": text},
-        #         ],
-        #         "temperature": 0.1,
-        #         "response_format": {"type": "json_object"},
-        #     }
-        #     resp = await hc.post(f"{api_base}/chat/completions", headers=headers, json=payload)
-        #     if resp.status_code != 200:
-        #         log.warning("LLM extraction API error %d: %s", resp.status_code, resp.text[:300])
-        #         # 如果 qwen 不支持 json_object，异常已经被底层捕获
-        #         # 直接返回空结果
-        #         raw = "{}"
-        #     else:
-        #         data = resp.json()
-        #         raw = str(data.get("choices", [{}])[0].get("message", {}).get("content", "{}"))
-        async with AsyncOpenAI(api_key=api_key, base_url=api_base) as client:
-            raw = await client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
-                model=api_model,
-            )
-            raw= str(raw.choices[0].message.content)
+        # 统一走 provider 配置的 ChatOpenAI（opencode_go 头等兼容逻辑一致生效）
+        llm = await build_main_chat_model(providers, intensity=None)
+        response = await llm.bind(
+            temperature=0.1, response_format={"type": "json_object"}
+        ).ainvoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=text),
+        ])
+        raw = runtime_state.message_content_to_text(getattr(response, "content", ""))
         log.info("_bg_extract_and_save raw=%s", raw)
         result = json.loads(raw)
         log.info("_bg_extract_and_save result=%s", result)

@@ -201,7 +201,7 @@ class ArayaRuntime:
         self.refresh_target_agent()
         self._sync_templates()
         self._save_state(self._load_state())
-        self._init_agent()
+        await self._init_agent()
         if self._task is None or (hasattr(self._task, "done") and self._task.done()):
             self._stop_event = asyncio.Event()
             self._task = asyncio.create_task(self._loop_async())
@@ -563,18 +563,13 @@ class ArayaRuntime:
             arayaFileEditTool,
         ]
 
-    def _init_agent(self) -> None:
+    async def _init_agent(self) -> None:
         from faust_backend.runtime import state as runtime_state
-        from faust_backend.provider import get_main_credentials
-        _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
-        self._chat_model = ChatOpenAI(
-            model=_model_name,
-            api_key=_api_key, # type: ignore
-            base_url=_api_base,
-        #    request_timeout=30,
-            max_retries=1,
+        from faust_backend.provider import build_main_chat_model
+        self._chat_model = await build_main_chat_model(
+            runtime_state.get_model_providers(), intensity=None
         )
-        log.info("Creating Araya agent with model: %s", _model_name)
+        log.info("Creating Araya agent with model: %s", self._chat_model.model_name)
         self._agent = create_agent(
             model=self._chat_model,
             tools=self._build_tools(),
@@ -716,7 +711,7 @@ class ArayaRuntime:
             run_error = ""
             try:
                 if self._agent is None:
-                    self._init_agent()
+                    await self._init_agent()
                 agt = self._agent
                 payload = {"messages": [{"role": "user", "content": instruction}]}
                 config = {"configurable": {"thread_id": int(time.time())}, "recursion_limit": 500}

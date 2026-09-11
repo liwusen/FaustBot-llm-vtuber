@@ -91,21 +91,21 @@ def test_build_model_unknown_model_raises():
         assert "not found" in str(e)
 
 
-def test_build_model_tolerates_empty_models_list():
+def test_build_model_tolerates_empty_models_list(monkeypatch):
     """[R3] models 为空（加载失败/离线）时，显式指定的模型名仍可用，不崩溃。"""
     import faust_backend.provider as prov
     p = make_providers()
     p.providers[0].models = []  # 模拟自动加载失败
 
-    async def _no_load(provider):
+    async def _no_load(provider, force=False):
         return provider.models  # 无网络
 
-    prov.auto_load_model_for_provider = _no_load
+    monkeypatch.setattr(prov, "auto_load_model_for_provider", _no_load)
     model = asyncio.run(build_ReasoningChatOpenAI_from_spec(p, "deepseek::deepseek-v4", intensity=None))
     assert model.model_name == "deepseek-v4"
 
 
-def test_build_model_thinking_disabled_when_type_none():
+def test_build_model_thinking_disabled_when_type_none(monkeypatch):
     """[R5] thinking_type == 'none' 时即使传 intensity 也不启用思考（返回 ChatOpenAI 而非 ReasoningChatOpenAI）。"""
     from faust_backend.thinking import ReasoningChatOpenAI as RChat
     from langchain_openai import ChatOpenAI
@@ -113,10 +113,10 @@ def test_build_model_thinking_disabled_when_type_none():
     p = make_providers()
     p.providers[0].thinking_type = "none"
 
-    async def _no_load(provider):
+    async def _no_load(provider, force=False):
         return provider.models  # 无网络
 
-    prov.auto_load_model_for_provider = _no_load
+    monkeypatch.setattr(prov, "auto_load_model_for_provider", _no_load)
     model = asyncio.run(build_ReasoningChatOpenAI_from_spec(p, "deepseek::deepseek-v4", intensity="medium"))
     assert isinstance(model, ChatOpenAI)
     assert not isinstance(model, RChat)
@@ -187,6 +187,73 @@ def test_get_provider_models_keeps_path_prefix(monkeypatch):
     p.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     asyncio.run(get_provider_models_by_api(p))
     assert captured_url["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+
+
+def test_auto_load_force_refreshes_existing_models(monkeypatch):
+    """force=True：已有 models 时丢弃旧列表重新拉取（前端「自动加载模型」语义）；
+    默认仍幂等，不触网。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "fresh-1"}, {"id": "fresh-2"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kw):
+            return FakeResp()
+
+    p = make_providers().providers[0]
+    p.models = ["stale-1"]
+
+    # 默认：已有 models，跳过网络，保留旧列表
+    monkeypatch.setattr(httpx, "AsyncClient", None)  # 触网即 TypeError
+    assert asyncio.run(auto_load_model_for_provider(p)) == ["stale-1"]
+
+    # force：丢弃旧列表，重新拉取
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    assert asyncio.run(auto_load_model_for_provider(p, force=True)) == ["fresh-1", "fresh-2"]
+
+
+def test_auto_load_force_keeps_old_models_on_failure(monkeypatch):
+    """force=True 拉取失败时抛错，且不清空旧 models。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kw):
+            raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    p = make_providers().providers[0]
+    p.models = ["stale-1"]
+    try:
+        asyncio.run(auto_load_model_for_provider(p, force=True))
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+    assert p.models == ["stale-1"]
 
 
 # ── Task 2: config_loader 集成 ──
@@ -334,6 +401,37 @@ def test_providers_crud_roundtrip(tmp_path, monkeypatch):
     assert r.status_code == 200
     r = client.delete("/faust/admin/providers/test")
     assert r.status_code == 404
+
+
+def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
+    """「自动加载模型」路由必须 force=True：已有模型的 provider 也会清空重拉。"""
+    from fastapi.testclient import TestClient
+    import faust_backend.config_loader as conf
+    import faust_backend.provider as prov
+    import faust_backend.runtime.state as state_mod
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    monkeypatch.setattr(state_mod, "get_model_providers", conf.ensure_model_providers_loaded)
+
+    client = TestClient(_make_provider_app())
+    client.post("/faust/admin/providers", json={
+        "name": "test", "base_url": "http://test/v1", "key": "k1"
+    })
+
+    calls = []
+
+    async def _fake_load(provider, force=False):
+        calls.append(force)
+        provider.models = ["fresh"]
+        return provider.models
+
+    monkeypatch.setattr(prov, "auto_load_model_for_provider", _fake_load)
+    r = client.post("/faust/admin/providers/test/load-models")
+    assert r.status_code == 200
+    assert r.json()["models"] == ["fresh"]
+    assert calls == [True]
 
 
 def test_select_model_switches(tmp_path, monkeypatch):

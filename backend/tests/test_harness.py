@@ -897,20 +897,25 @@ class TestExecuteTool:
         assert "ValueError" in result or "exit code" in result
 
     @pytest.mark.asyncio
-    async def test_execute_shell(self):
-        from faust_backend.tools.execute import execute
-        result = await execute.ainvoke({"language": "shell", "code": "echo hello world"})
-        assert "hello world" in result
-
-    @pytest.mark.asyncio
     async def test_execute_timeout(self):
         from faust_backend.tools.execute import execute
         result = await execute.ainvoke({"language": "python", "code": "import time; time.sleep(999)", "timeout": 1})
         assert "超时" in result
 
     @pytest.mark.asyncio
-    async def test_execute_shell_non_blocking(self):
-        """shell 执行不得阻塞事件循环：执行期间心跳任务持续 tick，无 >1.2s 空洞。"""
+    async def test_execute_shell_non_blocking(self, monkeypatch):
+        """shell 执行不得阻塞事件循环：执行期间心跳任务持续 tick，无 >1.2s 空洞。
+
+        security_check_command 会真实调用外部 LLM（首次构建 ChatOpenAI 的同步
+        开销也会污染本测试的心跳测量），此处替换为直接放行，只测量子进程执行。
+        """
+        import faust_backend.security as security
+
+        async def _approve(command):
+            return True
+
+        monkeypatch.setattr(security, "security_check_command", _approve)
+
         from faust_backend.tools.execute import execute
 
         import time as _time

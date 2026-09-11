@@ -77,7 +77,8 @@ async def admin_auto_load_models(name: str):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     try:
-        models = await auto_load_model_for_provider(provider)
+        # 用户显式点击「自动加载模型」：清空该 provider 已有模型后重新拉取
+        models = await auto_load_model_for_provider(provider, force=True)
     except Exception as exc:  # noqa: BLE001 - 网络/API 错误转 502
         raise HTTPException(status_code=502, detail=f"模型加载失败: {exc}")
     conf.save_model_providers()
