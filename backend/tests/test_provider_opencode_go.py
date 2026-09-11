@@ -33,7 +33,7 @@ async def test_build_injects_opencode_headers(monkeypatch):
     llm = await pv.build_ReasoningChatOpenAI_from_spec(mp, "Go::m1", intensity=None)
     dh = llm.default_headers or {}
     assert dh.get("x-opencode-session") == pv._OPENCODE_SESSION_ID  # 进程内稳定
-    assert "FaustBot" in dh.get("User-Agent", "")
+     assert dh.get("User-Agent") == pv.FAUSTBOT_USER_AGENT
 
     llm2 = await pv.build_ReasoningChatOpenAI_from_spec(mp, "Go::m1", intensity="medium")
     dh2 = llm2.default_headers or {}
@@ -54,6 +54,8 @@ async def test_build_without_flag_has_no_session_header(monkeypatch):
     llm = await pv.build_ReasoningChatOpenAI_from_spec(mp, "D::m1", intensity=None)
     dh = llm.default_headers or {}
     assert "x-opencode-session" not in dh
+    # UA 是全局契约：非 opencode_go 的 provider 也必须携带
+    assert dh.get("User-Agent") == pv.FAUSTBOT_USER_AGENT
 
 
 @pytest.mark.asyncio

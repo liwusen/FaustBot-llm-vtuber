@@ -9,12 +9,17 @@ from faust_backend.thinking import (
             THINKING_PRESETS
         )
 
-# OpenCode Go 要求每个会话携带稳定 session ID（用于路由优化与 prompt 缓存），
-# 并要求客户端用可识别的 User-Agent。进程生命周期内保持稳定，重启后更换。
+# 对外统一标识本客户端（FaustBot v3，langchain 栈）。不设置时 openai-python /
+# httpx 会以自身 UA 发请求（AsyncOpenAI/Python x.y.z、python-httpx/x.y），部分
+# 网关据此做来源识别或拦截，因此所有 LLM 与 /models 请求都显式携带该 UA。
+FAUSTBOT_USER_AGENT = "faustbot/3 (langchain)"
+
+# OpenCode Go 要求每个会话携带稳定 session ID（用于路由优化与 prompt 缓存）。
+# 进程生命周期内保持稳定，重启后更换。
 _OPENCODE_SESSION_ID = uuid.uuid4().hex
 OPENCODE_DEFAULT_HEADERS = {
     "x-opencode-session": _OPENCODE_SESSION_ID,
-    "User-Agent": "FaustBot/1.0 (desktop-pet-agent)",
+    "User-Agent": FAUSTBOT_USER_AGENT,
 }
 
 
@@ -47,7 +52,9 @@ async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
     任何异常都会抛出明确的 ValueError（前端向导据此提示用户）。
     """
     import httpx
-    headers = {"Authorization": f"Bearer {provider.key}"} if provider.key else {}
+    headers = {"User-Agent": FAUSTBOT_USER_AGENT}
+    if provider.key:
+        headers["Authorization"] = f"Bearer {provider.key}"
     if provider.opencode_go:
         headers.update(opencode_headers())
     try:
@@ -120,8 +127,10 @@ async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:st
             request_timeout=60,
             max_retries=1,
     )
+    default_headers = {"User-Agent": FAUSTBOT_USER_AGENT}
     if provider.opencode_go:
-        kwargs["default_headers"] = opencode_headers(kwargs.get("default_headers"))
+        default_headers = opencode_headers(default_headers)
+    kwargs["default_headers"] = default_headers
     # [R5] thinking 开关语义：provider.thinking_type == "none" 时强制关闭思考
     # （无论 intensity 传什么），与旧 THINKING_ENABLED=False 默认行为保持一致，
     # 避免重构后所有对话意外开启推理。
