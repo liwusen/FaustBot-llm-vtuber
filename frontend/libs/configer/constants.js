@@ -134,7 +134,7 @@ META.EDGE_TTS_PITCH = { label: "Edge TTS 音高", help: "Edge TTS 的音高设�
 META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 Edge TTS 的超时秒数。" };
 META.MD_BLOCK_ENABLED = { label: "启用 Markdown 内容块", help: "开启后主 Agent 可使用 RenderMarkdownBlock 工具向气泡推送 Markdown 内容块（支持 mermaid 图表），内容仅展示不朗读。保存后立即生效。" };
 META.AUTO_FORCE_INTERRUPT = { label: "自动强制打断", help: "开启后，用户发起对话时若主 Agent 正被前台/后台触发器占用，会立即强制打断该触发器（前台触发器补发 done），并把用户消息标记为\"(用户插话)\"交给 AI。关闭则不打断，用户消息排队等待锁。" };
-META.PTT_MODE = { label: "按住说话(PTT)", help: "开启后平时麦克风关闭，长按 Ctrl+Alt+A 说话，松开自动识别并发送。关闭则恢复普通监听模式。保存后立即生效（前端热重载）。" };
+META.PTT_MODE = { label: "按住说话(PTT)", help: "开启后平时麦克风关闭，长按 Ctrl+Alt+A 说话，松开自动识别并发送。按住期间若 VAD 命中帧占比低于 10%（整段几乎没人声）则丢弃该段、不上传识别，右上角状态显示 \"(已忽略)\"。关闭则恢复普通监听模式。保存后立即生效（前端热重载）。" };
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"];
 var MODULES = [

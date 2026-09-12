@@ -967,7 +967,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     getVrmScene: () => vrmScene,
     getCurrentModel: () => currentModel,
     getLipSyncParamIds: () => currentLipSyncParamIds,
-    showOverlay,
     stopBackgroundAudio: () => stopBackgroundAudio(),
     onAnalyserCreated: (analyser) => {
       // 内部 TTS 播放：analyser 交给 soullink 表演层驱动口型（engine beforeModelUpdate 注入）
@@ -1439,6 +1438,10 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   let silenceFrameLimit = 22;
   let minSpeechFrameLimit = 8;
   const VAD_END_DEBOUNCE_MS = 300;
+  // VAD 判"有人声"的概率阈值（与后端 vad_runtime.VAD_THRESHOLD 一致）
+  const VAD_SPEECH_THRESHOLD = 0.5;
+  // PTT 静音判定：按住期间 VAD 命中帧占比低于该比例 → 整段视为没人声
+  const PTT_SILENCE_HIT_RATIO = 0.1;
   function getVadWsUrl(){
     const path = String((speechRuntimeConfig && speechRuntimeConfig.vad_ws_path) || DEFAULT_VAD_WS_PATH).trim() || DEFAULT_VAD_WS_PATH;
     return `ws://${BACKEND_HOST}:${BACKEND_PORT}${path.startsWith('/') ? path : `/${path}`}`;
@@ -1488,15 +1491,15 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }catch(e){}
   }
 
-  function finalizeSpeechSegment(probability){
+  function finalizeSpeechSegment(probability, ignored){
     inSpeech = false;
     vadEndTimer = null;
     onUserSpeechEnd();
     const spokenEnough = speechFrameCnt >= minSpeechFrameLimit;
     speechFrameCnt = 0;
-    if (!spokenEnough){
+    if (ignored || !spokenEnough){
       uploadFrames = [];
-      asrStatusEl.textContent = '语音过短，已忽略';
+      asrStatusEl.textContent = ignored ? '(已忽略)' : '语音过短，已忽略';
       return;
     }
     asrStatusEl.textContent = '上传识别中...';
@@ -2610,7 +2613,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
           try{
             const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : JSON.parse(new TextDecoder().decode(ev.data));
             const p = (typeof msg.probability !== 'undefined') ? (Number(msg.probability) || 0) : (msg.is_speech ? 1 : 0);
-            handleSpeechActivity(p > 0.5, p);
+            const isSpeech = p > VAD_SPEECH_THRESHOLD;
+            // PTT 按住期间统计 VAD 命中帧占比（降级帧无真实概率，不计入分母）
+            if (pttActive && !msg.error){
+              pttVadFrames += 1;
+              if (isSpeech) pttVadHits += 1;
+            }
+            handleSpeechActivity(isSpeech, p);
           }catch(err){ console.warn('VAD ws message parse err', err); }
         };
         vadWs.onerror = (ev)=>{ console.warn('VAD ws error', ev); useVAD = false; asrStatusEl.textContent = '语音检测连接错误'; vadWs = null; };
@@ -2706,18 +2715,34 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   let pttOwnedMic = false;    // 麦克风是否由本次 PTT 打开（用户手动开的监听不代关）
   let pttSafetyTimer = null;  // 钩子丢 keyup 时的兜底上限
   let pttReleasePending = false; // 松开先于麦克风启动完成：启动完成后立即收尾
+  let pttVadFrames = 0;       // 本次按住收到真实 VAD 判定的帧数（降级帧不计）
+  let pttVadHits = 0;         // 其中概率达到阈值的帧数
 
   const normalizePtt = (v) => v === true || v === 1 || v === 'true';
 
+  // 整段几乎没人声：VAD 命中帧占比 < 10%。没有任何真实判定（VAD 未连接/降级）时
+  // 不做判定，保持原有"松手即上传"的行为。
+  function pttHoldHasNoSpeech(){
+    return pttVadFrames > 0 && (pttVadHits / pttVadFrames) < PTT_SILENCE_HIT_RATIO;
+  }
+
   function finishPttRelease(){
-    finalizeSpeechSegment(1); // 内含语音过短护栏：过短不上传
+    const noSpeech = pttHoldHasNoSpeech();
+    pttVadFrames = 0;
+    pttVadHits = 0;
+    // ignored: VAD 判定整段没人声 → 不上传识别，右上角状态标注已忽略
+    finalizeSpeechSegment(1, noSpeech); // 内含语音过短护栏：过短不上传
     inSpeech = false;
     if (pttOwnedMic) { stopMicAsr(); pttOwnedMic = false; }
+    // stopMicAsr 收尾会写"已停止"，这里把 PTT 的忽略标注补回右上角状态
+    if (noSpeech) asrStatusEl.textContent = '(已忽略)';
   }
 
   function startPttHold(){
     if (pttActive) return;
     pttActive = true;
+    pttVadFrames = 0;
+    pttVadHits = 0;
     pttReleasePending = false;
     clearTimeout(pttSafetyTimer);
     pttSafetyTimer = setTimeout(() => {

@@ -20,6 +20,7 @@ from faust_backend.speech.cloud.client import (
     resolve_cloud_url,
     current_cloud_headers,
 )
+from faust_backend.speech.tts.retry import TtsRateLimitError, with_429_retry
 
 
 def _resolve_local_tts_reference() -> tuple[str, str, str]:
@@ -118,15 +119,22 @@ async def _synthesize_mimo(payload_text: str) -> tuple[bytes, str]:
         "audio": audio_cfg,
     }
     url = _resolve_api_url(base_url, "/chat/completions")
-    resp = await asyncio.to_thread(
-        requests.post,
-        url,
-        json=payload,
-        headers={"api-key": api_key, "Content-Type": "application/json"},
-        timeout=120,
-    )
-    if not resp.ok:
-        raise SpeechRuntimeError(f"MiMo TTS 服务错误: {resp.status_code} {resp.text}")
+
+    async def _post_mimo_once() -> requests.Response:
+        resp = await asyncio.to_thread(
+            requests.post,
+            url,
+            json=payload,
+            headers={"api-key": api_key, "Content-Type": "application/json"},
+            timeout=120,
+        )
+        if resp.status_code == 429:
+            raise TtsRateLimitError(f"MiMo TTS 429: {resp.text[:200]}")
+        if not resp.ok:
+            raise SpeechRuntimeError(f"MiMo TTS 服务错误: {resp.status_code} {resp.text}")
+        return resp
+
+    resp = await with_429_retry(_post_mimo_once, label="MiMo TTS")
     try:
         data = resp.json()
         b64_audio = str(data["choices"][0]["message"]["audio"]["data"])

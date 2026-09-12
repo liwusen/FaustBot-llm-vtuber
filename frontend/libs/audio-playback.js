@@ -10,7 +10,6 @@ export function initAudioPlayback({
   getVrmScene,
   getCurrentModel,
   getLipSyncParamIds,
-  showOverlay,
   stopBackgroundAudio,
   onAnalyserCreated,
   getLipSyncDriverActive,
@@ -21,6 +20,19 @@ export function initAudioPlayback({
   let dataArray = null;
   let sourceNode = null;
   let rafId = null;
+
+  // TTS 片段被跳过时的提示：写入右上角状态栏（#ttsStatus），2.5s 后恢复
+  let ttsSkipNoticeTimer = null;
+  function showTtsSkipNotice() {
+    const el = document.getElementById('ttsStatus');
+    if (!el) return;
+    el.textContent = '部分 TTS 分段合成失败，已跳过错误片段';
+    clearTimeout(ttsSkipNoticeTimer);
+    ttsSkipNoticeTimer = setTimeout(() => {
+      const cur = document.getElementById('ttsStatus');
+      if (cur) cur.textContent = '已完成';
+    }, 2500);
+  }
 
   function setModelLipSyncValue(value) {
     const currentModel = getCurrentModel();
@@ -208,11 +220,12 @@ export function initAudioPlayback({
         }
       }
       try { await Promise.all(fetchPromises); } catch (e) {}
-      if (fetchHadError && typeof showOverlay === 'function') showOverlay('部分 TTS 分段合成失败，已跳过错误片段');
     } catch (e) { console.warn('TTS allDone err', e); }
     finally {
       if (ttsBtn) ttsBtn.disabled = false;
       if (ttsStatus) ttsStatus.textContent = '已完成';
+      // 提示必须在状态复位之后写入，否则会被 "已完成" 覆盖
+      if (fetchHadError) showTtsSkipNotice();
     }
   }
 
