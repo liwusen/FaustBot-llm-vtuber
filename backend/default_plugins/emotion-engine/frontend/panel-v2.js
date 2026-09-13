@@ -32,19 +32,10 @@
   ];
   const EMOTION_COLORS = ['#ff8fab', '#ff6b6b', '#f4d35e', '#4ecdc4', '#a78bfa', '#8ecae6'];
 
-  let echartsPromise = null;
+  // ECharts 由配置中心的本地 bundle（frontend/libs/echarts/echarts-bundle.js）提供，不再走 CDN
   function loadECharts(){
     if (window.echarts) return Promise.resolve(window.echarts);
-    if (!echartsPromise) {
-      echartsPromise = new Promise(function(resolve, reject){
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js';
-        script.onload = function(){ resolve(window.echarts); };
-        script.onerror = function(){ reject(new Error('ECharts CDN 加载失败')); };
-        document.head.appendChild(script);
-      });
-    }
-    return echartsPromise;
+    return Promise.reject(new Error('ECharts 未加载（缺少 libs/echarts/echarts-bundle.js）'));
   }
 
   function drawTrend(elm, history){

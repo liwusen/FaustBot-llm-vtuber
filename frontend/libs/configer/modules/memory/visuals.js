@@ -1,8 +1,9 @@
 // Memory page visualizations (echarts): word cloud / timeline / treemap.
 // Classic script: exposes window.MemoryVisuals. Requires window.echarts; the
-// wordCloud series additionally needs the echarts-wordcloud plugin (both are
-// loaded from CDN by config-window.html). When either is unavailable the view
-// degrades instead of throwing: no echarts -> "图表组件未加载", no wordCloud
+// wordCloud series additionally needs the echarts-wordcloud plugin (both come
+// from the local esbuild bundle libs/echarts/echarts-bundle.js, loaded by
+// config-window.html — npm run build:echarts). When either is unavailable the
+// view degrades instead of throwing: no echarts -> "图表组件未加载", no wordCloud
 // plugin -> frequency-ranked chip list.
 //
 // Public API:
