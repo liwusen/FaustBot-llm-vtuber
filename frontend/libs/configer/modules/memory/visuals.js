@@ -215,7 +215,16 @@
     } catch (err) {
       live = false;
     }
-    if (live) return chart;
+    if (live) {
+      // 词云 series 的点击参数只有 name，用它回填标签条件并立即检索
+      if (onPick) {
+        chart.on("click", (params) => {
+          const word = String((params && (params.name || (params.data && params.data.name))) || "").trim();
+          if (word) onPick(word);
+        });
+      }
+      return chart;
+    }
     // echarts-wordcloud missing/unusable -> degrade to a ranked chip list.
     registry.delete(canvas);
     if (typeof chart.isDisposed !== "function" || !chart.isDisposed()) chart.dispose();
@@ -313,6 +322,8 @@
           yAxisIndex: 0,
           animation: false,
           showSymbol: false,
+          // 曲线只作参考：不参与命中，否则点日历格会被折线截走（seriesType 变 line，取不到日期）
+          silent: true,
           data: cumFiles,
           lineStyle: { color: BLUE, width: 2 },
           itemStyle: { color: BLUE },
@@ -324,6 +335,7 @@
           yAxisIndex: 1,
           animation: false,
           showSymbol: false,
+          silent: true,
           data: cumChunks,
           lineStyle: { color: GRAY, width: 2 },
           itemStyle: { color: GRAY },

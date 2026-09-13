@@ -21,6 +21,8 @@ TEXT_PATH = PLUGIN_NS + "/text"
 
 ERROR_PREFIX = "[quick-screen-view]"
 
+TOOL_NAME = "quickScreenView"
+
 CONFIG_SCHEMA: list[dict[str, Any]] = [
     {
         "key": "screen-model",
@@ -249,6 +251,27 @@ class Plugin(FaustPlugin):
             await self._apply_mode()
 
     @hookimpl
+    async def agent_event_sent(
+        self, event: dict, current_history: list, ctx: PluginContext | None
+    ) -> dict | None:
+        """屏幕分析正文只交给模型：发往前端的气泡事件里换成一行状态。
+
+        工具返回值仍原样进入模型上下文（本钩子只改 WebSocket 事件），
+        因此不会丢信息；错误信息保留原文，便于用户看到失败原因。
+        """
+        del current_history, ctx
+        if not isinstance(event, dict) or event.get("type") != "tool_result":
+            return event
+        if str(event.get("tool_name") or "") != TOOL_NAME:
+            return event
+        text = str(event.get("output") or "")
+        if not text or text.startswith(ERROR_PREFIX):
+            return event
+        payload = dict(event)
+        payload["output"] = f"（屏幕分析 {len(text)} 字已交给模型，气泡不再重复展示）"
+        return payload
+
+    @hookimpl
     async def register_tools(self, ctx: PluginContext) -> list:
         self.ctx = ctx
         # 严格互斥：mode=vfs 时不注册工具
@@ -258,6 +281,9 @@ class Plugin(FaustPlugin):
         @tool
         async def quickScreenView(focus: str = "") -> str:
             """截取主显示器屏幕截图，调用 screen-model 视觉模型，按照 focus 指示以结构化 Markdown 概括屏幕内容。
+
+            结果只交给你（模型），不会显示在聊天气泡里：用户看不到这段文本，
+            所以拿到结果后请用自然语言转述/回答，不要指望用户读过它。
 
             Args:
                 focus (str): 概括指示，例如“当前打开了哪些应用”“屏幕上有什么数字”。为空时输出通用屏幕概览。
@@ -269,7 +295,7 @@ class Plugin(FaustPlugin):
 
         return [
             ToolSpec(
-                name="quickScreenView",
+                name=TOOL_NAME,
                 tool=quickScreenView,
                 enabled_by_default=True,
                 description=quickScreenView.__doc__ or "",

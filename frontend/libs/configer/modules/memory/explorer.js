@@ -1,17 +1,21 @@
-// Memory module shell: left tree, breadcrumbs, view switcher, filter chips, graph view.
-// Views: list (modules/memory/list.js) / graph (here) / cloud / timeline / treemap (modules/memory/visuals.js).
+// Memory module shell: left tree, breadcrumbs, view switcher, visualization card, graph view.
+// Views: list (modules/memory/list.js) / graph (here).
+// Visualization card (below everything): cloud / timeline / treemap (modules/memory/visuals.js).
 // Detail pane: modules/memory/detail.js.
 
 var MEM_VIEWS = [
   { id: "list", label: "列表" },
-  { id: "search", label: "搜索" },
   { id: "graph", label: "图谱" },
+];
+
+var MEM_SEARCH_LIMIT = 200;
+
+// 可视化卡片三个宽切换按钮（顺序即显示顺序）
+var MEM_VIZ_TABS = [
   { id: "cloud", label: "词云" },
   { id: "timeline", label: "时间线" },
   { id: "treemap", label: "Treemap" },
 ];
-
-var MEM_SEARCH_LIMIT = 200;
 
 // 可选列（名称列恒在）
 var MEM_COLUMN_DEFS = [
@@ -27,6 +31,7 @@ var MEM_COLUMN_DEFS = [
 var MEM_TREE_KEY = "faustbot.memory.tree";
 var MEM_VIEW_KEY = "faustbot.memory.view";
 var MEM_COLUMNS_KEY = "faustbot.memory.columns";
+var MEM_VIZ_TAB_KEY = "faustbot.memory.viztab";
 
 var _memGraph = { canvas: null, host: null, statusEl: null, legendEl: null, depth: 3, resultsEl: null };
 var _memVisibilityHooked = false;
@@ -67,11 +72,16 @@ function memEnsureState() {
   }
   if (!state.memSel || !state.memSel.kind) state.memSel = { kind: "dir", path: "/" };
   if (!state.memFilter) {
-    state.memFilter = { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", declaredBy: "", sortBy: "relevance", sortOrder: "desc" };
+    state.memFilter = { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", sortBy: "relevance", sortOrder: "desc" };
   }
   if (typeof state.memSearchDraft !== "object") state.memSearchDraft = null;
   if (typeof state.memResultLabel !== "string") state.memResultLabel = "";
   if (typeof state.memSearching !== "boolean") state.memSearching = false;
+  if (!MEM_VIZ_TABS.some((t) => t.id === state.memVizTab)) {
+    state.memVizTab = memReadLocal(MEM_VIZ_TAB_KEY, "cloud");
+    if (!MEM_VIZ_TABS.some((t) => t.id === state.memVizTab)) state.memVizTab = "cloud";
+  }
+  if (state.memEditor !== null && typeof state.memEditor !== "object") state.memEditor = null;
   if (!state.memSort || !state.memSort.by) state.memSort = { by: "updated_at", order: "desc" };
   if (typeof state.memPage !== "number" || state.memPage < 0) state.memPage = 0;
   if (!Array.isArray(state._memTeardowns)) state._memTeardowns = [];
@@ -87,6 +97,7 @@ function memCurrentDir() {
 }
 
 function memSelectDir(path) {
+  if (memEditorGuard(() => memSelectDir(path), "切换目录")) return;
   state.memSel = { kind: "dir", path: normalizeKbPath(path) };
   state.memDetail = null;
   state.memPage = 0;
@@ -95,8 +106,11 @@ function memSelectDir(path) {
   else memRenderShell();
 }
 
-function memSelectFile(path) {
+function memSelectFile(path, opts) {
+  if (memEditorGuard(() => memSelectFile(path, opts), "切换文件")) return;
   const norm = normalizeKbPath(path);
+  // 树导航文件 = 回到浏览态：检索结果/关联文件立即让位给父目录列表（列表内点结果行保留结果集）
+  if (!(opts && opts.keepResults)) memExitResults();
   state.memSel = { kind: "file", path: norm };
   state.memDetail = null;
   state.memPage = 0;
@@ -105,6 +119,7 @@ function memSelectFile(path) {
 }
 
 function memSelectEntity(entityId) {
+  if (memEditorGuard(() => memSelectEntity(entityId), "切换选中")) return;
   state.memSel = { kind: "entity", entityId: String(entityId || "") };
   state.memDetail = null;
   memRenderShell();
@@ -144,12 +159,17 @@ function memInScope(path) {
   return norm === dir || norm.startsWith(dir + "/");
 }
 
-function memClearFilter() {
-  state.memFilter = { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", declaredBy: "", sortBy: "relevance", sortOrder: "desc" };
+// 退出「结果集」态（检索结果 / 关联文件），回到当前目录的浏览列表
+function memExitResults() {
+  state.memFilter = { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", sortBy: "relevance", sortOrder: "desc" };
   state.memSearchResults = null;
   state.memResultLabel = "";
   state.memPage = 0;
   if (typeof memSearchSyncDraft === "function") memSearchSyncDraft();
+}
+
+function memClearFilter() {
+  memExitResults();
   memRenderShell();
 }
 
@@ -161,15 +181,11 @@ function memToggleTag(tag) {
 
 function memFilterActive() {
   const f = state.memFilter || {};
-  return Boolean(
-    String(f.query || "").trim() ||
-    (f.tags && f.tags.length) ||
-    f.dateFrom || f.dateTo ||
-    String(f.declaredBy || "").trim()
-  );
+  return Boolean(String(f.query || "").trim() || (f.tags && f.tags.length) || f.dateFrom || f.dateTo);
 }
 
 // 可视化等入口：立即改条件并重新检索（可选切视图）
+// 编辑态下不拦截：条件变化只换结果集，编辑器 DOM 与内容原样保留
 function memApplyCondition(patch, opts) {
   state.memFilter = Object.assign({}, state.memFilter || {}, patch || {});
   state.memPage = 0;
@@ -178,7 +194,7 @@ function memApplyCondition(patch, opts) {
   memRunSearch();
 }
 
-// 搜索页「搜索」按钮：以表单当前内容整体替换条件
+// 搜索栏「搜索」按钮：以表单当前内容整体替换条件
 function memApplySearch() {
   const values = typeof memSearchFormValues === "function" ? memSearchFormValues() : null;
   if (values) state.memFilter = Object.assign({}, state.memFilter || {}, values);
@@ -225,7 +241,6 @@ async function memRunSearch() {
     scope: memScopeOrNull(),
     date_from: f.dateFrom || null,
     date_to: f.dateTo || null,
-    declared_by: String(f.declaredBy || "").trim() || null,
     // 无关键词时「相关度」没有意义（后端也不会排序）→ 明确按更新时间取数
     sort_by: query ? (f.sortBy || "relevance") : "updated_at",
     sort_order: query ? (f.sortOrder || "desc") : "desc",
@@ -234,6 +249,8 @@ async function memRunSearch() {
   };
   state.memSearching = true;
   state.memResultLabel = "";
+  // 取数顺序由搜索栏的「排序/顺序」决定，表头排序在这批结果内重排
+  state.memSort = { by: payload.sort_by === "relevance" ? "score" : "updated_at", order: payload.sort_order };
   memRenderShell();
   try {
     const data = await cfgApi("POST", "/faust/memory/advanced-search", payload);
@@ -287,9 +304,8 @@ function memSubtreeFiles() {
   return memFlattenFiles().filter((file) => memInScope(file.path));
 }
 
-// 可视化数据源：有条件时用共享结果集，否则用当前目录子树
+// 可视化数据源：始终是当前目录整棵子树（忽略检索条件）
 function memVizFiles() {
-  if (state.memSearchResults) return state.memSearchResults.map((row) => Object.assign({}, row));
   return memSubtreeFiles();
 }
 
@@ -363,23 +379,25 @@ function memRenderTree() {
   const host = document.getElementById("memTree");
   if (!host) return;
   host.innerHTML = "";
-
-  const filterInput = el("input", "input");
-  filterInput.id = "memTreeFilter";
-  filterInput.placeholder = "过滤树";
-  filterInput.value = state._memTreeFilter || "";
-  filterInput.addEventListener("input", () => {
-    state._memTreeFilter = filterInput.value;
-    memRenderTreeBody();
-  });
-  const filterBar = el("div", "mem-tree-filter");
-  filterBar.append(filterInput);
-  host.append(filterBar);
-
   const body = el("div", "mem-tree-body");
   body.id = "memTreeBody";
   host.append(body);
   memRenderTreeBody();
+}
+
+// 选中路径的祖先目录链（渲染时临时展开，不写入 localStorage）
+function memRevealedAncestors() {
+  const sel = state.memSel || {};
+  const path = sel.kind === "dir" || sel.kind === "file" ? normalizeKbPath(sel.path || "") : "";
+  const out = new Set();
+  if (!path || path === "/") return out;
+  const segs = path.split("/").filter(Boolean);
+  let acc = "";
+  for (let i = 0; i < segs.length - 1; i++) {
+    acc += "/" + segs[i];
+    out.add(acc);
+  }
+  return out;
 }
 
 function memRenderTreeBody() {
@@ -391,14 +409,10 @@ function memRenderTreeBody() {
     state._memTreeChunked = null;
   }
 
-  const filter = String(state._memTreeFilter || "").trim().toLowerCase();
-  const matches = (node) => {
-    if (!filter) return true;
-    if (String(node.name || "").toLowerCase().includes(filter)) return true;
-    return (node.children || []).some((c) => c.type !== "entity" && matches(c));
-  };
+  const revealed = memRevealedAncestors();
+  const isExpanded = (path) => state.memExpanded.includes(path) || revealed.has(path);
 
-  const selectedPath = state.memSel && state.memSel.path ? state.memSel.path : "";
+  const selectedPath = state.memSel && state.memSel.path ? normalizeKbPath(state.memSel.path) : "";
 
   const buildRow = (node, depth) => {
     const isDir = node.type === "dir";
@@ -408,7 +422,7 @@ function memRenderTreeBody() {
     if (selectedPath && path === selectedPath) row.classList.add("selected");
     row.dataset.path = path;
 
-    const caret = el("span", "mem-tree-caret", isDir ? (state.memExpanded.includes(path) ? "\u25BE" : "\u25B8") : "");
+    const caret = el("span", "mem-tree-caret", isDir ? (isExpanded(path) ? "\u25BE" : "\u25B8") : "");
     const label = el("span", "mem-tree-label mono");
     const glyph = isDir ? "\u25AA" : (memIsImagePath(path) ? "\u25A4" : "\u25AA");
     label.textContent = glyph + " " + String(node.name || path);
@@ -437,6 +451,9 @@ function memRenderTreeBody() {
         memSelectFile(path);
       }
     });
+    row.addEventListener("dblclick", () => {
+      if (!isDir) memListRun("打开", () => memOpenEditor(path));
+    });
     row.addEventListener("contextmenu", (evt) => {
       evt.preventDefault();
       memOpenContextMenu(evt.clientX, evt.clientY, { type: isDir ? "dir" : "file", path, name: String(node.name || "") });
@@ -447,9 +464,8 @@ function memRenderTreeBody() {
   const rows = [];
   const walk = (node, depth) => {
     const isDir = node.type === "dir";
-    if (!matches(node)) return;
     rows.push({ node, depth });
-    if (isDir && state.memExpanded.includes(normalizeKbPath(node.path))) {
+    if (isDir && isExpanded(normalizeKbPath(node.path))) {
       for (const child of node.children || []) {
         if (child.type === "entity") continue;
         walk(child, depth + 1);
@@ -457,11 +473,11 @@ function memRenderTreeBody() {
     }
   };
   const root = state.kbTree;
-  if (root && matches(root)) {
+  if (root) {
     const rootPath = "/";
     const rootRow = el("div", "mem-tree-row");
     if (selectedPath === rootPath) rootRow.classList.add("selected");
-    const rootCaret = el("span", "mem-tree-caret", state.memExpanded.includes(rootPath) ? "\u25BE" : "\u25B8");
+    const rootCaret = el("span", "mem-tree-caret", isExpanded(rootPath) ? "\u25BE" : "\u25B8");
     rootRow.append(rootCaret, el("span", "mem-tree-label mono", "\u25AA /"));
     rootCaret.addEventListener("click", (evt) => {
       evt.stopPropagation();
@@ -483,7 +499,7 @@ function memRenderTreeBody() {
       memOpenContextMenu(evt.clientX, evt.clientY, { type: "dir", path: rootPath, name: "/" });
     });
     body.append(rootRow);
-    if (state.memExpanded.includes(rootPath)) {
+    if (isExpanded(rootPath)) {
       for (const child of root.children || []) {
         if (child.type === "entity") continue;
         walk(child, 1);
@@ -492,11 +508,19 @@ function memRenderTreeBody() {
   }
 
   if (!rows.length) {
-    body.append(el("div", "mem-empty", filter ? "无匹配节点" : "记忆库为空"));
+    body.append(el("div", "mem-empty", "记忆库为空"));
   }
   const rowsHost = el("div", "mem-tree-rows");
   body.append(rowsHost);
-  state._memTreeChunked = appendChunked(rowsHost, rows, (row) => buildRow(row.node, row.depth));
+  state._memTreeChunked = appendChunked(rowsHost, rows, (row) => buildRow(row.node, row.depth), {
+    // 选中行定位：仅在选中路径变化时滚动，避免每次重绘都把树拽回原位
+    onDone: () => {
+      if (!selectedPath || state._memTreeScrollKey === selectedPath) return;
+      state._memTreeScrollKey = selectedPath;
+      const target = rowsHost.querySelector('.mem-tree-row.selected');
+      if (target && typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "nearest" });
+    },
+  });
 
   // 待处理任务
   if (state.kbTasks && state.kbTasks.length) {
@@ -577,17 +601,46 @@ function memRenderCrumbs() {
   }
 
   const target = segs.length ? segs[segs.length - 1].path : "/";
-  const copyBtn = makeButton("复制路径", async () => {
-    try {
-      await navigator.clipboard.writeText(target);
-      showBanner("success", "已复制: " + target);
-    } catch (err) {
-      console.error("[memory] 复制路径失败", err);
-      showBanner("error", "复制失败: " + String((err && err.message) || err));
-    }
-  }, "btn btn-ghost");
-  copyBtn.classList.add("mem-copy-path");
-  host.append(copyBtn);
+  host.title = target;
+  // 复制路径改由右键菜单提供（面包屑/树/列表行统一）；host 常驻，只挂一次监听
+  if (!host._memCopyHooked) {
+    host._memCopyHooked = true;
+    host.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      memCopyPathMenu(evt.clientX, evt.clientY, host.title || "/");
+    });
+  }
+}
+
+// 复制路径右键菜单（面包屑 / 树节点 / 列表行共用）
+function memCopyPathMenu(x, y, path) {
+  const menu = el("div", "mem-menu");
+  const item = el("button", "mem-menu-item", "复制路径");
+  item.type = "button";
+  item.addEventListener("click", () => {
+    menu.remove();
+    memCopyPath(path);
+  });
+  menu.append(item);
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  document.body.append(menu);
+  const close = (evt) => {
+    if (menu.contains(evt.target)) return;
+    menu.remove();
+    document.removeEventListener("click", close);
+  };
+  window.setTimeout(() => document.addEventListener("click", close), 0);
+}
+
+async function memCopyPath(path) {
+  try {
+    await navigator.clipboard.writeText(path);
+    showBanner("success", "已复制: " + path);
+  } catch (err) {
+    console.error("[memory] 复制路径失败", err);
+    showBanner("error", "复制失败: " + String((err && err.message) || err));
+  }
 }
 
 async function memOpenSiblingPicker(dirPath) {
@@ -616,77 +669,29 @@ async function memOpenSiblingPicker(dirPath) {
   openModal("跳转目录", [box, bar]);
 }
 
-// ── 已生效条件回显（唯一可见处；编辑一律去搜索页或点可视化） ──
-
-function memRenderChips() {
-  const host = document.getElementById("memChips");
-  if (!host) return;
-  host.innerHTML = "";
-  const f = state.memFilter || {};
-  const chips = [];
-  if (f.query) chips.push({ label: "关键词: " + f.query, clear: () => memApplyCondition({ query: "" }, { view: "list" }) });
-  for (const tag of f.tags || []) chips.push({ label: "#" + tag, clear: () => memToggleTag(tag) });
-  if (f.dateFrom || f.dateTo) {
-    chips.push({
-      label: "更新: " + (f.dateFrom || "\u2026") + " ~ " + (f.dateTo || "\u2026"),
-      clear: () => memApplyCondition({ dateFrom: "", dateTo: "" }, { view: "list" }),
-    });
-  }
-  if (f.declaredBy) chips.push({ label: "创建者: " + f.declaredBy, clear: () => memApplyCondition({ declaredBy: "" }, { view: "list" }) });
-  if (f.tagLogic === "OR" && (f.tags || []).length > 1) chips.push({ label: "标签任一满足", clear: () => memApplyCondition({ tagLogic: "AND" }, { view: "list" }) });
-
-  if (state.memSearching) {
-    host.append(el("span", "mem-chips-hint", "检索中\u2026"));
-  } else if (!chips.length && !state.memSearchResults) {
-    host.append(el("span", "mem-chips-hint", "无筛选条件"));
-  } else if (!chips.length && state.memSearchResults) {
-    // 非条件型结果集（如详情栏「查看关联文件」）
-    const info = el("span", "mem-chip mem-chip-info", (state.memResultLabel || "结果") + " (" + state.memSearchResults.length + ")");
-    host.append(info);
-    const back = makeButton("返回浏览", () => { state.memSearchResults = null; state.memResultLabel = ""; memRenderShell(); }, "btn btn-ghost");
-    back.classList.add("mem-chip-clear");
-    host.append(back);
-    return;
-  }
-
-  for (const chip of chips) {
-    const node = el("span", "mem-chip");
-    node.append(el("span", "", chip.label));
-    const close = el("button", "mem-chip-close", "\u00D7");
-    close.type = "button";
-    close.title = "移除该条件";
-    close.addEventListener("click", chip.clear);
-    node.append(close);
-    host.append(node);
-  }
-  if (state.memSearchResults) {
-    const count = state.memSearchResults.length;
-    host.append(el("span", "mem-chips-hint", count >= MEM_SEARCH_LIMIT
-      ? "命中 \u2265" + count + " 条（仅显示前 " + MEM_SEARCH_LIMIT + " 条，请收紧条件）"
-      : "命中 " + count + " 条"));
-  }
-  if (chips.length) {
-    const clearAll = makeButton("清除全部", memClearFilter, "btn btn-ghost");
-    clearAll.classList.add("mem-chip-clear");
-    host.append(clearAll);
-  }
-}
-
-// ── 视图切换 ──
+// ── 视图切换（列表 / 图谱） ──
 
 function memRenderViewSwitcher() {
   const host = document.getElementById("memViews");
   if (!host) return;
   host.innerHTML = "";
+  const seg = el("div", "seg");
   for (const view of MEM_VIEWS) {
     const btn = makeButton(view.label, () => {
-      state.memView = view.id;
-      memWriteLocal(MEM_VIEW_KEY, view.id);
-      memRenderShell();
-    }, "mem-view-btn" + (state.memView === view.id ? " active" : ""));
+      if (state.memView === view.id) return;
+      if (memEditorGuard(() => memSetView(view.id), "切换视图")) return;
+      memSetView(view.id);
+    }, "seg-item" + (state.memView === view.id ? " active" : ""));
     btn.dataset.view = view.id;
-    host.append(btn);
+    seg.append(btn);
   }
+  host.append(seg);
+}
+
+function memSetView(viewId) {
+  state.memView = viewId;
+  memWriteLocal(MEM_VIEW_KEY, viewId);
+  memRenderShell();
 }
 
 // ── 图谱视图 ──
@@ -724,12 +729,12 @@ function memRenderGraphHost(host) {
 
   tb.append(
     searchInput,
-    makeButton("搜索", () => memGraphSearch(searchInput.value), "btn btn-primary"),
+    makeButton("搜索", () => memGraphSearch(searchInput.value), "btn btn-quiet"),
     status,
     document.createTextNode(" | "),
-    makeButton("放大", () => { if (_memGraph.canvas) { _memGraph.canvas._viewScale *= 1.2; _memGraph.canvas.render(); } }, "btn btn-ghost"),
-    makeButton("缩小", () => { if (_memGraph.canvas) { _memGraph.canvas._viewScale /= 1.2; _memGraph.canvas.render(); } }, "btn btn-ghost"),
-    makeButton("适应", () => { if (_memGraph.canvas) _memGraph.canvas.fitToScreen(); }, "btn btn-ghost"),
+    makeButton("放大", () => { if (_memGraph.canvas) { _memGraph.canvas._viewScale *= 1.2; _memGraph.canvas.render(); } }, "btn btn-quiet"),
+    makeButton("缩小", () => { if (_memGraph.canvas) { _memGraph.canvas._viewScale /= 1.2; _memGraph.canvas.render(); } }, "btn btn-quiet"),
+    makeButton("适应", () => { if (_memGraph.canvas) _memGraph.canvas.fitToScreen(); }, "btn btn-quiet"),
     depthLabel,
     depthSlider
   );
@@ -961,27 +966,72 @@ async function memGraphOpenLinkedFile(entityId) {
   memSelectFile(files[0]);
 }
 
-// ── 可视化视图 ──
+// ── 可视化卡片（通栏，位于整页最下方） ──
+//
+// 两态：选中目录 = 展开（三个宽切换按钮 + 固定高度内容区，只挂载当前 tab）；
+//       选中文件/实体 = 收起为一行灰字。
+// 数据源 = 当前目录整棵子树，忽略检索条件（与列表的检索结果无关）。
+// 重建缓存：目录/tab/可用性/树数据任一变化才重挂 echarts，避免每次重绘都重建图表。
 
-function memRenderVizHost(kind, host) {
+var _memVizTreeRef = null;
+
+function memRenderVizCard() {
+  const host = document.getElementById("memVizCard");
+  if (!host) return;
+  const dirSelected = (state.memSel || {}).kind === "dir";
+  const sig = [dirSelected ? "dir" : "other", state.memVizTab, memCurrentDir()].join("|");
+  const treeChanged = state.kbTree !== _memVizTreeRef;
+  if (!treeChanged && host._memVizSig === sig && host.childElementCount) return;
+  _memVizTreeRef = state.kbTree;
+  host._memVizSig = sig;
+
+  if (typeof MemoryVisuals !== "undefined") MemoryVisuals.dispose(host);
   host.innerHTML = "";
-  const files = memVizFiles();
-  if (!files.length) {
-    host.append(el("div", "mem-empty", "当前范围内没有可统计的文件"));
+  host.classList.toggle("mem-viz-off", !dirSelected);
+
+  if (!dirSelected) {
+    host.append(el("div", "mem-viz-hint", "可视化不可用，请选择文件夹"));
     return;
   }
+
+  const head = el("div", "mem-viz-head");
+  head.append(el("span", "mem-viz-title", "可视化"));
+  const seg = el("div", "seg mem-viz-tabs");
+  for (const tab of MEM_VIZ_TABS) {
+    const btn = makeButton(tab.label, () => {
+      if (state.memVizTab === tab.id) return;
+      state.memVizTab = tab.id;
+      memWriteLocal(MEM_VIZ_TAB_KEY, tab.id);
+      memRenderVizCard();
+    }, "seg-item" + (state.memVizTab === tab.id ? " active" : ""));
+    btn.dataset.viz = tab.id;
+    seg.append(btn);
+  }
+  head.append(seg);
+  host.append(head);
+
+  const body = el("div", "mem-viz-body");
+  host.append(body);
+
+  const kind = state.memVizTab;
+  const files = memVizFiles();
+  if (!files.length) {
+    body.append(el("div", "mem-empty", "当前范围内没有可统计的文件"));
+    return;
+  }
+  if (typeof MemoryVisuals === "undefined") {
+    body.append(el("div", "mem-error", "可视化组件未加载（visuals.js 缺失）。"));
+    return;
+  }
+  // 注意：visuals.js 读的是 opts.<kind>.onPick*，这里必须传整张表（早前按 kind 取值导致所有点击回调为 null）
   const opts = {
     cloud: { onPickTag: (tag) => memToggleTag(tag) },
     timeline: { onPickRange: (from, to) => memApplyCondition({ dateFrom: from, dateTo: to }, { view: "list" }) },
     // Treemap 点目录 = 换当前目录（与点左树同义）
     treemap: { onPickDir: (path) => memSelectDir(path) },
-  }[kind];
+  };
   const data = kind === "treemap" ? { treemap: { tree: memScopedTree() } } : { [kind]: { files } };
-  if (typeof MemoryVisuals === "undefined") {
-    host.append(el("div", "mem-error", "可视化组件未加载（visuals.js 缺失）。"));
-    return;
-  }
-  MemoryVisuals.mount(kind, host, data, opts);
+  MemoryVisuals.mount(kind, body, data, opts);
 }
 
 // Treemap 只画当前目录这一层起（当前目录 = 它的根）
@@ -1000,15 +1050,13 @@ function memScopedTree() {
 function memRenderShell() {
   memEnsureState();
   const crumbs = document.getElementById("memCrumbs");
-  const chips = document.getElementById("memChips");
   const switcher = document.getElementById("memViews");
-  if (!crumbs || !chips || !switcher) return;
+  if (!crumbs || !switcher) return;
   memRenderCrumbs();
-  memRenderChips();
   memRenderViewSwitcher();
   memRenderTree();
 
-  const hosts = { list: "memViewList", search: "memViewSearch", graph: "memViewGraph", cloud: "memViewCloud", timeline: "memViewTimeline", treemap: "memViewTreemap" };
+  const hosts = { list: "memViewList", graph: "memViewGraph" };
   for (const [view, id] of Object.entries(hosts)) {
     const host = document.getElementById(id);
     if (!host) continue;
@@ -1027,20 +1075,21 @@ function memRenderShell() {
       continue;
     }
     host.hidden = false;
+    if (view === "list" && state.memEditor) {
+      // 编辑态：主列的列表区让位给内联编辑器（活实例不重建，保住光标与撤销栈）
+      memRenderEditor(host);
+      continue;
+    }
     host.innerHTML = "";
     if (view === "list") {
       if (typeof memRenderList === "function") memRenderList(host);
       else host.append(el("div", "mem-error", "列表组件未加载（list.js 缺失）。"));
-    } else if (view === "search") {
-      if (typeof renderMemSearchView === "function") renderMemSearchView(host);
-      else host.append(el("div", "mem-error", "搜索组件未加载（search.js 缺失）。"));
-    } else if (view === "graph") {
-      memRenderGraphHost(host);
     } else {
-      memRenderVizHost(view, host);
+      memRenderGraphHost(host);
     }
   }
   memRenderDetailHost();
+  memRenderVizCard();
 }
 
 function memRenderDetailHost() {
@@ -1052,7 +1101,12 @@ function memRenderDetailHost() {
 }
 
 function memReload() {
-  return ensureModuleData("memory").then(() => memRenderShell());
+  return ensureModuleData("memory").then(() => {
+    // 有生效条件时结果集来自服务端，文件增删后必须重算，否则列表会显示已经不存在的文件
+    if (memFilterActive()) return memRunSearch();
+    memRenderShell();
+    return null;
+  });
 }
 
 function memRegisterTeardown(fn) {
@@ -1109,6 +1163,7 @@ function memOpenContextMenu(x, y, node) {
   }
   items.push({ label: "粘贴", disabled: !state.memClipboard, action: () => memPaste(parentDir) });
   items.push(null);
+  items.push({ label: "复制路径", action: () => memCopyPath(node.path) });
   items.push({ label: node.type === "file" ? "删除文件" : "删除目录", danger: true, action: () => memDelete(node.path) });
 
   for (const item of items) {
@@ -1135,13 +1190,202 @@ function memOpenContextMenu(x, y, node) {
   document.addEventListener("click", close);
 }
 
-async function memOpenEditor(path) {
+// ── 内联编辑器（取代模态编辑） ──
+//
+// 编辑态下主列的列表区整体让位给 CodeMirror：树 / 面包屑 / 详情栏 / 可视化卡片保持可见。
+// 脏状态由「退出编辑 / 切换选中 / 切换视图 / 离开记忆页」四处守卫，统一走 memEditorGuard。
+
+function memEditorDirty() {
+  return Boolean(state.memEditor && state.memEditor.dirty);
+}
+
+// 返回 true = 已拦截（用户正在确认）；返回 false = 放行（必要时已关闭干净的编辑器）
+function memEditorGuard(proceed, reason) {
+  const ed = state.memEditor;
+  if (!ed) return false;
+  if (!ed.dirty) {
+    memEditorClose();
+    return false;
+  }
+  const box = el("div", "list-box");
+  box.append(el("div", "", (reason || "继续操作") + " 前需要处理未保存的改动："));
+  box.append(el("div", "card-help mono", String(ed.path || "")));
+  const bar = el("div", "toolbar");
+  const saveAndGo = async () => {
+    const ok = await memEditorSave();
+    if (!ok) return;
+    closeModal();
+    memEditorClose();
+    memRenderShell();
+    await proceed();
+  };
+  const discard = () => {
+    closeModal();
+    memEditorClose();
+    memRenderShell();
+    proceed();
+  };
+  bar.append(
+    makeButton("保存并继续", saveAndGo, "btn btn-go"),
+    makeButton("放弃修改", discard, "btn btn-danger"),
+    makeButton("取消", closeModal, "btn btn-quiet")
+  );
+  openModal("未保存的改动", [box, bar]);
+  return true;
+}
+
+function memEditorClose() {
+  const ed = state.memEditor;
+  if (ed && ed.view && typeof ed.view.destroy === "function") ed.view.destroy();
+  state.memEditor = null;
+}
+
+async function memOpenEditor(path, opts) {
+  if (memEditorGuard(() => memOpenEditor(path, opts), "打开文件")) return;
+  const target = normalizeKbPath(path);
+  if (memIsImagePath(target)) {
+    showBanner("info", "图片文件不支持文本编辑，请在详情栏预览。");
+    return;
+  }
   try {
-    const data = await cfgApi("GET", "/faust/memory/get", null, { path });
-    await openKbEditorModal(path, String(data.content || ""), data.meta || {});
+    const data = await cfgApi("GET", "/faust/memory/get", null, { path: target });
+    const content = String(data.content || "");
+    if (!(opts && opts.keepResults)) memExitResults();
+    state.memEditor = {
+      path: target,
+      original: content,
+      content,
+      dirty: false,
+      isNew: false,
+      index: true,
+      meta: data.meta || {},
+      view: null,
+      host: null,
+      statusEl: null,
+    };
+    state.memSel = { kind: "file", path: target };
+    // 内容与元数据刚取过，直接喂给详情栏，避免再发一次请求
+    state.memDetail = { content, meta: data.meta || {} };
+    state.memView = "list";
+    memRenderShell();
   } catch (err) {
-    console.error("[memory] 打开编辑器失败", path, err);
+    console.error("[memory] 打开编辑器失败", target, err);
     showBanner("error", "打开失败: " + String((err && err.message) || err));
+  }
+}
+
+function memRenderEditor(host) {
+  const ed = state.memEditor;
+  if (!ed) return;
+  // 活实例复用：shell 重绘不重建 CodeMirror，保住光标位置与撤销栈
+  if (ed.host === host && ed.view && ed.view.dom && ed.view.dom.isConnected) {
+    memEditorUpdateStatus(ed);
+    return;
+  }
+  if (ed.view && typeof ed.view.destroy === "function") ed.view.destroy();
+  host.innerHTML = "";
+
+  const bar = el("div", "mem-editor-bar");
+  const exitBtn = makeButton("退出编辑", () => memEditorExit(), "btn btn-exit");
+  const name = el("span", "mem-editor-name mono", ed.path);
+  const saveBtn = makeButton("保存", () => memEditorSave(), "btn btn-go");
+  bar.append(exitBtn, name, saveBtn);
+
+  const status = el("div", "mem-editor-status");
+  bar.append(status);
+
+  const metaRow = el("div", "mem-editor-meta");
+  const indexLbl = el("label", "switch-text");
+  const indexChk = document.createElement("input");
+  indexChk.type = "checkbox";
+  indexChk.checked = Boolean(ed.index);
+  indexChk.addEventListener("change", () => {
+    ed.index = indexChk.checked;
+  });
+  indexLbl.append(indexChk, el("span", "", "保存后加入索引"));
+  const metaText = el("span", "card-help mono", memEditorMetaText(ed));
+  metaRow.append(indexLbl, metaText, el("span", "card-help", "标签在详情栏编辑"));
+
+  const box = el("div", "mem-editor-box");
+  host.append(bar, metaRow, box);
+
+  ed.host = host;
+  ed.statusEl = status;
+  ed.metaEl = metaText;
+  memEditorUpdateStatus(ed);
+
+  const view = createCodeMirrorEditor(box, ed.content, {
+    language: guessEditorLanguage(ed.path),
+    onChange: (value) => {
+      const current = state.memEditor;
+      if (!current) return;
+      current.content = value;
+      current.dirty = value !== current.original;
+      memEditorUpdateStatus(current);
+    },
+  });
+  ed.view = view;
+}
+
+function memEditorMetaText(ed) {
+  const meta = ed.meta || {};
+  const parts = [];
+  if (meta.updated_at) parts.push("更新 " + String(meta.updated_at));
+  if (meta.chunk_count !== undefined && meta.chunk_count !== null) parts.push("分块 " + String(meta.chunk_count));
+  if (meta.indexed !== undefined && meta.indexed !== null) parts.push("索引 " + (meta.indexed ? "已加入" : "未加入"));
+  if (ed.isNew) parts.push("未创建");
+  return parts.join(" · ");
+}
+
+function memEditorUpdateStatus(ed) {
+  if (!ed || !ed.statusEl) return;
+  ed.statusEl.textContent = ed.dirty ? "未保存" : ed.isNew ? "未创建" : "已保存";
+  ed.statusEl.classList.toggle("dirty", Boolean(ed.dirty));
+}
+
+function memEditorExit() {
+  if (memEditorGuard(() => memEditorExit(), "退出编辑")) return;
+  memEditorClose();
+  memRenderShell();
+}
+
+async function memEditorSave() {
+  const ed = state.memEditor;
+  if (!ed) return false;
+  const path = normalizeKbPath(ed.path);
+  if (!path || path === "/") {
+    showBanner("error", "请输入有效的 KB 文件路径。");
+    return false;
+  }
+  const content = ed.view ? ed.view.getValue() : ed.content;
+  try {
+    const data = await cfgApi("POST", "/faust/memory/save", {
+      path,
+      content,
+      declared_by: "config-center",
+      index: Boolean(ed.index),
+    });
+    const current = state.memEditor;
+    if (current && current.path === path) {
+      current.content = content;
+      current.original = content;
+      current.dirty = false;
+      current.isNew = false;
+      current.meta = Object.assign({}, current.meta || {}, data.meta || {});
+      if (current.metaEl) current.metaEl.textContent = memEditorMetaText(current);
+      memEditorUpdateStatus(current);
+    }
+    state.memSel = { kind: "file", path };
+    await ensureModuleData("memory");
+    // 只刷新周边（树/卡片），不动编辑器 DOM
+    memRenderTree();
+    memRenderVizCard();
+    showBanner("success", "KB 已保存: " + path);
+    return true;
+  } catch (err) {
+    console.error("[memory] 保存失败", path, err);
+    showBanner("error", "保存失败: " + String((err && err.message) || err));
+    return false;
   }
 }
 
@@ -1158,7 +1402,7 @@ function memPromptPath(title, defaultValue, onConfirm) {
     closeModal();
     await onConfirm(normalizeKbPath(value));
   };
-  bar.append(makeButton("创建", confirm, "btn btn-primary"), makeButton("取消", closeModal));
+  bar.append(makeButton("创建", confirm, "btn btn-go"), makeButton("取消", closeModal, "btn btn-quiet"));
   input.addEventListener("keydown", (evt) => {
     if (evt.key === "Enter") confirm();
   });
@@ -1166,14 +1410,25 @@ function memPromptPath(title, defaultValue, onConfirm) {
 }
 
 function memNewFile(dir) {
+  if (memEditorGuard(() => memNewFile(dir), "新建文件")) return;
   const base = dir === "/" ? "" : dir.slice(1) + "/";
-  memPromptPath("新建文件", base + "new.md", async (target) => {
-    try {
-      await openKbEditorModal(target, "", { path: target, declared_by: "config-center", indexed: true, tags: [] });
-    } catch (err) {
-      console.error("[memory] 新建文件失败", target, err);
-      showBanner("error", "新建失败: " + String((err && err.message) || err));
-    }
+  memPromptPath("新建文件", base + "new.md", (target) => {
+    // 先只开编辑器：文件在首次「保存」时才真正落盘，退出未保存则什么都不产生
+    state.memEditor = {
+      path: target,
+      original: "",
+      content: "",
+      dirty: false,
+      isNew: true,
+      index: true,
+      meta: {},
+      view: null,
+      host: null,
+      statusEl: null,
+    };
+    state.memSel = { kind: "file", path: target };
+    state.memView = "list";
+    memRenderShell();
   });
 }
 
@@ -1292,7 +1547,7 @@ function memShowLinkedFiles(paths) {
       type: "file",
     };
   });
-  state.memFilter = { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", declaredBy: "", sortBy: "relevance", sortOrder: "desc" };
+  state.memFilter = { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", sortBy: "relevance", sortOrder: "desc" };
   state.memSearchResults = list;
   state.memResultLabel = "关联文件";
   state.memPage = 0;
@@ -1321,37 +1576,48 @@ function renderMemoryModule() {
   switcher.id = "memViews";
   top.append(crumbs, switcher);
 
-  const chips = el("div", "mem-chips");
-  chips.id = "memChips";
-
   const views = el("div", "mem-views-host");
   for (const view of MEM_VIEWS) {
     const host = el("div", "mem-view");
-    host.id = { list: "memViewList", search: "memViewSearch", graph: "memViewGraph", cloud: "memViewCloud", timeline: "memViewTimeline", treemap: "memViewTreemap" }[view.id];
+    host.id = { list: "memViewList", graph: "memViewGraph" }[view.id];
     host.hidden = true;
     views.append(host);
   }
 
-  main.append(top, chips, views);
+  main.append(top, views);
 
   const detail = el("div", "mem-detail");
   detail.id = "memDetail";
 
-  shell.append(treePane, main, detail);
+  // 可视化卡片：通栏，位于三栏之后（grid-column: 1 / -1）
+  const vizCard = el("div", "mem-viz-card");
+  vizCard.id = "memVizCard";
+
+  shell.append(treePane, main, detail, vizCard);
   const shellWrap = el("div", "mem-shell-wrap");
   shellWrap.append(shell);
   addSection("记忆", [shellWrap]);
 
   if (!_memVisibilityHooked) {
     onModuleVisibilityChange(memHandleVisibility);
+    // 编辑中离开记忆页 → 先处理未保存改动（守卫返回 false 取消切换）
+    onModuleLeave((target) => {
+      if (target === "memory") return true;
+      return !memEditorGuard(() => switchModule(target), "离开记忆页");
+    });
     _memVisibilityHooked = true;
   }
   memRegisterTeardown(() => {
+    if (state.memEditor && state.memEditor.view && typeof state.memEditor.view.destroy === "function") {
+      state.memEditor.view.destroy();
+      state.memEditor = null;
+    }
     if (_memGraph.canvas) {
       _memGraph.canvas.destroy();
       _memGraph.canvas = null;
     }
     if (typeof MemoryVisuals !== "undefined") MemoryVisuals.disposeAll();
+    _memVizTreeRef = null;
     if (state._memTreeChunked) {
       state._memTreeChunked.cancel();
       state._memTreeChunked = null;

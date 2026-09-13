@@ -1,7 +1,6 @@
 // Memory detail pane: overview / tags / relations for the selected dir, file or entity.
 // Entry: memRenderDetail(host) — called by explorer.js memRenderDetailHost(); state is read here, never owned.
 
-var MEM_DETAIL_PREVIEW_LINES = 20;
 var MEM_DETAIL_ENTITY_DESC_MAX = 80;
 
 // ── 通用小工具 ──
@@ -146,7 +145,7 @@ function memDetailFileOverview(path, meta) {
     expanded = !expanded;
     extras.hidden = !expanded;
     toggle.textContent = expanded ? "收起" : "展开全部";
-  }, "btn btn-ghost");
+  }, "btn btn-quiet");
   section.append(toggle, extras);
   return section;
 }
@@ -221,7 +220,7 @@ function memDetailTagSection(host, path) {
         return;
       }
       addTag(value);
-    }, "btn btn-ghost");
+    }, "btn btn-quiet");
     input.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") {
         evt.preventDefault();
@@ -316,22 +315,11 @@ async function memDetailLoadImage(host, section, path, token) {
     img.title = "点击查看大图";
     img.addEventListener("click", () => memDetailOpenImageModal(src));
     status.replaceWith(img);
-    const editBar = el("div", "toolbar");
-    editBar.append(makeButton("编辑", () => memOpenEditor(path), "btn btn-ghost"));
-    section.append(editBar);
   } catch (err) {
     console.error("[memory] 加载图片失败", path, err);
     if (!memDetailTokenValid(host, token) || !memDetailIsFilePath(path)) return;
     status.replaceWith(el("div", "mem-error", "图片加载失败：" + memDetailMsg(err)));
   }
-}
-
-function memDetailRenderPreview(section, path, content) {
-  const lines = String(content || "").split("\n");
-  const head = lines.slice(0, MEM_DETAIL_PREVIEW_LINES).join("\n");
-  const text = lines.length > MEM_DETAIL_PREVIEW_LINES ? head + "\n\u2026（共 " + lines.length + " 行）" : head;
-  section.append(el("pre", "mem-preview", text));
-  section.append(makeButton("编辑", () => memOpenEditor(path), "btn btn-primary"));
 }
 
 // ── 概览：实体 ──
@@ -360,7 +348,7 @@ function memDetailEntityOverview(detail) {
 
   const files = Array.isArray(detail.linked_files) ? detail.linked_files : [];
   if (files.length) {
-    section.append(makeButton("查看关联文件 " + files.length + " 个", () => memShowLinkedFiles(files), "btn btn-ghost"));
+    section.append(makeButton("查看关联文件 " + files.length + " 个", () => memShowLinkedFiles(files), "btn btn-quiet"));
   }
   return section;
 }
@@ -417,15 +405,10 @@ async function memRenderDetail(host) {
     host.append(relationSection);
     memDetailLoadEntities(host, relationSection, path, token);
     const isImage = String(meta.content_type || "").indexOf("image/") === 0 || memIsImagePath(path);
-    const content = String(detail.content || "");
     if (isImage) {
       const imageSection = memDetailSection("图片");
       host.append(imageSection);
       memDetailLoadImage(host, imageSection, path, token);
-    } else if (content) {
-      const previewSection = memDetailSection("预览");
-      memDetailRenderPreview(previewSection, path, content);
-      host.append(previewSection);
     }
     return;
   }

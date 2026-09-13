@@ -111,6 +111,42 @@ async def test_tool_call_with_focus(
     assert fake.chat.calls == 2
 
 
+@pytest.mark.asyncio
+async def test_bubble_event_hides_analysis_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """气泡事件里不能带屏幕分析正文（正文只给模型），其它事件原样放行。"""
+    await _clean_vfs_async()
+    _patch_model(monkeypatch)
+    _patch_screenshot(monkeypatch)
+    pm = await _build_manager_async(tmp_path)
+    pm.set_plugin_config_values("quick-screen-view", {"screen-model": "test::fake"})
+    await pm.reload(force=True)
+    plugin = pm._faust_plugins["quick-screen-view"]
+    tool = (await plugin.register_tools(plugin.ctx))[0].tool
+    analysis = await tool.ainvoke({"focus": "看看屏幕上有什么"})
+    assert "屏幕概览" in analysis
+
+    sent = await plugin.agent_event_sent(
+        {"type": "tool_result", "tool_name": "quickScreenView", "output": analysis},
+        [],
+        None,
+    )
+    assert sent is not None
+    assert "屏幕概览" not in sent["output"]
+    assert sent["tool_name"] == "quickScreenView"
+
+    # 错误信息保留原文，用户要能看到失败原因
+    err = {"type": "tool_result", "tool_name": "quickScreenView", "output": "[quick-screen-view] screen-model 未配置"}
+    assert (await plugin.agent_event_sent(err, [], None))["output"] == err["output"]
+
+    # 其它工具 / 其它事件不受影响
+    other = {"type": "tool_result", "tool_name": "read", "output": analysis}
+    assert await plugin.agent_event_sent(other, [], None) is other
+    delta = {"type": "delta", "content": "你好"}
+    assert await plugin.agent_event_sent(delta, [], None) is delta
+
+
 # ── VFS 模式 ──
 
 

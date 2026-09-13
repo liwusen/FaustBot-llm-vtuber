@@ -1528,6 +1528,360 @@ body {
 }
 
 /* ── 记忆页 Explorer（.mem-*） ── */
+/* 按钮变体（本轮只记忆页套用，共享类名留给其它页后续迁移）：
+   .btn-go    蓝实心，区域内唯一主行动（搜索 / 保存）
+   .btn-quiet 无背景无边框，hover 才出现浅蓝底 + 阴影
+   .btn-danger 红字，hover 淡红底 + 红边
+   .btn-icon  方形图标按钮（⋯ / ✕）
+   .seg       分段控件（视图切换、可视化 tab） */
+.btn-go {
+	color: #fff;
+	background: var(--blue, #3f6be8);
+	border-color: var(--blue, #3f6be8);
+	box-shadow: 0 6px 14px rgba(63, 107, 232, 0.18);
+}
+.btn-go:hover {
+	background: #3560d8;
+	box-shadow: 0 10px 20px rgba(63, 107, 232, 0.26);
+}
+.btn-quiet {
+	color: #4f5d75;
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+}
+.btn-quiet:hover {
+	background: #eef2f9;
+	box-shadow: 0 6px 14px rgba(32, 55, 91, 0.08);
+}
+.btn-danger {
+	color: var(--accent, #e54447);
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+}
+.btn-danger:hover {
+	background: #fdeef0;
+	border-color: #f6c3c7;
+}
+.btn-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	color: #2a3446;
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+	font-size: 15px;
+	line-height: 1;
+}
+.btn-icon:hover {
+	background: #eef2f9;
+	box-shadow: 0 6px 12px rgba(32, 55, 91, 0.14);
+}
+/* 退出类动作（退出编辑 / 关闭搜索）：白底蓝框，比常规动作更醒目 */
+.btn-exit {
+	color: var(--blue, #3f6be8);
+	background: #fff;
+	border-color: #b9cbf6;
+	box-shadow: 0 4px 10px rgba(63, 107, 232, 0.12);
+	font-weight: 700;
+}
+.btn-exit:hover {
+	background: #f2f6ff;
+	border-color: var(--blue, #3f6be8);
+	box-shadow: 0 10px 20px rgba(63, 107, 232, 0.22);
+}
+/* 标签 chip（列表标签列 + 详情栏标签编辑共用） */
+.mem-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px 2px 8px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: #f4f7fc;
+	color: #3d4c63;
+	font-size: 12px;
+	line-height: 18px;
+}
+.mem-tag-edit .mem-chip {
+	cursor: default;
+}
+.mem-chip-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 15px;
+	height: 15px;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: transparent;
+	color: #7b8798;
+	font: inherit;
+	font-size: 12px;
+	line-height: 1;
+	cursor: pointer;
+}
+.mem-chip-close:hover {
+	background: #fdeef0;
+	color: var(--accent, #e54447);
+}
+.btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+.btn:disabled:hover {
+	transform: none;
+	box-shadow: none;
+}
+.seg {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	padding: 2px;
+	background: #eef2f7;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+}
+.seg-item {
+	color: #5b708f;
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+	padding: 5px 12px;
+	font-size: 12.5px;
+}
+.seg-item:hover {
+	color: #2a3446;
+	background: rgba(255, 255, 255, 0.7);
+}
+.seg-item.active {
+	color: #24405f;
+	background: #fff;
+	box-shadow: 0 4px 10px rgba(32, 55, 91, 0.12);
+}
+/* 搜索栏 */
+.mem-search {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: #f7f9fc;
+}
+.mem-search-basic {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.mem-search-basic .input {
+	min-width: 140px;
+	flex: 1 1 180px;
+}
+.mem-search-hint {
+	color: var(--accent);
+	font-size: 12px;
+}
+.mem-search-advlabel {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.mem-search-advcount {
+	min-width: 16px;
+	padding: 0 5px;
+	border-radius: 8px;
+	background: var(--blue, #3f6be8);
+	color: #fff;
+	font-size: 11px;
+	line-height: 16px;
+	text-align: center;
+}
+.mem-search-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+	gap: 8px 12px;
+	padding-top: 4px;
+	border-top: 1px dashed var(--line);
+}
+/* hidden 属性必须压过上面的 display: grid，否则「高级」按钮点了不生效 */
+.mem-search-grid[hidden] {
+	display: none;
+}
+/* 日期选择框在 Chromium 下自带 min-width，会顶破栅格列 */
+.mem-search-dates input {
+	flex: 1 1 0;
+	min-width: 0;
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: #fff;
+	color: var(--text);
+	font-size: 13px;
+}
+.mem-field {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: 12px;
+	color: var(--muted);
+}
+.mem-field .input,
+.mem-field .select {
+	width: 100%;
+}
+.mem-search-dates {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.mem-search-tilde {
+	color: var(--muted);
+}
+/* 结果区状态行 */
+.mem-list-status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 2px 0;
+}
+/* 表头 ⋯ 与下拉 */
+.mem-col-dots {
+	width: 34px;
+	text-align: right;
+}
+.mem-dots {
+	vertical-align: middle;
+}
+.mem-dropdown {
+	position: fixed;
+	z-index: 60;
+	min-width: 170px;
+	max-height: 60vh;
+	overflow: auto;
+	padding: 6px;
+	background: #fff;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	box-shadow: 0 14px 32px rgba(32, 55, 91, 0.18);
+}
+.mem-dropdown-title {
+	padding: 2px 6px 6px;
+	font-size: 12px;
+	color: var(--muted);
+}
+.mem-menu-box {
+	display: flex;
+	flex-direction: column;
+}
+.mem-menu {
+	position: fixed;
+	z-index: 70;
+	padding: 4px;
+	background: #fff;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	box-shadow: 0 12px 26px rgba(32, 55, 91, 0.18);
+}
+.mem-menu-item {
+	display: block;
+	width: 100%;
+	padding: 6px 10px;
+	border: none;
+	background: transparent;
+	color: #2a3446;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	border-radius: 6px;
+}
+.mem-menu-item:hover {
+	background: #eef2f9;
+}
+/* 可视化卡片（通栏） */
+.mem-viz-card {
+	grid-column: 1 / -1;
+	background: var(--bg1);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	padding: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.mem-viz-card.mem-viz-off {
+	padding: 8px 10px;
+}
+.mem-viz-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+.mem-viz-title {
+	font-weight: 600;
+	color: #24405f;
+}
+.mem-viz-tabs {
+	flex: 0 1 auto;
+}
+.mem-viz-tabs .seg-item {
+	min-width: 84px;
+	text-align: center;
+}
+.mem-viz-body {
+	height: 320px;
+	min-width: 0;
+}
+.mem-viz-hint {
+	color: var(--muted);
+	font-size: 12.5px;
+}
+/* 内联编辑器 */
+.mem-editor-bar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.mem-editor-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: #24405f;
+}
+.mem-editor-status {
+	font-size: 12px;
+	color: var(--muted);
+}
+.mem-editor-status.dirty {
+	color: var(--accent);
+}
+.mem-editor-meta {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	font-size: 12px;
+	color: var(--muted);
+}
+.mem-editor-box {
+	height: max(420px, 60vh);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	overflow: hidden;
+	background: #fff;
+}
 /* 三栏需要 ≥1040px 容器宽度；配置中心默认窗口内容区仅 ~850px，
    此时详情栏下沉到列表下方（容器查询而非视口查询，避免被左侧导航宽度误导）。 */
 .mem-shell-wrap {
@@ -1572,9 +1926,6 @@ body {
 	gap: 8px;
 	max-height: 70vh;
 	overflow: auto;
-}
-.mem-tree-filter .input {
-	width: 100%;
 }
 .mem-tree-body {
 	display: flex;
@@ -1655,6 +2006,27 @@ body {
 	gap: 12px;
 	flex-wrap: wrap;
 }
+.mem-views {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex-wrap: wrap;
+}
+.mem-col-score {
+	text-align: right;
+	color: var(--blue, #3f6be8);
+}
+.mem-chip-info {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: #eef2f7;
+	color: var(--muted);
+	font-size: 12px;
+}
 .mem-crumbs {
 	display: flex;
 	align-items: center;
@@ -1690,73 +2062,6 @@ body {
 }
 .mem-crumb-more {
 	color: var(--muted);
-}
-.mem-copy-path {
-	margin-left: 6px;
-	font-size: 11px;
-}
-.mem-views {
-	display: flex;
-	gap: 4px;
-	flex-wrap: wrap;
-}
-.mem-view-btn {
-	border: 1px solid var(--line);
-	background: var(--bg1);
-	color: var(--muted);
-	border-radius: 999px;
-	padding: 3px 12px;
-	font-size: 12px;
-	cursor: pointer;
-}
-.mem-view-btn:hover {
-	border-color: #b7caf9;
-	color: var(--blue);
-}
-.mem-view-btn.active {
-	background: var(--blue);
-	border-color: var(--blue);
-	color: #fff;
-}
-.mem-chips {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	flex-wrap: wrap;
-	min-height: 22px;
-}
-.mem-chips-hint {
-	color: var(--muted);
-	font-size: 12px;
-}
-.mem-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	background: var(--blue-soft);
-	border: 1px solid #b7caf9;
-	color: var(--blue);
-	border-radius: 999px;
-	padding: 1px 4px 1px 10px;
-	font-size: 12px;
-	max-width: 240px;
-}
-.mem-chip > span {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.mem-chip-close {
-	border: none;
-	background: transparent;
-	color: inherit;
-	cursor: pointer;
-	font-size: 13px;
-	line-height: 1;
-	padding: 0 2px;
-}
-.mem-chip-clear {
-	font-size: 11px;
 }
 .mem-views-host {
 	min-width: 0;
@@ -1888,12 +2193,14 @@ body {
 }
 .mem-kv {
 	display: grid;
-	grid-template-columns: 68px minmax(0, 1fr);
-	gap: 2px 8px;
-	font-size: 12px;
+	/* 键列按内容撑开（raw key 如 score_patch 比 68px 宽，会压到值列上），值列负责换行 */
+	grid-template-columns: minmax(56px, max-content) minmax(0, 1fr);
+	gap: 2px 10px;
+	font-size: 13px;
 }
 .mem-kv-key {
 	color: var(--muted);
+	overflow-wrap: anywhere;
 }
 .mem-kv-value {
 	min-width: 0;
@@ -1923,20 +2230,6 @@ body {
 .mem-entity-row:hover {
 	background: #f2f6ff;
 }
-.mem-preview {
-	font-family: Consolas, "Courier New", monospace;
-	font-size: 11px;
-	line-height: 1.5;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	max-height: 220px;
-	overflow: auto;
-	background: #f7faff;
-	border: 1px solid var(--line);
-	border-radius: 8px;
-	padding: 6px 8px;
-	margin: 0;
-}
 .mem-viz {
 	width: 100%;
 }
@@ -1957,4 +2250,42 @@ body {
 	margin: 0 auto;
 	max-width: 100%;
 	max-height: 80vh;
+}
+
+/* 记忆页字号：小字整体 +1px，面包屑中等调大（置于区块末尾以覆盖前面的原始字号） */
+.mem-search-basic .input,
+.mem-field .input,
+.mem-field .select {
+	font-size: 13.5px;
+}
+.mem-field,
+.mem-search-hint,
+.mem-list-status .card-help {
+	font-size: 13px;
+}
+.mem-list-table {
+	font-size: 14px;
+}
+.mem-list-table th {
+	font-size: 13px;
+}
+.mem-kv,
+.mem-detail-title,
+.mem-editor-status,
+.mem-editor-meta,
+.mem-tag-edit .input {
+	font-size: 13px;
+}
+.mem-tree-row {
+	font-size: 14.5px;
+}
+.mem-crumbs {
+	font-size: 17px;
+}
+.mem-empty,
+.mem-error,
+.mem-viz-hint,
+.seg-item,
+.mem-menu-item {
+	font-size: 13.5px;
 }

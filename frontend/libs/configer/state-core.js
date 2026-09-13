@@ -14,11 +14,13 @@ const state = {
   kbTasks: [],
   // ── 记忆页 Explorer 状态 ──
   memSel: { kind: "dir", path: "/" },   // { kind: "dir"|"file"|"entity", path?, entityId? }
-  memFilter: { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", declaredBy: "", sortBy: "relevance", sortOrder: "desc" },
-  memSearchDraft: null,                 // 搜索页表单草稿（未点「搜索」前的编辑内容）
+  memFilter: { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", sortBy: "relevance", sortOrder: "desc" },
+  memSearchDraft: null,                 // 搜索栏草稿（未点「搜索」前的编辑内容）
   memResultLabel: "",                   // 非条件型结果集的来源标签（如「关联文件」），空串=条件检索
   memSearching: false,
-  memView: "list",                      // "list" | "graph" | "cloud" | "timeline" | "treemap"
+  memView: "list",                      // "list" | "graph"
+  memVizTab: "cloud",                   // 可视化卡片激活 tab："cloud" | "timeline" | "treemap"
+  memEditor: null,                      // 内联编辑器：{ path, original, content, dirty, isNew } | null
   memColumns: ["tags", "updated", "size"],
   memExpanded: ["/"],
   memDetail: null,                      // 选中文件已加载的 { content, meta } | { error } | null
@@ -135,6 +137,13 @@ var PERSISTENT_MODULES = ["overview", "memory", "araya"];
 // 模块可见性监听：持久化模块（图谱 rAF、图表实例）在切走时自行暂停/释放
 var MODULE_VISIBILITY_LISTENERS = [];
 
+// 离开守卫：返回 false 阻止切换（记忆页用它拦截「编辑中离开」）
+var MODULE_LEAVE_GUARDS = [];
+
+function onModuleLeave(fn) {
+  if (typeof fn === "function" && !MODULE_LEAVE_GUARDS.includes(fn)) MODULE_LEAVE_GUARDS.push(fn);
+}
+
 function onModuleVisibilityChange(fn) {
   if (typeof fn === "function" && !MODULE_VISIBILITY_LISTENERS.includes(fn)) {
     MODULE_VISIBILITY_LISTENERS.push(fn);
@@ -142,6 +151,14 @@ function onModuleVisibilityChange(fn) {
 }
 
 function switchModule(moduleId) {
+  // 离开守卫：任一守卫返回 false 即取消切换（调用方可自行决定何时重试）
+  for (const fn of MODULE_LEAVE_GUARDS) {
+    try {
+      if (fn(moduleId) === false) return;
+    } catch (err) {
+      console.error("[module] 离开守卫失败", err);
+    }
+  }
   for (const [id, entry] of Object.entries(state.moduleContainers)) {
     if (id === moduleId) {
       entry.div.style.display = "";

@@ -33,6 +33,8 @@ function createCodeMirrorEditor(container, value, options) {
     ? cm.EditorView.editable.of(false)
     : [];
 
+  var onChange = options && typeof options.onChange === 'function' ? options.onChange : null;
+
   container.textContent = '';
   container.classList.add('cm-host');
 
@@ -75,6 +77,9 @@ function createCodeMirrorEditor(container, value, options) {
       ]),
       langExt,
       ...(Array.isArray(readOnly) ? readOnly : []),
+      ...(onChange ? [cm.EditorView.updateListener.of(function (update) {
+        if (update.docChanged) onChange(update.state.doc.toString());
+      })] : []),
     ],
   });
 
