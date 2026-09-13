@@ -8,6 +8,8 @@ Supports:
     - skill references:     skill://slug/SKILL.md
     - faustbot references:  faustbot://index.md
     - sourceCode references: sourceCode://backend/main.py, sourceCode://backend/ (目录自动列目录)
+  - raw selector:         src/main.py:raw、skill://slug/scripts/a.py:raw（关闭结构化摘要；
+                          可单独用，也可追加在行选择器后，如 :50-100:raw）
 """
 
 from __future__ import annotations
@@ -22,8 +24,9 @@ from urllib.parse import parse_qs, urlparse
 #   :A-B / :-A--B / :-A-B / :A--B   范围（任一端可为负数，从末尾倒数）
 #   :-A:-B                           双冒号负范围（-20:-10 = 倒数第20行~倒数第10行）
 #   :A+C / :-A+C                     C 行从 A 起
-#   以上均可追加 :raw
-SELECTOR_RE = re.compile(r"^:-?\d+(?:(?::|-)-?\d+|\+-?\d+)?(:raw)?$")
+#   :raw                             关闭结构化摘要（源码文件返回原文）;可单独使用，
+#                                    也可追加在行选择器后（:50-100:raw，行选择本就不做摘要）
+SELECTOR_RE = re.compile(r"^(?::raw|:-?\d+(?:(?::|-)-?\d+|\+-?\d+)?(:raw)?)$")
 SCHEME_ARTIFACT = "artifact"
 SCHEME_MEMORY = "memory"
 SCHEME_SKILL = "skill"
@@ -75,13 +78,19 @@ class ParsedURI:
 
     @property
     def selector_lines(self) -> tuple[int, int] | None:
-        """Parse selector as (start_line, end_line) 1-indexed inclusive."""
+        """Parse selector as (start_line, end_line) 1-indexed inclusive.
+
+        ``:raw``（单独使用）没有行范围 → None。
+        """
         if not self.selector:
             return None
         s = self.selector.lstrip(":")
-        raw = s.endswith(":raw")
-        if raw:
+        if s == "raw":
+            return None
+        if s.endswith(":raw"):
             s = s[:-4]
+        if not s:
+            return None
         # 双冒号负范围：:-20:-10 → 倒数第20行 ~ 倒数第10行
         if ":" in s and not s.startswith("+") and not s.startswith(":"):
             a, b = s.split(":", 1)
@@ -100,9 +109,19 @@ class ParsedURI:
         return (n, n)
 
     @property
+    def is_raw(self) -> bool:
+        """True when the selector requests raw output (关闭结构化摘要)。"""
+        if not self.selector:
+            return False
+        return self.selector == ":raw" or self.selector.endswith(":raw")
+
+    @property
     def is_dir(self) -> bool:
-        """True if path is empty or the URI ends with / (and has no selector)."""
-        return not self.selector and (self.path == "" or self.trailing_slash)
+        """True if path is empty or the URI ends with / (and has no line selector).
+
+        仅带 ``:raw`` 时不改变目录语义：``src/:raw`` 仍算目录。
+        """
+        return self.selector_lines is None and (self.path == "" or self.trailing_slash)
 
 
 def _extract_selector(rest: str) -> str | None:

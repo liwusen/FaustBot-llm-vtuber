@@ -410,9 +410,12 @@ class Plugin(FaustPlugin):
             "RSS Watcher 会把 RSS 正文存到 faustbot://plugins/rss-watcher/ 下。\n"
             "正常对话和被 event-trigger 唤醒时，都可以优先读取 faustbot://plugins/rss-watcher/index.md 获取最近一天的更新概览。\n"
             "若要看某条 RSS 的正文，请读取 faustbot://plugins/rss-watcher/RSS-FEED-*.md。\n",
+            description="RSS Watcher 插件说明：订阅源与正文落盘位置",
         )
         await ctx.vfs_write(
-            "/plugins/rss-watcher/index.md", "# RSS Watcher\n\n暂无 RSS 更新。"
+            "/plugins/rss-watcher/index.md",
+            "# RSS Watcher\n\n暂无 RSS 更新。",
+            description="最近一天的 RSS 更新索引",
         )
 
     @hookimpl
@@ -556,7 +559,9 @@ class Plugin(FaustPlugin):
             f"- 时间: {stamp}\n\n"
             f"{item.get('summary') or ''}\n"
         )
-        await self.ctx.vfs_write(path, content)
+        await self.ctx.vfs_write(
+            path, content, description=f"RSS 正文：{feed_name} — {title}"
+        )
 
     async def _write_daily_index(self) -> None:
         if self.ctx is None or self.store is None:
@@ -573,7 +578,11 @@ class Plugin(FaustPlugin):
             lines.append(
                 f"- {item.get('feed_name') or 'RSS'} | {item.get('title') or title} | faustbot://plugins/rss-watcher/RSS-FEED-{title}-{stamp}.md"
             )
-        await self.ctx.vfs_write("/plugins/rss-watcher/index.md", "\n".join(lines) + "\n")
+        await self.ctx.vfs_write(
+            "/plugins/rss-watcher/index.md",
+            "\n".join(lines) + "\n",
+            description="最近一天的 RSS 更新索引",
+        )
 
     def _in_quiet_hours(self) -> bool:
         if self.ctx is None:

@@ -75,7 +75,7 @@ from agile_base import AgileModule, AgileContext
 
 module = AgileModule("mymod", "模块描述")   # name 必须与文件名一致
 
-@module.vfsContentFunc("/mymod/data", cacheStrategy="cache@10")
+@module.vfsContentFunc("/mymod/data", cacheStrategy="cache@10", description="数据快照：读它取当前状态")
 def data(_path):
     return "动态内容"                        # 读 faustbot://mymod/data 时调用
 
@@ -103,6 +103,16 @@ def get_agile_module():
     return module
 ```
 
+### 节点 description（建议写）
+
+`@module.vfsContentFunc(path, cacheStrategy=..., description="一句话说明")` 的 description 会：
+
+- 展示在 `read("faustbot://", with_metadata=True)` / `read("faustbot://{目录}/", with_metadata=True)` 的节点列举里（该节点下方多一行 `[描述]`）
+- 汇总到 `faustbot://agile/{name}/status` 的 `VFS 节点 (N)` 清单（`- /path — 描述`）
+
+写清"这个节点是什么 + 什么时候该读/改它"，未来的你（或另一个会话）不读模块源码就能判断该不该读。示例：
+`description="规则草稿：写入/编辑这里，再读 reload 节点提交生效"`。write/edit hook 不需要描述（它们不是可读节点）。
+
 ## AgileContext 依赖注入
 
 Hook 函数**签名中类型注解为 `AgileContext` 的参数**（任意参数名）会被自动注入 agile 实例。同步/异步函数均支持，无需手动 await 判断。
@@ -116,7 +126,8 @@ async def poll(agile: AgileContext):         # 只拿 agile
 ```
 
 AgileContext 方法（全部 async）：
-- `await agile.vfs_write_symbolic(path, func, writable=False, should_be_included_in_search=True)`
+- `await agile.vfs_write(path, content, description="")` —— 写普通内容节点（description 用途同 `vfsContentFunc`）
+- `await agile.vfs_write_symbolic(path, func, writable=False, should_be_included_in_search=True, description="")`
 - `await agile.vfs_set_write_handler(path, func)` / `await agile.vfs_set_edit_handler(path, func)` / `await agile.vfs_delete(path)`
 - `await agile.event_fire(event_name, data, recall_description="Agent 可读的描述", lifespan=7200, priority="normal")` —— 触发事件唤醒你自己，之后 Agent 会收到 recall_description 描述的事件；`priority` 三档：`interrupt`=立即唤醒（告警/紧急，如连续失败检测）、`normal`=常规行为事件（默认）、`batched`=高频低价值感知（Git Commit、轮询摘要），消费侧按 30 秒窗口合并为一次唤醒
 - `await agile.log(level, msg)` / `linfo` / `ldebug` / `lwarning` / `lerror` / `lcritical`

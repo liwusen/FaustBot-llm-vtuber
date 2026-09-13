@@ -83,7 +83,7 @@ class AsyncRWLock:
 
 
 class VfsNode:
-    def __init__(self, *, name: str, is_directory: bool, content: Any = None, symbolic_func: SymbolicFunc | None = None, should_be_included_in_search: bool = True, writable: bool = True,write_handler:Callable | None = None,edit_handler: Callable | None = None):
+    def __init__(self, *, name: str, is_directory: bool, content: Any = None, symbolic_func: SymbolicFunc | None = None, should_be_included_in_search: bool = True, writable: bool = True,write_handler:Callable | None = None,edit_handler: Callable | None = None, description: str = ''):
         self.name = name
         self.is_directory = is_directory
         self.content = content
@@ -91,6 +91,8 @@ class VfsNode:
         self.symbolic_func:SymbolicFunc = symbolic_func#type: ignore
         self.should_be_included_in_search = should_be_included_in_search
         self.writable = writable
+        # 供 read(with_metadata=True) 列举时展示的节点用途说明，空字符串 = 不展示
+        self.description: str = str(description or '')
         # handler 签名为 (node: VfsNode, content: Any)，支持 sync/async；
         # 存在 handler 时完全接管写入/编辑，VFS 不再自动替换节点内容
         self.write_handler: Callable | None = write_handler
@@ -159,9 +161,11 @@ class AsyncVirtualFileSystem:
                 return None
         return current
 
-    async def mkdir(self, path: str) -> None:
+    async def mkdir(self, path: str, *, description: str = '') -> None:
         async with self._rwlock.write_lock():
-            self._ensure_dir_path_unlocked(self.get_path_parts(path))
+            node = self._ensure_dir_path_unlocked(self.get_path_parts(path))
+            if description:
+                node.description = str(description)
 
     async def exists(self, path: str) -> bool:
         async with self._rwlock.read_lock():
@@ -177,7 +181,7 @@ class AsyncVirtualFileSystem:
             node = self._get_node_unlocked(path)
             return bool(node and not node.is_directory)
 
-    async def write(self, path: str, content: Any, *, writable: bool = True) -> None:
+    async def write(self, path: str, content: Any, *, writable: bool = True, description: str = '') -> None:
         parts = self.get_path_parts(path)
         if not parts:
             raise ValueError('Cannot write to root directory')
@@ -189,7 +193,9 @@ class AsyncVirtualFileSystem:
             if handler is None:
                 if existing is not None and existing.is_symbolic and not existing.writable:
                     raise PermissionError(f'Symbolic node is read-only: {self.normalize_path(path)}')
-                parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=content, writable=writable)
+                # 未显式给描述时保留旧节点的描述，内容重写不应丢失元数据
+                keep_desc = description or (existing.description if existing is not None else '')
+                parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=content, writable=writable, description=keep_desc)
                 return
         result = handler(existing, content)
         if inspect.isawaitable(result):
@@ -207,19 +213,20 @@ class AsyncVirtualFileSystem:
             if handler is None:
                 if existing is not None and existing.is_symbolic and not existing.writable:
                     raise PermissionError(f'Symbolic node is read-only: {self.normalize_path(path)}')
-                parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=edited_content, writable=writable)
+                parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=edited_content, writable=writable, description=existing.description if existing is not None else '')
                 return
         result = handler(existing, edited_content)
         if inspect.isawaitable(result):
             await result
 
-    async def write_symbolic(self, path: str, func: SymbolicFunc, *, should_be_included_in_search: bool = True, writable: bool = False) -> None:
+    async def write_symbolic(self, path: str, func: SymbolicFunc, *, should_be_included_in_search: bool = True, writable: bool = False, description: str = '') -> None:
         """注册一个 symbol 节点：读取时调用 func(path) 生成内容。
 
         内容函数 func 支持同步与异步两种形态（返回 awaitable 会被自动等待），
         例如 async def fn(path): ... await 模型调用。异步内容函数执行期间不持有
         读写锁，可安全地嵌套调用其它 VFS 方法。
         writable=True 且未设置 write/edit handler 时，写入会替换为普通内容节点。
+        description 为节点用途说明，read(with_metadata=True) 列举时展示。
         """
         parts = self.get_path_parts(path)
         if not parts:
@@ -227,7 +234,9 @@ class AsyncVirtualFileSystem:
         async with self._rwlock.write_lock():
             *dirs, file_name = parts
             parent = self._ensure_dir_path_unlocked(dirs)
-            parent.children[file_name] = VfsNode(name=file_name, is_directory=False, symbolic_func=func, should_be_included_in_search=should_be_included_in_search, writable=writable)
+            existing = parent.children.get(file_name)
+            keep_desc = description or (existing.description if existing is not None else '')
+            parent.children[file_name] = VfsNode(name=file_name, is_directory=False, symbolic_func=func, should_be_included_in_search=should_be_included_in_search, writable=writable, description=keep_desc)
 
     async def set_write_handler(self, path: str, func: Callable) -> None:
         parts = self.get_path_parts(path)
@@ -252,6 +261,14 @@ class AsyncVirtualFileSystem:
             if node is None:
                 raise FileNotFoundError(f'VFS node not found: {self.normalize_path(path)}')
             node.edit_handler = func
+
+    async def set_description(self, path: str, text: str) -> None:
+        """设置节点描述（read(with_metadata=True) 列举时展示，空字符串 = 不展示）。"""
+        async with self._rwlock.write_lock():
+            node = self._get_node_unlocked(path)
+            if node is None:
+                raise FileNotFoundError(f'VFS node not found: {self.normalize_path(path)}')
+            node.description = str(text or '')
 
     async def get_node(self, path: str) -> VfsNode | None:
         """返回节点引用（带读锁），供调用方校验节点属性（如卸载时的归属确认）。"""

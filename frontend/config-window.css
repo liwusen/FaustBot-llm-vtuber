@@ -1526,3 +1526,435 @@ body {
 	text-align: center;
 	color: #5b708f;
 }
+
+/* ── 记忆页 Explorer（.mem-*） ── */
+/* 三栏需要 ≥1040px 容器宽度；配置中心默认窗口内容区仅 ~850px，
+   此时详情栏下沉到列表下方（容器查询而非视口查询，避免被左侧导航宽度误导）。 */
+.mem-shell-wrap {
+	container-type: inline-size;
+}
+.mem-shell {
+	display: grid;
+	grid-template-columns: 216px minmax(0, 1fr) 264px;
+	gap: 12px;
+	align-items: start;
+}
+@container (max-width: 1040px) {
+	.mem-shell {
+		grid-template-columns: 188px minmax(0, 1fr);
+	}
+	.mem-detail {
+		grid-column: 1 / -1;
+		max-height: none;
+	}
+}
+.mem-tree,
+.mem-main,
+.mem-detail {
+	background: var(--bg1);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	padding: 10px;
+}
+.mem-tree {
+	max-height: 70vh;
+	overflow: auto;
+}
+.mem-main {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+.mem-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 70vh;
+	overflow: auto;
+}
+.mem-tree-filter .input {
+	width: 100%;
+}
+.mem-tree-body {
+	display: flex;
+	flex-direction: column;
+	margin-top: 6px;
+}
+.mem-tree-rows {
+	display: flex;
+	flex-direction: column;
+}
+.mem-tree-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px 2px calc(6px + var(--mem-depth, 0) * 12px);
+	border-radius: 6px;
+	cursor: pointer;
+	line-height: 1.5;
+}
+.mem-tree-row:hover {
+	background: #f2f6ff;
+}
+.mem-tree-row.selected {
+	background: var(--blue-soft);
+	color: var(--blue);
+}
+.mem-tree-caret {
+	width: 12px;
+	flex-shrink: 0;
+	color: var(--muted);
+	font-size: 10px;
+}
+.mem-tree-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: inherit;
+}
+.mem-tree-count {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+.mem-tree-tasks {
+	margin-top: 10px;
+	border-top: 1px solid var(--line);
+	padding-top: 8px;
+}
+.mem-tree-task {
+	display: flex;
+	gap: 6px;
+	align-items: baseline;
+	font-size: 11px;
+	padding: 2px 0;
+	min-width: 0;
+}
+.mem-tree-task .mono {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mem-task-status {
+	flex-shrink: 0;
+	font-size: 11px;
+}
+.mem-task-done { color: var(--ok); }
+.mem-task-running { color: var(--blue); }
+.mem-task-error { color: var(--accent); }
+.mem-task-waiting { color: var(--muted); }
+
+.mem-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+.mem-crumbs {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex-wrap: wrap;
+	min-width: 0;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+}
+.mem-crumb {
+	border: none;
+	background: transparent;
+	color: var(--blue);
+	padding: 2px 4px;
+	border-radius: 4px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: inherit;
+	max-width: 200px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mem-crumb:hover {
+	background: var(--blue-soft);
+}
+.mem-crumb-file {
+	color: var(--ink, #1a2433);
+	font-weight: 600;
+}
+.mem-crumb-sep {
+	color: #b8c6d8;
+}
+.mem-crumb-more {
+	color: var(--muted);
+}
+.mem-copy-path {
+	margin-left: 6px;
+	font-size: 11px;
+}
+.mem-views {
+	display: flex;
+	gap: 4px;
+	flex-wrap: wrap;
+}
+.mem-view-btn {
+	border: 1px solid var(--line);
+	background: var(--bg1);
+	color: var(--muted);
+	border-radius: 999px;
+	padding: 3px 12px;
+	font-size: 12px;
+	cursor: pointer;
+}
+.mem-view-btn:hover {
+	border-color: #b7caf9;
+	color: var(--blue);
+}
+.mem-view-btn.active {
+	background: var(--blue);
+	border-color: var(--blue);
+	color: #fff;
+}
+.mem-chips {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+	min-height: 22px;
+}
+.mem-chips-hint {
+	color: var(--muted);
+	font-size: 12px;
+}
+.mem-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background: var(--blue-soft);
+	border: 1px solid #b7caf9;
+	color: var(--blue);
+	border-radius: 999px;
+	padding: 1px 4px 1px 10px;
+	font-size: 12px;
+	max-width: 240px;
+}
+.mem-chip > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mem-chip-close {
+	border: none;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	font-size: 13px;
+	line-height: 1;
+	padding: 0 2px;
+}
+.mem-chip-clear {
+	font-size: 11px;
+}
+.mem-views-host {
+	min-width: 0;
+}
+.mem-view[hidden] {
+	display: none;
+}
+.mem-empty,
+.mem-error {
+	border: 1px dashed #c3d0e3;
+	background: #f7faff;
+	border-radius: var(--radius-md);
+	padding: 12px;
+	color: var(--muted);
+	font-size: 13px;
+	text-align: center;
+}
+.mem-error {
+	border-color: #f0b8bb;
+	background: var(--accent-soft);
+	color: #9c2a2d;
+	text-align: left;
+}
+.mem-context-menu {
+	position: fixed;
+	z-index: 9999;
+	background: var(--bg1);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	box-shadow: var(--shadow-soft);
+	padding: 4px 0;
+	min-width: 150px;
+}
+.mem-menu-sep {
+	border-top: 1px solid var(--line);
+	margin: 4px 8px;
+}
+.context-menu-item {
+	padding: 6px 16px;
+	font-size: 13px;
+	cursor: pointer;
+}
+.context-menu-item:hover {
+	background: #f2f6ff;
+}
+.context-menu-item.disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+.context-menu-item.danger {
+	color: var(--accent);
+}
+.mem-list-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+/* 列较多时在自身容器内横向滚动，绝不压到详情栏 */
+.mem-list-scroll {
+	overflow-x: auto;
+	max-width: 100%;
+}
+.mem-list-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+	margin-top: 6px;
+}
+.mem-list-table th {
+	text-align: left;
+	padding: 4px 8px;
+	border-bottom: 2px solid var(--line);
+	color: var(--muted);
+	font-weight: 600;
+	font-size: 12px;
+	white-space: nowrap;
+}
+.mem-list-table th.sortable {
+	cursor: pointer;
+}
+.mem-list-table td {
+	padding: 3px 8px;
+	border-bottom: 1px solid #eef2f7;
+	white-space: nowrap;
+}
+.mem-list-table tbody tr {
+	cursor: pointer;
+}
+.mem-list-table tbody tr:hover {
+	background: #f2f6ff;
+}
+.mem-list-table tbody tr.selected {
+	background: var(--blue-soft);
+}
+.mem-list-table .mem-col-name {
+	max-width: 320px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.mem-col-size,
+.mem-col-updated {
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+.mem-scale {
+	display: inline-block;
+	vertical-align: middle;
+	width: 60px;
+	height: 12px;
+}
+.mem-scale-empty {
+	color: var(--muted);
+	font-size: 11px;
+	margin-left: 6px;
+}
+.mem-detail-title {
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--muted);
+	letter-spacing: 0.04em;
+}
+.mem-detail-section {
+	border-top: 1px solid var(--line);
+	padding-top: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.mem-kv {
+	display: grid;
+	grid-template-columns: 68px minmax(0, 1fr);
+	gap: 2px 8px;
+	font-size: 12px;
+}
+.mem-kv-key {
+	color: var(--muted);
+}
+.mem-kv-value {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-family: Consolas, "Courier New", monospace;
+}
+.mem-tag-edit {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+}
+.mem-tag-edit .input {
+	width: 84px;
+	height: 24px;
+	font-size: 12px;
+	padding: 0 4px;
+}
+.mem-entity-row {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 4px 6px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+.mem-entity-row:hover {
+	background: #f2f6ff;
+}
+.mem-preview {
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 11px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 220px;
+	overflow: auto;
+	background: #f7faff;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 6px 8px;
+	margin: 0;
+}
+.mem-viz {
+	width: 100%;
+}
+.mem-viz-canvas {
+	width: 100%;
+	height: 320px;
+}
+.mem-image {
+	display: block;
+	margin: 0 auto;
+	max-width: 100%;
+	max-height: 300px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+.mem-image-full {
+	display: block;
+	margin: 0 auto;
+	max-width: 100%;
+	max-height: 80vh;
+}

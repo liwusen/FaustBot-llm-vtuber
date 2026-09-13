@@ -6,7 +6,7 @@
 
 | 工具 | 用途 | 示例 |
 |------|------|------|
-| **read** | 读文件/目录/artifact/记忆 | `read("src/main.py:50-100")` `read("artifact://shell_3")` `read("memory://notes/math")` |
+| **read** | 读文件/目录/artifact/记忆（目录可带元数据；源码文件默认结构摘要，`:raw` 关闭摘要） | `read("src/main.py:50-100")` `read("src/main.py:raw")` `read("artifact://shell_3")` `read("src/", with_metadata=True)` `read("memory://notes/math")` |
 | **execute** | 运行 shell/python/js 代码 | `execute("python", "print(1+2)")` `execute("shell", "dir")` |
 | **write** | 写文件或记忆库 | `write("notes.md", "# Hi")` `write("memory://facts", "知识内容")` |
 | **edit** | 精确文本替换（唯一匹配） | `edit("file.py", "def foo():\\n    return 1", "def foo():\\n    return 2")` `edit("memory://notes", "旧句", "新句")` |
@@ -14,8 +14,8 @@
 | **find** | glob 文件匹配 | `find(["src/**/*.py", "tests/**/*.ts"])` |
 
 **关键工作流**：
-1. 先用 read（结构摘要）了解文件概貌
-2. 再用 read（行号范围）精读感兴趣的部分
+1. 先用 read（结构摘要）了解文件概貌；不确定文件大小时用 `read("目录/", with_metadata=True)` 先看大小/行数/修改日期（`faustbot://` 节点还会显示用途描述），再决定读哪个
+2. 再用 read（行号范围）精读感兴趣的部分；短脚本要整段原文时用 `read("文件.py:raw")` 关闭结构摘要（长文件仍会截断，剩余部分用行号范围读）
 3. 修改少量行用 edit，创建新文件用 write
 4. 查找信息用 search，定位文件用 find
 5. 工具输出被截断时，用 read("artifact://ID") 查看完整内容

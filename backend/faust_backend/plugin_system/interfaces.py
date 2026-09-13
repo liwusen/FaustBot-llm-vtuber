@@ -110,25 +110,31 @@ class PluginContext:
             return await res
         return res # type: ignore
 
-    async def vfs_write(self, path: str, content: Any) -> Any:
+    async def vfs_write(self, path: str, content: Any, description: str = "") -> Any:
+        """写入内容节点。
+
+        description 为节点用途说明，read(with_metadata=True) 列举时展示；
+        未显式给描述时保留旧节点的描述（重复写入不会丢失元数据）。
+        """
         fn = self.config.get("vfs_write")
         if not callable(fn):
             raise RuntimeError("vfs_write is not available")
-        res = fn(path, content)
+        res = fn(path, content, description)
         if inspect.isawaitable(res):
             return await res
         return res
 
-    async def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True, writable: bool = False) -> Any:
+    async def vfs_write_symbolic(self, path: str, func: Any, should_be_included_in_search: bool = True, writable: bool = False, description: str = "") -> Any:
         """注册一个 symbol 节点：读取时调用 func(path)（支持同步或异步内容函数）。
 
         writable=True 时允许写入，配合 vfs_set_write_handler/vfs_set_edit_handler
         自定义写入行为（不设置 handler 时写入会替换节点为普通内容节点）。
+        description 为节点用途说明，read(with_metadata=True) 列举时展示。
         """
         fn = self.config.get("vfs_write_symbolic")
         if not callable(fn):
             raise RuntimeError("vfs_write_symbolic is not available")
-        res = fn(path, func, should_be_included_in_search, writable)
+        res = fn(path, func, should_be_included_in_search, writable, description)
         if inspect.isawaitable(res):
             return await res
         return res

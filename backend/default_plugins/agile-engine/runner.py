@@ -277,6 +277,7 @@ def _norm_vfs_path(path: str) -> str:
 
 async def _register_hooks(agile_module: AgileModule, agile: AgileContext, name: str):
     vfs_paths: list[str] = []
+    vfs_descriptions: dict[str, str] = {}
     owned_funcs: list[Any] = []
     interval_handles: list[IntervalHandle] = []
     for hook in agile_module.getHooks().values():
@@ -285,10 +286,14 @@ async def _register_hooks(agile_module: AgileModule, agile: AgileContext, name: 
         path = _norm_vfs_path(hook.name)
         if hook.hookType is AgileHookType.VFS_CONTENT:
             strategy = (hook.attr or {}).get("cacheStrategy", "cache@10")
+            description = str((hook.attr or {}).get("description") or "")
             wrapped = _wrap_errors(_wrap_activity(_wrap_cache_strategy(invoker, strategy, name), name), name)
             await agile.vfs_write_symbolic(path, wrapped, writable=False,
-                                           should_be_included_in_search=True)
+                                           should_be_included_in_search=True,
+                                           description=description)
             vfs_paths.append(path)
+            if description:
+                vfs_descriptions[path] = description
             owned_funcs.append(wrapped)
         elif hook.hookType is AgileHookType.VFS_WRITE:
             wrapped = _wrap_errors(_wrap_activity(invoker, name), name)
@@ -305,7 +310,7 @@ async def _register_hooks(agile_module: AgileModule, agile: AgileContext, name: 
             handle = IntervalHandle(name, interval, _wrap_errors(invoker, name))
             handle.start()
             interval_handles.append(handle)
-    return vfs_paths, owned_funcs, interval_handles
+    return vfs_paths, owned_funcs, interval_handles, vfs_descriptions
 
 
 async def _unregister_hooks(instance: dict[str, Any]) -> None:
@@ -367,8 +372,8 @@ def _module_source(name: str) -> str:
 
 async def _register_mirror_nodes(name: str) -> list[str]:
     vfs = await get_faustbot_vfs()
-    await vfs.mkdir("/agile")
-    await vfs.mkdir("/agile/modules")
+    await vfs.mkdir("/agile", description="Agile 模块镜像根目录")
+    await vfs.mkdir("/agile/modules", description="Agile 模块源码镜像目录")
     paths = [
         f"/agile/modules/{name}.py",
         f"/agile/{name}/status",
@@ -377,16 +382,20 @@ async def _register_mirror_nodes(name: str) -> list[str]:
     ]
     await vfs.write_symbolic(f"/agile/modules/{name}.py",
                              lambda _p, n=name: _module_source(n),
-                             should_be_included_in_search=False, writable=False)
+                             should_be_included_in_search=False, writable=False,
+                             description=f"Agile 模块 {name} 的源码镜像（只读）")
     await vfs.write_symbolic(f"/agile/{name}/status",
                              lambda _p, n=name: format_module_status(n),
-                             should_be_included_in_search=True, writable=False)
+                             should_be_included_in_search=True, writable=False,
+                             description=f"Agile 模块 {name} 的运行状态：节点/定时任务/最近活动")
     await vfs.write_symbolic(f"/agile/{name}/log/all",
                              lambda _p, n=name: format_module_logs(n, None),
-                             should_be_included_in_search=False, writable=False)
+                             should_be_included_in_search=False, writable=False,
+                             description=f"Agile 模块 {name} 的全部日志")
     await vfs.write_symbolic(f"/agile/{name}/log/errors",
                              lambda _p, n=name: format_module_logs(n, "ERROR"),
-                             should_be_included_in_search=False, writable=False)
+                             should_be_included_in_search=False, writable=False,
+                             description=f"Agile 模块 {name} 的错误日志")
     return paths
 
 
@@ -471,7 +480,7 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
                              trigger_limiter=lambda n=name: check_trigger_limit(n),
                              on_activity=lambda n=name: _stamp_activity(n),
                              storage=AgileStorage(name, STORAGE_DIR))
-        vfs_paths, owned_funcs, interval_handles = await _register_hooks(agile_module, agile, name)
+        vfs_paths, owned_funcs, interval_handles, vfs_descriptions = await _register_hooks(agile_module, agile, name)
         mirror_paths = await _register_mirror_nodes(name)
         # 生效上限：reload 传入的 preset_limit > 磁盘持久化值 > 默认值
         if preset_limit is not None:
@@ -486,6 +495,7 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
             "module": agile_module,
             "agile": agile,
             "vfs_paths": vfs_paths,
+            "vfs_descriptions": vfs_descriptions,
             "owned_funcs": owned_funcs,
             "interval_handles": interval_handles,
             "mirror_paths": mirror_paths,
@@ -633,7 +643,12 @@ def format_module_status(name: str) -> str:
         for hook in module.getHooks().values():
             lines.append(f"- {hook.hookType or 'lifecycle'}: {hook.name} {hook.func_signature or ''}")
     lines.append("")
-    lines.append(f"VFS 节点: {len(inst.get('vfs_paths', []))}  定时任务: {len(inst.get('interval_handles', []))}")
+    vfs_paths = inst.get("vfs_paths", [])
+    vfs_descriptions = inst.get("vfs_descriptions", {})
+    lines.append(f"VFS 节点 ({len(vfs_paths)})  定时任务: {len(inst.get('interval_handles', []))}")
+    for path in vfs_paths:
+        desc = str(vfs_descriptions.get(path) or "").strip()
+        lines.append(f"- {path}" + (f" — {desc}" if desc else ""))
     limit = int(inst.get("tpm_limit", DEFAULT_TPM_LIMIT) or 0)
     limit_txt = "不限制" if limit <= 0 else f"{limit}/min"
     now = _monotonic()
@@ -652,8 +667,9 @@ async def format_module_logs(name: str, level: str | None = None) -> str:
 async def register_overview_node() -> None:
     """插件 startup 调用：注册 faustbot://agile/status 总览节点。"""
     vfs = await get_faustbot_vfs()
-    await vfs.mkdir("/agile")
+    await vfs.mkdir("/agile", description="Agile 模块镜像根目录")
     await vfs.write_symbolic(
         "/agile/status", lambda _p: format_status_overview(),
         should_be_included_in_search=True, writable=False,
+        description="全部 Agile 模块总览：节点/定时任务/最近活动",
     )

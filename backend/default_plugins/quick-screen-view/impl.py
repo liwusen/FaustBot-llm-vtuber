@@ -221,11 +221,15 @@ class Plugin(FaustPlugin):
             return
         self._focus_value = ""
         self._clear_cache()
-        await self.ctx.vfs_write_symbolic(FOCUS_PATH, self._read_focus, writable=True)
+        await self.ctx.vfs_write_symbolic(
+            FOCUS_PATH, self._read_focus, writable=True,
+            description="用户当前关注的内容（可写：写入后触发屏幕分析）",
+        )
         await self.ctx.vfs_set_write_handler(FOCUS_PATH, self._write_focus)
         await self.ctx.vfs_set_edit_handler(FOCUS_PATH, self._write_focus)
         await self.ctx.vfs_write_symbolic(
-            TEXT_PATH, self._read_text, should_be_included_in_search=False
+            TEXT_PATH, self._read_text, should_be_included_in_search=False,
+            description="最近一次屏幕分析结果",
         )
         log.info("quick-screen-view: VFS 模式已挂载 %s, %s", FOCUS_PATH, TEXT_PATH)
 

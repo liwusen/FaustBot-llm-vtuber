@@ -225,6 +225,16 @@ function GraphCanvas(container, options) {
   this._viewY = 0;
   this._viewScale = 1;
   this._nodeRadius = 18;
+  this._degrees = {};
+  this._destroyed = false;
+
+  this._onCanvasMouseDown = null;
+  this._onWindowMouseMove = null;
+  this._onWindowMouseUp = null;
+  this._onCanvasClick = null;
+  this._onCanvasDblClick = null;
+  this._onCanvasWheel = null;
+  this._onWindowResize = null;
 
   this._hoveredNode = null;
   this._selectedNode = null;
@@ -264,7 +274,7 @@ GraphCanvas.prototype._screenToWorld = function (sx, sy) {
 GraphCanvas.prototype._bindEvents = function () {
   var self = this;
 
-  this.canvas.addEventListener("mousedown", function (e) {
+  this._onCanvasMouseDown = function (e) {
     var r = self.canvas.getBoundingClientRect();
     var mx = e.clientX - r.left, my = e.clientY - r.top;
     var w = self._screenToWorld(mx, my);
@@ -278,9 +288,10 @@ GraphCanvas.prototype._bindEvents = function () {
       self._isPanning = true;
       self._panStart = { x: mx, y: my };
     }
-  });
+  };
+  this.canvas.addEventListener("mousedown", this._onCanvasMouseDown);
 
-  window.addEventListener("mousemove", function (e) {
+  this._onWindowMouseMove = function (e) {
     var r = self.canvas.getBoundingClientRect();
     var mx = e.clientX - r.left, my = e.clientY - r.top;
     var w = self._screenToWorld(mx, my);
@@ -303,34 +314,38 @@ GraphCanvas.prototype._bindEvents = function () {
       self.canvas.style.cursor = hit ? "pointer" : "default";
       self.render();
     }
-  });
+  };
+  window.addEventListener("mousemove", this._onWindowMouseMove);
 
-  window.addEventListener("mouseup", function () {
+  this._onWindowMouseUp = function () {
     if (self._draggedNode) {
       self._draggedNode.fixed = false;
       self._draggedNode = null;
       self.simulation._onSettle = null;
     }
     self._isPanning = false;
-  });
+  };
+  window.addEventListener("mouseup", this._onWindowMouseUp);
 
-  this.canvas.addEventListener("click", function (e) {
+  this._onCanvasClick = function (e) {
     var r = self.canvas.getBoundingClientRect();
     var mx = e.clientX - r.left, my = e.clientY - r.top;
     var w = self._screenToWorld(mx, my);
     var node = self._hitTest(w.x, w.y);
     if (node && self._onNodeClick) self._onNodeClick(node);
-  });
+  };
+  this.canvas.addEventListener("click", this._onCanvasClick);
 
-  this.canvas.addEventListener("dblclick", function (e) {
+  this._onCanvasDblClick = function (e) {
     var r = self.canvas.getBoundingClientRect();
     var mx = e.clientX - r.left, my = e.clientY - r.top;
     var w = self._screenToWorld(mx, my);
     var node = self._hitTest(w.x, w.y);
     if (node && self._onExpand) self._onExpand(node);
-  });
+  };
+  this.canvas.addEventListener("dblclick", this._onCanvasDblClick);
 
-  this.canvas.addEventListener("wheel", function (e) {
+  this._onCanvasWheel = function (e) {
     e.preventDefault();
     var r = self.canvas.getBoundingClientRect();
     var mx = e.clientX - r.left, my = e.clientY - r.top;
@@ -341,16 +356,48 @@ GraphCanvas.prototype._bindEvents = function () {
     self._viewY = my - (my - self._viewY) * delta;
     self._viewScale = ns;
     self.render();
-  });
+  };
+  this.canvas.addEventListener("wheel", this._onCanvasWheel);
 
-  window.addEventListener("resize", function () { self._resize(); self.render(); });
+  this._onWindowResize = function () { self._resize(); self.render(); };
+  window.addEventListener("resize", this._onWindowResize);
+};
+
+// 度数 ≤1 → 13，2–4 → 17，≥5 → 22；无度数记录时回退统一的 _nodeRadius
+GraphCanvas.prototype._nodeRadiusFor = function (node) {
+  var deg = node ? this._degrees[node.id] : undefined;
+  if (typeof deg !== "number") return this._nodeRadius;
+  if (deg <= 1) return 13;
+  if (deg <= 4) return 17;
+  return 22;
+};
+
+// 按当前边统计无向度数：(source,target,type) 三元组去重，A→B 与 B→A 视为同一条边。
+// 无邻接边的节点记为 0 度，未出现在图中的 id 才落回 _nodeRadius 缺省。
+GraphCanvas.prototype._recomputeDegrees = function () {
+  var nodes = this.simulation.nodes;
+  var degrees = {};
+  for (var i = 0; i < nodes.length; i++) degrees[nodes[i].id] = 0;
+  var edges = this.simulation.edges;
+  var seenEdge = {};
+  for (var j = 0; j < edges.length; j++) {
+    var e = edges[j];
+    var key = (e.source < e.target
+      ? e.source + "\u0000" + e.target
+      : e.target + "\u0000" + e.source) + "\u0000" + (e.type || "");
+    if (seenEdge[key]) continue;
+    seenEdge[key] = true;
+    if (typeof degrees[e.source] === "number") degrees[e.source] += 1;
+    if (typeof degrees[e.target] === "number") degrees[e.target] += 1;
+  }
+  this._degrees = degrees;
 };
 
 GraphCanvas.prototype._hitTest = function (wx, wy) {
-  var r = this._nodeRadius;
   var nodes = this.simulation.nodes;
   for (var i = nodes.length - 1; i >= 0; i--) {
     var n = nodes[i];
+    var r = this._nodeRadiusFor(n);
     var dx = wx - n.x, dy = wy - n.y;
     if (dx * dx + dy * dy <= r * r * 2.5) return n;
   }
@@ -359,6 +406,7 @@ GraphCanvas.prototype._hitTest = function (wx, wy) {
 
 GraphCanvas.prototype.setData = function (nodes, edges) {
   var self = this;
+  if (this._destroyed) return;
   // 最多渲染 500 个实体，超限则丢弃多余实体及其相关边，避免卡顿
   var MAX_RENDER_NODES = 500;
   if (nodes && nodes.length > MAX_RENDER_NODES) {
@@ -379,6 +427,7 @@ GraphCanvas.prototype.setData = function (nodes, edges) {
   }
   this.simulation.stop();
   this.simulation.setData(nodes, bidirEdges);
+  this._recomputeDegrees();
   this._expanded = {};
   var cx = this._width / 2, cy = this._height / 2;
   nodes.forEach(function (n) {
@@ -392,6 +441,7 @@ GraphCanvas.prototype.setData = function (nodes, edges) {
 
 GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
   var self = this;
+  if (this._destroyed) return;
   // Find an existing parent node from the edges
   var parentId = null;
   if (newEdges && newEdges.length) {
@@ -427,6 +477,7 @@ GraphCanvas.prototype.addNodes = function (newNodes, newEdges) {
   if (bidirEdges.length) {
     this.simulation.addEdges(bidirEdges);
   }
+  this._recomputeDegrees();
   if (parentNode) this._expanded[parentNode.id] = true;
   this.render();
   this.simulation.stop();
@@ -456,6 +507,7 @@ GraphCanvas.prototype.highlightIds = function (ids) {
 };
 
 GraphCanvas.prototype.fitToScreen = function () {
+  if (this._destroyed) return;
   var nodes = this.simulation.nodes;
   if (!nodes.length) return;
   var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -474,6 +526,7 @@ GraphCanvas.prototype.fitToScreen = function () {
 };
 
 GraphCanvas.prototype.render = function () {
+  if (this._destroyed) return;
   var ctx = this._ctx;
   var w = this._width, h = this._height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -516,12 +569,11 @@ GraphCanvas.prototype._drawEdges = function (ctx) {
 
 GraphCanvas.prototype._drawNodes = function (ctx) {
   var nodes = this.simulation.nodes;
-  var nodeRadius = this._nodeRadius;
   var self = this;
 
   for (var i = 0; i < nodes.length; i++) {
     var n = nodes[i];
-    var r = nodeRadius;
+    var r = this._nodeRadiusFor(n);
     var color = _nodeColor(n);
     var isHover = n === this._hoveredNode;
     var isSel = n === this._selectedNode;
@@ -569,6 +621,10 @@ GraphCanvas.prototype._drawNodes = function (ctx) {
 GraphCanvas.prototype._drawTooltip = function (ctx, n) {
   var lines = ["ID: " + n.id, "Type: " + ((n.entity_type || n.type || "?"))];
   if (n.name) lines[0] = "Name: " + n.name;
+  var deg = this._degrees[n.id];
+  lines.push("度数: " + (typeof deg === "number" ? deg : 0));
+  var desc = n.description ? String(n.description).replace(/\s+/g, " ").trim() : "";
+  if (desc) lines.push("描述: " + desc.substring(0, 40));
   var fSize = 11;
   var pad = 6;
   var maxW = 0;
@@ -594,9 +650,30 @@ GraphCanvas.prototype._drawTooltip = function (ctx, n) {
   ctx.restore();
 };
 
-GraphCanvas.prototype.destroy = function () {
+GraphCanvas.prototype.pause = function () {
   this.simulation.stop();
-  this._container.removeChild(this.canvas);
+};
+
+GraphCanvas.prototype.resume = function () {
+  if (this._destroyed) return;
+  if (!this.simulation.nodes.length) return;
+  var self = this;
+  this.simulation.stop();
+  this.simulation.start(function () { self.render(); }, function () { self.render(); });
+};
+
+GraphCanvas.prototype.destroy = function () {
+  if (this._destroyed) return;
+  this._destroyed = true;
+  this.simulation.stop();
+  this.canvas.removeEventListener("mousedown", this._onCanvasMouseDown);
+  this.canvas.removeEventListener("click", this._onCanvasClick);
+  this.canvas.removeEventListener("dblclick", this._onCanvasDblClick);
+  this.canvas.removeEventListener("wheel", this._onCanvasWheel);
+  window.removeEventListener("mousemove", this._onWindowMouseMove);
+  window.removeEventListener("mouseup", this._onWindowMouseUp);
+  window.removeEventListener("resize", this._onWindowResize);
+  if (this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
 };
 
 GraphCanvas.prototype.onNodeClick = function (cb) { this._onNodeClick = cb; };

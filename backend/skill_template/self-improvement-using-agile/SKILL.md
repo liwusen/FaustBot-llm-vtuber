@@ -21,7 +21,7 @@
  
 **不该触发的反例**:
 - 用户一次性请求("帮我算下这顿饭钱")→ 当场做掉,不建模块
-- 需求需要注册 Agent 工具/修改上下文/拦截消息 → 这是 Plugin 的能力,Agile 模块做不了,按 `skill://plugin-creation` 评估或放弃
+- 需求需要注册 Agent 工具/修改上下文/拦截消息 → 这是 Plugin 的能力,Agile 模块做不了,按 `skill://plugin-creation/SKILL.md` 评估或放弃
 - 需求没有本地机器可读来源(进程/端口/文件/API) → 模块无法自己感知"该干活了",放弃
 
 ---
@@ -85,7 +85,7 @@
 
 ### Step 4 编写 Agile 模块并部署
 
-- **协议**:按 `skill://agile-engine` 的装饰器/AgileContext/缓存策略编写,模块文件写 `~/.faustbot/agile-modules/{name}.py`
+- **协议**:按 `skill://agile-engine/SKILL.md` 的装饰器/AgileContext/缓存策略编写,模块文件写 `~/.faustbot/agile-modules/{name}.py`
 - **模块固有反骚扰(硬规则)**:
   - **边沿检测**:只在活动"新开始"时 fire 事件(如游戏进程从无到有),已在运行中加载模块时**不**立即 fire
   - **能力宣告只一次**:模块部署后第一次检测到活动时 fire 一次 `{slug}::ready` 事件;宣告过的标记持久化到模块自己的 state 文件(如 `{name}.state`),重启后端后不重复宣告

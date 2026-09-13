@@ -173,7 +173,7 @@ var GRAPH_NODE_RADIUS = 18;
 var GRAPH_EXPAND_DEPTH = 1;
 
 const SCALE_PRESETS = {
-    LIVE2D_MODEL_SCALE: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "x" },
+    LIVE2D_MODEL_SCALE: { type: "range", min: 0.01, max: 1, step: 0.01, unit: "x" },
     LIVE2D_MOUSE_TRACKING_STRENGTH: { type: "range", min: 0, max: 0.05, step: 0.001, unit: "px" },
     LIVE2D_MODEL_X: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "" },
     LIVE2D_MODEL_Y: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "" },

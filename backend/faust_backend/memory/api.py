@@ -17,9 +17,10 @@ def _m():
 # ── tree ──
 
 @router.get("/tree")
-async def memory_tree(scope: str | None = Query(default=None)):
-    result = await _m().tree_list(scope)
-    log.info("GET /tree scope=%s", scope)
+async def memory_tree(scope: str | None = Query(default=None),
+                      include_metadata: bool = Query(default=False)):
+    result = await _m().tree_list(scope, include_metadata=include_metadata)
+    log.info("GET /tree scope=%s include_metadata=%s", scope, include_metadata)
     return {"status": "ok", "tree": result}
 
 

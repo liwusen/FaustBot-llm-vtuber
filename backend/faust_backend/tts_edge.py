@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import os
+import tempfile
 from pathlib import Path
 from typing import Tuple
 
-import faust_backend.config_loader as conf
-
-
+import aiohttp
 import edge_tts
 
-
+import faust_backend.config_loader as conf
+from faust_backend.speech.errors import SpeechRuntimeError
 
 
 async def synthesize_edge_tts(
@@ -23,42 +22,47 @@ async def synthesize_edge_tts(
 ) -> Tuple[bytes, str]:
     """Use edge-tts to synthesize text to audio bytes.
 
-    Returns (audio_bytes, content_type). Raises RuntimeError on failure.
+    上游 429(限流) 会退避重试（见 speech/tts/retry.py）。
+    Returns (audio_bytes, content_type). Raises SpeechRuntimeError on failure.
     """
+    from faust_backend.speech.tts.retry import TtsRateLimitError, with_429_retry
+
     if not text or not str(text).strip():
-        from faust_backend.speech_runtime import SpeechRuntimeError
         raise SpeechRuntimeError("TTS 文本不能为空")
 
     tts_voice = str(voice or conf.EDGE_TTS_VOICE or "en-US-AriaNeural")
     tts_rate = str(rate or conf.EDGE_TTS_RATE or "0%")
     tts_pitch = str(pitch or conf.EDGE_TTS_PITCH or "0%")
 
-    communicate = edge_tts.Communicate(str(text), tts_voice)
-
-    # edge-tts supports saving to file via async save API; use a temp file to capture bytes
+    # edge-tts 走 websocket 合成；用临时文件接收音频字节
     tmp = None
+
+    async def _save_once() -> None:
+        # 每次重试都新建 Communicate，不复用上一次失败的连接状态。
+        # 注：某些版本的 Communicate 支持 rate/pitch kwargs，这里不依赖未文档化参数，
+        # 音色/语调仍由 voice 控制（保持原行为）。
+        communicate = edge_tts.Communicate(str(text), tts_voice)
+        try:
+            await asyncio.wait_for(communicate.save(tmp), timeout=float(timeout or 120))
+        except asyncio.TimeoutError as exc:
+            raise SpeechRuntimeError(f"Edge TTS 超时 ({timeout}s)") from exc
+        except aiohttp.ClientResponseError as exc:
+            if exc.status == 429:
+                raise TtsRateLimitError(f"Edge TTS 429: {exc}") from exc
+            raise
+
     try:
         fd, tmp = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)
-        # Build a coroutine that saves to tmp. Some versions accept rate/pitch via arguments in the
-        # Communicate constructor or via SSML; we'll attempt to pass rate/pitch via properties if available.
-        # For compatibility, we will not rely on undocumented kwargs — users can set voice to control prosody.
-
-        coro = communicate.save(tmp)
-        try:
-            await asyncio.wait_for(coro, timeout=float(timeout or 120))
-        except asyncio.TimeoutError as exc:
-            from faust_backend.speech_runtime import SpeechRuntimeError
-            raise SpeechRuntimeError(f"Edge TTS 超时 ({timeout}s)") from exc
+        await with_429_retry(_save_once, label="Edge TTS")
 
         path = Path(tmp)
         if not path.exists():
-            from faust_backend.speech_runtime import SpeechRuntimeError
             raise SpeechRuntimeError("Edge TTS 未生成音频文件")
-        data = path.read_bytes()
-        return data, "audio/mpeg"
+        return path.read_bytes(), "audio/mpeg"
+    except SpeechRuntimeError:
+        raise
     except Exception as exc:  # pragma: no cover - surface failures
-        from faust_backend.speech_runtime import SpeechRuntimeError
         raise SpeechRuntimeError(f"Edge TTS 合成失败: {exc}") from exc
     finally:
         try:

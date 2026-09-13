@@ -62,6 +62,28 @@ class TestURIParse:
         assert p.selector == ":50-100:raw"
         assert p.selector_lines == (50, 100)
 
+    def test_file_path_raw_only(self):
+        """裸 :raw = 无行范围，仅关闭结构化摘要。"""
+        p = parse("src/main.py:raw")
+        assert p.scheme == SCHEME_FILE
+        assert p.path == "src/main.py"
+        assert p.selector == ":raw"
+        assert p.selector_lines is None
+        assert p.is_raw is True
+
+    def test_scheme_path_raw_only(self):
+        p = parse("skill://demo/scripts/client.py:raw")
+        assert p.scheme == SCHEME_SKILL
+        assert p.path == "demo/scripts/client.py"
+        assert p.selector == ":raw"
+        assert p.selector_lines is None
+        assert p.is_raw is True
+
+    def test_raw_only_keeps_dir_semantics(self):
+        assert parse("src/:raw").is_dir is True
+        assert parse("memory://user/:raw").is_dir is True
+        assert parse("src/main.py:raw").is_dir is False
+
     def test_file_path_negative_range_colon(self):
         p = parse("src/main.py:-20:-10")
         assert p.scheme == SCHEME_FILE
@@ -345,6 +367,99 @@ class MyClass:
             conf.WORKDIR_ROOT = orig_root
 
     @pytest.mark.asyncio
+    async def test_read_file_raw_skips_structural_summary(self, tmp_path):
+        """`:raw` 关闭结构摘要：返回原文（回归：此前 :raw 被当成文件名 → 文件不存在）。"""
+        from faust_backend.tools.read import read
+        import faust_backend.config_loader as conf
+        code = "def foo():\n    return 42\n\n\ndef bar(x):\n    return x + 1\n"
+        (tmp_path / "demo.py").write_text(code, encoding="utf-8")
+
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
+        try:
+            summary = await read.ainvoke({"uri": "demo.py"})
+            raw = await read.ainvoke({"uri": "demo.py:raw"})
+        finally:
+            conf.WORKDIR_ROOT = orig_root
+        assert "结构摘要" in summary
+        assert "return 42" not in summary
+        assert raw == code
+
+    @pytest.mark.asyncio
+    async def test_read_skill_file_raw(self, tmp_path):
+        """skill 目录内的代码文件同样支持 `:raw`（skill://demo/scripts/client.py:raw）。"""
+        from faust_backend.tools.read import read
+        from faust_backend.runtime import state
+
+        agent_root = tmp_path / "agents"
+        skill_dir = agent_root / "skill.d" / "demo_skill"
+        (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
+        code = "def download(url):\n    return url\n"
+        (skill_dir / "scripts" / "client.py").write_text(code, encoding="utf-8")
+
+        orig_agent_name = state.AGENT_NAME
+        orig_agent_root = state.AGENT_ROOT
+        state.AGENT_NAME = "demo_agent"
+        state.AGENT_ROOT = str(agent_root)
+        try:
+            summary = await read.ainvoke({"uri": "skill://demo_skill/scripts/client.py"})
+            raw = await read.ainvoke({"uri": "skill://demo_skill/scripts/client.py:raw"})
+            numbered = await read.ainvoke(
+                {"uri": "skill://demo_skill/scripts/client.py:raw", "show_line_number": True}
+            )
+        finally:
+            state.AGENT_NAME = orig_agent_name
+            state.AGENT_ROOT = orig_agent_root
+        assert "结构摘要" in summary
+        assert raw == code
+        assert numbered == "1:def download(url):\n2:    return url\n3:"
+
+    @pytest.mark.asyncio
+    async def test_read_file_raw_with_line_numbers(self, tmp_path):
+        """RAW + show_line_number=True：全文编号；截断提示行不编号。"""
+        from faust_backend.tools.read import read
+        import faust_backend.config_loader as conf
+        (tmp_path / "small.py").write_text("def foo():\n    return 42\n", encoding="utf-8")
+        (tmp_path / "big.py").write_text(
+            "".join(f"line{i}\n" for i in range(1, 401)), encoding="utf-8"
+        )
+
+        orig_root = conf.WORKDIR_ROOT
+        conf.WORKDIR_ROOT = str(tmp_path)
+        try:
+            small = await read.ainvoke({"uri": "small.py:raw", "show_line_number": True})
+            big_out = await read.ainvoke({"uri": "big.py:raw", "show_line_number": True})
+            big_plain = await read.ainvoke({"uri": "big.py:raw"})
+        finally:
+            conf.WORKDIR_ROOT = orig_root
+
+        assert small == "1:def foo():\n2:    return 42\n3:"
+        big_lines = big_out.split("\n")
+        assert big_lines[0] == "1:line1"
+        assert big_lines[299] == "300:line300"
+        assert big_lines[300].startswith("[") and "已截断" in big_lines[300]
+        assert big_plain.split("\n")[0] == "line1"
+
+    @pytest.mark.asyncio
+    async def test_read_source_code_line_range_with_line_numbers(self):
+        """回归：sourceCode:// 此前丢弃 show_line_number（委派 _read_file 时未透传）。"""
+        from faust_backend.tools.read import read
+        result = await read.ainvoke(
+            {"uri": "sourceCode://backend/faust_backend/tools/read.py:1-3", "show_line_number": True}
+        )
+        assert result.split("\n")[0].startswith("1:")
+
+    @pytest.mark.asyncio
+    async def test_read_memory_document_line_numbers(self, read_memory_store):
+        """show_line_number 对无选择器的记忆文档同样生效。"""
+        from faust_backend.tools.read import read
+        await read_memory_store.file_write("/notes/num", "alpha\nbeta", index=False)
+
+        result = await read.ainvoke({"uri": "memory://notes/num", "show_line_number": True})
+
+        assert result == "1:alpha\n2:beta"
+
+    @pytest.mark.asyncio
     async def test_read_file_with_line_range(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
@@ -415,22 +530,54 @@ class MyClass:
         assert "sourceCode://backend/faust_backend/" in result
 
     @pytest.mark.asyncio
+    async def test_read_source_code_dir_without_trailing_slash_lists(self):
+        from faust_backend.tools.read import read
+        result = await read.ainvoke({"uri": "sourceCode://backend"})
+        assert "sourceCode://backend/main.py" in result
+
+    @pytest.mark.asyncio
+    async def test_read_memory_dir_without_trailing_slash_lists(self, read_memory_store):
+        from faust_backend.tools.read import read
+        await read_memory_store.file_write("/notes/work", "l1\nl2", index=False)
+
+        result = await read.ainvoke({"uri": "memory://notes"})
+
+        assert "notes/" in result
+        assert "work" in result
+
+    @pytest.mark.asyncio
+    async def test_read_faustbot_dir_without_trailing_slash_lists(self):
+        from faust_backend.tools.read import read
+        from faust_backend.tools.vfs import get_faustbot_vfs
+
+        vfs = await get_faustbot_vfs()
+        await vfs.mkdir("/dirdetect-test")
+        await vfs.write("/dirdetect-test/child.md", "x")
+        try:
+            result = await read.ainvoke({"uri": "faustbot://dirdetect-test"})
+            assert "faustbot://dirdetect-test/child.md" in result
+        finally:
+            await vfs.delete("/dirdetect-test/child.md")
+            await vfs.delete("/dirdetect-test")
+
+    @pytest.mark.asyncio
     async def test_read_source_code_line_range(self):
         from faust_backend.tools.read import read
         result = await read.ainvoke({"uri": "sourceCode://backend/faust_backend/tools/read.py:1-5"})
         assert "Unified Read tool" in result or "read" in result
 
     @pytest.mark.asyncio
-    async def test_read_skill_default_skill_md(self, tmp_path):
+    async def test_read_skill_lists_dir_and_reads_explicit_file(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.config_loader as conf
         from faust_backend.runtime import state
 
         agent_root = tmp_path / "agents" / "demo_agent"
         skill_root = agent_root / "skill.d" / "demo_skill"
-        skill_root.mkdir(parents=True, exist_ok=True)
+        (skill_root / "sub").mkdir(parents=True, exist_ok=True)
         (agent_root / "TASK.md").write_text("# task\n", encoding="utf-8")
         (skill_root / "SKILL.md").write_text("skill content", encoding="utf-8")
+        (skill_root / "sub" / "note.md").write_text("note content", encoding="utf-8")
 
         orig_config_root = conf.CONFIG_ROOT
         orig_agent_name = state.AGENT_NAME
@@ -439,8 +586,16 @@ class MyClass:
         state.AGENT_NAME = "demo_agent"
         state.AGENT_ROOT = str(agent_root)
         try:
-            result = await read.ainvoke({"uri": "skill://demo_skill"})
-            assert "skill content" in result
+            # 不带结尾 /：目标是目录 → 列举（不再默认读 SKILL.md）
+            listing = await read.ainvoke({"uri": "skill://demo_skill"})
+            assert "skill://demo_skill/SKILL.md" in listing
+            assert "skill://demo_skill/sub/" in listing
+            assert "skill content" not in listing
+            # 子目录（同样不带结尾 /）也列举
+            sub_listing = await read.ainvoke({"uri": "skill://demo_skill/sub"})
+            assert "skill://demo_skill/sub/note.md" in sub_listing
+            # 明确写出文件路径才读内容
+            assert "skill content" in await read.ainvoke({"uri": "skill://demo_skill/SKILL.md"})
         finally:
             conf.CONFIG_ROOT = orig_config_root
             state.AGENT_NAME = orig_agent_name
@@ -1294,6 +1449,17 @@ class TestMiddlewareMultimodal:
 # ============================================================
 
 class TestNegativeSelectorApplication:
+    def test_no_selector_numbers_whole_text(self):
+        """无行范围 + show_line_number=True → 全文编号（`:raw` 走这条路径）。"""
+        from faust_backend.tools.read import _apply_selector_to_text
+
+        content = "line001\nline002\nline003"
+        assert _apply_selector_to_text(content, None, show_line_number=True) == (
+            "1:line001\n2:line002\n3:line003"
+        )
+        assert _apply_selector_to_text(content, None, show_line_number=False) == content
+        assert _apply_selector_to_text("", None, show_line_number=True) == ""
+
     def test_negative_range_absolute_line_numbers(self):
         """show_line_number=True 时输出绝对行号，不随负数选择器变化。"""
         from faust_backend.tools.read import _apply_selector_to_text

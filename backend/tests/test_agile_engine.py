@@ -22,11 +22,11 @@ def _make_ctx(vfs, events):
     async def _vfs_read_text(path, default=""):
         return await vfs.read_text(path, default=default)
 
-    async def _vfs_write(path, content):
-        return await vfs.write(path, content)
+    async def _vfs_write(path, content, description=""):
+        return await vfs.write(path, content, description=description)
 
-    async def _vfs_write_symbolic(path, func, should_be_included_in_search=True, writable=False):
-        return await vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable)
+    async def _vfs_write_symbolic(path, func, should_be_included_in_search=True, writable=False, description=""):
+        return await vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable, description=description)
 
     async def _vfs_set_write_handler(path, func):
         return await vfs.set_write_handler(path, func)
@@ -628,6 +628,21 @@ def get_agile_module():
 
 
 @pytest.mark.asyncio
+async def test_mirror_and_overview_nodes_have_description(agile_env):
+    """镜像节点/总览节点的 description 落到 VFS（read(with_metadata=True) 可见）。"""
+    vfs, mods_dir = agile_env["vfs"], agile_env["mods_dir"]
+    _write_module(mods_dir, "demo", SIMPLE_MODULE)
+    assert (await runner.load_module("demo"))["ok"]
+
+    overview = await vfs.get_node("/agile/status")
+    assert overview is not None and "总览" in overview.description
+    status = await vfs.get_node("/agile/demo/status")
+    assert status is not None and "demo" in status.description
+    source = await vfs.get_node("/agile/modules/demo.py")
+    assert source is not None and "源码镜像" in source.description
+
+
+@pytest.mark.asyncio
 async def test_storage_set_get_roundtrip_and_file(agile_env):
     """set/get 同步可用(异步 hook 内直接调用),落盘到 plugin_data/agile-engine/<name>.json。"""
     mods_dir = agile_env["mods_dir"]
@@ -765,3 +780,51 @@ async def test_event_fire_priority_passthrough(agile_env):
     assert (await runner.load_module("prio"))["ok"]
     prios = [e["priority"] for e in events if e["id"].startswith("agileEngine::prio")]
     assert prios == ["interrupt", "normal"]
+
+
+DESC_MODULE = '''
+from agile_base import AgileModule
+
+module = AgileModule("desc", "description test")
+
+@module.vfsContentFunc("/desc/plain")
+def plain(_path):
+    return "p"
+
+@module.vfsContentFunc("/desc/documented", description="规则草稿（编辑后提交生效）")
+def documented(_path):
+    return "d"
+
+def get_agile_module():
+    return module
+'''
+
+
+@pytest.mark.asyncio
+async def test_vfs_content_func_description(agile_env):
+    """vfsContentFunc(description=...) 落到 VFS 节点；未写描述的节点保持空。"""
+    vfs, mods_dir = agile_env["vfs"], agile_env["mods_dir"]
+    _write_module(mods_dir, "desc", DESC_MODULE)
+    assert (await runner.load_module("desc"))["ok"]
+
+    documented = await vfs.get_node("/desc/documented")
+    assert documented is not None and documented.description == "规则草稿（编辑后提交生效）"
+    plain = await vfs.get_node("/desc/plain")
+    assert plain is not None and plain.description == ""
+
+    assert (await runner.reload_module("desc"))["ok"]
+    documented = await vfs.get_node("/desc/documented")
+    assert documented is not None and documented.description == "规则草稿（编辑后提交生效）"
+
+
+@pytest.mark.asyncio
+async def test_module_status_lists_vfs_nodes_with_description(agile_env):
+    """status 文档逐个列出 VFS 节点及其描述。"""
+    mods_dir = agile_env["mods_dir"]
+    _write_module(mods_dir, "desc", DESC_MODULE)
+    assert (await runner.load_module("desc"))["ok"]
+
+    status_lines = (await agile_env["vfs"].read_text("/agile/desc/status")).splitlines()
+    assert "VFS 节点 (2)  定时任务: 0" in status_lines
+    assert "- /desc/documented — 规则草稿（编辑后提交生效）" in status_lines
+    assert "- /desc/plain" in status_lines

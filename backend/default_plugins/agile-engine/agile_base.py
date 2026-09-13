@@ -89,14 +89,14 @@ class AgileContext:
         self._on_activity = on_activity
         self.storage = storage  # AgileStorage:模块级 KV 持久存储(可为 None,如测试桩)
 
-    async def vfs_write(self,path:str,content:Any):
-        await self.ctx.vfs_write(path,content)
+    async def vfs_write(self,path:str,content:Any,description:str=""):
+        await self.ctx.vfs_write(path,content,description=description)
 
     async def vfs_read_text(self,path:str,default:str=""):
         return await self.ctx.vfs_read_text(path,default)
 
-    async def vfs_write_symbolic(self,path:str,func:Callable[...,Any],writable:bool=False,should_be_included_in_search:bool=True):
-        await self.ctx.vfs_write_symbolic(path,func,writable=writable,should_be_included_in_search=should_be_included_in_search)
+    async def vfs_write_symbolic(self,path:str,func:Callable[...,Any],writable:bool=False,should_be_included_in_search:bool=True,description:str=""):
+        await self.ctx.vfs_write_symbolic(path,func,writable=writable,should_be_included_in_search=should_be_included_in_search,description=description)
 
     async def vfs_set_write_handler(self,path:str,func:Callable[...,Any]):
         await self.ctx.vfs_set_write_handler(path,func)
@@ -147,10 +147,10 @@ class AgileModule:
         self.description:str = description
         self.version:str = version
 
-    def vfsContentFunc(self,path:str,cacheStrategy:str="cache@10"):
+    def vfsContentFunc(self,path:str,cacheStrategy:str="cache@10",description:str=""):
         def decorator(func:Callable[...,Any]):
             key = f"{AgileHookType.VFS_CONTENT.value}::{path}"
-            self.hooks[key] = AgileHookBase(name=path,func=func,hookType=AgileHookType.VFS_CONTENT,attr={"cacheStrategy":cacheStrategy,"path":path})
+            self.hooks[key] = AgileHookBase(name=path,func=func,hookType=AgileHookType.VFS_CONTENT,attr={"cacheStrategy":cacheStrategy,"path":path,"description":str(description or "")})
             return func
         return decorator
 

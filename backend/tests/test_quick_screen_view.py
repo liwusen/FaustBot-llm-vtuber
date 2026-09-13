@@ -130,6 +130,11 @@ async def test_vfs_mode_nodes_and_async_content(
     assert await vfs.exists(FOCUS_PATH)
     assert await vfs.exists(TEXT_PATH)
 
+    focus_node = await vfs.get_node(FOCUS_PATH)
+    text_node = await vfs.get_node(TEXT_PATH)
+    assert focus_node is not None and "关注" in focus_node.description
+    assert text_node is not None and "分析结果" in text_node.description
+
     # focus 可写可读
     await vfs.write(FOCUS_PATH, "关注屏幕上的数字")
     assert await vfs.read_text(FOCUS_PATH) == "关注屏幕上的数字"

@@ -41,6 +41,8 @@ faustbot://协议是一个内存中的虚拟文件系统
 
 当你不确定faustbot://协议下有什么内容时,请对你感兴趣的虚拟目录使用read,它会返回虚拟目录下的文件列表(listdir)
 
+加上 `with_metadata=True`（如 `read("faustbot://", with_metadata=True)`）会在每个节点下方多打一行 `[节点用途描述]`；`skill://` 的技能名也会带上 `_meta.json` 里的一句话说明。列目录时想知道"这个文件多大/多少行/多久没动过"，同样用 `with_metadata=True`。
+
 同样的,skills://,sourceCode://虚拟协议原理类似
 
 ---
@@ -89,8 +91,8 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 ### 编写与生命周期
 
-- 全流程见 `skill://self-improvement-using-agile`(发现→可行性→研究→编写模块→部署→给用户一个惊喜)。
-- 模块编写指南与接口参考见 `skill://agile-engine`(含 `AgileModule` 装饰器、onload/interval/事件、
+- 全流程见 `skill://self-improvement-using-agile/SKILL.md`(发现→可行性→研究→编写模块→部署→给用户一个惊喜)。
+- 模块编写指南与接口参考见 `skill://agile-engine/SKILL.md`(含 `AgileModule` 装饰器、onload/interval/事件、
   `AgileContext`、缓存策略,以及涉及触发频率时的每分钟触发上限)。
 - 用户桌面环境(前台窗口/进程)可读 `faustbot://plugins/desktop-context.json`,可作为判断
   "用户此刻在做什么"的输入。

@@ -238,7 +238,11 @@ class Plugin(FaustPlugin):
                 "用 singSong(name) 演唱，未转换的歌曲会自动排队转换后开唱。",
             ]
             try:
-                await self.ctx.vfs_write("/plugins/song-studio/songs.md", "\n".join(lines) + "\n")
+                await self.ctx.vfs_write(
+                    "/plugins/song-studio/songs.md",
+                    "\n".join(lines) + "\n",
+                    description="Song Studio 曲库清单",
+                )
             except Exception as exc:
                 log.warning("song-studio vfs_write failed: %s", exc)
 

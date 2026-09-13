@@ -11,12 +11,21 @@ const state = {
   selectedAgent: "",
   agentDetail: null,
   kbTree: null,
-  kbScope: "",
-  kbCurrentDir: "/",
-  kbSelectedPath: "",
-  kbSelectedContent: "",
-  kbSelectedMeta: null,
   kbTasks: [],
+  // ── 记忆页 Explorer 状态 ──
+  memSel: { kind: "dir", path: "/" },   // { kind: "dir"|"file"|"entity", path?, entityId? }
+  memFilter: { query: "", tags: [], tagLogic: "AND", dateFrom: "", dateTo: "", declaredBy: "", sortBy: "relevance", sortOrder: "desc" },
+  memSearchDraft: null,                 // 搜索页表单草稿（未点「搜索」前的编辑内容）
+  memResultLabel: "",                   // 非条件型结果集的来源标签（如「关联文件」），空串=条件检索
+  memSearching: false,
+  memView: "list",                      // "list" | "graph" | "cloud" | "timeline" | "treemap"
+  memColumns: ["tags", "updated", "size"],
+  memExpanded: ["/"],
+  memDetail: null,                      // 选中文件已加载的 { content, meta } | { error } | null
+  memClipboard: null,                   // { mode: "copy"|"cut", path, name }
+  memSort: { by: "updated_at", order: "desc" },
+  memPage: 0,
+  memSearchResults: null,               // 全文检索结果（非空时列表进入检索态）
   araya: null,
   services: [],
   selectedService: "",
@@ -26,8 +35,6 @@ const state = {
   selectedMcpId: "",
   triggers: [],
   selectedTriggerId: "",
-  memoryView: "tree",
-  kbGraphSelectedEntityId: "",
   skills: [],
   selectedSkillSlug: "",
   skillsAgent: "",
@@ -40,8 +47,6 @@ const state = {
   pluginConfigDraft: {},
   pluginUpdates: null,
   runtimeUpdate: null,
-  graphEntities: [],
-  graphRelations: [],
   moduleContainers: {},  // { [moduleId]: { div: HTMLElement, rendered: boolean } }
   _activeContainer: null,
   arayaEventSource: null,  // Araya SSE 连接（页面切换后持续存活）
@@ -127,6 +132,15 @@ function getModuleContainer(moduleId) {
 // 白名单：离开这些页面时保留 DOM（SSE 连接、实时进度、图谱状态）
 var PERSISTENT_MODULES = ["overview", "memory", "araya"];
 
+// 模块可见性监听：持久化模块（图谱 rAF、图表实例）在切走时自行暂停/释放
+var MODULE_VISIBILITY_LISTENERS = [];
+
+function onModuleVisibilityChange(fn) {
+  if (typeof fn === "function" && !MODULE_VISIBILITY_LISTENERS.includes(fn)) {
+    MODULE_VISIBILITY_LISTENERS.push(fn);
+  }
+}
+
 function switchModule(moduleId) {
   for (const [id, entry] of Object.entries(state.moduleContainers)) {
     if (id === moduleId) {
@@ -138,6 +152,13 @@ function switchModule(moduleId) {
         entry.div.innerHTML = "";
         entry.rendered = false;
       }
+    }
+  }
+  for (const fn of MODULE_VISIBILITY_LISTENERS) {
+    try {
+      fn(moduleId);
+    } catch (err) {
+      console.error("[module] 可见性回调失败", err);
     }
   }
 }

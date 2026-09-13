@@ -11,6 +11,8 @@ import getpass
 import json
 import os
 import platform
+import time
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -42,10 +44,36 @@ log = get_logger("faust.tools.read")
 
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
 
+# 列举元数据里统计行数的源码扩展名白名单（与结构化摘要共用）
+SOURCE_EXTENSIONS = frozenset({
+    ".py",
+    ".ts",
+    ".js",
+    ".rs",
+    ".go",
+    ".java",
+    ".cpp",
+    ".c",
+    ".h",
+    ".jsx",
+    ".tsx",
+    ".vue",
+    ".rb",
+    ".swift",
+})
+# 超过该大小不统计行数（避免列举时读大文件）
+MAX_METADATA_LINE_SCAN = 2 * 1024 * 1024
+
 
 @register
 @tool
-async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+async def read(
+    uri: str,
+    *,
+    force_plain_text: bool = False,
+    show_line_number: bool = False,
+    with_metadata: bool = False,
+) -> str:
     """Read a file, directory, tool output, or memory document — the universal read tool.
 
     This is your PRIMARY tool for inspecting anything on disk or in memory.
@@ -55,7 +83,12 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
     - `read("src/main.py")` → returns only declarations (def/class/import lines)
       with line numbers. The body of functions is hidden to save context space.
       This is the default for .py, .ts, .js, .rs, .go, .java, .cpp files.
-    - Use this when: exploring a codebase, finding a function, checking imports.
+    - `read("src/main.py:raw")` → returns the file verbatim, WITHOUT the structural
+      summary. Works on every scheme (`skill://demo/scripts/a.py:raw`,
+      `sourceCode://backend/main.py:raw`). Files longer than 300 lines are still
+      truncated — use a line range for the remainder.
+    - Use this when: exploring a codebase, finding a function, checking imports;
+      or use `:raw` when you need the real body of a short file.
 
     **Reading specific line ranges:**
     - `read("src/main.py:50-100")` → returns lines 50 through 100 verbatim.
@@ -65,7 +98,24 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
 
     **Listing a directory:**
     - `read("src/")` or `read(".")` → returns a list of files and subdirectories.
+    - The trailing `/` is optional: when the resolved target IS a directory, the
+      listing is returned anyway. This holds for every scheme — `read("memory://notes")`,
+      `read("faustbot://plugins")`, `read("skill://demo")`, `read("sourceCode://backend")`
+      all list when the target is a directory.
     - Use this when: exploring what files exist, finding a file whose name you forgot.
+
+    **Listing with metadata:**
+    - `read("src/", with_metadata=True)` → each file entry gains an indented
+      metadata line: `  [3KB, 400 lines, 03/16]` (size, line count, mtime).
+      Directories never get a metadata line.
+    - `read("faustbot://", with_metadata=True)` → each VFS node gains its
+      `[description]`; `read("skill://", with_metadata=True)` and
+      `read("sourceCode://backend/", with_metadata=True)` behave like plain
+      directory listings.
+    - Line counts are shown only for known source files (≤2MB, valid UTF-8);
+      other files still show size/date.
+    - Use this when: you need a file's size, recency, or line count before
+      deciding whether to read it.
 
     **Reading tool outputs (artifact://):**
     - `read("artifact://shell_3")` → full output of a previous tool execution.
@@ -78,6 +128,7 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
     - `read("memory://notes/math")` → read a document from the memory store.
     - `read("memory://notes/math:50-100")` → read a range of that document.
     - `read("memory://")` → list all documents in the memory tree.
+    - `read("memory://notes")` → list that directory (also when it has no trailing `/`).
     - Use this when: checking your knowledge base, reviewing past notes or diaries.
 
     **Reading system resources (faustbot://):**
@@ -97,8 +148,9 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
 
     **Reading skills (skill://):**
     - `read("skill://")` → list all available skill names.
-    - `read("skill://{name}/")` → list files in a skill directory.
-    - `read("skill://{name}/SKILL.md")` → read a skill's main file.
+    - `read("skill://{name}")` or `read("skill://{name}/")` → list files in that skill directory.
+    - `read("skill://{name}/SKILL.md")` → read a skill's main file (must be stated explicitly).
+    - `read("skill://{name}/subdir")` → list that subdirectory (no trailing `/` needed).
     - `read("skill://{name}/subdir/file.md")` → read a file in a skill subdirectory.
     - Use this when: you need to check available skills or read skill instructions.
 
@@ -123,19 +175,30 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
       `50:def foo():`, `51:    return 1`.
     - Line numbers are always absolute (line 1 = first line of the file), even
       when the selector is a negative offset or the result is truncated.
+    - Works without a range too: `read("src/main.py:raw", show_line_number=True)`
+      numbers the whole file (the `[... 已截断]` notice line stays unnumbered).
+      Applies to memory documents, text artifacts and faustbot:// nodes as well.
     - Use this when: you need to reference or edit exact lines later (e.g. with
       the edit tool), or when a range's absolute position matters.
 
     Args:
-        uri: Path or URI with optional :line-selector suffix.
+        uri: Path or URI with optional selector suffix (`:50-100` line range,
+             `:raw` 关闭结构化摘要).
         force_plain_text: If True, images and multimodal artifacts return only
                           text description (no base64 data). Defaults to False.
         show_line_number: If True, prefix each output line with its absolute
-                          line number (e.g. "36:print(xxx)"). Only applies to
-                          line-ranged text output. Defaults to False.
+                          line number (e.g. "36:print(xxx)"). Applies to any
+                          text output: a line range, a whole-file read, or
+                          `:raw`. Defaults to False.
+        with_metadata: If True, directory listings add per-entry metadata
+                       (size, line count, mtime), VFS nodes add their
+                       description, and memory documents add date/lines/tags.
+                       Only applies to listings; single-file reads ignore it.
+                       Defaults to False.
 
     Returns:
-        For files: structural summary (code) or first 300 lines; or specified range.
+        For files: structural summary (code) or first 300 lines; or specified range;
+            `:raw` returns the file content without the structural summary.
         For images: multimodal JSON with base64 (unless force_plain_text=True).
         For directories: list of entries.
         For artifacts: full or ranged tool output.
@@ -145,7 +208,13 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
         For skill://: skill files and directory listings.
         For img_source://: screenshot or camera images (multimodal).
     """
-    log.info("read INPUT uri=%s force_plain_text=%s show_line_number=%s", uri, force_plain_text, show_line_number)
+    log.info(
+        "read INPUT uri=%s force_plain_text=%s show_line_number=%s with_metadata=%s",
+        uri,
+        force_plain_text,
+        show_line_number,
+        with_metadata,
+    )
     parsed = parse(uri)
     log.debug(
         "read parsed: scheme=%s path=%r selector=%r force_plain_text=%r",
@@ -156,36 +225,36 @@ async def read(uri: str, *, force_plain_text: bool = False, show_line_number: bo
     )
 
     if parsed.scheme == SCHEME_ARTIFACT:
-        result = _read_artifact(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = _read_artifact(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_MEMORY:
-        result = await _read_memory(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = await _read_memory(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_SKILL:
-        result = _read_skill(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = _read_skill(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_FAUSTBOT:
-        result = await _read_faustbot(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = await _read_faustbot(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_IMG_SOURCE:
-        result = _read_img_source(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = _read_img_source(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
     elif parsed.scheme == SCHEME_SOURCE_CODE:
-        result = _read_source_code(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = _read_source_code(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
     else:
-        result = _read_file(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number)
+        result = _read_file(parsed, force_plain_text=force_plain_text, show_line_number=show_line_number, with_metadata=with_metadata)
         log.info("read OUTPUT len=%d", len(result))
         return result
 
 
-def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     store = get_output_store()
     output_id = parsed.path
     if not output_id:
@@ -200,7 +269,9 @@ def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: 
     if art is None:
         return f"[找不到 artifact: {output_id}]"
 
-    if parsed.selector_lines:
+    if parsed.selector_lines or (
+        show_line_number and art.content_type not in ("image", "multimodal")
+    ):
         return _apply_selector_to_text(art.content, parsed.selector_lines, show_line_number=show_line_number)
 
     # Image/multimodal artifacts: return plain text if requested
@@ -210,7 +281,7 @@ def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: 
     return art.get()
 
 
-async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     try:
         from faust_backend.memory import get_memory
     except ImportError:
@@ -223,6 +294,7 @@ async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_numb
     import asyncio as _asyncio
 
     nid = _path_id(path)
+    node_type = store._get_node_attr(nid, "type", "") if path and store._has_node(nid) else ""
     if path and store._has_node(nid):
         ct = store._get_node_attr(nid, "content_type", "")
         if ct.startswith("image/"):
@@ -246,11 +318,12 @@ async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_numb
             }
             return _json.dumps(payload, ensure_ascii=False)
 
-    # empty path → tree
-    if not path or parsed.is_dir:
+    # 空路径 / 显式目录 / 目标实际类型是目录（路径未以 / 结尾也算）→ 列目录
+    if not path or parsed.is_dir or node_type == "dir":
         try:
-            tree = await store.tree_list(path or "/")
-            return _format_tree(tree)
+            tree = await store.tree_list(path or "/", include_metadata=with_metadata,
+                                         include_line_count=with_metadata)
+            return _format_tree(tree, with_metadata=with_metadata)
         except Exception as e:
             return f"读取记忆树出错: {e}"
 
@@ -263,13 +336,12 @@ async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_numb
         return f"读取记忆文档出错: {e}"
 
     content = result.get("content", "")
-    if parsed.selector_lines:
+    if parsed.selector_lines or show_line_number:
         return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)
     return content
 
 
-def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
-    del force_plain_text
+def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     from faust_backend.runtime import state
 
     raw_path = str(parsed.path or "").strip("/")
@@ -278,11 +350,18 @@ def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: boo
         skill_root = Path(state.AGENT_ROOT) / "skill.d"
         if not skill_root.exists():
             return "(没有可用的 skill)"
-        names = sorted(d.name for d in skill_root.iterdir() if d.is_dir())
+        names = sorted(d for d in skill_root.iterdir() if d.is_dir())
         if not names:
             return "(没有可用的 skill)"
         lines = ["skill:// 可用 skill:"]
-        lines += [f"  skill://{name}/" for name in names]
+        for d in names:
+            lines.append(f"  skill://{d.name}/")
+            if with_metadata:
+                from faust_backend.skill_manager import _read_skill_meta
+
+                desc = str(_read_skill_meta(d).get("description") or "").strip()
+                if desc:
+                    lines.append(f"    [{desc}]")
         return "\n".join(lines)
 
     parts = [part for part in raw_path.split("/") if part]
@@ -290,48 +369,73 @@ def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: boo
     if not skill_name:
         return "[skill 名称不能为空]"
 
-    relative_parts = parts[1:] or ["SKILL.md"]
-    # 如果路径以 / 结尾（显式目录请求），或只有 skill_name 后空格默认为目录
-    if raw_path.endswith("/") or (len(parts) == 1 and parsed.is_dir):
-        skill_root_dir = Path(state.AGENT_ROOT) / "skill.d" / skill_name
-        if not skill_root_dir.is_dir():
-            return f"[skill 不存在: {skill_name}]"
-        items = sorted(skill_root_dir.iterdir())
+    relative_parts = parts[1:]
+    if any(part in (".", "..") for part in relative_parts):
+        return "[不允许越界访问 skill 目录]"
+
+    skill_root = Path(state.AGENT_ROOT) / "skill.d" / skill_name
+    if not skill_root.is_dir():
+        return f"[skill 不存在: {skill_name}]"
+
+    # 无子路径（skill://name，带不带结尾 / 都算）或目标子路径本身是目录 → 列目录
+    target_path: Path | None = None
+    is_dir_target = True
+    if relative_parts:
+        target_path = (skill_root / Path(*relative_parts)).resolve()
+        if not str(target_path).startswith(str(skill_root.resolve())):
+            return "[不允许访问 skill 目录外的文件]"
+        is_dir_target = target_path.is_dir()
+
+    if is_dir_target:
+        dir_path = target_path or skill_root
+        dir_label = f"{skill_name}/{'/'.join(relative_parts)}" if relative_parts else skill_name
+        items = sorted(dir_path.iterdir())
         files = []
         dirs = []
         for item in items:
             if item.name.startswith("."):
                 continue
             if item.is_dir():
-                dirs.append(item.name + "/")
+                dirs.append(item)
             else:
-                files.append(item.name)
-        lines = [f"skill://{skill_name}/ 内容:"]
-        lines += [f"  skill://{skill_name}/{d}" for d in dirs]
-        lines += [f"  skill://{skill_name}/{f}" for f in files]
+                files.append(item)
+        lines = [f"skill://{dir_label}/ 内容:"]
+        lines += [f"  skill://{dir_label}/{d.name}/" for d in dirs]
+        for f in files:
+            lines.append(f"  skill://{dir_label}/{f.name}")
+            if with_metadata:
+                meta = _file_metadata_line(f)
+                if meta:
+                    lines.append(f"    [{meta}]")
         return "\n".join(lines)
 
-    if any(part in (".", "..") for part in relative_parts):
-        return "[不允许越界访问 skill 目录]"
-
-    skill_root = Path(state.AGENT_ROOT) / "skill.d" / skill_name
-    target_path = (skill_root / Path(*relative_parts)).resolve()
-    try:
-        skill_root_resolved = skill_root.resolve()
-    except FileNotFoundError:
-        skill_root_resolved = skill_root
-    if not str(target_path).startswith(str(skill_root_resolved)):
-        return "[不允许访问 skill 目录外的文件]"
+    assert target_path is not None
     if not target_path.exists():
         return f"[skill 文件不存在: {skill_name}/{'/'.join(relative_parts)}]"
 
     file_uri = str(target_path)
     if parsed.selector:
         file_uri += parsed.selector
-    return _read_file(parse(file_uri))
+    return _read_file(
+        parse(file_uri),
+        force_plain_text=force_plain_text,
+        show_line_number=show_line_number,
+    )
 
 
-async def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+async def _vfs_entry_lines(vfs, child_path: str, label: str, *, with_metadata: bool) -> list[str]:
+    """渲染一个 VFS 列举条目：名称行 + 可选的缩进 [描述] 行。"""
+    suffix = "/" if await vfs.is_dir(child_path) else ""
+    lines = [f"  {label}{suffix}"]
+    if with_metadata:
+        node = await vfs.get_node(child_path)
+        desc = (node.description if node is not None else "").strip()
+        if desc:
+            lines.append(f"    [{desc}]")
+    return lines
+
+
+async def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     del force_plain_text
     raw_path = str(parsed.path or "").strip("/")
     vfs = await get_faustbot_vfs(refresh=True)
@@ -340,9 +444,7 @@ async def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_nu
         items = await vfs.list_dir("/") or []
         lines = ["faustbot:// 可用资源:"]
         for item in items:
-            child_path = "/" + item
-            suffix = "/" if await vfs.is_dir(child_path) else ""
-            lines.append(f"  faustbot://{item}{suffix}")
+            lines += await _vfs_entry_lines(vfs, "/" + item, f"faustbot://{item}", with_metadata=with_metadata)
         return "\n".join(lines)
 
     normalized = "/" + raw_path
@@ -351,8 +453,7 @@ async def _read_faustbot(parsed, *, force_plain_text: bool = False, show_line_nu
         lines = [f"faustbot://{raw_path}/ 内容:"]
         for item in items:
             child_path = normalized.rstrip("/") + "/" + item
-            suffix = "/" if await vfs.is_dir(child_path) else ""
-            lines.append(f"  faustbot://{raw_path}/{item}{suffix}")
+            lines += await _vfs_entry_lines(vfs, child_path, f"faustbot://{raw_path}/{item}", with_metadata=with_metadata)
         return "\n".join(lines)
 
     content = await vfs.read_text(normalized, default="")
@@ -366,14 +467,13 @@ def _repo_root() -> Path:
     return Path(conf.PROJECT_ROOT).parent
 
 
-def _read_source_code(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+def _read_source_code(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     """读取 FaustBot 仓库源码：sourceCode://{path}。
 
     文件 → 与 read 普通文件一致（结构化摘要 / 行范围 / 全文）；
     目录（含尾斜杠或空路径）→ 自动列出目录内容。
     路径被限制在仓库根内，禁止 .. 越界。
     """
-    del force_plain_text
     repo_root = _repo_root()
     raw_path = str(parsed.path or "").strip("/")
     rel_parts = [p for p in raw_path.split("/") if p]
@@ -384,8 +484,14 @@ def _read_source_code(parsed, *, force_plain_text: bool = False, show_line_numbe
         for item in sorted(repo_root.iterdir()):
             if item.name.startswith("."):
                 continue
-            suffix = "/" if item.is_dir() else ""
-            lines.append(f"  sourceCode://{item.name}{suffix}")
+            if item.is_dir():
+                lines.append(f"  sourceCode://{item.name}/")
+            else:
+                lines.append(f"  sourceCode://{item.name}")
+                if with_metadata:
+                    meta = _file_metadata_line(item)
+                    if meta:
+                        lines.append(f"    [{meta}]")
         return "\n".join(lines)
 
     if any(p in (".", "..") for p in rel_parts):
@@ -407,7 +513,12 @@ def _read_source_code(parsed, *, force_plain_text: bool = False, show_line_numbe
                 files.append(item.name)
         lines = [f"sourceCode://{raw_path}/ 内容:"]
         lines += [f"  sourceCode://{raw_path}/{d}" for d in dirs]
-        lines += [f"  sourceCode://{raw_path}/{f}" for f in files]
+        for f in files:
+            lines.append(f"  sourceCode://{raw_path}/{f}")
+            if with_metadata:
+                meta = _file_metadata_line(target / f)
+                if meta:
+                    lines.append(f"    [{meta}]")
         return "\n".join(lines)
 
     if not target.exists():
@@ -416,10 +527,14 @@ def _read_source_code(parsed, *, force_plain_text: bool = False, show_line_numbe
     file_uri = str(target)
     if parsed.selector:
         file_uri += parsed.selector
-    return _read_file(parse(file_uri))
+    return _read_file(
+        parse(file_uri),
+        force_plain_text=force_plain_text,
+        show_line_number=show_line_number,
+    )
 
 
-def _read_img_source(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+def _read_img_source(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     path = str(parsed.path or "").strip("/")
 
     if not path or parsed.is_dir:
@@ -602,12 +717,21 @@ def _apply_selector_to_text(
     *,
     show_line_number: bool = False,
 ) -> str:
-    if not selector_lines:
-        return content
-    start, end = selector_lines
     lines = content.split("\n")
-    if not lines:
-        return ""
+
+    def _numbered(selected: list[str], first_line_no: int) -> str:
+        return "\n".join(
+            f"{first_line_no + i}:{line}"
+            for i, line in enumerate(selected)
+        )
+
+    if not selector_lines:
+        # 无行范围（整篇读取 / `:raw`）：开关打开时给全文编号
+        if not content or not show_line_number:
+            return content
+        return _numbered(lines, 1)
+
+    start, end = selector_lines
 
     def _resolve(line_no: int) -> int:
         if line_no < 0:
@@ -623,14 +747,11 @@ def _apply_selector_to_text(
     selected = lines[resolved_start - 1 : resolved_end]
     if show_line_number:
         # 行号始终为文件中的绝对行号（首行=1），与选择器写法无关
-        return "\n".join(
-            f"{resolved_start + i}:{line}"
-            for i, line in enumerate(selected)
-        )
+        return _numbered(selected, resolved_start)
     return "\n".join(selected)
 
 
-def _read_file(parsed, *, force_plain_text: bool = False, show_line_number: bool = False) -> str:
+def _read_file(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
     path_str = parsed.path
 
     # Empty path → current directory
@@ -641,7 +762,7 @@ def _read_file(parsed, *, force_plain_text: bool = False, show_line_number: bool
 
     # Directory
     if parsed.is_dir or (file_path.exists() and file_path.is_dir()):
-        return _list_directory(file_path)
+        return _list_directory(file_path, with_metadata=with_metadata)
 
     # File
     if not file_path.exists():
@@ -669,29 +790,55 @@ def _read_file(parsed, *, force_plain_text: bool = False, show_line_number: bool
     if parsed.selector_lines:
         return _apply_selector_to_text(content, parsed.selector_lines, show_line_number=show_line_number)
 
+    # `:raw` → 关闭结构化摘要，返回原文（长文件仍按普通文本截断）
+    if parsed.is_raw:
+        # 先编号再截断，截断提示行不带行号
+        return _truncate_long(
+            _apply_selector_to_text(content, None, show_line_number=show_line_number)
+        )
+
     # For code files, return structural summary
-    if file_path.suffix in (
-        ".py",
-        ".ts",
-        ".js",
-        ".rs",
-        ".go",
-        ".java",
-        ".cpp",
-        ".c",
-        ".h",
-        ".jsx",
-        ".tsx",
-        ".vue",
-        ".rb",
-        ".swift",
-    ):
+    if file_path.suffix.lower() in SOURCE_EXTENSIONS:
         return _structural_summary(content, str(file_path))
     return _truncate_long(content)
 
 
-def _list_directory(dir_path: Path) -> str:
-    """Return a simple dirent list."""
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size}B"
+    if size < 1024 * 1024:
+        return f"{size // 1024}KB"
+    return f"{size / (1024 * 1024):.1f}MB"
+
+
+def _count_source_lines(path: Path) -> int | None:
+    """白名单源码文件（≤2MB 且 UTF-8 可解码）返回行数，否则 None。"""
+    if path.suffix.lower() not in SOURCE_EXTENSIONS:
+        return None
+    try:
+        if path.stat().st_size > MAX_METADATA_LINE_SCAN:
+            return None
+        return len(path.read_text(encoding="utf-8").splitlines())
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _file_metadata_line(path: Path) -> str:
+    """条目元数据 `[大小, N lines, MM/DD]`；stat 失败返回空串。"""
+    try:
+        st = path.stat()
+    except OSError:
+        return ""
+    parts = [_format_size(st.st_size)]
+    line_count = _count_source_lines(path)
+    if line_count is not None:
+        parts.append(f"{line_count} lines")
+    parts.append(time.strftime("%m/%d", time.localtime(st.st_mtime)))
+    return ", ".join(parts)
+
+
+def _list_directory(dir_path: Path, *, with_metadata: bool = False) -> str:
+    """Return a dirent list; with_metadata adds an indented metadata line per file."""
     try:
         entries = sorted(
             dir_path.iterdir(), key=lambda e: (e.is_file(), e.name.lower())
@@ -700,8 +847,12 @@ def _list_directory(dir_path: Path) -> str:
         return f"列出目录出错: {e}"
     lines = []
     for entry in entries:
-        suffix = "/" if entry.is_dir() else ""
-        lines.append(f"  {entry.name}{suffix}")
+        is_dir = entry.is_dir()
+        lines.append(f"  {entry.name}{'/' if is_dir else ''}")
+        if with_metadata and not is_dir:
+            meta = _file_metadata_line(entry)
+            if meta:
+                lines.append(f"    [{meta}]")
     return "\n".join(lines)
 
 
@@ -785,12 +936,37 @@ def _truncate_long(content: str, max_lines: int = 300) -> str:
     return "\n".join(lines[:max_lines]) + f"\n[... 共 {len(lines)} 行, 已截断]"
 
 
-def _format_tree(tree: dict, indent: int = 0) -> str:
+def _iso_to_mmdd(value: str) -> str:
+    """ISO 时间戳 → 本地 MM/DD；无法解析返回空串。"""
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return dt.astimezone().strftime("%m/%d")
+
+
+def _memory_entry_metadata(node: dict) -> str:
+    """记忆文件条目的 `[MM/DD, N lines, #tag...]`；无可用字段返回空串。"""
+    parts: list[str] = []
+    updated = str(node.get("updated_at") or "").strip()
+    if updated:
+        mmdd = _iso_to_mmdd(updated)
+        if mmdd:
+            parts.append(mmdd)
+    line_count = node.get("line_count")
+    if isinstance(line_count, int):
+        parts.append(f"{line_count} lines")
+    tags = [str(t).strip() for t in (node.get("tags") or []) if str(t).strip()]
+    parts += [f"#{t}" for t in tags[:3]]
+    return ", ".join(parts)
+
+
+def _format_tree(tree: dict, indent: int = 0, *, with_metadata: bool = False) -> str:
     """Format a memory tree node into a text listing.
 
     只列出当前层的直接子项（类似 ``ls``），不再递归展开整个子树：
     - 目录显示为 ``name/``
-    - 文件显示为 ``name``
+    - 文件显示为 ``name``，with_metadata 时下一行补充 ``[MM/DD, N lines, #tag]``
     """
     result = []
     name = tree.get("name", "/")
@@ -805,6 +981,10 @@ def _format_tree(tree: dict, indent: int = 0) -> str:
             result.append(f"{prefix}  {cname}/")
         else:
             result.append(f"{prefix}  {cname}")
+            if with_metadata:
+                meta = _memory_entry_metadata(child)
+                if meta:
+                    result.append(f"{prefix}    [{meta}]")
     return "\n".join(result)
 
 

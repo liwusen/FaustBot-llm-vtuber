@@ -98,7 +98,7 @@ class _FakeCtx:
     async def list_configs(self):
         return dict(self._config)
 
-    async def vfs_write(self, path, content):
+    async def vfs_write(self, path, content, description=""):
         self._config.setdefault('_vfs', {})[path] = content
 
 

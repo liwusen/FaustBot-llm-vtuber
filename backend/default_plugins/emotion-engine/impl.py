@@ -692,12 +692,14 @@ class Plugin(FaustPlugin):
             "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。\n"
             "调用后返回当前完整情绪向量。该工具的调用对用户不可见，\n"
             "请大胆使用。当前状态也可通过 faustbot://plugins/emotion-engine-state.json 读取。\n",
+            description="Emotion Engine 插件说明：EmotionInvokeSigned 工具与情绪标签",
         )
         await ctx.vfs_write_symbolic(
             "/plugins/emotion-engine-state.json",
             lambda _path: json.dumps(
                 self.get_state_payload(), ensure_ascii=False, indent=2
             ),
+            description="当前情绪向量与最近一次更新时间",
         )
 
     @hookimpl

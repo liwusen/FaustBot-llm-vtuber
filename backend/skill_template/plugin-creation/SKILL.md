@@ -247,8 +247,8 @@ ctx.list_configs()               # 列出所有配置
 
 ```python
 ctx.vfs_read_text(path, default)  # 读取文本
-ctx.vfs_write(path, content)      # 写入文本
-ctx.vfs_write_symbolic(path, func, search=True)  # 写入动态内容
+ctx.vfs_write(path, content, description="节点用途")  # 写入文本（description 同 vfs_write_symbolic，会展示在 read(..., with_metadata=True) 的列举里）
+ctx.vfs_write_symbolic(path, func, search=True, description="节点用途")  # 写入动态内容（description 会展示在 read(..., with_metadata=True) 的列举里）
 ctx.vfs_delete(path)              # 删除文件
 ctx.vfs_list(path)                # 列出目录
 ```

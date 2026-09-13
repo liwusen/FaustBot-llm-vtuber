@@ -322,6 +322,7 @@ class Plugin(FaustPlugin):
             "当你想根据用户环境主动提醒、播报、关心用户时，请先读取这个上下文文件。\n"
             "规则（自动触发动作）的编辑入口见 faustbot://plugins/desktop-mood/rules.md"
             "，改规则必须走「编辑 rules.json 草稿 → 读/写 reload 节点提交」。\n",
+            description="Desktop Mood 插件说明：桌面上下文节点与规则编辑入口",
         )
         await self._install_rule_nodes(ctx)
 
@@ -334,18 +335,24 @@ class Plugin(FaustPlugin):
         每次插件启动无条件重播种草稿，丢弃上一次未提交的改动。
         """
         rules = self.store.snapshot().get('rules', []) if self.store is not None else []
-        await ctx.vfs_write(RULES_NODE_PATH, json.dumps(rules, ensure_ascii=False, indent=2))
+        await ctx.vfs_write(
+            RULES_NODE_PATH,
+            json.dumps(rules, ensure_ascii=False, indent=2),
+            description="桌面心情规则草稿：只改这里，读/写 reload 节点才生效",
+        )
         await ctx.vfs_set_write_handler(RULES_NODE_PATH, self._on_rules_draft_write)
         await ctx.vfs_set_edit_handler(RULES_NODE_PATH, self._on_rules_draft_write)
         await ctx.vfs_write_symbolic(
             RULES_GUIDE_PATH,
             lambda _path: self._rules_guide_text(),
             should_be_included_in_search=False,
+            description="规则编辑指南：条件/动作 schema 与提交流程",
         )
         await ctx.vfs_write_symbolic(
             RULES_RELOAD_PATH,
             self._on_reload_read,
             should_be_included_in_search=False,
+            description="提交桌面心情规则草稿（read/write 均触发生效）",
         )
         await ctx.vfs_set_write_handler(RULES_RELOAD_PATH, self._on_reload_write)
         self._draft_dirty = False
@@ -711,7 +718,11 @@ class Plugin(FaustPlugin):
         self._smtc_rising_edge = playing_now and self._last_smtc_playing is False
         self._last_smtc_playing = playing_now
         self.store.update_snapshot(context)
-        await self.ctx.vfs_write('/plugins/desktop-context.json', json.dumps(context, ensure_ascii=False, indent=2))
+        await self.ctx.vfs_write(
+            '/plugins/desktop-context.json',
+            json.dumps(context, ensure_ascii=False, indent=2),
+            description="当前桌面上下文：活动窗口/进程、空闲时长、CPU/内存/电量、天气、媒体播放",
+        )
         idle_seconds = int(context.get('idle_seconds') or 0)
         last_idle_state = self.store.get_last_idle_state()
         next_idle_state = 'idle' if idle_seconds >= 600 else 'active'

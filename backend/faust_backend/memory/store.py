@@ -364,11 +364,25 @@ class GraphStore:
         relative = norm_path.strip("/")
         return self.meta_dir / f"{relative}.meta.json"
 
+    def _count_content_lines(self, norm_path: str) -> int | None:
+        """列举元数据用：内容文件 ≤2MB 且 UTF-8 可解码时返回行数，否则 None。"""
+        cp = self._content_path(norm_path)
+        try:
+            if cp.stat().st_size > 2 * 1024 * 1024:
+                return None
+            text = cp.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        return len(text.splitlines())
+
     # ── tree operations ──
 
-    async def tree_list(self, scope: str | None = None) -> dict:
+    async def tree_list(self, scope: str | None = None, *,
+                        include_metadata: bool = False,
+                        include_line_count: bool = False) -> dict:
         scope_path = _normalize_path(scope or "/")
-        log.info("tree_list scope=%s", scope_path)
+        log.info("tree_list scope=%s include_metadata=%s include_line_count=%s",
+                 scope_path, include_metadata, include_line_count)
         scope_id = _path_id(scope_path)
         if not self._has_node(scope_id):
             return {"path": scope_path, "type": "dir", "children": []}
@@ -397,6 +411,21 @@ class GraphStore:
                     "type": "file",
                     "description": self._get_node_attr(nid, "description", ""),
                 }
+                if include_metadata:
+                    meta = self._read_meta(rel)
+                    node["updated_at"] = str(meta.get("updated_at") or "")
+                    node["tags"] = [str(t).strip() for t in (meta.get("tags") or []) if str(t).strip()]
+                    node["chunk_count"] = int(meta.get("chunk_count") or 0)
+                    node["indexed"] = bool(meta.get("indexed"))
+                    node["declared_by"] = str(meta.get("declared_by") or "")
+                    node["score_patch"] = float(meta.get("score_patch") or 0.0)
+                    node["content_type"] = str(
+                        meta.get("content_type")
+                        or self._get_node_attr(nid, "content_type", "")
+                        or ""
+                    )
+                    if include_line_count:
+                        node["line_count"] = self._count_content_lines(rel)
                 return node
             children = []
             for cid, _ in self._children(nid):

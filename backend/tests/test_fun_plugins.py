@@ -240,3 +240,69 @@ async def test_plugin_communicate_dispatch():
     feeds = await pm.communicate('rss-watcher', {'action': 'get_feeds'})
     assert feeds['status'] == 'ok'
     assert any(int(item['id']) == feed_id for item in feeds['items'])
+
+
+@pytest.mark.asyncio
+async def test_builtin_plugin_vfs_nodes_have_description(_isolate_home):
+    """内置插件注册的 VFS 节点都带 description，且 read(with_metadata=True) 列举可见。"""
+    from faust_backend.tools.read import read
+
+    pm = await _build_manager()
+    for pid in ('emotion-engine', 'rss-watcher', 'desktop-mood'):
+        pm.set_plugin_enabled(pid, True)
+    await pm.reload(force=True)
+
+    vfs = await get_faustbot_vfs(refresh=True)
+    expected = {
+        '/plugins/desktop-mood.md': 'Desktop Mood',
+        '/plugins/desktop-context.json': '桌面上下文',
+        '/plugins/desktop-mood/rules.json': '草稿',
+        '/plugins/desktop-mood/rules.md': '指南',
+        '/plugins/desktop-mood/reload': '提交',
+        '/plugins/emotion-engine.md': 'Emotion Engine',
+        '/plugins/emotion-engine-state.json': '情绪向量',
+        '/plugins/rss-watcher.md': 'RSS Watcher',
+        '/plugins/rss-watcher/index.md': '索引',
+    }
+    for path, snippet in expected.items():
+        node = await vfs.get_node(path)
+        assert node is not None, path
+        assert snippet in node.description, (path, node.description)
+
+    listing = await read.ainvoke(
+        {"uri": "faustbot://plugins/desktop-mood/", "with_metadata": True}
+    )
+    assert "草稿" in listing
+    assert "提交" in listing
+
+
+@pytest.mark.asyncio
+async def test_desktop_mood_context_keeps_description_across_writes(_isolate_home):
+    """上下文节点持续重写，描述不被后续写入清空。"""
+    pm = await _build_manager()
+    plugin = await _desktop_mood_plugin(pm)
+    vfs = await get_faustbot_vfs(refresh=True)
+
+    await plugin.heartbeat(plugin.ctx)
+    node = await vfs.get_node('/plugins/desktop-context.json')
+    assert node is not None
+    assert '桌面上下文' in node.description
+
+
+@pytest.mark.asyncio
+async def test_rss_feed_node_describes_item(_isolate_home):
+    """每条 RSS 正文节点带来源描述（正文节点名含标题/日期，无法静态描述）。"""
+    pm = await _build_manager()
+    pm.set_plugin_enabled('rss-watcher', True)
+    await pm.reload(force=True)
+    plugin = pm._plugins['rss-watcher']['plugin']
+
+    await plugin._write_item_to_vfs(
+        {'title': 'ExampleItem', 'link': 'https://example.com/a', 'published': 1721361600,
+         'summary': 'text'},
+        'Example/Item',
+    )
+    vfs = await get_faustbot_vfs(refresh=True)
+    node = await vfs.get_node('/plugins/rss-watcher/RSS-FEED-ExampleItem-20240719.md')
+    assert node is not None
+    assert 'Example/Item' in node.description

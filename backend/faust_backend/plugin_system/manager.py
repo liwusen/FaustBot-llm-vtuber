@@ -199,11 +199,11 @@ class PluginManager:
         async def _vfs_read_text(path, default=""):
             return await vfs.read_text(path, default=default)
 
-        async def _vfs_write(path, content):
-            return await vfs.write(path, content)
+        async def _vfs_write(path, content, description=""):
+            return await vfs.write(path, content, description=description)
 
-        async def _vfs_write_symbolic(path, func, should_be_included_in_search=True, writable=False):
-            return await vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable)
+        async def _vfs_write_symbolic(path, func, should_be_included_in_search=True, writable=False, description=""):
+            return await vfs.write_symbolic(path, func, should_be_included_in_search=should_be_included_in_search, writable=writable, description=description)
 
         async def _vfs_set_write_handler(path, func):
             return await vfs.set_write_handler(path, func)

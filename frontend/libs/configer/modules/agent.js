@@ -39,38 +39,13 @@ async function ensureModuleData(moduleId) {
     }
   }
   if (moduleId === "memory") {
-    const treeRes = await cfgApi("GET", "/faust/memory/tree", null, { scope: state.kbScope || null });
+    // 一次请求拿齐树 + 元数据（tags/updated_at/chunk_count/indexed/declared_by/score_patch）
+    const treeRes = await cfgApi("GET", "/faust/memory/tree", null, { include_metadata: true });
     state.kbTree = treeRes.tree || null;
-    state.kbCurrentDir = normalizeKbPath(state.kbCurrentDir || "/");
-    if (!findKbNodeByPath(state.kbTree, state.kbCurrentDir)) {
-      state.kbCurrentDir = "/";
-    }
     const taskRes = await cfgApi("GET", "/faust/memory/tasks");
     state.kbTasks = taskRes.items || [];
-    if (state.kbSelectedPath) {
-      try {
-        const nodeRes = await cfgApi("GET", "/faust/memory/get", null, { path: state.kbSelectedPath });
-        state.kbSelectedContent = String(nodeRes.content || "");
-        state.kbSelectedMeta = nodeRes.meta || {};
-      } catch (_e) {
-        state.kbSelectedPath = "";
-        state.kbSelectedContent = "";
-        state.kbSelectedMeta = null;
-      }
-    } else {
-      state.kbSelectedContent = "";
-      state.kbSelectedMeta = null;
-    }
-    try {
-      const [entities, relations] = await Promise.all([
-        cfgApi("GET", "/faust/memory/graph/entities"),
-        cfgApi("GET", "/faust/memory/graph/relations"),
-      ]);
-      state.graphEntities = entities.items || [];
-      state.graphRelations = relations.items || [];
-    } catch (e) {
-      state.graphEntities = [];
-      state.graphRelations = [];
+    if (state.memSel && state.memSel.kind !== "entity" && !findKbNodeByPath(state.kbTree, state.memSel.path || "/")) {
+      state.memSel = { kind: "dir", path: "/" };
     }
   }
   if (moduleId === "runtime") {

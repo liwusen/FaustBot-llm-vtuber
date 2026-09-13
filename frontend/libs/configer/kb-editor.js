@@ -5,11 +5,7 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
   pathInput.value = String(path || "");
   pathInput.placeholder = "输入 KB 路径，例如 reactor/core/doc.md";
 
-  const tagsInput = el("input", "input");
-  tagsInput.placeholder = "标签（逗号分隔）";
   const meta = initialMeta && typeof initialMeta === "object" ? initialMeta : {};
-  const currentTags = Array.isArray(meta.tags) ? meta.tags : [];
-  tagsInput.value = currentTags.join(", ");
 
   const indexChk = document.createElement("input");
   indexChk.type = "checkbox";
@@ -40,30 +36,24 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
       showBanner("error", "请输入有效的 KB 文件路径。");
       return;
     }
-    const tags = tagsInput.value
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
     const data = await cfgApi("POST", "/faust/memory/save", {
       path: targetPath,
       content: _editor ? _editor.getValue() : "",
       declared_by: "config-center",
       index: indexChk.checked,
-      tags,
     });
     const savedMeta = data.meta || {};
     meta.updated_at = savedMeta.updated_at;
     meta.declared_by = savedMeta.declared_by;
     meta.chunk_count = savedMeta.chunk_count;
     meta.indexed = savedMeta.indexed;
-    meta.tags = savedMeta.tags || tags;
+    if (Array.isArray(savedMeta.tags)) meta.tags = savedMeta.tags;
     refreshMetaText();
-    state.kbSelectedPath = targetPath;
-    state.kbSelectedContent = _editor ? _editor.getValue() : "";
-    state.kbCurrentDir = kbParentPath(targetPath);
     await ensureModuleData("memory");
+    state.memSel = { kind: "file", path: targetPath };
+    await renderModule();
+    memSelectFile(targetPath);
     showBanner("success", `KB 已保存: ${targetPath}`);
-    renderModule();
   };
 
   const deleteAction = async () => {
@@ -71,19 +61,18 @@ async function openKbEditorModal(path, initialContent = "", initialMeta = null) 
     if (!targetPath || targetPath === "/") return;
     if (!window.confirm(`确定删除 ${targetPath} ?`)) return;
     await cfgApi("POST", "/faust/memory/delete", { path: targetPath });
-    state.kbSelectedPath = "";
-    state.kbSelectedContent = "";
-    state.kbCurrentDir = kbParentPath(targetPath);
+    state.memSel = { kind: "dir", path: kbParentPath(targetPath) };
+    state.memDetail = null;
     await ensureModuleData("memory");
     closeModal();
+    await renderModule();
     showBanner("success", `KB 已删除: ${targetPath}`);
-    renderModule();
   };
 
   const headerBar = el("div", "toolbar");
   headerBar.append(pathInput);
   const settingBar = el("div", "toolbar");
-  settingBar.append(tagsInput, indexChk, indexLbl);
+  settingBar.append(indexChk, indexLbl, el("span", "card-help", "标签在记忆页详情栏中编辑"));
   const actionBar = el("div", "toolbar");
   actionBar.append(
     makeButton("保存", saveAction, "btn btn-primary"),

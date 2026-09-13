@@ -153,6 +153,94 @@ class TestPhase1TreeStructure:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Phase 1b: tree_list include_metadata
+# ══════════════════════════════════════════════════════════════════════
+
+class TestTreeListIncludeMetadata:
+
+    METADATA_KEYS = {
+        "updated_at", "tags", "chunk_count", "indexed",
+        "declared_by", "score_patch", "content_type",
+    }
+
+    def _write_file(self, memory_store):
+        async def _test():
+            await memory_store.file_write(
+                "/meta/doc.md", "第一行\n第二行", description="元数据文件",
+                declared_by="config", tags=["alpha", "beta"], index=False,
+            )
+        asyncio.run(_test())
+
+    def _find_file_node(self, tree, name="doc.md"):
+        meta_dir = next(c for c in tree["children"] if c["name"] == "meta")
+        return next(c for c in meta_dir["children"] if c["name"] == name)
+
+    def test_tree_list_include_metadata_adds_keys_without_line_count(self, memory_store):
+        self._write_file(memory_store)
+        tree = asyncio.run(memory_store.tree_list("/", include_metadata=True))
+        node = self._find_file_node(tree)
+
+        assert self.METADATA_KEYS <= set(node), f"missing keys: {self.METADATA_KEYS - set(node)}"
+        assert "line_count" not in node
+        assert node["description"] == "元数据文件"
+        assert node["tags"] == ["alpha", "beta"]
+        assert node["declared_by"] == "config"
+        assert node["chunk_count"] >= 1
+        assert node["indexed"] is False
+        assert node["score_patch"] == 0.0
+        assert node["content_type"] == ""
+        assert isinstance(node["updated_at"], str) and node["updated_at"]
+
+    def test_tree_list_default_excludes_metadata_keys(self, memory_store):
+        self._write_file(memory_store)
+        tree = asyncio.run(memory_store.tree_list("/"))
+        node = self._find_file_node(tree)
+
+        assert set(node) == {"path", "name", "type", "description"}
+        assert not (self.METADATA_KEYS & set(node))
+        assert node["description"] == "元数据文件"
+
+
+class TestTreeRouteIncludeMetadata:
+    """路由层：include_metadata 参数名一旦漂移，前端会静默拿不到元数据（不报错），故单独钉住。"""
+
+    def _client(self, memory_store, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        import faust_backend.memory.api as memory_api
+
+        monkeypatch.setattr(memory_api, "_m", lambda: memory_store)
+        app = FastAPI()
+        app.include_router(memory_api.router)
+        return TestClient(app)
+
+    def _write_file(self, memory_store):
+        async def _test():
+            await memory_store.file_write(
+                "/meta/doc.md", "第一行", description="元数据文件",
+                declared_by="config", tags=["alpha"], index=False,
+            )
+        asyncio.run(_test())
+
+    def _doc_node(self, tree):
+        meta_dir = next(c for c in tree["children"] if c["name"] == "meta")
+        return next(c for c in meta_dir["children"] if c["name"] == "doc.md")
+
+    def test_route_forwards_include_metadata(self, memory_store, monkeypatch):
+        self._write_file(memory_store)
+        client = self._client(memory_store, monkeypatch)
+
+        with_meta = self._doc_node(client.get("/faust/memory/tree", params={"include_metadata": True}).json()["tree"])
+        plain = self._doc_node(client.get("/faust/memory/tree").json()["tree"])
+
+        assert with_meta["chunk_count"] >= 1
+        assert with_meta["tags"] == ["alpha"]
+        assert "line_count" not in with_meta
+        assert "chunk_count" not in plain
+        assert plain["description"] == "元数据文件"
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Phase 2: Description field
 # ══════════════════════════════════════════════════════════════════════
 
