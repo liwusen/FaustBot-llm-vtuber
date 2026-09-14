@@ -316,20 +316,30 @@ async def _run_trigger_stream_frontend(chat_ws, trigger_text: str) -> None:
         raise
     except Exception as e:
         log.error("触发器流式推送失败，降级为后台执行: %s", e)
-        await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+        fallback_text = await _apply_plugin_message_hooks(trigger_text)
+        if fallback_text == "__IGNORED__":
+            log.info("触发器消息已被插件拦截，跳过降级执行")
+            return
+        await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": fallback_text}]})
+
+
+async def _apply_plugin_message_hooks(text: str) -> str:
+    """把用户消息/触发器文本按洋葱模型过一遍插件的 message_received。
+
+    所有把文本送进 Agent 的入口都必须走这里，否则插件（记忆注入、情绪向量等）
+    会在该路径上被静默绕过。返回值可能为 "__IGNORED__"（消息被插件拦截）。
+    """
+    pm = state.plugin_manager
+    if pm is None:
+        return text
+    return await pm.apply_message_received(text, history=[], ctx=None)
 
 
 async def _run_agent_stream(websocket: WebSocket, text: str, agent=None) -> str:
     reply = ""
     abort_evt = state.reset_abort_event()
-    pm = getattr(state, 'plugin_manager', None)
-    if pm:
-        results = await pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
-        if results:
-            for r in results:
-                if r is not None and isinstance(r, str):
-                    text = r
-                    break
+    pm = state.plugin_manager
+    text = await _apply_plugin_message_hooks(text)
     if text == "__IGNORED__":
         log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
         done_payload = _main_event_payload("done")
@@ -456,14 +466,7 @@ async def chat_post(payload: dict):
     try:
         await asyncio.to_thread(araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity)
         events.ignore_trigger_event.set()
-        pm = getattr(state, 'plugin_manager', None)
-        if pm:
-            results = await pm._call_pluggy_hook('message_received', msg=text, history=[], ctx=None)
-            if results:
-                for r in results:
-                    if r is not None and isinstance(r, str):
-                        text = r
-                        break
+        text = await _apply_plugin_message_hooks(text)
         if text == "__IGNORED__":
             events.ignore_trigger_event.clear()
             log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
@@ -657,18 +660,22 @@ async def command_websocket(websocket: WebSocket):
                     batch_buffer = []
                     trigger_text = trigger_manager.format_batch_injection(items, first_ts)
                     log.info('批量触发器注入 %d 条: %s', len(items), trigger_text[:120])
-                    batch_task = asyncio.create_task(
-                        invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
-                    )
-                    _register_trigger_task(batch_task)
-                    try:
-                        await batch_task
-                    except asyncio.CancelledError:
-                        if not batch_task.cancelled():
-                            raise
-                        log.info('批量触发器被用户插话打断')
-                    finally:
-                        _clear_trigger_task(batch_task)
+                    batch_text = await _apply_plugin_message_hooks(trigger_text)
+                    if batch_text == "__IGNORED__":
+                        log.info('批量触发器消息已被插件拦截，跳过本次注入')
+                    else:
+                        batch_task = asyncio.create_task(
+                            invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": batch_text}]})
+                        )
+                        _register_trigger_task(batch_task)
+                        try:
+                            await batch_task
+                        except asyncio.CancelledError:
+                            if not batch_task.cancelled():
+                                raise
+                            log.info('批量触发器被用户插话打断')
+                        finally:
+                            _clear_trigger_task(batch_task)
             if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
                 if not state.RUNTIME_READY or state.agent is None:
                     await asyncio.sleep(0.1)
@@ -709,8 +716,13 @@ async def command_websocket(websocket: WebSocket):
                 chat_ws = next(iter(_active_chat_websockets), None)
                 if run_background or chat_ws is None:
                     # 后台触发器（或无前端连接时降级）：仅执行，不推送前端
+                    # 前台流式路径在 _run_agent_stream 内部做插件处理，这里不能重复处理
+                    bg_text = await _apply_plugin_message_hooks(trigger_text)
+                    if bg_text == "__IGNORED__":
+                        log.info('触发器消息已被插件拦截，跳过后台执行: %s', trigger_text[:80])
+                        continue
                     bg_task = asyncio.create_task(
-                        invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": trigger_text}]})
+                        invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": bg_text}]})
                     )
                     _register_trigger_task(bg_task)
                     try:

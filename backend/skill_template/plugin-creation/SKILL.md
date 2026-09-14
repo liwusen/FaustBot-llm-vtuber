@@ -194,7 +194,7 @@ def get_plugin():
 
 | Hook | 用途 |
 |------|------|
-| `message_received(msg, history, ctx)` | 拦截/修改用户消息 |
+| `message_received(msg, history, ctx)` | 拦截/修改用户消息（**洋葱模型**：多个实现按 `priority` 升序逐层串联，每层入参是上一层的结果；返回 `None` 不改，返回字符串传给下一层，返回 `"__IGNORED__"` 拦截。用户消息与所有触发器路径都会经过这里） |
 | `agent_event_sent(event, current_history, ctx)` | 拦截/抑制 Agent 事件 |
 | `memory_read_pre(query, filters, ctx)` | 记忆读取前重写查询 |
 | `memory_read_post(query, results, ctx)` | 记忆读取后重排结果 |

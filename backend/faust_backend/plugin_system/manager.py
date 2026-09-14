@@ -927,6 +927,74 @@ class PluginManager:
                 collected.append(res)
         return collected
 
+    # ── message_received：洋葱模型逐层串联 ──
+
+    def _plugin_priority(self, plugin_id: str) -> int:
+        """插件优先级（manifest.priority，缺省 100）。数字小的在外层，先执行。"""
+        record = self._plugins.get(plugin_id) or {}
+        manifest = record.get("manifest")
+        return int(manifest.priority) if manifest is not None else 100
+
+    def _message_received_layers(self) -> list:
+        """按 (priority, plugin_id) 升序返回可参与串联的 message_received 实现。
+
+        hookwrapper 需要包住整个调用（生成器协议），无法作为一层被串联，跳过并告警。
+        """
+        if not self._pluggy_loaded:
+            return []
+        layers = []
+        for impl in self._pluggy_manager.hook.message_received.get_hookimpls():
+            if impl.wrapper or impl.hookwrapper:
+                log.warning(
+                    "插件 %s 的 message_received 使用了 hookwrapper，无法参与洋葱串联，已跳过",
+                    impl.plugin_name,
+                )
+                continue
+            layers.append(impl)
+
+        def _layer_order(impl) -> tuple[int, str]:
+            plugin_id = str(impl.plugin_name or "")
+            return (self._plugin_priority(plugin_id), plugin_id)
+
+        layers.sort(key=_layer_order)
+        return layers
+
+    async def apply_message_received(self, msg: str, history: list | None = None, ctx: Any = None) -> str:
+        """把用户消息/触发器文本依次交给每个插件的 message_received（洋葱模型）。
+
+        - 层序：(manifest.priority, plugin_id) 升序，数字小的在外层、先执行；
+          每层接到的是上一层处理后的文本，返回值继续传给下一层。
+        - 返回 None：该层不修改，文本保持原样继续往下传。
+        - 返回 str：作为下一层的输入。
+        - 返回 "__IGNORED__"：消息被拦截，立即返回并停止后续层。
+        - 单层抛异常只告警并跳过该层，不打断整轮对话。
+        """
+        text = msg
+        hist = history if history is not None else []
+        for impl in self._message_received_layers():
+            provided = {"msg": text, "history": hist, "ctx": ctx}
+            allowed = set(impl.argnames) | set(impl.kwargnames)
+            try:
+                res = impl.function(**{k: v for k, v in provided.items() if k in allowed})
+                if inspect.isawaitable(res):
+                    res = await res
+            except Exception as exc:
+                log.warning("插件 hook message_received 执行失败 (%s): %s", impl.plugin_name, exc)
+                continue
+            if res is None:
+                continue
+            if not isinstance(res, str):
+                log.warning(
+                    "插件 %s 的 message_received 返回了非 str（%s），已忽略",
+                    impl.plugin_name,
+                    type(res).__name__,
+                )
+                continue
+            text = res
+            if text == "__IGNORED__":
+                return text
+        return text
+
     def _load_schedules(self) -> None:
         """Load schedules from pluggy-registered plugins."""
         if not self._pluggy_loaded:

@@ -402,6 +402,21 @@ def tool_call_post(self, name: str, args: dict, result: Any, ctx: PluginContext)
 
 拦截/修改用户消息。返回 None 不修改。
 
+**洋葱模型**：不是「谁先返回谁生效」，而是把所有实现按 `(manifest.priority, plugin_id)` 升序**逐层串联**——每层拿到的是上一层处理后的文本，返回值继续传给下一层。因此多个插件可以同时注入、互不覆盖（记忆注入和情绪向量能同时生效）；`priority` 小（缺省 100）的插件在更外层、先执行。层序只由 priority 和插件 id 决定，与插件加载顺序无关。
+
+```mermaid
+flowchart LR
+    M["用户消息 / 触发器文本"] --> P1["priority 小的插件"]
+    P1 -->|"msg + 自己的后缀"| P2["priority 更大的插件"]
+    P2 -->|"在上一层结果上继续追加"| L["最终交给 Agent 的文本"]
+```
+
+- 返回 `None`：本层不改动，文本原样传给下一层。
+- 返回 `str`：作为下一层的输入。**入参 `msg` 已经是上一层处理后的结果**，不要假设它是原始用户输入。
+- 返回 `"__IGNORED__"`：立即拦截该消息并停止后续层，Agent 不会被调用。
+- 本层抛异常只记日志并跳过该层，不会打断整轮对话。
+- 使用 `hookwrapper=True` 的实现无法参与串联，会被跳过并在日志中告警。
+
 ```python
 @hookimpl
 def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str | None:
@@ -409,6 +424,8 @@ def message_received(self, msg: Any, history: list, ctx: PluginContext) -> str |
     self.last_user_activity_ts = time.time()
     return None  # 不修改消息
 ```
+
+用户消息与所有触发器路径（前台流式、后台执行、批量聚合、流式失败后的降级重试）都会经过这里，插件无需关心消息来自哪条路径。
 
 #### `agent_event_sent(event: dict, current_history: list, ctx: PluginContext) -> dict | None`
 

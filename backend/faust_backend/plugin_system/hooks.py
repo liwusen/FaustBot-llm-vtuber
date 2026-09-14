@@ -80,7 +80,12 @@ class CoreHooks:
 
     @hookspec
     def message_received(self, msg: Any, history: list, ctx: Any) -> str | None:
-        """Intercept/modify incoming user message."""
+        """Intercept/modify incoming user message.
+
+        洋葱模型逐层串联：所有实现按 (manifest.priority, plugin_id) 升序依次执行，
+        每层拿到的是上一层处理后的文本。返回 None 表示不改动，返回字符串则作为
+        下一层的输入；返回 "__IGNORED__" 会立即拦截并停止后续层。
+        """
 
     @hookspec
     def agent_event_sent(self, event: dict, current_history: list, ctx: Any) -> dict | None:
