@@ -86,3 +86,29 @@ def test_faustbot_using_guide_skill_exists_and_has_meta():
     assert "faust.config.json" in text
     # 文档站点链接
     assert "faustbot.allenlee.xyz" in text
+
+
+def test_nimble_window_skill_documents_every_template():
+    """nimble-window 技能：SKILL.md 必须介绍目录下每个游戏模板。
+
+    模板只有在 SKILL.md 里被点名，Agent 才会知道它存在并知道怎么用；
+    新增模板却忘了写进 SKILL.md，等于该模板永远不被使用。
+    """
+    skill_dir = SKILL_TEMPLATE / "nimble-window"
+    meta = json.loads((skill_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["slug"] == "nimble-window"
+    assert meta["builtin"] is True
+
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    templates = sorted(p.name for p in skill_dir.glob("*.html"))
+    assert templates, "nimble-window 技能应至少自带一个模板"
+    for name in templates:
+        assert f"skill://nimble-window/{name}" in text, f"SKILL.md 未介绍模板 {name}"
+
+    # 三个游戏模板都要有：棋类的落子协议 + Wordle 的出题/猜测协议
+    assert "tictactoe.html" in text
+    assert "gomoku.html" in text
+    assert "wordle.html" in text
+    assert "set-word" in text
+    assert "restart_request" in text
+    assert "correct" in text and "present" in text and "absent" in text

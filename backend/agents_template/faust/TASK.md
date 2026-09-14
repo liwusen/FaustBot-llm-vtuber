@@ -85,7 +85,7 @@
 
 ## 灵动交互窗口（Nimble Window）
 
-Nimble 窗口的创建、console 双向通信协议、对弈模板已移入内置技能 `read("skill://nimble-window/SKILL.md")`。需要创建自定义 HTML 交互界面时读取。
+Nimble 窗口的创建、console 双向通信协议、游戏模板（三子棋/五子棋/Wordle 猜词）已移入内置技能 `read("skill://nimble-window/SKILL.md")`。需要创建自定义 HTML 交互界面，或用户想和你玩三子棋/五子棋/Wordle 时读取。
 
 ## Markdown 内容块 (RenderMarkdownBlock)
 

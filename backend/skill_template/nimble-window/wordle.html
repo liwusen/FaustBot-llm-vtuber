@@ -1,0 +1,229 @@
+<div style="padding:12px 14px;color:#1a2433;font-family:'Segoe UI',sans-serif;user-select:none;">
+  <div id="wdl-status" style="margin-bottom:6px;font-weight:700;">等待出题…</div>
+  <div id="wdl-hint" style="margin-bottom:10px;font-size:12px;color:#647086;min-height:16px;"></div>
+  <div id="wdl-board" style="display:grid;grid-template-columns:repeat(5,54px);grid-template-rows:repeat(6,54px);gap:6px;justify-content:center;"></div>
+  <div style="margin-top:12px;display:flex;gap:6px;justify-content:center;">
+    <input id="wdl-input" maxlength="5" autocomplete="off" spellcheck="false" placeholder="输入 5 个字母" disabled
+      style="width:170px;padding:8px 10px;border-radius:10px;border:1px solid rgba(190,201,217,0.9);background:#fff;color:#1a2433;font-size:15px;font-weight:700;letter-spacing:3px;text-align:center;text-transform:uppercase;outline:none;" />
+    <button id="wdl-submit" disabled
+      style="padding:8px 16px;border-radius:10px;border:none;background:#3f6be8;color:#fff;font-weight:700;cursor:pointer;opacity:0.5;">猜</button>
+  </div>
+  <div id="wdl-keyboard" style="margin-top:10px;display:flex;flex-direction:column;gap:5px;align-items:center;"></div>
+  <div style="margin-top:10px;display:flex;justify-content:center;">
+    <button id="wdl-restart" style="padding:6px 14px;border-radius:8px;border:1px solid rgba(190,201,217,0.9);background:#fff;color:#647086;font-weight:700;cursor:pointer;">换一题</button>
+  </div>
+</div>
+<script>
+  const WORD_LEN = 5;
+  const MAX_ROWS = 6;
+  const TILE = {
+    empty: { bg: '#f5f7fb', fg: '#1a2433', border: '1px solid rgba(190,201,217,0.9)' },
+    correct: { bg: '#5aa469', fg: '#ffffff', border: '1px solid #5aa469' },
+    present: { bg: '#d8a72c', fg: '#ffffff', border: '1px solid #d8a72c' },
+    absent: { bg: '#dfe4ec', fg: '#647086', border: '1px solid #dfe4ec' },
+  };
+
+  let answer = '';
+  let rows = [];          // [{guess, result}]
+  let gameOver = false;
+  let keyStates = {};     // 字母 → correct/present/absent（取最优）
+
+  const statusEl = document.getElementById('wdl-status');
+  const hintEl = document.getElementById('wdl-hint');
+  const boardEl = document.getElementById('wdl-board');
+  const inputEl = document.getElementById('wdl-input');
+  const submitEl = document.getElementById('wdl-submit');
+  const keyboardEl = document.getElementById('wdl-keyboard');
+  const tiles = [];       // 6×5 DOM
+  const keyEls = {};      // 字母 → 键帽 DOM
+
+  nimble.resize('420px', 'auto');
+
+  // ── 棋盘 ──
+  for (let r = 0; r < MAX_ROWS; r++) {
+    for (let c = 0; c < WORD_LEN; c++) {
+      const cell = document.createElement('div');
+      cell.style.cssText = 'display:flex;align-items:center;justify-content:center;border-radius:10px;font-size:24px;font-weight:800;transition:background 0.15s,color 0.15s;';
+      boardEl.appendChild(cell);
+      tiles.push(cell);
+    }
+  }
+
+  function renderBoard() {
+    for (let r = 0; r < MAX_ROWS; r++) {
+      const row = rows[r];
+      for (let c = 0; c < WORD_LEN; c++) {
+        const cell = tiles[r * WORD_LEN + c];
+        const letter = row ? row.guess[c] : '';
+        const state = row ? row.result[c] : 'empty';
+        const style = TILE[state] || TILE.empty;
+        cell.textContent = letter;
+        cell.style.background = style.bg;
+        cell.style.color = style.fg;
+        cell.style.border = style.border;
+      }
+    }
+  }
+
+  // ── 屏幕键盘 ──
+  const KEY_ROWS = ['QWERTYUIOP', 'ASDFGHJKL', '↵ZXCVBNM⌫'];
+  for (const rowKeys of KEY_ROWS) {
+    const rowEl = document.createElement('div');
+    rowEl.style.cssText = 'display:flex;gap:4px;';
+    for (const ch of rowKeys) {
+      const isAction = ch === '↵' || ch === '⌫';
+      const key = document.createElement('button');
+      key.textContent = ch;
+      key.style.cssText = 'min-width:' + (isAction ? '46px' : '30px') + ';height:34px;padding:0 6px;border-radius:8px;border:1px solid rgba(190,201,217,0.9);background:#eef1f6;color:#1a2433;font-weight:700;font-size:13px;cursor:pointer;transition:background 0.15s,color 0.15s;';
+      key.addEventListener('click', () => {
+        if (gameOver) return;
+        if (ch === '↵') submitGuess();
+        else if (ch === '⌫') { inputEl.value = inputEl.value.slice(0, -1); }
+        else if (inputEl.value.length < WORD_LEN) { inputEl.value += ch; }
+        inputEl.focus();
+      });
+      rowEl.appendChild(key);
+      if (!isAction) keyEls[ch] = key;
+    }
+    keyboardEl.appendChild(rowEl);
+  }
+
+  function paintKeyboard() {
+    for (const [ch, key] of Object.entries(keyEls)) {
+      const state = keyStates[ch];
+      const style = state ? TILE[state] : { bg: '#eef1f6', fg: '#1a2433' };
+      key.style.background = style.bg;
+      key.style.color = style.fg;
+    }
+  }
+
+  // ── 判分（标准 Wordle 两遍扫描，正确处理重复字母） ──
+  function evaluate(guess, secret) {
+    const result = Array(WORD_LEN).fill('absent');
+    const remaining = {};
+    for (let i = 0; i < WORD_LEN; i++) {
+      if (guess[i] === secret[i]) result[i] = 'correct';
+      else remaining[secret[i]] = (remaining[secret[i]] || 0) + 1;
+    }
+    for (let i = 0; i < WORD_LEN; i++) {
+      if (result[i] === 'correct') continue;
+      const ch = guess[i];
+      if (remaining[ch] > 0) { result[i] = 'present'; remaining[ch] -= 1; }
+    }
+    return result;
+  }
+
+  const STATE_RANK = { absent: 1, present: 2, correct: 3 };
+  function rememberKeys(guess, result) {
+    for (let i = 0; i < WORD_LEN; i++) {
+      const ch = guess[i];
+      const prev = keyStates[ch];
+      if (!prev || STATE_RANK[result[i]] > STATE_RANK[prev]) keyStates[ch] = result[i];
+    }
+  }
+
+  function setEnabled(enabled) {
+    inputEl.disabled = !enabled;
+    submitEl.disabled = !enabled;
+    submitEl.style.opacity = enabled ? '1' : '0.5';
+    if (enabled) inputEl.focus();
+  }
+
+  function send(payload) {
+    return nimble.sendMessage(true, Object.assign({ game: 'wordle' }, payload));
+  }
+
+  function submitGuess() {
+    if (gameOver || !answer) return;
+    const guess = String(inputEl.value || '').trim().toUpperCase();
+    if (!/^[A-Z]{5}$/.test(guess)) {
+      statusEl.textContent = '请输入 5 个字母（A-Z）。';
+      return;
+    }
+    const result = evaluate(guess, answer);
+    rows.push({ guess, result });
+    rememberKeys(guess, result);
+    inputEl.value = '';
+    renderBoard();
+    paintKeyboard();
+
+    const solved = result.every((v) => v === 'correct');
+    const finished = solved || rows.length >= MAX_ROWS;
+    if (finished) {
+      gameOver = true;
+      setEnabled(false);
+      statusEl.textContent = solved ? '猜对了！' : '机会用完了，答案是 ' + answer;
+    } else {
+      statusEl.textContent = '第 ' + (rows.length + 1) + ' / ' + MAX_ROWS + ' 次尝试。';
+    }
+
+    // 每次猜测都唤醒 Agent（猜对/猜错都要它知道）
+    send({
+      type: 'guess',
+      guess,
+      result,
+      solved,
+      finished,
+      attempts_used: rows.length,
+      attempts_left: MAX_ROWS - rows.length,
+      board: rows.map((row) => ({ guess: row.guess, result: row.result })),
+    }).catch((e) => console.warn('wordle sendMessage failed', e));
+  }
+
+  // ── 出题（Agent 写 console 下发） ──
+  function setWord(word, hint) {
+    const secret = String(word || '').trim().toUpperCase();
+    if (!/^[A-Z]{5}$/.test(secret)) {
+      send({
+        type: 'error',
+        reason: 'word 必须是恰好 5 个 A-Z 字母',
+        got: String(word || ''),
+      }).catch((e) => console.warn('wordle sendMessage failed', e));
+      statusEl.textContent = '出题无效，等待重新出题…';
+      return;
+    }
+    answer = secret;
+    rows = [];
+    gameOver = false;
+    keyStates = {};
+    inputEl.value = '';
+    hintEl.textContent = hint ? String(hint) : '';
+    renderBoard();
+    paintKeyboard();
+    setEnabled(true);
+    statusEl.textContent = '已出题（5 个字母），输入你的第 1 次尝试。';
+  }
+
+  nimble.setMessageHandler((msg) => {
+    if (!msg) return;
+    if (msg.type === 'set-word') { setWord(msg.word, msg.hint); return; }
+    if (msg.type === 'reveal') {
+      if (!answer || gameOver) return;
+      gameOver = true;
+      setEnabled(false);
+      statusEl.textContent = '答案是 ' + answer;
+      send({ type: 'revealed', answer, attempts_used: rows.length, board: rows.map((row) => ({ guess: row.guess, result: row.result })) })
+        .catch((e) => console.warn('wordle sendMessage failed', e));
+    }
+  });
+
+  inputEl.addEventListener('input', () => {
+    inputEl.value = inputEl.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, WORD_LEN);
+  });
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitGuess(); }
+  });
+  submitEl.addEventListener('click', submitGuess);
+  document.getElementById('wdl-restart').addEventListener('click', () => {
+    gameOver = true;
+    setEnabled(false);
+    inputEl.value = '';
+    hintEl.textContent = '';
+    statusEl.textContent = '等待重新出题…';
+    send({ type: 'restart_request' }).catch((e) => console.warn('wordle sendMessage failed', e));
+  });
+
+  renderBoard();
+  // 不主动索取题目：窗口 HTML 注入后 Agent 会紧接着 write console 下发 set-word；
+  // 若长时间没有题目，用户可点「换一题」显式唤醒 Agent 出题。
+</script>

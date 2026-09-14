@@ -1,8 +1,8 @@
-<div style="padding:14px;color:#fff;font-family:'Segoe UI',sans-serif;">
+<div style="padding:12px 14px;color:#1a2433;font-family:'Segoe UI',sans-serif;user-select:none;">
   <div id="gmk-status" style="margin-bottom:10px;font-weight:700;">你执黑（B），先手。点击棋盘落子。</div>
-  <canvas id="gmk-canvas" width="450" height="450" style="background:#c8a15a;border-radius:10px;cursor:pointer;"></canvas>
-  <div style="margin-top:10px;display:flex;gap:8px;">
-    <button id="gmk-reset" style="padding:6px 14px;border-radius:8px;border:none;background:#3a86ff;color:#fff;cursor:pointer;">重新开始</button>
+  <canvas id="gmk-canvas" width="450" height="450" style="background:#f0e4cd;border:1px solid rgba(190,201,217,0.9);border-radius:10px;cursor:pointer;"></canvas>
+  <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;">
+    <button id="gmk-reset" style="padding:6px 14px;border-radius:8px;border:none;background:#3f6be8;color:#fff;font-weight:700;cursor:pointer;">重新开始</button>
   </div>
 </div>
 <script>
@@ -28,7 +28,7 @@
 
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.strokeStyle = 'rgba(122,101,64,0.45)';
     ctx.lineWidth = 1;
     for (let i = 0; i < SIZE; i++) {
       ctx.beginPath();
@@ -45,9 +45,9 @@
         if (!board[r][c]) continue;
         ctx.beginPath();
         ctx.arc(PAD + c * CELL, PAD + r * CELL, CELL * 0.42, 0, Math.PI * 2);
-        ctx.fillStyle = board[r][c] === 'B' ? '#111' : '#f5f5f5';
+        ctx.fillStyle = board[r][c] === 'B' ? '#2b3446' : '#ffffff';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.strokeStyle = board[r][c] === 'B' ? '#1a2433' : 'rgba(122,101,64,0.75)';
         ctx.stroke();
       }
     }

@@ -3,6 +3,8 @@
 
 export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManager, saveSettings, getPersistedWidgetSettings }) {
   const nimbleWindows = new Map(); // callback_id -> { shell, body, header, api, messageHandler, fullscreen }
+  const pendingNimbleMessages = new Map(); // callback_id -> [{payload, at}] 窗口挂载前到达的消息
+  const PENDING_MESSAGE_TTL = 15000; // 超过此时长仍未挂载的消息丢弃，避免为已关闭窗口无限缓存
   let nimbleDragState = null;
 
   const DEFAULT_COORD = { x: 0.7, y: 0.5 };
@@ -163,12 +165,18 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     return api;
   }
 
-  function closeWindowFn(callbackId, notifyBackend = true, reason = 'closed_locally') {
+  // 仅移除已挂载的窗口（show 覆盖同名窗口时复用；不动 pending 队列）
+  function removeWindow(callbackId) {
     const win = nimbleWindows.get(callbackId);
     if (win && win.shell.parentNode) win.shell.parentNode.removeChild(win.shell);
     nimbleWindows.delete(callbackId);
     try { widgetManager.removeWidget(widgetId(callbackId)); } catch (_e) {}
     if (window.nimble && window.nimble.callbackId === callbackId) window.nimble = null;
+  }
+
+  function closeWindowFn(callbackId, notifyBackend = true, reason = 'closed_locally') {
+    removeWindow(callbackId);
+    pendingNimbleMessages.delete(callbackId);
     if (!notifyBackend) return;
     fetch(closeEndpoint, {
       method: 'POST',
@@ -215,19 +223,41 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     if (!payload || !payload.callback_id) return;
     const callbackId = payload.callback_id;
     const win = nimbleWindows.get(callbackId);
-    if (!win) return;
-    const message = payload.payload;
+    if (!win) {
+      // Agent 可能把「创建窗口」和「写 console」作为同一轮的并行工具调用发出，
+      // 消息会先于 NIMBLE_SHOW 到达。此时窗口尚未挂载、messageHandler 还不存在，
+      // 直接丢弃会让窗口永远收不到首条指令（例如 Wordle 的开局出题），因此短暂缓存待挂载后补投。
+      const queue = pendingNimbleMessages.get(callbackId) || [];
+      const now = Date.now();
+      queue.push({ payload, at: now });
+      pendingNimbleMessages.set(
+        callbackId,
+        queue.filter((item) => now - item.at < PENDING_MESSAGE_TTL)
+      );
+      return;
+    }
+    deliverMessage(callbackId, win, payload.payload);
+  }
+
+  function deliverMessage(callbackId, win, message) {
     if (handleReservedCommand(callbackId, message)) return;
     if (typeof win.messageHandler === 'function') {
       try { win.messageHandler(message); } catch (e) { console.warn('nimble messageHandler error', e); }
     }
   }
 
+  function flushPendingMessages(callbackId, win) {
+    const queue = pendingNimbleMessages.get(callbackId);
+    if (!queue || !queue.length) return;
+    pendingNimbleMessages.delete(callbackId);
+    for (const item of queue) deliverMessage(callbackId, win, item.payload.payload);
+  }
+
   function show(payload) {
     if (!payload || !payload.callback_id) return;
     const callbackId = payload.callback_id;
     const host = ensureHost();
-    closeWindowFn(callbackId, false);
+    removeWindow(callbackId); // 覆盖同名窗口；保留 pending 队列供本次挂载后补投
 
     const shell = document.createElement('div');
     shell.className = 'nimble-window';
@@ -321,6 +351,9 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     } catch (e) {
       console.warn('nimble script exec error', e);
     }
+
+    // 页面脚本已执行（messageHandler 已注册），补投挂载前到达的消息
+    flushPendingMessages(callbackId, win);
 
     header.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;

@@ -1,12 +1,13 @@
-<div style="padding:14px;color:#fff;font-family:'Segoe UI',sans-serif;">
+<div style="padding:12px 14px;color:#1a2433;font-family:'Segoe UI',sans-serif;user-select:none;">
   <div id="ttt-status" style="margin-bottom:10px;font-weight:700;">你执 X，先手。点击格子落子。</div>
-  <div id="ttt-board" style="display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,64px);gap:6px;"></div>
-  <div style="margin-top:10px;display:flex;gap:8px;">
-    <button id="ttt-reset" style="padding:6px 14px;border-radius:8px;border:none;background:#3a86ff;color:#fff;cursor:pointer;">重新开始</button>
+  <div id="ttt-board" style="display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,64px);gap:6px;justify-content:center;"></div>
+  <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;">
+    <button id="ttt-reset" style="padding:6px 14px;border-radius:8px;border:none;background:#3f6be8;color:#fff;font-weight:700;cursor:pointer;">重新开始</button>
   </div>
 </div>
 <script>
   const SIZE = 3;
+  const MARK_COLORS = { X: '#3f6be8', O: '#e54447' };
   let board = [];
   let gameOver = false;
   let waitingAgent = false;
@@ -27,7 +28,7 @@
       for (let c = 0; c < SIZE; c++) {
         const cell = cells[r * SIZE + c];
         cell.textContent = board[r][c];
-        cell.style.color = board[r][c] === 'X' ? '#3a86ff' : '#ff5d8f';
+        cell.style.color = MARK_COLORS[board[r][c]] || '#1a2433';
       }
     }
   }
@@ -83,7 +84,9 @@
   for (let r = 0; r < SIZE; r++) {
     for (let c = 0; c < SIZE; c++) {
       const cell = document.createElement('div');
-      cell.style.cssText = 'display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.08);border-radius:10px;font-size:34px;font-weight:800;cursor:pointer;user-select:none;';
+      cell.style.cssText = 'display:flex;align-items:center;justify-content:center;background:#eef1f6;border:1px solid rgba(190,201,217,0.9);border-radius:10px;font-size:34px;font-weight:800;cursor:pointer;user-select:none;transition:background 0.15s;';
+      cell.addEventListener('mouseenter', () => { if (!cell.textContent && !gameOver && !waitingAgent) cell.style.background = '#e2e8f2'; });
+      cell.addEventListener('mouseleave', () => { cell.style.background = '#eef1f6'; });
       cell.addEventListener('click', () => userMove(r, c));
       boardEl.appendChild(cell);
       cells.push(cell);

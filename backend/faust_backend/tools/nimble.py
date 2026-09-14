@@ -108,7 +108,9 @@ async def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_te
         HTML 来源（两种方式）：
         - 直接传入 HTML 字符串；
         - 传入 `path:{URI}` 从文件加载，例如：
-          `path:skill://nimble-window/tictactoe.html`（skill 内置模板）、
+          `path:skill://nimble-window/tictactoe.html`（skill 内置三子棋模板）、
+          `path:skill://nimble-window/gomoku.html`（五子棋）、
+          `path:skill://nimble-window/wordle.html`（Wordle 猜词，你出题、用户猜）、
           `path:sourceCode://frontend/xxx.html`、`path:memory://notes/x`、`path:D:/tmp/a.html`。
 
         双向通信（核心机制，全部走 console）：
