@@ -57,7 +57,12 @@ ATTITUDE_TEMPLATES = {
     "silent": "你现在情绪沉默。话极少，除非必要否则不主动开口，语气冷淡疏离。",
 }
 STATE_FILE_NAME = "emotion_state.json"
-HISTORY_LIMIT = 512
+DEFAULT_DECAY_PER_MINUTE = 0.1
+# history 是面板「24 小时趋势」的数据源：按时间窗口裁剪，而不是按条数——
+# 10s 心跳会瞬间顶掉条数上限，条数上限曾让 24h 窗口实际只剩 ~85 分钟
+HISTORY_RETENTION_SECONDS = 86400.0
+HISTORY_LIMIT = 1024  # 时间裁剪后的条数上限（防情绪事件风暴撑爆内存与状态文件）
+HEARTBEAT_HISTORY_MIN_INTERVAL = 300.0  # 心跳采样限频：≥5min 才记一条 → 24h ≈ 288 条
 COREMEMORY_START = "<!-- emotion-engine:start -->"
 COREMEMORY_END = "<!-- emotion-engine:end -->"
 _PLUGIN: "Plugin | None" = None
@@ -69,6 +74,22 @@ def _now() -> float:
 
 def _clamp(value: float, min_value: float = 0.0, max_value: float = 10.0) -> float:
     return max(min_value, min(max_value, round(float(value), 3)))
+
+
+def _decay_per_minute_value(raw: Any) -> float:
+    """配置值 → 每分钟衰减量；缺失/非法回退默认值，0 表示完全不衰减。"""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_DECAY_PER_MINUTE
+    return max(0.0, value)
+
+
+def _trim_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 24h 窗口裁剪并套用条数上限（旧状态文件的超量记录也一并收敛）。"""
+    cutoff = _now() - HISTORY_RETENTION_SECONDS
+    kept = [item for item in history if float(item.get("ts") or 0) >= cutoff]
+    return kept[-HISTORY_LIMIT:]
 
 
 # ── 无聊自然增长（非线性饱和曲线） ──
@@ -211,10 +232,10 @@ class EmotionState:
 
 
 class EmotionEngineStore:
-    def __init__(self, data_dir: Path, decay_per_minute: float = 0.1):
+    def __init__(self, data_dir: Path, decay_per_minute: float = DEFAULT_DECAY_PER_MINUTE):
         self._lock = threading.RLock()
         self._data_dir = data_dir
-        self._decay_per_minute = float(decay_per_minute or 0.1)
+        self._decay_per_minute = _decay_per_minute_value(decay_per_minute)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self._data_dir / STATE_FILE_NAME
         self._state = self._load_state()
@@ -234,11 +255,9 @@ class EmotionEngineStore:
         for key in EMOTION_KEYS:
             if key in vector:
                 state.vector[key] = _clamp(vector[key])
-        state.history = [
-            item
-            for item in list(raw.get("history") or [])[-HISTORY_LIMIT:]
-            if isinstance(item, dict)
-        ]
+        state.history = _trim_history(
+            [item for item in list(raw.get("history") or []) if isinstance(item, dict)]
+        )
         state.last_decay_ts = float(raw.get("last_decay_ts") or _now())
         state.last_interaction_ts = float(raw.get("last_interaction_ts") or _now())
         state.recent_user_modes = list(raw.get("recent_user_modes") or [])[-8:]
@@ -302,10 +321,7 @@ class EmotionEngineStore:
         return max(0.0, _now() - last)
 
     def _history_24h(self) -> list[dict[str, Any]]:
-        cutoff = _now() - 86400
-        return [
-            item for item in self._state.history if float(item.get("ts") or 0) >= cutoff
-        ]
+        return _trim_history(self._state.history)
 
     def _record_history(
         self, reason: str, deltas: dict[str, float] | None = None
@@ -318,7 +334,14 @@ class EmotionEngineStore:
                 "vector": dict(self._state.vector),
             }
         )
-        self._state.history = self._state.history[-HISTORY_LIMIT:]
+        self._state.history = _trim_history(self._state.history)
+
+    def _heartbeat_history_due(self) -> bool:
+        """心跳采样限频：距上一条 history ≥5min 才记，24h 趋势只占 ~288 条。"""
+        if not self._state.history:
+            return True
+        last_ts = float(self._state.history[-1].get("ts") or 0.0)
+        return _now() - last_ts >= HEARTBEAT_HISTORY_MIN_INTERVAL
 
     def _dominant_from_vector(self, vector: dict[str, float]) -> str:
         return max(EMOTION_KEYS, key=lambda key: float(vector.get(key, 0.0)))
@@ -413,13 +436,16 @@ class EmotionEngineStore:
                 ],
                 "updated_at": int(self._state.last_interaction_ts),
                 "config": {
-                    "sharp_tongue_enabled": bool(
-                        cfg.get("SHARP_TONGUE_REWRITE", False)
+                    "decay_per_minute": _decay_per_minute_value(
+                        cfg.get("DECAY_PER_MINUTE")
                     ),
-                    "decay_per_minute": float(cfg.get("DECAY_PER_MINUTE", 0.1) or 0.1),
-                    "overlay_intensity": int(cfg.get("OVERLAY_INTENSITY", 50) or 50),
                 },
             }
+
+    def set_decay_per_minute(self, value: Any) -> None:
+        """运行时更新衰减速率（配置热更新；离线补算也用它）。"""
+        with self._lock:
+            self._decay_per_minute = _decay_per_minute_value(value)
 
     def note_user_message(self, text: str) -> str:
         with self._lock:
@@ -572,9 +598,10 @@ class EmotionEngineStore:
                 self._state.vector
             )
             self._state.pending_corememory_sync = True
-            self._record_history(
-                "heartbeat", {"boredom": target - current if boredom_bump else 0.0}
-            )
+            if boredom_bump or self._heartbeat_history_due():
+                self._record_history(
+                    "heartbeat", {"boredom": target - current if boredom_bump else 0.0}
+                )
             self._save_state()
             return {"boredom_bump": boredom_bump}
 
@@ -635,22 +662,10 @@ class Plugin(FaustPlugin):
         await ctx.register_config(
             [
                 {
-                    "key": "SHARP_TONGUE_REWRITE",
-                    "type": "bool",
-                    "label": "毒舌改写开关",
-                    "default": False,
-                },
-                {
                     "key": "DECAY_PER_MINUTE",
                     "type": "float",
                     "label": "情绪衰减速率",
                     "default": 0.1,
-                },
-                {
-                    "key": "OVERLAY_INTENSITY",
-                    "type": "int",
-                    "label": "滤镜强度",
-                    "default": 50,
                 },
                 {
                     "key": "PROACTIVE_ENABLED",
@@ -678,10 +693,7 @@ class Plugin(FaustPlugin):
                 },
             ] # type: ignore
         )
-        try:
-            decay = float(await ctx.get_config("DECAY_PER_MINUTE", 0.1) or 0.1)
-        except (TypeError, ValueError):
-            decay = 0.1
+        decay = _decay_per_minute_value(await ctx.get_config("DECAY_PER_MINUTE"))
         self.store = EmotionEngineStore(data_dir, decay_per_minute=decay)
         self.store.sync_corememory()
         self._configs_cache = await ctx.list_configs()
@@ -716,8 +728,11 @@ class Plugin(FaustPlugin):
     @hookimpl
     async def config_changed(self, key: str, old: Any, new: Any, ctx: PluginContext) -> None:
         # 用 startup 保存的 self.ctx（hook 参数 ctx 可能为 None）
+        del key, old, new, ctx
         if self.ctx is not None:
             self._configs_cache = await self.ctx.list_configs()
+        if self.store is not None:
+            self.store.set_decay_per_minute(self._configs().get("DECAY_PER_MINUTE"))
 
     def _configs(self) -> dict[str, Any]:
         return self._configs_cache
@@ -860,7 +875,7 @@ class Plugin(FaustPlugin):
         if self.store is None:
             return
         cfg = self._configs()
-        decay = float(cfg.get("DECAY_PER_MINUTE", 0.1) or 0.1)
+        decay = _decay_per_minute_value(cfg.get("DECAY_PER_MINUTE"))
         result = self.store.heartbeat(decay)
         if result.get("boredom_bump") and self.store.should_write_diary(
             "长时间沉默导致无聊上升", True

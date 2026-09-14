@@ -1,30 +1,27 @@
 (function(){
   const api = window.pluginUI;
   if (!api) return;
-  baseUrl = api.backendBaseUrl;
+  const baseUrl = api.backendBaseUrl;
+  const CONFIG_URL = baseUrl + '/faust/admin/plugins/emotion-engine/config';
 
-  function formatBool(value) {
-    return value ? '是' : '否';
-  }
-
-  async function fetchState(){
+  function fetchState(){
     return api.communicate('emotion-engine', { action: 'get_state' });
-    console.log('fetchState:', payload);
   }
 
   async function fetchConfig(){
-    const res = await fetch(baseUrl + '/faust/admin/plugins/emotion-engine/config');
-    console.log('fetchConfig:', res);
+    const res = await fetch(CONFIG_URL);
     return res.json();
-    
   }
 
+  // 插件配置不重建运行时（apply_runtime=false）：配置变更由后端广播 config_changed 即时生效
   async function saveConfig(values){
-    await fetch(baseUrl + '/faust/admin/plugins/emotion-engine/config', {
+    const res = await fetch(CONFIG_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: values, apply_runtime: true, no_initial_chat: true, reset_dialog: false })
+      body: JSON.stringify({ values: values, apply_runtime: false, no_initial_chat: true, reset_dialog: false })
     });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
   }
 
   const EMOTION_ITEMS = [
@@ -42,29 +39,30 @@
     if (!elm) return;
     loadECharts().then(function(echarts){
       const chart = echarts.getInstanceByDom(elm) || echarts.init(elm);
-      const recent = history.slice(-96);
-      const times = recent.map(function(entry){
-        return new Date((entry.ts || 0) * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      // 后端按 24h 窗口裁剪并做了心跳限频，这里直接用满窗口数据；时间轴用 value 型毫秒时间戳，避免采样不等距导致失真
+      const series = EMOTION_ITEMS.map(function(item, index){
+        return {
+          name: item[1],
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { width: 2, color: EMOTION_COLORS[index] },
+          itemStyle: { color: EMOTION_COLORS[index] },
+          data: history.map(function(entry){
+            return [Number(entry.ts || 0) * 1000, Number(((entry || {}).vector || {})[item[0]]) || 0];
+          }),
+        };
       });
       chart.setOption({
-        tooltip: { trigger: 'axis' },
+        tooltip: {
+          trigger: 'axis',
+          valueFormatter: function(value){ return Number(value).toFixed(1); }
+        },
         legend: { data: EMOTION_ITEMS.map(function(item){ return item[1]; }), textStyle: { color: '#888' } },
         grid: { left: 36, right: 16, top: 36, bottom: 28 },
-        xAxis: { type: 'category', data: times, axisLabel: { color: '#888' } },
+        xAxis: { type: 'time', axisLabel: { color: '#888', formatter: '{HH}:{mm}' } },
         yAxis: { type: 'value', min: 0, max: 10, axisLabel: { color: '#888' } },
-        series: EMOTION_ITEMS.map(function(item, index){
-          return {
-            name: item[1],
-            type: 'line',
-            smooth: true,
-            showSymbol: false,
-            lineStyle: { width: 2, color: EMOTION_COLORS[index] },
-            itemStyle: { color: EMOTION_COLORS[index] },
-            data: recent.map(function(entry){
-              return Number((((entry || {}).vector || {})[item[0]]) || 0);
-            }),
-          };
-        }),
+        series: series,
       });
       chart.resize();
     }).catch(function(error){
@@ -136,7 +134,7 @@
     desc: '实时情绪、趋势和配置快照',
     plugin: 'emotion-engine',
     render: function(container){
-      container.innerHTML = '<article class="card full-span"><h3 class="card-title">Emotion Engine</h3><p class="card-help">显示当前主导情绪、近 24 小时变化与配置状态。拖动情绪条可直接修改情绪值。</p><div id="emotion-metrics" class="data-grid-compact"></div><div id="emotion-bars"></div></article><article class="card full-span"><h3 class="card-title">情绪配置</h3><div class="data-grid-compact"><div class="metric"><span class="metric-label">毒舌改写</span><span class="metric-value" id="emotion-sharp-state">否</span></div><div class="metric"><span class="metric-label">衰减速度</span><span class="metric-value" id="emotion-decay-state">0.10</span></div><div class="metric"><span class="metric-label">滤镜强度</span><span class="metric-value" id="emotion-overlay-state">50</span></div></div><div class="toolbar"><label><input id="emotion-sharp-toggle" type="checkbox" /> 启用毒舌改写</label><label>情绪衰减 <input id="emotion-decay" type="number" step="0.1" min="0" /></label><label>滤镜强度 <input id="emotion-overlay" type="number" step="1" min="0" max="100" /></label><button id="emotion-save" class="btn btn-primary">保存配置</button></div></article><article class="card full-span"><h3 class="card-title">24 小时趋势</h3><div id="emotion-trend" style="width:100%;height:260px;"></div></article>';
+      container.innerHTML = '<article class="card full-span"><h3 class="card-title">Emotion Engine</h3><p class="card-help">显示当前主导情绪、近 24 小时变化与配置状态。拖动情绪条可直接修改情绪值。</p><div id="emotion-metrics" class="data-grid-compact"></div><div id="emotion-bars"></div></article><article class="card full-span"><h3 class="card-title">情绪配置</h3><div class="data-grid-compact"><div class="metric"><span class="metric-label">衰减速度</span><span class="metric-value" id="emotion-decay-state">0.10</span></div></div><div class="toolbar"><label>情绪衰减（每分钟，0 表示不衰减）<input id="emotion-decay" type="number" step="0.05" min="0" max="10" /></label><button id="emotion-save" class="btn btn-primary">保存配置</button><span id="emotion-save-status" class="card-help"></span></div></article><article class="card full-span"><h3 class="card-title">24 小时趋势</h3><div id="emotion-trend" style="width:100%;height:260px;"></div></article>';
       Promise.all([fetchState(), fetchConfig()]).then(function(results){
         const payload = results[0] || {};
         const cfgPayload = (results[1] || {}).config || {};
@@ -147,26 +145,21 @@
         if (metrics) renderMetrics(metrics, payload);
         if (bars) renderBars(bars, vector);
         const values = (cfgPayload.values || {});
-        const sharpToggle = document.getElementById('emotion-sharp-toggle');
         const decay = document.getElementById('emotion-decay');
-        const overlay = document.getElementById('emotion-overlay');
-        const sharpState = document.getElementById('emotion-sharp-state');
         const decayState = document.getElementById('emotion-decay-state');
-        const overlayState = document.getElementById('emotion-overlay-state');
-        if (sharpToggle) sharpToggle.checked = !!values.SHARP_TONGUE_REWRITE;
+        const status = document.getElementById('emotion-save-status');
         if (decay) decay.value = String(values.DECAY_PER_MINUTE ?? 0.1);
-        if (overlay) overlay.value = String(values.OVERLAY_INTENSITY ?? 50);
-        if (sharpState) sharpState.textContent = formatBool(!!values.SHARP_TONGUE_REWRITE);
         if (decayState) decayState.textContent = Number(values.DECAY_PER_MINUTE ?? 0.1).toFixed(2);
-        if (overlayState) overlayState.textContent = String(values.OVERLAY_INTENSITY ?? 50);
         const saveBtn = document.getElementById('emotion-save');
         if (saveBtn) {
           saveBtn.onclick = async function(){
-            await saveConfig({
-              SHARP_TONGUE_REWRITE: !!(sharpToggle && sharpToggle.checked),
-              DECAY_PER_MINUTE: Number(decay && decay.value || 0.1),
-              OVERLAY_INTENSITY: Number(overlay && overlay.value || 50)
-            });
+            if (status) { status.textContent = '保存中…'; status.style.color = ''; }
+            try {
+              await saveConfig({ DECAY_PER_MINUTE: Number(decay && decay.value || 0.1) });
+              if (status) status.textContent = '已保存，立即生效';
+            } catch (error) {
+              if (status) { status.textContent = '保存失败：' + error.message; status.style.color = '#e54447'; }
+            }
           };
         }
         drawTrend(document.getElementById('emotion-trend'), history);

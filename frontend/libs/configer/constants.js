@@ -179,8 +179,8 @@ const SCALE_PRESETS = {
     LIVE2D_MODEL_Y: { type: "range", min: 0.1, max: 1, step: 0.01, unit: "" },
     TEXT_CHAT_BAR_Y_FACTOR: { type: "range", min: -1, max: 2, step: 0.05, unit: "x" },
     OPENAI_TTS_SPEED: { type: "range", min: 0.25, max: 4, step: 0.05, unit: "x" },
-    DECAY_PER_MINUTE: { type: "range", min: 0, max: 1, step: 0.01, unit: "" },
-    OVERLAY_INTENSITY: { type: "range", min: 0, max: 100, step: 1, unit: "%" },
+    // emotion-engine 的衰减速率：0 表示不衰减；上限放到 10 以免通用插件表单把值夹到 1
+    DECAY_PER_MINUTE: { type: "range", min: 0, max: 10, step: 0.05, unit: " /min" },
     TTS_CHUNK_IDEAL_TOKENS: { type: "range", min: 10, max: 100, step: 1, unit: " tok" },
   };
 

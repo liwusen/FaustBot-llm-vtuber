@@ -579,6 +579,9 @@ def test_startup_registers_new_configs(data_dir):
         "PROACTIVE_INTERVAL_QUIET",
     ):
         assert expected in keys
+    # 已删除的死配置不得再出现在设置界面（历史上它们没有任何消费方）
+    assert "SHARP_TONGUE_REWRITE" not in keys
+    assert "OVERLAY_INTENSITY" not in keys
     assert plugin.store is not None
 
 
@@ -587,3 +590,81 @@ def test_startup_uses_configured_decay(data_dir):
     ctx = _FakeCtx(configs={"DECAY_PER_MINUTE": 0.3}, data_dir=data_dir)
     asyncio.run(plugin.startup(ctx))
     assert plugin.store._decay_per_minute == pytest.approx(0.3)
+
+
+# ── 配置热更新：保存后立即作用于运行中的 store ──
+
+
+def test_config_changed_applies_decay_without_restart(data_dir):
+    plugin = impl.Plugin()
+    ctx = _FakeCtx(configs={"DECAY_PER_MINUTE": 0.1}, data_dir=data_dir)
+    asyncio.run(plugin.startup(ctx))
+    assert plugin.store._decay_per_minute == pytest.approx(0.1)
+
+    ctx.configs["DECAY_PER_MINUTE"] = 3.0
+    asyncio.run(plugin.config_changed("plugin:emotion-engine", {}, {}, None))
+
+    assert plugin._configs().get("DECAY_PER_MINUTE") == pytest.approx(3.0)
+    assert plugin.store._decay_per_minute == pytest.approx(3.0)
+
+
+def test_zero_decay_disables_falloff(data_dir, clock):
+    """0 表示完全不衰减（旧代码 `or 0.1` 会把 0 悄悄变成 0.1）。"""
+    store = impl.EmotionEngineStore(data_dir, decay_per_minute=0)
+    store.note_user_message("hi")
+    clock.advance(600)
+    store.heartbeat(0)
+    assert store._state.vector["joy"] == pytest.approx(impl.DEFAULT_EMOTIONS["joy"])
+
+
+def test_heartbeat_uses_configured_rate(data_dir, clock):
+    store = impl.EmotionEngineStore(data_dir, decay_per_minute=2.0)
+    store.note_user_message("hi")
+    clock.advance(60)
+    store.heartbeat(2.0)
+    assert store._state.vector["joy"] == pytest.approx(
+        impl.DEFAULT_EMOTIONS["joy"] - 2.0
+    )
+
+
+# ── 趋势数据窗口（24h 时间裁剪 + 心跳限频） ──
+
+
+def test_history_trims_entries_older_than_24h(data_dir, clock):
+    store = impl.EmotionEngineStore(data_dir)
+    store._record_history("old", {"joy": 1.0})
+    clock.advance(int(impl.HISTORY_RETENTION_SECONDS) + 60)
+    store._record_history("new", {"joy": 1.0})
+    assert [item["reason"] for item in store._history_24h()] == ["new"]
+
+
+def test_stale_history_entries_dropped_on_load(data_dir, clock):
+    store = impl.EmotionEngineStore(data_dir)
+    store._record_history("old", {"joy": 1.0})
+    store._record_history("recent", {"joy": 1.0})
+    clock.advance(60)
+    # 直接把旧记录时间戳改写为 25 小时前，再重新加载
+    for item in store._state.history:
+        if item["reason"] == "old":
+            item["ts"] = int(clock.now - impl.HISTORY_RETENTION_SECONDS - 3600)
+    store._save_state()
+
+    reloaded = impl.EmotionEngineStore(data_dir)
+    assert [item["reason"] for item in reloaded._history_24h()] == ["recent"]
+
+
+def test_heartbeat_history_is_throttled(data_dir, clock):
+    store = impl.EmotionEngineStore(data_dir)
+    for _ in range(12):  # 2 分钟连续心跳
+        clock.advance(10)
+        store.heartbeat(0.1)
+
+    def heartbeat_count():
+        return len(
+            [item for item in store._history_24h() if item["reason"] == "heartbeat"]
+        )
+
+    assert heartbeat_count() == 1  # 10s 一跳不再灌满历史
+    clock.advance(int(impl.HEARTBEAT_HISTORY_MIN_INTERVAL))
+    store.heartbeat(0.1)
+    assert heartbeat_count() == 2

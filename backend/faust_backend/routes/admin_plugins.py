@@ -115,8 +115,24 @@ async def admin_set_plugin_config(plugin_id: str, payload: dict | None = None):
     apply_runtime = bool(body.get("apply_runtime", True))
     reset_dialog = bool(body.get("reset_dialog", False))
     no_initial_chat = bool(body.get("no_initial_chat", True))
-    config_snapshot = state.plugin_manager.set_plugin_config_values(plugin_id, values) if state.plugin_manager else {}
-    if state.plugin_manager:
+    pm = state.plugin_manager
+    before = (pm.get_plugin_config_snapshot(plugin_id).get("values") or {}) if pm else {}
+    config_snapshot = pm.set_plugin_config_values(plugin_id, values) if pm else {}
+    if pm:
+        # 插件配置不走 needs_reload 指纹（只算插件目录 mtime + 启用状态），
+        # 因此必须显式广播变更，否则 config-only 更新永远停留在旧缓存
+        after = dict(config_snapshot.get("values") or {})
+        for raw_key in values:
+            key = str(raw_key)
+            if before.get(key) == after.get(key):
+                continue
+            await pm._call_pluggy_hook(
+                "config_changed",
+                key=key,
+                old=before.get(key),
+                new=after.get(key),
+                ctx=None,
+            )
         reload_summary = {"skipped": True, "reason": "config-only update"}
     else:
         reload_summary = {}

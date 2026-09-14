@@ -306,3 +306,30 @@ async def test_rss_feed_node_describes_item(_isolate_home):
     node = await vfs.get_node('/plugins/rss-watcher/RSS-FEED-ExampleItem-20240719.md')
     assert node is not None
     assert 'Example/Item' in node.description
+
+
+@pytest.mark.asyncio
+async def test_plugin_config_save_applies_to_running_plugin(monkeypatch):
+    """插件配置保存后必须即时生效。
+
+    config-only 更新不会被 needs_reload（只算插件目录 mtime + 启用状态）捕获，
+    因此路由必须广播 config_changed，否则插件缓存永远停留在启动值。
+    """
+    from faust_backend.routes import admin_plugins as admin_plugins_routes
+    from faust_backend.runtime import state as runtime_state
+
+    pm = await _build_manager()
+    pm.set_plugin_enabled('emotion-engine', True)
+    await pm.reload(force=True)
+    plugin = pm._plugins['emotion-engine']['plugin']
+    assert plugin._configs().get('DECAY_PER_MINUTE') == pytest.approx(0.1)
+
+    monkeypatch.setattr(runtime_state, 'plugin_manager', pm)
+    result = await admin_plugins_routes.admin_set_plugin_config(
+        'emotion-engine',
+        {'values': {'DECAY_PER_MINUTE': 2.5}, 'apply_runtime': False},
+    )
+
+    assert result['config']['values']['DECAY_PER_MINUTE'] == pytest.approx(2.5)
+    assert plugin._configs().get('DECAY_PER_MINUTE') == pytest.approx(2.5)
+    assert plugin.store._decay_per_minute == pytest.approx(2.5)
