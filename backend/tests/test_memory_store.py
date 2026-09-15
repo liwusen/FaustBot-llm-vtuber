@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import sys
 import time
@@ -36,7 +35,7 @@ def memory_store(tmp_path, monkeypatch):
     monkeypatch.setattr(gs, "_embed_and_index", _noop_embed_index)
 
     yield gs
-    gs.flush()
+    gs.close()
 
 
 def _mock_embed(_texts):
@@ -108,22 +107,6 @@ class TestPhase1TreeStructure:
 
         for nid in ["path:/a", "path:/a/b", "path:/a/b/c", "path:/a/b/c/newdir"]:
             assert memory_store._has_node(nid), f"Missing node {nid}"
-
-    def test_repair_tree_fixes_missing_parents(self, memory_store, tmp_path, monkeypatch):
-        nid_a = store._path_id("/orphan_dir")
-        memory_store._add_node(nid_a, type="dir", name="orphan_dir")
-        nid_b = store._path_id("/orphan_dir/sub")
-        memory_store._add_node(nid_b, type="dir", name="sub")
-        memory_store.save()
-        data = json.loads(memory_store.graph_file.read_text(encoding="utf-8"))
-        assert "path:/orphan_dir" in data["nodes"]
-        assert "path:/orphan_dir/sub" in data["nodes"]
-
-        gs2 = store.GraphStore("test_agent")
-        assert gs2._has_node("path:/orphan_dir")
-        assert gs2._has_node(store._path_id("/"))
-        assert gs2._graph.has_edge("path:/", store._path_id("/orphan_dir"))
-        assert gs2._graph.has_edge(store._path_id("/orphan_dir"), store._path_id("/orphan_dir/sub"))
 
     def test_tree_list_returns_full_tree_after_write(self, memory_store):
         async def _test():
@@ -393,19 +376,6 @@ class TestPhase3EntityOnTree:
         assert results[1] != eid1
         assert results[1] is not None, "Same embedding should match itself"
 
-    def test_entity_name_embedding_persisted(self, memory_store, tmp_path, monkeypatch):
-        vec = np.array([0.5, 0.5, 0.5], dtype=np.float32).tolist()
-        memory_store.entity_add("test_ent", name_embedding=vec)
-        memory_store.flush()
-
-        gs2 = store.GraphStore("test_agent")
-        entities = gs2.entity_iter()
-        test_ent = next(e for e in entities if e["name"] == "test_ent")
-        assert test_ent["id"] in gs2._graph.nodes
-        cached_vec = gs2._graph.nodes[test_ent["id"]].get("_name_vec")
-        assert cached_vec is not None
-        np.testing.assert_allclose(cached_vec, vec, atol=1e-6)
-
     def test_tree_list_includes_dir_description(self, memory_store):
         async def _test():
             await memory_store.mkdir("/described_dir", description="This is a described directory")
@@ -619,7 +589,7 @@ class TestPhase4RenameCopyMove:
             await memory_store.file_write("/test/tagged.md", "content", index=False, tags=["tag1", "tag2"])
             await memory_store.set_score_patch("/test/tagged.md", 0.1)
             await memory_store.file_rename("/test/tagged.md", "renamed_tagged.md")
-            meta = memory_store._read_meta("/test/renamed_tagged.md")
+            meta = memory_store._get_meta("/test/renamed_tagged.md")
             assert "tag1" in meta.get("tags", [])
             assert "tag2" in meta.get("tags", [])
             assert meta.get("score_patch") == 0.1
@@ -854,59 +824,6 @@ class TestFileDeleteTree:
         assert memory_store._has_node(nid)
         ntype = memory_store._get_node_attr(nid, "type", "file")
         assert ntype == "dir"
-
-
-class TestEntityVecSidecarAndBatchFlush:
-    """实体名称向量侧车存储 + 批量 flush（性能修复回归测试）。"""
-
-    def test_entity_add_flush_false_batches_save(self, memory_store, tmp_path):
-        gs = memory_store
-        graph_path = Path(tmp_path) / "agents" / "test_agent" / "memory" / "graph.json"
-        vec = [0.1] * 1536
-        eids = []
-        for i in range(3):
-            eids.append(gs.entity_add(f"batch_{i}", "person", name_embedding=vec, flush=False))
-        # 未显式 flush 前，graph.json 不应包含这些实体
-        if graph_path.exists():
-            d = json.loads(graph_path.read_text(encoding="utf-8"))
-            assert not any("batch_" in n for n in d.get("nodes", {})), "flush=False 不应提前落盘"
-        gs.relation_add(eids[0], eids[1], "knows", flush=False)
-        gs.flush()
-        d = json.loads(graph_path.read_text(encoding="utf-8"))
-        nodes = d.get("nodes", {})
-        assert all("_name_vec" not in v for v in nodes.values()), "graph.json 不应含 _name_vec"
-        vecs_file = Path(tmp_path) / "agents" / "test_agent" / "memory" / "index" / "entity_vecs.jsonl"
-        assert vecs_file.exists()
-        sidecar = [json.loads(l)["id"] for l in vecs_file.read_text(encoding="utf-8").splitlines()]
-        assert all(e in sidecar for e in eids)
-
-    def test_reload_restores_name_vecs_from_sidecar(self, memory_store, tmp_path):
-        gs = memory_store
-        vec = [0.2] * 1536
-        eid = gs.entity_add("vec_persist", "concept", name_embedding=vec)
-        gs.flush()
-        gs2 = store.GraphStore("test_agent")
-        assert gs2._graph.nodes[eid].get("_name_vec") == vec
-
-    def test_migration_from_inline_name_vec(self, memory_store, tmp_path):
-        """旧格式：_name_vec 内嵌 graph.json → 下次 save 自动迁移到侧车。"""
-        gs = memory_store
-        vec = [0.3] * 1536
-        eid = gs.entity_add("legacy_entity", "person", name_embedding=vec)
-        gs.flush()
-        graph_path = Path(tmp_path) / "agents" / "test_agent" / "memory" / "graph.json"
-        vecs_file = Path(tmp_path) / "agents" / "test_agent" / "memory" / "index" / "entity_vecs.jsonl"
-        # 模拟旧数据：删除侧车，把向量塞回 graph.json
-        vecs_file.unlink()
-        d = json.loads(graph_path.read_text(encoding="utf-8"))
-        d["nodes"][eid]["_name_vec"] = vec
-        graph_path.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
-        gs3 = store.GraphStore("test_agent")
-        assert gs3._graph.nodes[eid].get("_name_vec") == vec
-        gs3.flush()
-        d2 = json.loads(graph_path.read_text(encoding="utf-8"))
-        assert "_name_vec" not in d2["nodes"][eid]
-        assert vecs_file.exists()
 
 
 # ── BM25 jieba 化 + search_bm25 ──────────────────────────────

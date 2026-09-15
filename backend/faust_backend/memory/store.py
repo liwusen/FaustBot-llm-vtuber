@@ -4,17 +4,12 @@ import asyncio
 import base64
 import json
 import math
-import os
-import re
 import shutil
-import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-import aiofiles
-import aiofiles.os
 import networkx as nx
 import numpy as np
 from nano_vectordb import NanoVectorDB
@@ -23,6 +18,10 @@ from rank_bm25 import BM25Okapi
 
 import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
+from faust_backend.memory.migrate import migrate_if_needed
+from faust_backend.memory.storage import (
+    MemoryDB, ensure_root_node, epoch_to_iso, iso_to_epoch,
+)
 from faust_backend.memory.tokenize_pool import jieba_tokenize, jieba_tokenize_batch
 from faust_backend.memory.config import (
     EMBED_MODEL, EMBED_DIM, MAX_CHUNK_CHARS, CHUNK_OVERLAP_CHARS,
@@ -39,7 +38,16 @@ def _utc_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _now() -> float:
+def _attr_epoch(value: Any) -> float | None:
+    """节点属性里的时间 -> epoch：数值直通，ISO 串转换，空值 None。"""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return iso_to_epoch(str(value))
+
+
+def _now_epoch() -> float:
     return time.time()
 
 
@@ -68,27 +76,6 @@ def _normalize_path(path: str) -> str:
         return "/"
     parts = [p for p in raw.split("/") if p and p not in (".", "..")]
     return "/" + "/".join(parts)
-
-
-def _atomic_write_json(path: Path, data: Any, compact: bool = False) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # 唯一临时文件名，避免多线程写同一目标时在 tmp 文件上相互冲突（WinError 32）
-    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex[:8]}.tmp")
-    if compact:
-        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    else:
-        payload = json.dumps(data, ensure_ascii=False, indent=2)
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def _read_json(path: Path, default: Any = None) -> Any:
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
 
 
 def _chunk_text(text: str) -> list[str]:
@@ -126,25 +113,19 @@ class GraphStore:
         self.agent_root = Path(conf.CONFIG_ROOT) / "agents" / self.agent_name
         self.store_dir = self.agent_root / _NODE_PATH
         self.content_dir = self.store_dir / "content"
-        self.meta_dir = self.store_dir / "meta"
         self.index_dir = self.store_dir / "index"
-        self.attachments_dir = self.store_dir / "attachments"
-        self.graph_file = self.store_dir / "graph.json"
+        self.db_file = self.store_dir / "memory.sqlite"
         self.index_file = self.index_dir / "chunks.vdb"
-        self.chunks_index_file = self.meta_dir / "chunks_index.json"
-        self.tasks_file = self.meta_dir / "tasks.json"
-        # 实体名称向量独立存储（1536 维浮点 JSON 体积大，拖慢 graph.json 全量保存）
-        self.vecs_file = self.index_dir / "entity_vecs.jsonl"
+        self.entity_index_file = self.index_dir / "entity.vdb"
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._vdb: NanoVectorDB | None = None
         self._openai_client: AsyncOpenAI | None = None
         self._embed_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
-        self._save_lock = threading.Lock()
-        self._dirty: bool = False
         self._bm25_dirty: bool = True
         self._bm25_index: BM25Okapi | None = None
         self._bm25_corpus: list[list[str]] | None = None
+        self._bm25_docs: list[dict] = []
         self._extraction_status: dict = {
             "pending": 0,
             "running": 0,
@@ -153,7 +134,13 @@ class GraphStore:
             "last_error": None,
         }
         self._ensure_dirs()
-        self._load()
+        self.db = MemoryDB(self.db_file)
+        report = migrate_if_needed(self.store_dir, self.db, embed_dim=EMBED_DIM)
+        if report.migrated:
+            log.info("memory migrated counts=%s archived=%s", report.counts, report.archived_to)
+        ensure_root_node(self.db)
+        self._load_from_db()
+        self._ensure_vdb()
 
     # ── initialization ──
 
@@ -161,94 +148,48 @@ class GraphStore:
         target = str(agent_name or conf.AGENT_NAME)
         if target == self.agent_name:
             return
+        try:
+            self.db.close()
+        except Exception:
+            log.warning("close previous memory db failed", exc_info=True)
         self.__init__(target)
+
+    def close(self) -> None:
+        try:
+            self.db.close()
+        except Exception:
+            log.warning("close memory db failed", exc_info=True)
 
     def _ensure_dirs(self) -> None:
         self.content_dir.mkdir(parents=True, exist_ok=True)
-        self.meta_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
-        self.attachments_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── persistence ──
-
-    def _load(self) -> None:
-        data = _read_json(self.graph_file, {"nodes": {}, "edges": []})
-        nodes = data.get("nodes", {})
-        edges = data.get("edges", [])
-
+    def _load_from_db(self) -> None:
+        """SQL -> nx 内存视图（含由 parent_id 派生的 has_child 边）。"""
         self._graph.clear()
-        for nid, attrs in nodes.items():
-            self._graph.add_node(nid, **attrs)
-        self._load_entity_vecs()
-        for e in edges:
-            src = str(e.get("source", ""))
-            tgt = str(e.get("target", ""))
-            key = str(e.get("key", "")) or str(uuid.uuid4().hex)
-            etype = str(e.get("type", "relates_to"))
-            self._graph.add_edge(src, tgt, key=key, type=etype)
-
-        if not self._graph.has_node("path:/"):
-            self._graph.add_node("path:/", type="dir", name="/")
-            self._dirty = True
-
-        self._repair_tree()
-        self._ensure_vdb()
-
-    def _load_entity_vecs(self) -> None:
-        """读取实体名称向量侧车文件；兼容旧数据（向量内嵌在 graph.json 中）。"""
-        if self.vecs_file.exists():
-            try:
-                with open(self.vecs_file, encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        rec = json.loads(line)
-                        nid = rec.get("id")
-                        vec = rec.get("v")
-                        if nid and vec is not None and self._graph.has_node(nid):
-                            self._graph.nodes[nid]["_name_vec"] = [float(x) for x in vec]
-            except Exception:  # noqa: BLE001 损坏的侧车文件不阻塞加载
-                pass
-        # 旧格式迁移：graph.json 内嵌 _name_vec → 下次 save() 移入侧车
-        for nid, ndata in self._graph.nodes(data=True):
-            if ndata.get("_name_vec") is not None:
-                self._dirty = True
-                break
-
-    def _write_entity_vecs(self, vecs: dict[str, list[float]]) -> None:
-        """原子写实体名称向量侧车文件（先写侧车再写图，旧图可读时数据不丢）。"""
-        self.index_dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.vecs_file.with_suffix(self.vecs_file.suffix + f".{uuid.uuid4().hex[:8]}.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            for nid, vec in vecs.items():
-                f.write(json.dumps({"id": nid, "v": vec}, ensure_ascii=False,
-                                   separators=(",", ":")) + "\n")
-        os.replace(tmp, self.vecs_file)
-
-    def save(self) -> None:
-        # 同步工具在线程池中执行，save 可能被多线程并发调用，须串行化
-        with self._save_lock:
-            if not self._dirty:
-                return
-            nodes = {}
-            vecs: dict[str, list[float]] = {}
-            for nid, ndata in self._graph.nodes(data=True):
-                d = dict(ndata) if ndata else {}
-                v = d.pop("_name_vec", None)
-                if v is not None:
-                    vecs[nid] = [float(x) for x in v]
-                nodes[nid] = d
-            edges = []
-            for src, tgt, k, edata in self._graph.edges(data=True, keys=True):
-                etype = str(edata.get("type", "relates_to")) if edata else "relates_to"
-                edges.append({"source": src, "target": tgt, "key": str(k), "type": etype})
-            if vecs:
-                self._write_entity_vecs(vecs)
-            _atomic_write_json(self.graph_file, {"nodes": nodes, "edges": edges},
-                               compact=True)
-            self._dirty = False
-            log.info("save wrote %d nodes, %d edges", len(nodes), len(edges))
+        for r in self.db.all(
+            "SELECT id, type, name, description, entity_type, content_type, declared_by,"
+            " updated_at, created_at, score_patch, score_patch_updated_at, managed_by,"
+            " chunk_count, indexed, data FROM nodes"
+        ):
+            attrs = json.loads(r["data"] or "{}")
+            for key in ("type", "name", "description", "entity_type", "content_type",
+                        "declared_by", "managed_by"):
+                if r[key] is not None:
+                    attrs[key] = r[key]
+            if r["updated_at"] is not None:
+                attrs["updated_at"] = epoch_to_iso(r["updated_at"])
+            if r["created_at"] is not None:
+                attrs["created_at"] = epoch_to_iso(r["created_at"])
+            attrs["score_patch"] = float(r["score_patch"] or 0.0)
+            attrs["chunk_count"] = int(r["chunk_count"] or 0)
+            attrs["indexed"] = bool(r["indexed"])
+            self._graph.add_node(r["id"], **attrs)
+        for r in self.db.all("SELECT id, parent_id FROM nodes WHERE parent_id IS NOT NULL"):
+            self._graph.add_edge(r["parent_id"], r["id"], key="parent", type=TREE_EDGE)
+        for r in self.db.all("SELECT src, dst, type, key FROM edges"):
+            self._graph.add_edge(r["src"], r["dst"], key=r["key"], type=r["type"])
+        self._verify_tree()
 
     def _mark_bm25_dirty(self) -> None:
         self._bm25_dirty = True
@@ -256,44 +197,110 @@ class GraphStore:
     def _mark_bm25_clean(self) -> None:
         self._bm25_dirty = False
 
-    def flush(self) -> None:
-        self.save()
-        log.info("flush")
+    # ── node/edge 原语（SQL + nx 同步） ──
 
-    async def _flush_async(self) -> None:
-        """异步调用 flush（save 为全量磁盘写，移出事件循环避免卡顿）。"""
-        await asyncio.to_thread(self.flush)
+    _NODE_COLUMNS = (
+        "type", "name", "description", "entity_type", "content_type", "declared_by",
+        "updated_at", "created_at", "score_patch", "score_patch_updated_at",
+        "managed_by", "chunk_count", "indexed",
+    )
 
-    # ── node helpers ──
+    def _node_row(self, nid: str, attrs: dict) -> dict:
+        extra = {k: v for k, v in attrs.items()
+                 if k not in self._NODE_COLUMNS
+                 and k not in ("path", "parent_id", "tags")
+                 and not k.startswith("_")}
+        return {
+            "id": nid,
+            "type": str(attrs.get("type") or "file"),
+            "name": str(attrs.get("name") or ""),
+            "description": str(attrs.get("description") or ""),
+            "entity_type": attrs.get("entity_type"),
+            "content_type": attrs.get("content_type"),
+            "parent_id": None,
+            "path": _id_to_path(nid) if _is_path_id(nid) else None,
+            "declared_by": attrs.get("declared_by"),
+            "updated_at": _attr_epoch(attrs.get("updated_at")),
+            "created_at": _attr_epoch(attrs.get("created_at")),
+            "score_patch": float(attrs.get("score_patch") or 0.0),
+            "score_patch_updated_at": _attr_epoch(attrs.get("score_patch_updated_at")),
+            "managed_by": attrs.get("managed_by"),
+            "chunk_count": int(attrs.get("chunk_count") or 0),
+            "indexed": 1 if attrs.get("indexed") else 0,
+            "data": json.dumps(extra, ensure_ascii=False),
+        }
+
+    _NODE_UPSERT = (
+        "INSERT INTO nodes(id, type, name, description, entity_type, content_type, parent_id,"
+        " path, declared_by, updated_at, created_at, score_patch, score_patch_updated_at,"
+        " managed_by, chunk_count, indexed, data)"
+        " VALUES (:id, :type, :name, :description, :entity_type, :content_type, :parent_id,"
+        " :path, :declared_by, :updated_at, :created_at, :score_patch, :score_patch_updated_at,"
+        " :managed_by, :chunk_count, :indexed, :data)"
+        " ON CONFLICT(id) DO NOTHING"
+    )
 
     def _add_node(self, nid: str, **attrs) -> None:
+        if self._graph.has_node(nid):
+            return
+        self._graph.add_node(nid, **attrs)
+        with self.db.transaction() as conn:
+            conn.execute(self._NODE_UPSERT, self._node_row(nid, dict(attrs)))
+
+    def _db_delete_node(self, nid: str) -> None:
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM nodes WHERE id=?", (nid,))
+        if self._graph.has_node(nid):
+            self._graph.remove_node(nid)
+
+    def _set_node_attr(self, nid: str, **kwargs) -> None:
         if not self._graph.has_node(nid):
-            self._graph.add_node(nid, **attrs)
-            self._dirty = True
+            return
+        self._graph.nodes[nid].update(kwargs)
+        cols = {k: v for k, v in kwargs.items() if k in self._NODE_COLUMNS}
+        # tags 属 tags 表，实体/记录自由属性进 data JSON；其余键仅存在于 nx
+        extra = {k: v for k, v in kwargs.items()
+                 if k not in self._NODE_COLUMNS and k != "tags" and not k.startswith("_")}
+        with self.db.transaction() as conn:
+            if cols:
+                assignments, params = [], []
+                for key, value in cols.items():
+                    assignments.append(f"{key}=?")
+                    params.append(_attr_epoch(value) if key in (
+                        "updated_at", "created_at", "score_patch_updated_at"
+                    ) else (1 if key == "indexed" else value))
+                params.append(nid)
+                conn.execute(f"UPDATE nodes SET {', '.join(assignments)} WHERE id=?", params)
+            if extra:
+                row = conn.execute("SELECT data FROM nodes WHERE id=?", (nid,)).fetchone()
+                data = json.loads(row["data"] or "{}") if row else {}
+                data.update(extra)
+                conn.execute("UPDATE nodes SET data=? WHERE id=?",
+                             (json.dumps(data, ensure_ascii=False), nid))
 
     def _add_edge(self, src: str, tgt: str, etype: str = "relates_to") -> str:
         key = str(uuid.uuid4().hex)
         self._graph.add_edge(src, tgt, key=key, type=etype)
-        self._dirty = True
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO edges(src, dst, type, key) VALUES (?, ?, ?, ?)",
+                (src, tgt, etype, key),
+            )
         return key
 
     def _remove_edge(self, src: str, tgt: str) -> None:
-        if self._graph.has_edge(src, tgt):
-            self._graph.remove_edge(src, tgt)
-            self._dirty = True
+        if self._graph.has_node(src) and self._graph.has_node(tgt) and self._graph.has_edge(src, tgt):
+            for key in list(self._graph[src][tgt].keys()):
+                self._graph.remove_edge(src, tgt, key)
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM edges WHERE src=? AND dst=?", (src, tgt))
+            conn.execute("UPDATE nodes SET parent_id=NULL WHERE id=? AND parent_id=?", (tgt, src))
 
     def _has_node(self, nid: str) -> bool:
         return self._graph.has_node(nid)
 
     def _get_node_attr(self, nid: str, key: str, default: Any = None) -> Any:
         return self._graph.nodes[nid].get(key, default) if self._graph.has_node(nid) else default
-
-    def _set_node_attr(self, nid: str, **kwargs) -> None:
-        if not self._graph.has_node(nid):
-            return
-        for k, v in kwargs.items():
-            self._graph.nodes[nid][k] = v
-        self._dirty = True
 
     def _children(self, parent_id: str) -> list[tuple[str, str]]:
         out = []
@@ -306,63 +313,105 @@ class GraphStore:
     # ── tree path helpers ──
 
     def _ensure_ancestors(self, normalized_path: str) -> str:
-        parts = Path(normalized_path).parts
-        current = ""
-        for i, part in enumerate(parts):
-            if part in ("/", "\\"):
-                current = "/"
-                continue
-            if i == len(parts) - 1:
-                break
-            parent = current
-            current = str(Path(current) / part) if current != "/" else f"/{part}"
-            parent_nid = _path_id(parent)
-            child_nid = _path_id(current)
-            if not self._has_node(child_nid):
-                self._add_node(child_nid, type="dir", name=part)
-            if parent_nid == child_nid:
-                continue
-            has_edge = False
-            for _, tgt, _k, edata in self._graph.out_edges(parent_nid, data=True, keys=True):
-                if tgt == child_nid and edata and edata.get("type") == TREE_EDGE:
-                    has_edge = True
-                    break
-            if not has_edge:
-                self._add_edge(parent_nid, child_nid, TREE_EDGE)
-        return _path_id(str(Path(normalized_path).parent))
+        """确保所有中间目录存在并连好父子边；返回直接父节点 id（与原实现同语义）。"""
+        parts = [p for p in Path(normalized_path).parts if p not in ("/", "\\")]
+        parent_id = "path:/"
+        for i, part in enumerate(parts[:-1]):
+            nid = _path_id("/" + "/".join(parts[: i + 1]))
+            if not self._has_node(nid):
+                self._add_node(nid, type="dir", name=part)
+            if self._parent_of(nid) != parent_id:
+                self._link_parent(nid, parent_id)
+            parent_id = nid
+        return parent_id
 
-    def _repair_tree(self) -> None:
-        changed = True
-        for _ in range(20):
-            if not changed:
-                break
-            changed = False
-            for nid in list(self._graph.nodes):
-                if not _is_path_id(nid) or nid == "path:/":
-                    continue
-                parent_nid = _path_id(str(Path(_id_to_path(nid)).parent))
-                if not self._has_node(parent_nid):
-                    self._add_node(parent_nid, type="dir", name=Path(_id_to_path(parent_nid)).name or "/")
-                    changed = True
-                has_edge = False
-                if self._has_node(parent_nid) and self._has_node(nid):
-                    for _, tgt, _k, edata in self._graph.out_edges(parent_nid, data=True, keys=True):
-                        if tgt == nid and edata and edata.get("type") == TREE_EDGE:
-                            has_edge = True
-                            break
-                if not has_edge:
-                    self._add_edge(parent_nid, nid, TREE_EDGE)
-                    changed = True
+    def _link_parent(self, child_id: str, parent_id: str) -> None:
+        """建立路径树父子关系（唯一真源 = nodes.parent_id），并修正 nx 中的父边。"""
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE nodes SET parent_id=? WHERE id=?", (parent_id, child_id))
+        self._reset_nx_parent_edge(child_id, parent_id)
+
+    def _reset_nx_parent_edge(self, child_id: str, parent_id: str) -> None:
+        """nx 视图里只保留一条指向 parent_id 的 has_child 边。"""
+        if not self._graph.has_node(child_id):
+            return
+        for src, _, key, edata in list(self._graph.in_edges(child_id, data=True, keys=True)):
+            if edata and edata.get("type") == TREE_EDGE and src != parent_id:
+                self._graph.remove_edge(src, child_id, key)
+        if self._graph.has_node(parent_id) and not self._graph.has_edge(parent_id, child_id):
+            self._graph.add_edge(parent_id, child_id, key="parent", type=TREE_EDGE)
+
+    def _parent_of(self, nid: str) -> str | None:
+        row = self.db.one("SELECT parent_id FROM nodes WHERE id=?", (nid,))
+        return row["parent_id"] if row else None
+
+    def _verify_tree(self) -> None:
+        """启动时修树：path 派生父缺失则补齐（旧 JSON 图的全量修复语义）。"""
+        for r in self.db.all(
+            "SELECT id, path, parent_id FROM nodes WHERE path IS NOT NULL AND id <> 'path:/'"
+        ):
+            expected = _path_id(str(Path(r["path"]).parent).replace("\\", "/"))
+            if r["parent_id"] == expected and self._graph.has_node(expected):
+                continue
+            if not self._graph.has_node(expected):
+                self._add_node(expected, type="dir", name=Path(_id_to_path(expected)).name or "/")
+            self._link_parent(r["id"], expected)
+
+    def _subtree_paths(self, norm_path: str) -> list[str]:
+        """返回该路径自身及所有后代路径（浅 -> 深）。"""
+        prefix = norm_path.rstrip("/") + "/"
+        rows = self.db.all(
+            "SELECT path FROM nodes WHERE path = ? OR path LIKE ? ORDER BY length(path), path",
+            (norm_path, prefix + "%"),
+        )
+        return [r["path"] for r in rows]
+
+    def _relabel_nx(self, old_path: str, new_path: str) -> None:
+        mapping = {}
+        for nid in list(self._graph.nodes):
+            if not _is_path_id(nid):
+                continue
+            p = _id_to_path(nid)
+            if p == old_path or p.startswith(old_path + "/"):
+                mapping[nid] = _path_id(new_path + p[len(old_path):])
+        if mapping:
+            nx.relabel_nodes(self._graph, mapping, copy=False)
+
+    def _copy_one_node(self, conn, src_path: str, dst_path: str) -> list[dict]:
+        """把一个 path 节点（含内容文件、元数据、分块）复制到 dst_path；返回新分块项。"""
+        src_nid, dst_nid = _path_id(src_path), _path_id(dst_path)
+        src_attrs = dict(self._graph.nodes[src_nid]) if self._graph.has_node(src_nid) else {}
+        cp = self._content_path(src_path)
+        if cp.is_file():
+            new_cp = self._content_path(dst_path)
+            new_cp.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cp, new_cp)
+        attrs = {k: v for k, v in src_attrs.items() if k not in ("tags", "parent_id")}
+        attrs["updated_at"] = _utc_iso()
+        self._add_node(dst_nid, **attrs)
+        self._link_parent(dst_nid, _path_id(str(Path(dst_path).parent)))
+        for r in conn.execute("SELECT tag FROM tags WHERE node_id=?", (src_nid,)).fetchall():
+            conn.execute("INSERT OR IGNORE INTO tags(node_id, tag) VALUES (?, ?)", (dst_nid, r["tag"]))
+        new_items = []
+        for r in conn.execute(
+                "SELECT chunk_index, text, text_preview, scope_prefix FROM chunks"
+                " WHERE node_id=? ORDER BY chunk_index", (src_nid,)).fetchall():
+            new_items.append({
+                "chunk_id": f"{dst_path}::chunk::{r['chunk_index']}::{uuid.uuid4().hex[:8]}",
+                "node_path": dst_path, "chunk_index": int(r["chunk_index"]), "text": r["text"],
+                "text_preview": r["text_preview"],
+                "scope_prefix": str(Path(dst_path).parent.as_posix()).strip(".") or "/",
+                "updated_at": _utc_iso(), "indexed": True,
+            })
+        if new_items:
+            self._replace_chunks(dst_path, new_items)
+        return new_items
 
     # ── content helpers ──
 
     def _content_path(self, norm_path: str) -> Path:
         relative = norm_path.strip("/")
         return self.content_dir / relative
-
-    def _meta_path(self, norm_path: str) -> Path:
-        relative = norm_path.strip("/")
-        return self.meta_dir / f"{relative}.meta.json"
 
     def _count_content_lines(self, norm_path: str) -> int | None:
         """列举元数据用：内容文件 ≤2MB 且 UTF-8 可解码时返回行数，否则 None。"""
@@ -412,7 +461,7 @@ class GraphStore:
                     "description": self._get_node_attr(nid, "description", ""),
                 }
                 if include_metadata:
-                    meta = self._read_meta(rel)
+                    meta = self._get_meta(rel)
                     node["updated_at"] = str(meta.get("updated_at") or "")
                     node["tags"] = [str(t).strip() for t in (meta.get("tags") or []) if str(t).strip()]
                     node["chunk_count"] = int(meta.get("chunk_count") or 0)
@@ -507,7 +556,7 @@ class GraphStore:
                 except (UnicodeDecodeError, OSError):
                     content = ""
         description = self._get_node_attr(nid, "description", "")
-        meta = self._read_meta(norm)
+        meta = self._get_meta(norm)
 
         result = {"path": norm, "content": content, "description": description, "meta": meta}
 
@@ -554,71 +603,57 @@ class GraphStore:
         parent_nid = self._ensure_ancestors(norm)
 
         async with self._write_lock:
-            cp = self._content_path(norm)
-            cp.parent.mkdir(parents=True, exist_ok=True)
-            cp.write_text(str(content or ""), encoding="utf-8")
+            with self.db.transaction() as conn:
+                cp = self._content_path(norm)
+                cp.parent.mkdir(parents=True, exist_ok=True)
+                cp.write_text(str(content or ""), encoding="utf-8")
 
-            if not self._has_node(nid):
-                self._add_node(nid, type="file", name=name, description=str(description or ""),
-                               tags=[], score_patch=0.0)
-            self._set_node_attr(nid, updated_at=_utc_iso(), declared_by=declared_by)
+                if not self._has_node(nid):
+                    self._add_node(nid, type="file", name=name,
+                                   description=str(description or ""), score_patch=0.0)
+                self._set_node_attr(nid, updated_at=_utc_iso(), declared_by=declared_by)
+                self._link_parent(nid, parent_nid)
 
-            has_child = False
-            if self._has_node(parent_nid):
-                for _, tgt, _k, edata in self._graph.out_edges(parent_nid, data=True, keys=True):
-                    if tgt == nid and edata and edata.get("type") == TREE_EDGE:
-                        has_child = True
-                        break
-            if not has_child:
-                self._add_edge(parent_nid, nid, TREE_EDGE)
+                index_text = str(content or "")
+                if description:
+                    index_text = f"{description}\n\n{content}"
+                chunks = _chunk_text(index_text)
+                existing_tags = [r["tag"] for r in conn.execute(
+                    "SELECT tag FROM tags WHERE node_id=? ORDER BY tag", (nid,)).fetchall()]
+                tags_final = [t.strip() for t in (tags or existing_tags) if t and t.strip()]
+                conn.execute("DELETE FROM tags WHERE node_id=?", (nid,))
+                conn.executemany("INSERT OR IGNORE INTO tags(node_id, tag) VALUES (?, ?)",
+                                 [(nid, t) for t in tags_final])
+                conn.execute(
+                    "UPDATE nodes SET description=?, declared_by=?, updated_at=?, chunk_count=?,"
+                    " indexed=? WHERE id=?",
+                    (str(description or ""), declared_by, _now_epoch(),
+                     len(chunks), 1 if index else 0, nid),
+                )
+                self._set_node_attr(nid, tags=tags_final)
+                meta = self._get_meta(norm)
 
-            index_text = str(content or "")
-            if description:
-                index_text = f"{description}\n\n{content}"
-            chunks = _chunk_text(index_text)
-            existing_meta = self._read_meta(norm) or {}
-            meta = {
-                "path": norm,
-                "declared_by": declared_by,
-                "description": str(description or ""),
-                "updated_at": _utc_iso(),
-                "chunk_count": len(chunks),
-                "indexed": bool(index),
-                "tags": [t.strip() for t in (tags or existing_meta.get("tags", [])) if t and t.strip()],
-                "score_patch": float(existing_meta.get("score_patch", 0.0)),
-            }
-            self._write_meta(norm, meta)
-            self._set_node_attr(nid, tags=meta["tags"], score_patch=meta["score_patch"])
+                if not index:
+                    return {"path": norm, "meta": meta}
 
-            if not index:
-                return {"path": norm, "meta": meta}
+                old_ids = self._delete_chunks(norm)
+                chunk_items = []
+                for idx, chunk_text in enumerate(chunks, 1):
+                    cid = f"{norm}::chunk::{idx}::{uuid.uuid4().hex[:8]}"
+                    chunk_items.append({
+                        "chunk_id": cid, "node_path": norm, "chunk_index": idx,
+                        "text": chunk_text, "text_preview": chunk_text[:120],
+                        "scope_prefix": str(Path(norm).parent.as_posix()).strip(".") or "/",
+                        "updated_at": _utc_iso(), "indexed": True,
+                    })
+                self._replace_chunks(norm, chunk_items)
+                self._mark_bm25_dirty()
 
-            chunk_items = []
-            chunks_index = self._load_chunks_index()
-            old_ids = [cid for cid, item in chunks_index.items() if str(item.get("node_path")) == norm]
-            for cid in old_ids:
-                chunks_index.pop(cid, None)
             if old_ids:
                 await self._delete_chunk_ids(old_ids)
-
-            for idx, chunk_text in enumerate(chunks, 1):
-                cid = f"{norm}::chunk::{idx}::{uuid.uuid4().hex[:8]}"
-                item = {
-                    "chunk_id": cid, "node_path": norm, "chunk_index": idx,
-                    "text": chunk_text, "text_preview": chunk_text[:120],
-                    "scope_prefix": str(Path(norm).parent.as_posix()).strip(".") or "/",
-                    "updated_at": _utc_iso(), "indexed": True,
-                }
-                chunk_items.append(item)
-                chunks_index[cid] = item
-            _atomic_write_json(self._chunks_file(norm), chunk_items)
-            self._save_chunks_index(chunks_index)
-
             if chunk_items:
                 await self._embed_and_index(chunk_items)
-            self._mark_bm25_dirty()
 
-        await self._flush_async()
         log.info("file_write done path=%s chunks=%d", norm, len(chunks) if index else 0)
         result = {"path": norm, "meta": meta}
 
@@ -646,43 +681,26 @@ class GraphStore:
         parent_nid = self._ensure_ancestors(norm)
 
         async with self._write_lock:
-            cp = self._content_path(norm)
-            cp.parent.mkdir(parents=True, exist_ok=True)
-            cp.write_bytes(image_bytes)
+            with self.db.transaction() as conn:
+                cp = self._content_path(norm)
+                cp.parent.mkdir(parents=True, exist_ok=True)
+                cp.write_bytes(image_bytes)
 
-            if not self._has_node(nid):
-                self._add_node(nid, type="file", name=name,
-                               description=str(description or ""),
-                               content_type=content_type, tags=[],
-                               score_patch=0.0)
-            self._set_node_attr(nid, updated_at=_utc_iso(),
-                                declared_by=declared_by)
-
-            has_child = False
-            if self._has_node(parent_nid):
-                for _, tgt, _k, edata in self._graph.out_edges(parent_nid, data=True, keys=True):
-                    if tgt == nid and edata and edata.get("type") == TREE_EDGE:
-                        has_child = True
-                        break
-            if not has_child:
-                self._add_edge(parent_nid, nid, TREE_EDGE)
-
-            meta = {
-                "path": norm,
-                "declared_by": declared_by,
-                "description": str(description or ""),
-                "content_type": content_type,
-                "updated_at": _utc_iso(),
-                "tags": [],
-                "score_patch": 0.0,
-            }
-            self._write_meta(norm, meta)
+                if not self._has_node(nid):
+                    self._add_node(nid, type="file", name=name,
+                                   description=str(description or ""),
+                                   content_type=content_type, score_patch=0.0)
+                self._set_node_attr(nid, updated_at=_utc_iso(), declared_by=declared_by)
+                self._link_parent(nid, parent_nid)
+                conn.execute(
+                    "UPDATE nodes SET description=?, declared_by=?, updated_at=?, content_type=?"
+                    " WHERE id=?",
+                    (str(description or ""), declared_by, _now_epoch(), content_type, nid),
+                )
 
         if description:
             await self._index_attachment_description(norm, content_type, description)
         self._mark_bm25_dirty()
-
-        await self._flush_async()
 
         log.info("attachment_write done path=%s size=%d desc_len=%d",
                  norm, len(image_bytes), len(description))
@@ -692,26 +710,19 @@ class GraphStore:
         try:
             chunk_text = f"[image:{content_type}] {description}"
             chunks = _chunk_text(chunk_text)
-            chunk_items = []
-            chunks_index = self._load_chunks_index()
-            old_ids = [cid for cid, item in chunks_index.items()
-                       if str(item.get("node_path")) == norm]
-            for cid in old_ids:
-                chunks_index.pop(cid, None)
+            old_ids = self._delete_chunks(norm)
             if old_ids:
                 await self._delete_chunk_ids(old_ids)
-            for idx, chunk_text in enumerate(chunks, 1):
-                cid = f"{norm}::chunk::{idx}::{uuid.uuid4().hex[:8]}"
-                item = {
-                    "chunk_id": cid, "node_path": norm, "chunk_index": idx,
-                    "text": chunk_text, "text_preview": chunk_text[:120],
+            chunk_items = []
+            for idx, text in enumerate(chunks, 1):
+                chunk_items.append({
+                    "chunk_id": f"{norm}::chunk::{idx}::{uuid.uuid4().hex[:8]}",
+                    "node_path": norm, "chunk_index": idx, "text": text,
+                    "text_preview": text[:120],
                     "scope_prefix": str(Path(norm).parent.as_posix()).strip(".") or "/",
                     "updated_at": _utc_iso(), "indexed": True,
-                }
-                chunk_items.append(item)
-                chunks_index[cid] = item
-            _atomic_write_json(self._chunks_file(norm), chunk_items)
-            self._save_chunks_index(chunks_index)
+                })
+            self._replace_chunks(norm, chunk_items)
             if chunk_items:
                 await self._embed_and_index(chunk_items)
         except Exception as e:
@@ -747,36 +758,22 @@ class GraphStore:
             raise FileNotFoundError(f"节点不存在: {norm}")
 
         async with self._write_lock:
-            cp = self._content_path(norm)
-            if cp.exists():
-                if cp.is_dir():
-                    # 目录节点：递归删除其内容目录（含残留子目录/文件）
-                    shutil.rmtree(cp, ignore_errors=True)
-                else:
-                    cp.unlink(missing_ok=True)
-            mp = self._meta_path(norm)
-            if mp.exists():
-                mp.unlink(missing_ok=True)
-            cf = self._chunks_file(norm)
-            if cf.exists():
-                cf.unlink(missing_ok=True)
-
-            parent_nid = _path_id(str(Path(norm).parent))
-            self._remove_edge(parent_nid, nid)
-
-            chunks_index = self._load_chunks_index()
-            old_ids = [cid for cid, item in chunks_index.items() if str(item.get("node_path")) == norm]
-            for cid in old_ids:
-                chunks_index.pop(cid, None)
-            self._save_chunks_index(chunks_index)
-            await self._delete_chunk_ids(old_ids)
+            chunk_ids: list[str] = []
+            with self.db.transaction() as conn:
+                cp = self._content_path(norm)
+                if cp.exists():
+                    if cp.is_dir():
+                        # 目录节点：递归删除其内容目录（含残留子目录/文件）
+                        shutil.rmtree(cp, ignore_errors=True)
+                    else:
+                        cp.unlink(missing_ok=True)
+                chunk_ids = [r["chunk_id"] for r in conn.execute(
+                    "SELECT chunk_id FROM chunks WHERE node_id=?", (nid,)).fetchall()]
+                conn.execute("DELETE FROM nodes WHERE id=?", (nid,))
+                if self._graph.has_node(nid):
+                    self._graph.remove_node(nid)
+            await self._delete_chunk_ids(chunk_ids)
             self._mark_bm25_dirty()
-
-            if self._has_node(nid):
-                self._graph.remove_node(nid)
-                self._dirty = True
-
-        await self._flush_async()
         return {"path": norm}
 
     async def file_delete_tree(self, path: str) -> dict:
@@ -826,105 +823,31 @@ class GraphStore:
             raise FileExistsError(f"目标路径已存在: {new_path}")
         ntype = self._get_node_attr(nid, "type", "file")
         async with self._write_lock:
-            if ntype == "file":
-                # 文件：移动内容+元数据+chunks
-                cp = self._content_path(norm)
-                if cp.exists():
-                    new_cp = self._content_path(new_path)
-                    new_cp.parent.mkdir(parents=True, exist_ok=True)
-                    cp.rename(new_cp)
-                mp = self._meta_path(norm)
-                if mp.exists():
-                    meta = self._read_meta(norm)
-                    meta["path"] = new_path
-                    meta["updated_at"] = _utc_iso()
-                    self._write_meta(new_path, meta)
-                    mp.unlink()
-                cf = self._chunks_file(norm)
-                if cf.exists():
-                    new_cf = self._chunks_file(new_path)
-                    new_cf.parent.mkdir(parents=True, exist_ok=True)
-                    cf.rename(new_cf)
-                    # update chunks_index references
-                    chunks_index = self._load_chunks_index()
-                    for cid, item in list(chunks_index.items()):
-                        if str(item.get("node_path")) == norm:
-                            item["node_path"] = new_path
-                    self._save_chunks_index(chunks_index)
-                parent_nid = _path_id(str(Path(norm).parent))
-                self._remove_edge(parent_nid, nid)
-                # 重新添加节点
-                ndata = dict(self._graph.nodes[nid])
-                ndata["name"] = new_name
-                self._graph.remove_node(nid)
-                self._add_node(new_nid, **ndata)
-                self._add_edge(_path_id(parent), new_nid, TREE_EDGE)
-            else:
-                # 目录：遍历所有子节点递归重命名
-                children_to_rename = []
-                for child_nid in list(self._graph.nodes):
-                    if not _is_path_id(child_nid):
-                        continue
-                    child_path = _id_to_path(child_nid)
-                    if child_path.startswith(norm + "/") or child_path == norm:
-                        children_to_rename.append((child_nid, child_path))
-                # 按路径深度排序（深->浅），避免父路径先变导致子路径错误
-                children_to_rename.sort(key=lambda x: x[1], reverse=True)
-                seen_new = set()
-                for child_nid, child_path in children_to_rename:
-                    suffix = child_path[len(norm):]  # e.g. "/sub/file.md"
-                    new_child_path = _normalize_path(new_path + suffix)
-                    new_child_nid = _path_id(new_child_path)
-                    if new_child_nid in seen_new:
-                        continue
-                    seen_new.add(new_child_nid)
-                    if child_nid == nid:
-                        ndata = dict(self._graph.nodes[child_nid])
-                        ndata["name"] = new_name
-                        self._graph.remove_node(child_nid)
-                        self._add_node(new_child_nid, **ndata)
-                        self._add_edge(_path_id(parent), new_child_nid, TREE_EDGE)
-                    else:
-                        # move path:/old/dir/sub -> path:/new/dir/sub
-                        try:
-                            sub_cp = self._content_path(child_path)
-                            if sub_cp.exists():
-                                new_sub_cp = self._content_path(new_child_path)
-                                new_sub_cp.parent.mkdir(parents=True, exist_ok=True)
-                                sub_cp.rename(new_sub_cp)
-                        except Exception:
-                            pass
-                        try:
-                            sub_mp = self._meta_path(child_path)
-                            if sub_mp.exists():
-                                sub_meta = _read_json(sub_mp, {})
-                                sub_meta["path"] = new_child_path
-                                sub_meta["updated_at"] = _utc_iso()
-                                self._write_meta(new_child_path, sub_meta)
-                                sub_mp.unlink()
-                        except Exception:
-                            pass
-                        try:
-                            sub_cf = self._chunks_file(child_path)
-                            if sub_cf.exists():
-                                new_cf = self._chunks_file(new_child_path)
-                                new_cf.parent.mkdir(parents=True, exist_ok=True)
-                                sub_cf.rename(new_cf)
-                        except Exception:
-                            pass
-                        ndata = dict(self._graph.nodes[child_nid])
-                        self._graph.remove_node(child_nid)
-                        self._add_node(new_child_nid, **ndata)
-                # 更新 chunks index 中的 node_path 引用
-                chunks_index = self._load_chunks_index()
-                for cid, item in list(chunks_index.items()):
-                    np = str(item.get("node_path", ""))
-                    if np.startswith(norm + "/") or np == norm:
-                        item["node_path"] = np.replace(norm, new_path, 1)
-                self._save_chunks_index(chunks_index)
-            # 修复父目录边缘
-            self._repair_tree()
-        await self._flush_async()
+            old_cp = self._content_path(norm)
+            new_cp = self._content_path(new_path)
+            if old_cp.exists():
+                new_cp.parent.mkdir(parents=True, exist_ok=True)
+                old_cp.rename(new_cp)
+            with self.db.transaction() as conn:
+                if ntype == "file":
+                    conn.execute(
+                        "UPDATE nodes SET id=?, path=?, name=?, updated_at=? WHERE id=?",
+                        (new_nid, new_path, new_name, _now_epoch(), nid),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE nodes SET id='path:' || replace(path, ?, ?),"
+                        " path=replace(path, ?, ?), updated_at=?"
+                        " WHERE path=? OR path LIKE ?",
+                        (norm, new_path, norm, new_path, _now_epoch(), norm, norm + "/%"),
+                    )
+                    conn.execute("UPDATE nodes SET name=? WHERE id=?", (new_name, new_nid))
+                self._mark_bm25_dirty()
+            self._relabel_nx(norm, new_path)
+            if self._graph.has_node(new_nid):
+                self._graph.nodes[new_nid]["name"] = new_name
+                self._graph.nodes[new_nid]["updated_at"] = _utc_iso()
+            self._reset_nx_parent_edge(new_nid, _path_id(str(Path(new_path).parent)))
         log.info("file_rename path=%s -> new_path=%s type=%s", norm, new_path, ntype)
         return {"path": norm, "new_path": new_path, "type": ntype}
 
@@ -941,114 +864,18 @@ class GraphStore:
         ntype = self._get_node_attr(nid, "type", "file")
         copied_chunk_items: list[dict] = []
         async with self._write_lock:
-            if ntype == "file":
-                # 复制文件
-                cp = self._content_path(norm)
-                if cp.exists():
-                    new_cp = self._content_path(dest)
-                    new_cp.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
-                    shutil.copy2(cp, new_cp)
-                meta = self._read_meta(norm)
-                new_meta = dict(meta)
-                new_meta["path"] = dest
-                new_meta["updated_at"] = _utc_iso()
-                self._write_meta(dest, new_meta)
-                cf = self._chunks_file(norm)
-                if cf.exists():
-                    new_cf = self._chunks_file(dest)
-                    new_cf.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
-                    shutil.copy2(cf, new_cf)
-                    # copy chunks index refs
-                    chunks_items = _read_json(cf, [])
-                    new_items = []
-                    for item in chunks_items:
-                        new_item = dict(item)
-                        new_item["node_path"] = dest
-                        new_cid = f"{dest}::chunk::{item.get('chunk_index', 0)}::{uuid.uuid4().hex[:8]}"
-                        new_item["chunk_id"] = new_cid
-                        new_items.append(new_item)
-                    _atomic_write_json(new_cf, new_items)
-                    # 更新全局 chunks_index
-                    chunks_index = self._load_chunks_index()
-                    for ni in new_items:
-                        chunks_index[ni["chunk_id"]] = ni
-                    self._save_chunks_index(chunks_index)
-                    copied_chunk_items.extend(new_items)
-                ndata = dict(self._graph.nodes[nid])
-                self._add_node(dest_nid, **ndata)
-                parent_dest_nid = _path_id(str(Path(dest).parent))
+            with self.db.transaction() as conn:
                 self._ensure_ancestors(dest)
-                self._add_edge(parent_dest_nid, dest_nid, TREE_EDGE)
-            else:
-                # 目录递归复制
-                self._ensure_ancestors(dest)
-                children_to_copy = []
-                for child_nid in list(self._graph.nodes):
-                    if not _is_path_id(child_nid):
-                        continue
-                    child_path = _id_to_path(child_nid)
-                    if child_path.startswith(norm + "/") or child_path == norm:
-                        children_to_copy.append((child_nid, child_path))
-                children_to_copy.sort(key=lambda x: len(x[1]))
-                seen_new = set()
-                for child_nid, child_path in children_to_copy:
-                    suffix = child_path[len(norm):]
-                    new_child_path = _normalize_path(dest + suffix)
-                    new_child_nid = _path_id(new_child_path)
-                    if new_child_nid in seen_new:
-                        continue
-                    seen_new.add(new_child_nid)
-                    try:
-                        cp = self._content_path(child_path)
-                        if cp.exists():
-                            new_cp = self._content_path(new_child_path)
-                            new_cp.parent.mkdir(parents=True, exist_ok=True)
-                            import shutil
-                            shutil.copy2(cp, new_cp)
-                    except Exception:
-                        pass
-                    try:
-                        meta = self._read_meta(child_path)
-                        new_meta = dict(meta)
-                        new_meta["path"] = new_child_path
-                        new_meta["updated_at"] = _utc_iso()
-                        self._write_meta(new_child_path, new_meta)
-                    except Exception:
-                        pass
-                    try:
-                        cf = self._chunks_file(child_path)
-                        if cf.exists():
-                            new_cf = self._chunks_file(new_child_path)
-                            new_cf.parent.mkdir(parents=True, exist_ok=True)
-                            chunks_items = _read_json(cf, [])
-                            new_items = []
-                            for item in chunks_items:
-                                new_item = dict(item)
-                                new_item["node_path"] = new_child_path
-                                new_item["chunk_id"] = f"{new_child_path}::chunk::{item.get('chunk_index', 0)}::{uuid.uuid4().hex[:8]}"
-                                new_items.append(new_item)
-                            _atomic_write_json(new_cf, new_items)
-                            # update global chunks_index
-                            chunks_index = self._load_chunks_index()
-                            for ni in new_items:
-                                chunks_index[ni["chunk_id"]] = ni
-                            self._save_chunks_index(chunks_index)
-                            copied_chunk_items.extend(new_items)
-                    except Exception:
-                        pass
-                    ndata = dict(self._graph.nodes[child_nid])
-                    self._add_node(new_child_nid, **ndata)
-                    # wire parent
-                    if child_nid != nid:  # not the root
-                        p_dest = _path_id(str(Path(new_child_path).parent))
-                        self._add_edge(p_dest, new_child_nid, TREE_EDGE)
-        if copied_chunk_items:
-            await self._embed_and_index(copied_chunk_items)
-        self._mark_bm25_dirty()
-        self._repair_tree()
-        await self._flush_async()
+                if ntype == "file":
+                    copied_chunk_items = self._copy_one_node(conn, norm, dest)
+                else:
+                    for child_path in self._subtree_paths(norm):
+                        copied_chunk_items.extend(
+                            self._copy_one_node(conn, child_path, dest + child_path[len(norm):])
+                        )
+            if copied_chunk_items:
+                await self._embed_and_index(copied_chunk_items)
+            self._mark_bm25_dirty()
         log.info("file_copy path=%s -> dest=%s type=%s", norm, dest, ntype)
         return {"path": norm, "dest": dest, "type": ntype}
 
@@ -1067,103 +894,30 @@ class GraphStore:
             raise FileExistsError(f"目标路径已存在: {dest}")
         ntype = self._get_node_attr(nid, "type", "file")
         async with self._write_lock:
-            if ntype == "file":
-                cp = self._content_path(norm)
-                if cp.exists():
-                    new_cp = self._content_path(dest)
-                    new_cp.parent.mkdir(parents=True, exist_ok=True)
-                    cp.rename(new_cp)
-                mp = self._meta_path(norm)
-                if mp.exists():
-                    meta = self._read_meta(norm)
-                    meta["path"] = dest
-                    meta["updated_at"] = _utc_iso()
-                    self._write_meta(dest, meta)
-                    mp.unlink()
-                cf = self._chunks_file(norm)
-                if cf.exists():
-                    new_cf = self._chunks_file(dest)
-                    new_cf.parent.mkdir(parents=True, exist_ok=True)
-                    cf.rename(new_cf)
-                    chunks_index = self._load_chunks_index()
-                    for cid, item in list(chunks_index.items()):
-                        if str(item.get("node_path")) == norm:
-                            item["node_path"] = dest
-                    self._save_chunks_index(chunks_index)
-                parent_nid = _path_id(str(Path(norm).parent))
-                self._remove_edge(parent_nid, nid)
-                ndata = dict(self._graph.nodes[nid])
-                self._graph.remove_node(nid)
-                self._add_node(dest_nid, **ndata)
+            old_cp = self._content_path(norm)
+            new_cp = self._content_path(dest)
+            if old_cp.exists():
+                new_cp.parent.mkdir(parents=True, exist_ok=True)
+                old_cp.rename(new_cp)
+            with self.db.transaction() as conn:
                 self._ensure_ancestors(dest)
-                p_dest = _path_id(str(Path(dest).parent))
-                self._add_edge(p_dest, dest_nid, TREE_EDGE)
-            else:
-                # 目录移动：迭代子节点，转移到新目录
-                self._ensure_ancestors(dest)
-                children_to_move = []
-                for child_nid in list(self._graph.nodes):
-                    if not _is_path_id(child_nid):
-                        continue
-                    child_path = _id_to_path(child_nid)
-                    if child_path.startswith(norm + "/") or child_path == norm:
-                        children_to_move.append((child_nid, child_path))
-                children_to_move.sort(key=lambda x: len(x[1]), reverse=True)
-                seen_new = set()
-                for child_nid, child_path in children_to_move:
-                    suffix = child_path[len(norm):]
-                    new_child_path = _normalize_path(dest + suffix)
-                    new_child_nid = _path_id(new_child_path)
-                    if new_child_nid in seen_new:
-                        continue
-                    seen_new.add(new_child_nid)
-                    try:
-                        cp = self._content_path(child_path)
-                        if cp.exists():
-                            new_cp = self._content_path(new_child_path)
-                            new_cp.parent.mkdir(parents=True, exist_ok=True)
-                            cp.rename(new_cp)
-                    except Exception:
-                        pass
-                    try:
-                        mp = self._meta_path(child_path)
-                        if mp.exists():
-                            meta = _read_json(mp, {})
-                            meta["path"] = new_child_path
-                            meta["updated_at"] = _utc_iso()
-                            self._write_meta(new_child_path, meta)
-                            mp.unlink()
-                    except Exception:
-                        pass
-                    try:
-                        cf = self._chunks_file(child_path)
-                        if cf.exists():
-                            new_cf = self._chunks_file(new_child_path)
-                            new_cf.parent.mkdir(parents=True, exist_ok=True)
-                            cf.rename(new_cf)
-                    except Exception:
-                        pass
-                    ndata = dict(self._graph.nodes[child_nid])
-                    self._graph.remove_node(child_nid)
-                    self._add_node(new_child_nid, **ndata)
-                    if child_nid == nid:
-                        old_parent_nid = _path_id(str(Path(norm).parent))
-                        self._remove_edge(old_parent_nid, child_nid)
-                        p_dest = _path_id(str(Path(dest).parent))
-                        self._add_edge(p_dest, new_child_nid, TREE_EDGE)
-                    else:
-                        p_dest = _path_id(str(Path(new_child_path).parent))
-                        self._add_edge(p_dest, new_child_nid, TREE_EDGE)
-                # 更新 chunks index
-                chunks_index = self._load_chunks_index()
-                for cid, item in list(chunks_index.items()):
-                    np_str = str(item.get("node_path", ""))
-                    if np_str.startswith(norm + "/") or np_str == norm:
-                        item["node_path"] = np_str.replace(norm, dest, 1)
-                self._save_chunks_index(chunks_index)
-            self._mark_bm25_dirty()
-            self._repair_tree()
-        await self._flush_async()
+                if ntype == "file":
+                    conn.execute(
+                        "UPDATE nodes SET id=?, path=?, updated_at=? WHERE id=?",
+                        (dest_nid, dest, _now_epoch(), nid),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE nodes SET id='path:' || replace(path, ?, ?),"
+                        " path=replace(path, ?, ?), updated_at=?"
+                        " WHERE path=? OR path LIKE ?",
+                        (norm, dest, norm, dest, _now_epoch(), norm, norm + "/%"),
+                    )
+                new_parent = _path_id(str(Path(dest).parent))
+                conn.execute("UPDATE nodes SET parent_id=? WHERE id=?", (new_parent, dest_nid))
+                self._mark_bm25_dirty()
+            self._relabel_nx(norm, dest)
+            self._reset_nx_parent_edge(dest_nid, new_parent)
         log.info("file_move path=%s -> dest=%s type=%s", norm, dest, ntype)
         return {"path": norm, "new_path": dest, "type": ntype}
 
@@ -1175,28 +929,80 @@ class GraphStore:
 
         if not self._has_node(nid):
             self._add_node(nid, type="dir", name=Path(norm).name, description=str(description or ""))
-        self._add_edge(parent_nid, nid, TREE_EDGE)
-        await self._flush_async()
+        self._link_parent(nid, parent_nid)
         return {"path": norm, "type": "dir"}
 
-    def _chunks_file(self, norm_path: str) -> Path:
-        relative = norm_path.strip("/")
-        return self.meta_dir / f"{relative}.chunks.json"
+    # ── meta（SQL） ──
 
-    # ── meta helpers ──
+    def _get_meta(self, norm_path: str) -> dict:
+        """返回与旧 meta.json 同键的字典（对外时间仍是 ISO 串）。
 
-    def _read_meta(self, norm_path: str) -> dict:
-        mp = self._meta_path(norm_path)
-        meta = _read_json(mp, {})
-        meta.setdefault("path", norm_path)
-        meta.setdefault("tags", [])
-        meta.setdefault("score_patch", 0.0)
-        return meta
+        tags 按写入顺序（rowid）返回，与旧 meta.json 的数组顺序一致。
+        """
+        nid = _path_id(norm_path)
+        row = self.db.one(
+            "SELECT declared_by, description, updated_at, chunk_count, indexed, score_patch,"
+            " score_patch_updated_at, managed_by, content_type FROM nodes WHERE id=?", (nid,)
+        )
+        tags = [r["tag"] for r in self.db.all(
+            "SELECT tag FROM tags WHERE node_id=? ORDER BY rowid", (nid,))]
+        if row is None:
+            return {
+                "path": norm_path, "declared_by": "", "description": "", "updated_at": "",
+                "chunk_count": 0, "indexed": False, "tags": tags, "score_patch": 0.0,
+            }
+        return {
+            "path": norm_path,
+            "declared_by": str(row["declared_by"] or ""),
+            "description": str(row["description"] or ""),
+            "updated_at": epoch_to_iso(row["updated_at"]),
+            "chunk_count": int(row["chunk_count"] or 0),
+            "indexed": bool(row["indexed"]),
+            "tags": tags,
+            "score_patch": float(row["score_patch"] or 0.0),
+            "score_patch_updated_at": epoch_to_iso(row["score_patch_updated_at"]),
+            "managed_by": str(row["managed_by"] or ""),
+            "content_type": str(row["content_type"] or ""),
+        }
 
-    def _write_meta(self, norm_path: str, meta: dict) -> None:
-        mp = self._meta_path(norm_path)
-        mp.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_json(mp, meta)
+    # ── chunks（SQL） ──
+
+    def _replace_chunks(self, norm_path: str, items: list[dict]) -> None:
+        """整篇文档的分块行替换（含 scope_prefix / preview）。"""
+        nid = _path_id(norm_path)
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM chunks WHERE node_id=?", (nid,))
+            conn.executemany(
+                "INSERT OR REPLACE INTO chunks(chunk_id, node_id, chunk_index, text, text_preview,"
+                " scope_prefix, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        str(it["chunk_id"]), nid, int(it.get("chunk_index") or 0),
+                        str(it.get("text") or ""), str(it.get("text_preview") or ""),
+                        str(it.get("scope_prefix") or "/"), iso_to_epoch(it.get("updated_at")),
+                    )
+                    for it in items
+                ],
+            )
+
+    def _delete_chunks(self, norm_path: str) -> list[str]:
+        nid = _path_id(norm_path)
+        ids = [r["chunk_id"] for r in self.db.all(
+            "SELECT chunk_id FROM chunks WHERE node_id=?", (nid,))]
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM chunks WHERE node_id=?", (nid,))
+        return ids
+
+    # ── tasks（SQL） ──
+
+    def _task_row(self, row) -> dict:
+        return {
+            "task_id": row["task_id"], "type": row["type"], "status": row["status"],
+            "payload": json.loads(row["payload"] or "{}"),
+            "created_at": epoch_to_iso(row["created_at"]),
+            "updated_at": epoch_to_iso(row["updated_at"]),
+            "error": row["error"],
+        }
 
     # ── extraction status ──
 
@@ -1230,16 +1036,21 @@ class GraphStore:
     async def set_tags(self, path: str, tags: list[str], managed_by: str | None = None) -> dict:
         norm = _normalize_path(path)
         log.info("set_tags path=%s tags=%s", norm, tags)
-        meta = self._read_meta(norm)
-        meta["tags"] = [t.strip() for t in (tags or []) if t and t.strip()]
-        meta["updated_at"] = _utc_iso()
-        if managed_by is not None:
-            meta["managed_by"] = str(managed_by)
-        self._write_meta(norm, meta)
         nid = _path_id(norm)
-        self._set_node_attr(nid, tags=meta["tags"])
-        await self._flush_async()
-        return {"path": norm, "meta": meta}
+        if not self._has_node(nid):
+            raise FileNotFoundError(f"节点不存在: {norm}")
+        clean = [t.strip() for t in (tags or []) if t and t.strip()]
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM tags WHERE node_id=?", (nid,))
+            conn.executemany("INSERT OR IGNORE INTO tags(node_id, tag) VALUES (?, ?)",
+                             [(nid, t) for t in clean])
+            if managed_by is not None:
+                conn.execute("UPDATE nodes SET managed_by=?, updated_at=? WHERE id=?",
+                             (str(managed_by), _now_epoch(), nid))
+            else:
+                conn.execute("UPDATE nodes SET updated_at=? WHERE id=?", (_now_epoch(), nid))
+        self._set_node_attr(nid, tags=clean)
+        return {"path": norm, "meta": self._get_meta(norm)}
 
     async def set_score_patch(self, path: str, score_patch: float) -> dict:
         norm = _normalize_path(path)
@@ -1249,15 +1060,14 @@ class GraphStore:
             raise ValueError("score_patch 必须是有限数值")
         if patch < MIN_SCORE_PATCH or patch > MAX_SCORE_PATCH:
             raise ValueError(f"score_patch 超出范围 [{MIN_SCORE_PATCH}, {MAX_SCORE_PATCH}]")
-        meta = self._read_meta(norm)
-        meta["score_patch"] = patch
-        meta["score_patch_updated_at"] = _utc_iso()
-        meta["updated_at"] = _utc_iso()
-        self._write_meta(norm, meta)
         nid = _path_id(norm)
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE nodes SET score_patch=?, score_patch_updated_at=?, updated_at=? WHERE id=?",
+                (patch, _now_epoch(), _now_epoch(), nid),
+            )
         self._set_node_attr(nid, score_patch=patch)
-        await self._flush_async()
-        return {"path": norm, "meta": meta}
+        return {"path": norm, "meta": self._get_meta(norm)}
 
 
     # ── advanced search ──
@@ -1279,83 +1089,80 @@ class GraphStore:
         required_tags = {t.casefold() for t in (tags or [])} if tags else set()
         need_text_query = str(query or "").strip() if query else ""
 
-        # Collect all path nodes with meta
+        # Collect candidate rows from SQL（唯一真源）
+        rows = self.db.all(
+            "SELECT n.id AS id, n.path AS path, n.description AS description,"
+            " n.declared_by AS declared_by, n.updated_at AS updated_at,"
+            " n.score_patch AS score_patch, n.content_type AS content_type,"
+            " (SELECT group_concat(t.tag, ',') FROM tags t WHERE t.node_id = n.id) AS tag_csv"
+            " FROM nodes n WHERE n.type IN ('file', 'dir') AND n.path IS NOT NULL"
+            " ORDER BY n.updated_at DESC"
+        )
         candidates: list[dict] = []
-        meta_dir = self.meta_dir
-        if meta_dir.exists():
-            for mp in sorted(meta_dir.rglob("*.meta.json")):
-                try:
-                    meta = _read_json(mp, {})
-                    if not meta or not meta.get("path"):
+        for row in rows:
+            p = _normalize_path(row["path"])
+            # scope filter
+            if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
+                continue
+            # tags filter
+            meta_tags = [t for t in str(row["tag_csv"] or "").split(",") if t]
+            if required_tags:
+                tag_set = {t.casefold() for t in meta_tags}
+                if tag_logic == "AND":
+                    if not required_tags.issubset(tag_set):
                         continue
-                    p = _normalize_path(meta["path"])
-                    # scope filter
-                    if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
+                else:  # OR
+                    if not required_tags.intersection(tag_set):
                         continue
-                    # tags filter
-                    meta_tags = [t for t in (meta.get("tags") or []) if t]
-                    if required_tags:
-                        tag_set = {t.casefold() for t in meta_tags}
-                        if tag_logic == "AND":
-                            if not required_tags.issubset(tag_set):
-                                continue
-                        else:  # OR
-                            if not required_tags.intersection(tag_set):
-                                continue
-                    # date filter
-                    updated = (meta.get("updated_at") or "")
-                    updated_date = updated[:10] if updated else ""
-                    if date_from and updated_date and updated_date < date_from:
-                        continue
-                    if date_to and updated_date and updated_date > date_to:
-                        continue
-                    # declared_by filter
-                    if declared_by and meta.get("declared_by", "") != declared_by:
-                        continue
-                    # content_type filter
-                    if content_type:
-                        ctype = str(self._get_node_attr(_path_id(p), "content_type", "") or "")
-                        if content_type == "text" and ctype and not ctype.startswith("text/"):
-                            continue
-                        if content_type == "image" and ctype and not ctype.startswith("image/"):
-                            continue
-                    nid = _path_id(p)
-                    description = str(meta.get("description", "") or self._get_node_attr(nid, "description", ""))
-                    candidate = {
-                        "path": p,
-                        "description": description,
-                        "tags": meta_tags,
-                        "updated_at": updated,
-                        "declared_by": str(meta.get("declared_by", "")),
-                        "score_patch": float(meta.get("score_patch", 0.0)),
-                    }
-                    # text match score
-                    if need_text_query:
-                        text_lower = need_text_query.lower()
-                        name_lower = Path(p).name.lower()
-                        score = 0.0
-                        if text_lower in name_lower:
-                            score = 1.0
-                        if text_lower in description.lower():
-                            score = max(score, 0.8)
-                        # also check content file
-                        cp = self._content_path(p)
-                        if cp.exists() and score < 0.5:
-                            try:
-                                content = cp.read_text(encoding="utf-8", errors="ignore")[:5000]
-                                if need_text_query.lower() in content.lower():
-                                    score = max(score, 0.6)
-                            except Exception:
-                                pass
-                        candidate["score"] = score
-                        if score == 0:
-                            continue  # text query present but no match
-                    else:
-                        candidate["score"] = 0.0
-                        # no text query - path, tag match is enough
-                    candidates.append(candidate)
-                except Exception:
+            # date filter
+            updated = epoch_to_iso(row["updated_at"])
+            updated_date = updated[:10] if updated else ""
+            if date_from and updated_date and updated_date < date_from:
+                continue
+            if date_to and updated_date and updated_date > date_to:
+                continue
+            # declared_by filter
+            if declared_by and str(row["declared_by"] or "") != declared_by:
+                continue
+            # content_type filter
+            if content_type:
+                ctype = str(row["content_type"] or "")
+                if content_type == "text" and ctype and not ctype.startswith("text/"):
                     continue
+                if content_type == "image" and ctype and not ctype.startswith("image/"):
+                    continue
+            candidate = {
+                "path": p,
+                "description": str(row["description"] or ""),
+                "tags": meta_tags,
+                "updated_at": updated,
+                "declared_by": str(row["declared_by"] or ""),
+                "score_patch": float(row["score_patch"] or 0.0),
+            }
+            # text match score
+            if need_text_query:
+                text_lower = need_text_query.lower()
+                score = 0.0
+                if text_lower in Path(p).name.lower():
+                    score = 1.0
+                if text_lower in candidate["description"].lower():
+                    score = max(score, 0.8)
+                # also check content file
+                cp = self._content_path(p)
+                if cp.exists() and score < 0.5:
+                    try:
+                        content = cp.read_text(encoding="utf-8", errors="ignore")[:5000]
+                        if text_lower in content.lower():
+                            score = max(score, 0.6)
+                    except Exception:
+                        pass
+                if score == 0:
+                    continue  # text query present but no match
+                candidate["score"] = score
+            else:
+                candidate["score"] = 0.0
+                # no text query - path, tag match is enough
+            candidates.append(candidate)
 
         if sort_by == "relevance" and need_text_query:
             candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -1429,86 +1236,26 @@ class GraphStore:
     async def _ensure_bm25_index(self) -> None:
         if self._bm25_index is not None and not self._bm25_dirty:
             return
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         docs: list[dict] = []
         seen: set[str] = set()
-
-        # try VDB file first (populated in hybrid mode)
-        vdb_had_data = False
-        if self.index_file.exists():
-            log.info("Loading BM25 index from VDB file: %s", self.index_file)
-            import json as _json
-            raw = _json.loads(self.index_file.read_text(encoding="utf-8"))
-            items = raw.get("data", [])
-            if items:
-                vdb_had_data = True
-                path_chunks: dict[str, list[str]] = {}
-                for item in items:
-                    p = _normalize_path(str(item.get("node_path", "")))
-                    if p:
-                        path_chunks.setdefault(p, []).append(str(item.get("text", "")))
-                for p, texts in path_chunks.items():
-                    docs.append({"path": p, "text": " ".join(texts), "type": "content"})
-                    seen.add(p)
-
-        # BM25-only fallback: read chunk files in parallel
-        if not vdb_had_data and self.meta_dir.exists():
-            log.info("Loading BM25 index from chunk files in: %s", self.meta_dir)
-            chunk_files = list(self.meta_dir.rglob("*.chunks.json"))
-            if chunk_files:
-                def _load_chunks(cf):
-                    items = _read_json(cf, [])
-                    if not items:
-                        return None
-                    path_set: dict[str, list[str]] = {}
-                    for item in items:
-                        p = _normalize_path(str(item.get("node_path", "")))
-                        if p:
-                            path_set.setdefault(p, []).append(str(item.get("text", "")))
-                    return path_set
-                with ThreadPoolExecutor(max_workers=8) as ex:
-                    futures = {ex.submit(_load_chunks, cf): cf for cf in chunk_files}
-                    for f in as_completed(futures):
-                        try:
-                            path_set = f.result()
-                            if path_set:
-                                for p, texts in path_set.items():
-                                    if p not in seen:
-                                        docs.append({"path": p, "text": " ".join(texts), "type": "content"})
-                                        seen.add(p)
-                        except Exception:
-                            pass
-
-        # read meta descriptions in parallel
-        if self.meta_dir.exists():
-            log.info("Loading BM25 index from meta files in: %s", self.meta_dir)
-            meta_files = list(self.meta_dir.rglob("*.meta.json"))
-            if meta_files:
-                def _load_meta(mf):
-                    meta = _read_json(mf, {})
-                    p = meta.get("path", "")
-                    desc = str(meta.get("description", "") or "").strip()
-                    return (p, desc) if p and desc else None
-                with ThreadPoolExecutor(max_workers=8) as ex:
-                    futures = {ex.submit(_load_meta, mf): mf for mf in meta_files}
-                    for f in as_completed(futures):
-                        try:
-                            result = f.result()
-                            if result:
-                                p, desc = result
-                                if p not in seen:
-                                    docs.append({"path": p, "text": desc, "type": "description"})
-                                    seen.add(p)
-                        except Exception:
-                            pass
-
-        for nid, ndata in self._graph.nodes(data=True):
-            if ndata.get("type") == "entity":
-                name = str(ndata.get("name", "") or "").strip()
-                desc = str(ndata.get("description", "") or "").strip()
-                text = f"{name} {desc}".strip()
-                if text:
-                    docs.append({"path": nid, "text": text, "type": "entity"})
+        for r in self.db.all(
+            "SELECT n.path AS path, group_concat(c.text, ' ') AS text FROM chunks c"
+            " JOIN nodes n ON n.id = c.node_id WHERE n.path IS NOT NULL GROUP BY n.id"
+        ):
+            docs.append({"path": r["path"], "text": r["text"] or "", "type": "content"})
+            seen.add(r["path"])
+        for r in self.db.all(
+            "SELECT path, description FROM nodes WHERE type IN ('file', 'dir')"
+            " AND description <> '' AND path IS NOT NULL"
+        ):
+            if r["path"] in seen:
+                continue
+            docs.append({"path": r["path"], "text": r["description"], "type": "description"})
+            seen.add(r["path"])
+        for r in self.db.all("SELECT id, name, description FROM nodes WHERE type='entity'"):
+            text = f"{r['name']} {r['description']}".strip()
+            if text:
+                docs.append({"path": r["id"], "text": text, "type": "entity"})
 
         if not docs:
             self._bm25_index = None
@@ -1618,24 +1365,12 @@ class GraphStore:
         except Exception:
             return 0
 
-    def _load_chunks_index(self) -> dict:
-        return _read_json(self.chunks_index_file, {})
-
-    def _save_chunks_index(self, data: dict) -> None:
-        _atomic_write_json(self.chunks_index_file, data)
-
-    def _load_tasks(self) -> list:
-        return _read_json(self.tasks_file, [])
-
-    def _save_tasks(self, tasks: list) -> None:
-        _atomic_write_json(self.tasks_file, tasks[-200:])
-
     # ── entity / relation operations ──
 
     def entity_add(self, name: str, entity_type: str = "custom",
                    description: str = "",
                    properties: dict | None = None, kb_refs: list[str] | None = None,
-                   name_embedding: list[float] | None = None, flush: bool = True) -> str:
+                   name_embedding: list[float] | None = None) -> str:
         eid = _ent_id()
         desc = str(description or "")
         entity_path = f"/entities/{eid}.md"
@@ -1652,22 +1387,16 @@ class GraphStore:
                        kb_refs=all_refs, created_at=_utc_iso())
         if name_embedding:
             self._graph.nodes[eid]["_name_vec"] = [float(v) for v in name_embedding]
-        self._dirty = True
-        if flush:
-            self.flush()
         log.info("entity_add name=%s type=%s eid=%s desc_len=%d refs=%d",
                  name, entity_type, eid[:16], len(desc), len(all_refs))
         return eid
 
-    def entity_delete(self, entity_id: str, flush: bool = True) -> bool:
+    def entity_delete(self, entity_id: str) -> bool:
         if not self._has_node(entity_id):
             return False
         if self._get_node_attr(entity_id, "type") != "entity":
             return False
-        self._graph.remove_node(entity_id)
-        self._dirty = True
-        if flush:
-            self.flush()
+        self._db_delete_node(entity_id)
         log.info("entity_delete eid=%s", entity_id[:16])
         return True
 
@@ -1714,18 +1443,14 @@ class GraphStore:
         return results
 
     def relation_add(self, source_id: str, target_id: str,
-                     rel_type: str = "relates_to", flush: bool = True) -> str:
+                     rel_type: str = "relates_to") -> str:
         key = self._add_edge(source_id, target_id, rel_type)
-        if flush:
-            self.flush()
         log.info("relation_add src=%s tgt=%s type=%s key=%s",
                  source_id[:16], target_id[:16], rel_type, key[:8])
         return key
 
-    def relation_remove(self, source_id: str, target_id: str, flush: bool = True) -> None:
+    def relation_remove(self, source_id: str, target_id: str) -> None:
         self._remove_edge(source_id, target_id)
-        if flush:
-            self.flush()
         log.info("relation_remove src=%s tgt=%s", source_id[:16], target_id[:16])
 
     def relation_iter(self) -> list[dict]:
@@ -1794,8 +1519,6 @@ class GraphStore:
         vecs = await self._embed_texts(names)
         for (nid, _), vec in zip(missing, vecs):
             self._graph.nodes[nid]["_name_vec"] = np.asarray(vec, dtype=np.float32).tolist()
-            self._dirty = True
-        await self._flush_async()
 
     async def entity_find_similar(self, name_vecs: list[np.ndarray],
                                    threshold: float = 0.85) -> list[str | None]:
@@ -1856,7 +1579,7 @@ class GraphStore:
                 for n in nb:
                     pref = n.get("path_ref")
                     if pref and pref not in seen and pref not in extra:
-                        meta = self._read_meta(pref)
+                        meta = self._get_meta(pref)
                         patch = float(meta.get("score_patch", 0.0))
                         extra[pref] = {
                             "path": pref,
@@ -1913,7 +1636,7 @@ class GraphStore:
             node_path = _normalize_path(node_path)
             if scope_prefix and not (node_path.startswith(scope_prefix) or node_path == scope_prefix.rstrip("/")):
                 continue
-            meta = self._read_meta(node_path)
+            meta = self._get_meta(node_path)
             normalized_tags = [t for t in meta.get("tags", []) if t]
             if required_tags:
                 current_set = {t.casefold() for t in normalized_tags}
@@ -1958,12 +1681,12 @@ class GraphStore:
                 if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
                     continue
                 if required_tags:
-                    meta = self._read_meta(p)
+                    meta = self._get_meta(p)
                     if not required_tags.issubset({t.casefold() for t in meta.get("tags", [])}):
                         continue
                 if p.startswith("ent_"):
                     continue
-                meta = self._read_meta(p)
+                meta = self._get_meta(p)
                 patch = float(meta.get("score_patch", 0.0))
                 normalized_tags = meta.get("tags", [])
                 filtered.append({
@@ -1987,7 +1710,7 @@ class GraphStore:
             if scope_prefix and not (p.startswith(scope_prefix) or p == scope_prefix.rstrip("/")):
                 continue
             if required_tags:
-                meta = self._read_meta(p)
+                meta = self._get_meta(p)
                 current_set = {t.casefold() for t in meta.get("tags", [])}
                 if not required_tags.issubset(current_set):
                     continue
@@ -2030,7 +1753,7 @@ class GraphStore:
             p = item["path"]
             if p in merged:
                 continue
-            meta = self._read_meta(p)
+            meta = self._get_meta(p)
             patch = float(meta.get("score_patch", 0.0))
             bm25_n = bm25_norms.get(p, 0)
             merged[p] = {
@@ -2057,7 +1780,7 @@ class GraphStore:
         seen: dict[str, dict] = {}
         for item in hybrid_results:
             p = item["path"]
-            meta = self._read_meta(p)
+            meta = self._get_meta(p)
             desc = meta.get("description", "") or self._get_node_attr(_path_id(p), "description", "")
             # 图片文件不计数行数，直接置 0
             lc = self._count_lines(p)
@@ -2073,7 +1796,7 @@ class GraphStore:
                 for n in nb:
                     pref = n.get("path_ref")
                     if pref and pref not in seen:
-                        meta2 = self._read_meta(pref)
+                        meta2 = self._get_meta(pref)
                         desc2 = meta2.get("description", "") or self._get_node_attr(_path_id(pref), "description", "")
                         seen[pref] = {
                             "path": pref,
@@ -2156,7 +1879,7 @@ class GraphStore:
                     path_scores[pref] = max(path_scores.get(pref, 0), 0.3)
         results = []
         for path_str, gscore in path_scores.items():
-            meta = self._read_meta(path_str)
+            meta = self._get_meta(path_str)
             patch = float(meta.get("score_patch", 0.0))
             results.append({
                 "path": path_str,
@@ -2178,7 +1901,7 @@ class GraphStore:
         for item in items:
             t = item.get("snippet") or item.get("description", "")
             if not t:
-                meta = self._read_meta(item["path"])
+                meta = self._get_meta(item["path"])
                 t = str(meta.get("description", "") or "")
             texts.append(t[:512])
         if not any(texts):
@@ -2226,67 +1949,69 @@ class GraphStore:
         scope_prefix = _normalize_path(scope or "").strip("/")
         scope_prefix = f"{scope_prefix}/" if scope_prefix else ""
         required_tags = {t.casefold() for t in (tags or [])}
+        rows = self.db.all(
+            "SELECT n.path AS path, n.updated_at AS updated_at, n.score_patch AS score_patch,"
+            " (SELECT group_concat(t.tag, ',') FROM tags t WHERE t.node_id = n.id) AS tag_csv"
+            " FROM nodes n WHERE n.type IN ('file', 'dir') AND n.updated_at IS NOT NULL"
+            " AND n.updated_at >= ? ORDER BY n.updated_at DESC",
+            (float(since_ts),),
+        )
         results = []
-        for cp in sorted(self.meta_dir.rglob("*.meta.json")):
-            meta = _read_json(cp, {})
-            node_path = str(meta.get("path", ""))
+        for row in rows:
+            node_path = str(row["path"] or "")
             if not node_path:
-                continue
-            updated_at = str(meta.get("updated_at", ""))
-            try:
-                updated_ts = float(time.mktime(time.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ")))
-            except Exception:
-                updated_ts = 0.0
-            if updated_ts < since_ts:
                 continue
             if scope_prefix and not node_path.startswith(scope_prefix):
                 continue
-            ntags = meta.get("tags", [])
-            if required_tags:
-                if not required_tags.issubset({t.casefold() for t in ntags}):
-                    continue
+            ntags = [t for t in str(row["tag_csv"] or "").split(",") if t]
+            if required_tags and not required_tags.issubset({t.casefold() for t in ntags}):
+                continue
             results.append({
                 "path": node_path,
-                "updated_at": updated_at,
+                "updated_at": epoch_to_iso(row["updated_at"]),
                 "tags": ntags,
-                "score_patch": float(meta.get("score_patch", 0.0)),
+                "score_patch": float(row["score_patch"] or 0.0),
             })
-        results.sort(key=lambda x: x["updated_at"], reverse=True)
         log.info("get_changed_nodes since=%s scope=%s hits=%d", since_ts, scope or "/", len(results))
         return results
 
     # ── tasks ──
 
     def get_tasks(self) -> list[dict]:
-        tasks = list(reversed(self._load_tasks()))
-        log.info("get_tasks count=%d", len(tasks))
-        return tasks
+        rows = self.db.all(
+            "SELECT task_id, type, status, payload, created_at, updated_at, error"
+            " FROM tasks ORDER BY created_at DESC LIMIT 200"
+        )
+        log.info("get_tasks count=%d", len(rows))
+        return [self._task_row(r) for r in rows]
 
     def add_task(self, task_type: str, payload: dict | None = None) -> dict:
-        tasks = self._load_tasks()
+        now = _now_epoch()
         task = {
             "task_id": f"tsk_{uuid.uuid4().hex}",
             "type": task_type,
             "status": "pending",
             "payload": payload or {},
-            "created_at": _utc_iso(),
-            "updated_at": _utc_iso(),
+            "created_at": epoch_to_iso(now),
+            "updated_at": epoch_to_iso(now),
             "error": "",
         }
-        tasks.append(task)
-        self._save_tasks(tasks)
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO tasks(task_id, type, status, payload, created_at, updated_at, error)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task["task_id"], task_type, "pending",
+                 json.dumps(task["payload"], ensure_ascii=False), now, now, ""),
+            )
         log.info("add_task type=%s task_id=%s", task_type, task["task_id"][:12])
         return task
 
     def update_task(self, task_id: str, status: str, error: str = "") -> None:
-        tasks = self._load_tasks()
-        for t in tasks:
-            if t.get("task_id") == task_id:
-                t["status"] = status
-                t["updated_at"] = _utc_iso()
-                t["error"] = error
-                break
-        self._save_tasks(tasks)
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE tasks SET status=?, error=?, updated_at=? WHERE task_id=?",
+                (status, error, _now_epoch(), task_id),
+            )
         log.info("update_task task_id=%s status=%s error=%s", task_id[:12], status, error or "none")
 
     # ── diary / chat record ──
@@ -2325,14 +2050,14 @@ class GraphStore:
             "path": path,
             **extra,
         }
-        eid = self.entity_add(name, entity_type=record_type, properties=props, kb_refs=[path])
-        nid = _path_id(path)
-        if self._has_node(nid):
-            self._add_edge(nid, eid, TREE_EDGE)
-        prev = self._find_latest_entity(record_type, exclude=eid)
-        if prev:
-            self._add_edge(prev, eid, "next")
-        await self._flush_async()
+        with self.db.transaction():
+            eid = self.entity_add(name, entity_type=record_type, properties=props, kb_refs=[path])
+            nid = _path_id(path)
+            if self._has_node(nid):
+                self._link_parent(eid, nid)
+            prev = self._find_latest_entity(record_type, exclude=eid)
+            if prev:
+                self._add_edge(prev, eid, "next")
 
     def _find_latest_entity(self, entity_type: str, exclude: str | None = None) -> str | None:
         best: str | None = None

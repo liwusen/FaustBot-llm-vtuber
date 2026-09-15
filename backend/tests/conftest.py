@@ -38,4 +38,4 @@ def read_memory_store(tmp_path, monkeypatch):
     monkeypatch.setattr(gs, "_embed_and_index", _noop_embed_index)
     monkeypatch.setattr(memory_pkg, "get_memory", lambda: gs)
     yield gs
-    gs.flush()
+    gs.close()

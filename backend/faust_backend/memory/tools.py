@@ -151,41 +151,38 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
             existing_ids = await m.entity_find_similar(name_vecs, threshold=ENTITY_DEDUP_THRESHOLD)#type: ignore
             doc_nid = _path_id(doc_path)
 
-            for item, name_vec, existing_id in zip(entities, name_vecs, existing_ids):
-                name = str(item.get("name", ""))
-                etype = str(item.get("type", "custom"))
-                desc = str(item.get("description", ""))
-                props = item.get("properties", {}) or {}
-                refs = item.get("kb_refs", []) or []
+            with m.db.transaction():
+                for item, name_vec, existing_id in zip(entities, name_vecs, existing_ids):
+                    name = str(item.get("name", ""))
+                    etype = str(item.get("type", "custom"))
+                    desc = str(item.get("description", ""))
+                    props = item.get("properties", {}) or {}
+                    refs = item.get("kb_refs", []) or []
 
-                if existing_id:
-                    eid = existing_id
-                    if m._has_node(doc_nid) and m._has_node(existing_id):
-                        m._add_edge(doc_nid, existing_id, "from")
-                else:
-                    eid = m.entity_add(name, etype, description=desc,
-                                       properties=props, kb_refs=refs,
-                                       name_embedding=name_vec.tolist(),
-                                       flush=False)  # 批量写入，末尾统一 flush
-                    if m._has_node(doc_nid):
-                        m._add_edge(doc_nid, eid, "from")
-                name_to_id[name] = eid
+                    if existing_id:
+                        eid = existing_id
+                        if m._has_node(doc_nid) and m._has_node(existing_id):
+                            m._add_edge(doc_nid, existing_id, "from")
+                    else:
+                        eid = m.entity_add(name, etype, description=desc,
+                                           properties=props, kb_refs=refs,
+                                           name_embedding=name_vec.tolist())
+                        if m._has_node(doc_nid):
+                            m._add_edge(doc_nid, eid, "from")
+                    name_to_id[name] = eid
 
-        for item in relations:
-            src_name = str(item.get("source", ""))
-            tgt_name = str(item.get("target", ""))
-            src_id = name_to_id.get(src_name)
-            tgt_id = name_to_id.get(tgt_name)
-            if not src_id or not tgt_id:
-                log.warning("relation skipped: source=%s target=%s not found in current extraction", src_name, tgt_name)
-                continue
-            m.relation_add(
-                source_id=src_id,
-                target_id=tgt_id,
-                rel_type=str(item.get("type", "relates_to")),
-                flush=False,  # 批量写入，末尾统一 flush
-            )
-        await asyncio.to_thread(m.flush)
+        with m.db.transaction():
+            for item in relations:
+                src_name = str(item.get("source", ""))
+                tgt_name = str(item.get("target", ""))
+                src_id = name_to_id.get(src_name)
+                tgt_id = name_to_id.get(tgt_name)
+                if not src_id or not tgt_id:
+                    log.warning("relation skipped: source=%s target=%s not found in current extraction", src_name, tgt_name)
+                    continue
+                m.relation_add(source_id=src_id, target_id=tgt_id,
+                               rel_type=str(item.get("type", "relates_to")))
+
         log.info("_bg_extract_and_save done entities=%d relations=%d",
                  len(entities) if entities else 0, len(relations) if relations else 0)
         m.complete_extraction(doc_path, success=True)

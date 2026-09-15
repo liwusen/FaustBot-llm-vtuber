@@ -274,12 +274,8 @@ async def graph_link(payload: dict):
     refs = list(best.get("kb_refs", []))
     if kb_path not in refs:
         refs.append(kb_path)
-        from faust_backend.memory.store import _normalize_path as _np
-        norm_path = _np(kb_path)
         eid = best["id"]
-        ndata = _m()._graph.nodes[eid]
-        ndata["kb_refs"] = refs
-        _m()._dirty = True
+        _m()._set_node_attr(eid, kb_refs=refs)
     log.info("POST /graph/link entity=%s kb_path=%s refs=%d", entity_name, kb_path, len(refs))
     return {"status": "ok", "entity_id": best["id"], "kb_refs": refs}
 
