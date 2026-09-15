@@ -353,11 +353,14 @@ class TestPhase3EntityOnTree:
         assert "children" not in file_node, "Entity children should NOT appear in tree_list"
 
     def test_entity_find_similar_detects_duplicates(self, memory_store, monkeypatch):
-        embeds = [
-            np.array([0.1, 0.2, 0.3], dtype=np.float32),
-            np.array([0.1, 0.2, 0.31], dtype=np.float32),
-            np.array([0.9, 0.9, 0.9], dtype=np.float32),
-        ]
+        # 生产向量维度（1536）：nano-vectordb 实例按 EMBED_DIM 建库，维度必须一致
+        vec_a = np.zeros(1536, dtype=np.float32)
+        vec_a[:3] = (0.1, 0.2, 0.3)
+        vec_near = np.zeros(1536, dtype=np.float32)
+        vec_near[:3] = (0.1, 0.2, 0.31)
+        vec_far = np.zeros(1536, dtype=np.float32)
+        vec_far[:3] = (0.9, 0.9, 0.9)
+        embeds = [vec_a, vec_near, vec_far]
         monkeypatch.setattr(memory_store, "_embed_texts", lambda texts: embeds[:len(texts)])
 
         eid1 = memory_store.entity_add("化学", entity_type="concept",
@@ -847,3 +850,41 @@ async def test_search_bm25_chinese_match(memory_store):
 @pytest.mark.asyncio
 async def test_search_bm25_empty_tokens(memory_store):
     assert await memory_store.search_bm25([], top_k=3) == []
+
+
+# ── 实体名向量落 entity.vdb ──────────────────────────────────
+
+def test_entity_name_vector_survives_restart_and_dedup(memory_store):
+    """行为断言：写入的实体名向量在重启后仍能被去重检索命中。"""
+    import asyncio
+
+    import numpy as np
+
+    import faust_backend.memory.store as store
+
+    vec = [0.5] * 1536
+    eid = memory_store.entity_add("vec_persist", "concept", name_embedding=vec)
+    memory_store.close()
+
+    gs2 = store.GraphStore("test_agent")
+    hits = asyncio.run(gs2.entity_find_similar([np.asarray(vec, dtype=np.float32)], threshold=0.99))
+    assert hits == [eid]
+    gs2.close()
+
+
+def test_entity_delete_removes_name_vector(memory_store):
+    import asyncio
+
+    import numpy as np
+
+    import faust_backend.memory.store as store
+
+    vec = [0.25] * 1536
+    eid = memory_store.entity_add("vec_gone", "concept", name_embedding=vec)
+    assert memory_store.entity_delete(eid) is True
+    memory_store.close()
+
+    gs2 = store.GraphStore("test_agent")
+    hits = asyncio.run(gs2.entity_find_similar([np.asarray(vec, dtype=np.float32)], threshold=0.99))
+    assert hits == [None]
+    gs2.close()

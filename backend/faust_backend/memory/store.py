@@ -119,6 +119,7 @@ class GraphStore:
         self.entity_index_file = self.index_dir / "entity.vdb"
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._vdb: NanoVectorDB | None = None
+        self._entity_vdb: NanoVectorDB | None = None
         self._openai_client: AsyncOpenAI | None = None
         self._embed_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
@@ -141,6 +142,7 @@ class GraphStore:
         ensure_root_node(self.db)
         self._load_from_db()
         self._ensure_vdb()
+        self._ensure_entity_vdb()
 
     # ── initialization ──
 
@@ -1297,6 +1299,12 @@ class GraphStore:
                 self._vdb = NanoVectorDB(EMBED_DIM, storage_file=str(self.index_file))
         return self._vdb
 
+    def _ensure_entity_vdb(self) -> NanoVectorDB:
+        if self._entity_vdb is None:
+            self.index_dir.mkdir(parents=True, exist_ok=True)
+            self._entity_vdb = NanoVectorDB(EMBED_DIM, storage_file=str(self.entity_index_file))
+        return self._entity_vdb
+
     def _get_openai(self) -> AsyncOpenAI:
         if self._openai_client is None:
             from faust_backend.runtime import state as runtime_state
@@ -1386,7 +1394,13 @@ class GraphStore:
                        properties=dict(properties or {}),
                        kb_refs=all_refs, created_at=_utc_iso())
         if name_embedding:
-            self._graph.nodes[eid]["_name_vec"] = [float(v) for v in name_embedding]
+            vdb = self._ensure_entity_vdb()
+            vdb.upsert([{
+                "__id__": eid,
+                "__vector__": np.asarray(name_embedding, dtype=np.float32),
+                "name": name,
+            }])
+            vdb.save()
         log.info("entity_add name=%s type=%s eid=%s desc_len=%d refs=%d",
                  name, entity_type, eid[:16], len(desc), len(all_refs))
         return eid
@@ -1396,6 +1410,10 @@ class GraphStore:
             return False
         if self._get_node_attr(entity_id, "type") != "entity":
             return False
+        if self._entity_vdb is not None or self.entity_index_file.exists():
+            vdb = self._ensure_entity_vdb()
+            vdb.delete([entity_id])
+            vdb.save()
         self._db_delete_node(entity_id)
         log.info("entity_delete eid=%s", entity_id[:16])
         return True
@@ -1506,42 +1524,31 @@ class GraphStore:
     # ── semantic entity dedup ──
 
     async def _ensure_entity_name_vecs(self) -> None:
-        missing: list[tuple[str, str]] = []
-        for nid, ndata in self._graph.nodes(data=True):
-            if ndata.get("type") != "entity":
-                continue
-            if "_name_vec" not in ndata:
-                missing.append((nid, str(ndata.get("name", ""))))
-                log.warning("entity missing name_vec eid=%s name=%s", nid[:16], ndata.get("name", ""))
+        vdb = self._ensure_entity_vdb()
+        entities = {r["id"]: r["name"] for r in self.db.all(
+            "SELECT id, name FROM nodes WHERE type='entity'")}
+        have = {d["__id__"] for d in (vdb.get(list(entities)) or [])}
+        missing = [(eid, name) for eid, name in entities.items() if eid not in have]
         if not missing:
             return
-        names = [name for _, name in missing]
-        vecs = await self._embed_texts(names)
-        for (nid, _), vec in zip(missing, vecs):
-            self._graph.nodes[nid]["_name_vec"] = np.asarray(vec, dtype=np.float32).tolist()
+        log.warning("entities missing name_vec count=%d", len(missing))
+        vecs = await self._embed_texts([name for _, name in missing])
+        rows = []
+        for (eid, name), vec in zip(missing, vecs):
+            rows.append({"__id__": eid, "__vector__": np.asarray(vec, dtype=np.float32), "name": name})
+        if rows:
+            vdb.upsert(rows)
+            vdb.save()
 
     async def entity_find_similar(self, name_vecs: list[np.ndarray],
                                    threshold: float = 0.85) -> list[str | None]:
         await self._ensure_entity_name_vecs()
+        vdb = self._ensure_entity_vdb()
         results: list[str | None] = []
         for qv in name_vecs:
-            qa = np.asarray(qv, dtype=np.float32)
-            best_eid: str | None = None
-            best_sim = -1.0
-            for nid, ndata in self._graph.nodes(data=True):
-                if ndata.get("type") != "entity":
-                    continue
-                cached = ndata.get("_name_vec")
-                if not cached:
-                    continue
-                sim = _cosine_sim(qa, np.asarray(cached, dtype=np.float32))
-                if sim > best_sim:
-                    best_sim = sim
-                    best_eid = nid
-            if best_sim >= threshold and best_eid:
-                results.append(best_eid)
-            else:
-                results.append(None)
+            hits = vdb.query(np.asarray(qv, dtype=np.float32), top_k=1,
+                             better_than_threshold=threshold)
+            results.append(hits[0]["__id__"] if hits else None)
         return results
 
     # ── top-level search (hybrid + graph + 2-hop) ──
