@@ -186,6 +186,7 @@ def migrate_from_json(store_dir: Path, db: MemoryDB, *, embed_dim: int) -> Migra
         "chunks": 0,
         "tasks": len(tasks),
         "entity_vecs": len(entity_vecs),
+        "orphan_meta": 0,
     }
 
     # 实体向量先落盘：只依赖旧文件，失败则迁移整体中止且 SQL 未动
@@ -216,6 +217,12 @@ def migrate_from_json(store_dir: Path, db: MemoryDB, *, embed_dim: int) -> Migra
 
         for path, meta in meta_items:
             nid = _path_id(path)
+            # 旧库存在「meta 文件比图节点多」的孤儿元数据（节点已删、meta 残留）；
+            # graph.json 是树形状的真源，孤儿 meta 不入库，否则 tags 外键失败。
+            if conn.execute("SELECT 1 FROM nodes WHERE id=?", (nid,)).fetchone() is None:
+                counts["orphan_meta"] += 1
+                log.warning("migrate skip meta without node: %s -> %s", path, nid)
+                continue
             tags = [str(t).strip() for t in (meta.get("tags") or []) if str(t).strip()]
             conn.execute(
                 "UPDATE nodes SET declared_by=COALESCE(?, declared_by), description=?,"

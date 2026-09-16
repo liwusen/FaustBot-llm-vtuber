@@ -65,6 +65,17 @@ def _write_legacy(store_dir: Path, *, break_graph: bool = False) -> None:
         "created_at": "2026-09-10T01:00:00Z", "updated_at": "2026-09-10T01:00:00Z", "error": "",
     }], ensure_ascii=False), encoding="utf-8")
 
+    # 真实旧库存在「meta 文件比图节点多」的孤儿元数据（节点已删、meta 残留）
+    orphan = dict(meta, path="/gone/deleted.md", tags=["ghost"], chunk_count=1)
+    (store_dir / "meta" / "gone").mkdir(parents=True, exist_ok=True)
+    (store_dir / "meta" / "gone" / "deleted.md.meta.json").write_text(
+        json.dumps(orphan, ensure_ascii=False), encoding="utf-8")
+    orphan_chunk = dict(chunk, chunk_id="/gone/deleted.md::chunk::1::ghost",
+                        node_path="/gone/deleted.md")
+    (store_dir / "meta" / "chunks_index.json").write_text(
+        json.dumps({chunk["chunk_id"]: chunk, orphan_chunk["chunk_id"]: orphan_chunk},
+                   ensure_ascii=False), encoding="utf-8")
+
     vecs = [{"id": "ent_1", "v": [0.1] * DIM}]
     (store_dir / "index" / "entity_vecs.jsonl").write_text(
         "\n".join(json.dumps(v) for v in vecs) + "\n", encoding="utf-8")
@@ -140,4 +151,22 @@ def test_migration_failure_rolls_back_and_keeps_legacy(tmp_path):
     assert (store_dir / "graph.json").exists()
     assert not (store_dir / "_legacy_json").exists()
     assert db.one("SELECT count(*) AS c FROM nodes")["c"] == 0
+    db.close()
+
+
+def test_migration_skips_orphan_meta_without_node(tmp_path):
+    """meta 比图节点多（真实旧库有 162 例）不得让迁移整体失败：孤儿 meta/分块跳过并计数。"""
+    from faust_backend.memory.migrate import migrate_from_json
+    from faust_backend.memory.storage import MemoryDB
+
+    store_dir = tmp_path / "memory"
+    _write_legacy(store_dir)
+    db = MemoryDB(store_dir / "memory.sqlite")
+    report = migrate_from_json(store_dir, db, embed_dim=DIM)
+
+    assert report.counts["orphan_meta"] == 1
+    assert db.one("SELECT count(*) AS c FROM nodes WHERE path LIKE '/gone/%'")["c"] == 0
+    assert db.one("SELECT count(*) AS c FROM tags WHERE tag='ghost'")["c"] == 0
+    assert db.one("SELECT count(*) AS c FROM chunks WHERE chunk_id LIKE '/gone/%'")["c"] == 0
+    assert db.one("SELECT count(*) AS c FROM nodes")["c"] == 4
     db.close()
