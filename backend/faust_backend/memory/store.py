@@ -5,8 +5,10 @@ import base64
 import json
 import math
 import shutil
+import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,66 @@ log = get_logger("faust.memory")
 
 _NODE_PATH = "memory"
 TREE_EDGE = "has_child"
+
+
+def _wake_waiter(fut: asyncio.Future) -> None:
+    """在等待者自己的循环里唤醒它（`call_soon_threadsafe` 回调）。"""
+    if not fut.done():
+        fut.set_result(None)
+
+
+class _CrossLoopLock:
+    """跨事件循环、跨线程可用的异步互斥锁。
+
+    `asyncio.Lock` 绑定创建它的循环，而 `GraphStore` 的协程会在多个循环里跑
+    （araya `asyncio.run`、插件 hook 的 `_run_sync`、`_run_async_in_thread`），
+    同一把 `asyncio.Lock` 跨循环争用会抛 "is bound to a different event loop"。
+    这里用线程锁保护状态、用 future 把持有权交给下一个等待者：等待不占用线程池，
+    也不会阻塞任何事件循环。
+    """
+
+    def __init__(self) -> None:
+        self._state = threading.Lock()
+        self._held = False
+        self._waiters: deque[asyncio.Future] = deque()
+
+    async def __aenter__(self) -> None:
+        loop = asyncio.get_running_loop()
+        with self._state:
+            if not self._held:
+                self._held = True
+                return None
+            fut = loop.create_future()
+            self._waiters.append(fut)
+        try:
+            await fut
+        except BaseException:
+            with self._state:
+                if fut.done() and not fut.cancelled():
+                    self._handoff_locked()  # 已被授予但没等到返回：交还持有权
+                elif fut in self._waiters:
+                    self._waiters.remove(fut)  # 还在排队：离队
+            raise
+        return None
+
+    async def __aexit__(self, *exc: object) -> None:
+        with self._state:
+            if not self._held:
+                raise RuntimeError("_CrossLoopLock is not acquired")
+            self._handoff_locked()
+
+    def _handoff_locked(self) -> None:
+        """把持有权直接交给下一个等待者；没有等待者就置为未持有。"""
+        while self._waiters:
+            fut = self._waiters.popleft()
+            if fut.cancelled():
+                continue
+            try:
+                fut.get_loop().call_soon_threadsafe(_wake_waiter, fut)
+            except RuntimeError:
+                continue  # 等待者的循环已关闭
+            return
+        self._held = False
 
 
 def _utc_iso() -> str:
@@ -123,7 +185,7 @@ class GraphStore:
         self._entity_vdb: NanoVectorDB | None = None
         self._openai_client: AsyncOpenAI | None = None
         self._embed_lock = asyncio.Lock()
-        self._write_lock = asyncio.Lock()
+        self._write_lock = _CrossLoopLock()
         self._bm25_dirty: bool = True
         self._bm25_index: BM25Okapi | None = None
         self._bm25_corpus: list[list[str]] | None = None
