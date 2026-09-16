@@ -146,6 +146,11 @@ def _normalize_path(path: str) -> str:
     return "/" + "/".join(parts)
 
 
+def _escape_like(value: str) -> str:
+    """LIKE 字面量转义：先转义 ESCAPE 字符本身，再转义 `%` / `_`。"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _chunk_text(text: str) -> list[str]:
     normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not normalized:
@@ -443,18 +448,26 @@ class GraphStore:
         return [path for _, path in self._subtree_rows(norm_path)]
 
     def _rewrite_subtree_paths(self, conn, old_path: str, new_path: str, now: float) -> None:
-        """按前缀改写整棵子树的主键与 `path` 列（浅 -> 深）。
+        """按前缀改写整棵子树的主键与 `path` 列（单条 UPDATE）。
 
-        不能用 SQL `replace()`：子串替换会把 `/diary/diary_2026.md` 改写成
-        `/journal/journal_2026.md`。逐行 `UPDATE nodes SET id=...` 时，主键改名经外键
-        `ON UPDATE CASCADE` 自动重指 edges / tags / chunks。
+        不能用 `replace(path, old, new)`：子串替换会把 `/diary/diary_2026.md` 改写成
+        `/journal/journal_2026.md`。这里用「常量新前缀 + `substr(旧 path, len(old)+1)`」拼后缀，
+        旧名在后代里再次出现也不会被二次替换；`LIKE` 必须转义 `_` / `%` 并声明 `ESCAPE`，
+        否则 `/a_b` 会误配 `/axb/...`。主键改名经外键 `ON UPDATE CASCADE`
+        自动重指 edges / tags / chunks。
         """
-        for old_id, old in self._subtree_rows(old_path):
-            updated = new_path + old[len(old_path):]
-            conn.execute(
-                "UPDATE nodes SET id=?, path=?, updated_at=? WHERE id=?",
-                (_path_id(updated), updated, now, old_id),
-            )
+        suffix_start = len(old_path) + 1  # SQLite substr 从 1 开始计数
+        conn.execute(
+            "UPDATE nodes SET id = 'path:' || ? || substr(path, ?),"
+            " path = ? || substr(path, ?), updated_at = ?"
+            " WHERE path = ? OR path LIKE ? ESCAPE '\\'",
+            (
+                new_path, suffix_start,
+                new_path, suffix_start,
+                now,
+                old_path, _escape_like(old_path) + "%",
+            ),
+        )
 
     def _relabel_nx(self, old_path: str, new_path: str) -> None:
         mapping = {}
