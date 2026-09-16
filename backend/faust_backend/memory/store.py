@@ -119,6 +119,7 @@ class GraphStore:
         self.entity_index_file = self.index_dir / "entity.vdb"
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._vdb: NanoVectorDB | None = None
+        self._vdb_dirty: bool = False
         self._entity_vdb: NanoVectorDB | None = None
         self._openai_client: AsyncOpenAI | None = None
         self._embed_lock = asyncio.Lock()
@@ -655,6 +656,9 @@ class GraphStore:
                 await self._delete_chunk_ids(old_ids)
             if chunk_items:
                 await self._embed_and_index(chunk_items)
+            if self._vdb_dirty:
+                self._vdb_dirty = False
+                await asyncio.to_thread(self._ensure_vdb().save)
 
         log.info("file_write done path=%s chunks=%d", norm, len(chunks) if index else 0)
         result = {"path": norm, "meta": meta}
@@ -703,6 +707,9 @@ class GraphStore:
         if description:
             await self._index_attachment_description(norm, content_type, description)
         self._mark_bm25_dirty()
+        if self._vdb_dirty:
+            self._vdb_dirty = False
+            await asyncio.to_thread(self._ensure_vdb().save)
 
         log.info("attachment_write done path=%s size=%d desc_len=%d",
                  norm, len(image_bytes), len(description))
@@ -727,6 +734,9 @@ class GraphStore:
             self._replace_chunks(norm, chunk_items)
             if chunk_items:
                 await self._embed_and_index(chunk_items)
+            if self._vdb_dirty:
+                self._vdb_dirty = False
+                await asyncio.to_thread(self._ensure_vdb().save)
         except Exception as e:
             log.error("_index_attachment_description failed path=%s: %s", norm, e)
 
@@ -776,6 +786,9 @@ class GraphStore:
                     self._graph.remove_node(nid)
             await self._delete_chunk_ids(chunk_ids)
             self._mark_bm25_dirty()
+            if self._vdb_dirty:
+                self._vdb_dirty = False
+                await asyncio.to_thread(self._ensure_vdb().save)
         return {"path": norm}
 
     async def file_delete_tree(self, path: str) -> dict:
@@ -878,6 +891,9 @@ class GraphStore:
             if copied_chunk_items:
                 await self._embed_and_index(copied_chunk_items)
             self._mark_bm25_dirty()
+            if self._vdb_dirty:
+                self._vdb_dirty = False
+                await asyncio.to_thread(self._ensure_vdb().save)
         log.info("file_copy path=%s -> dest=%s type=%s", norm, dest, ntype)
         return {"path": norm, "dest": dest, "type": ntype}
 
@@ -1360,7 +1376,7 @@ class GraphStore:
                 "text_preview": item["text_preview"],
             })
         vdb.upsert(rows)
-        await asyncio.to_thread(vdb.save)
+        self._vdb_dirty = True
 
     async def _delete_chunk_ids(self, chunk_ids: list[str]) -> int:
         if not chunk_ids or not self.index_file.exists():
@@ -1368,7 +1384,7 @@ class GraphStore:
         try:
             vdb = self._ensure_vdb()
             vdb.delete(chunk_ids)
-            await asyncio.to_thread(vdb.save)
+            self._vdb_dirty = True
             return len(chunk_ids)
         except Exception:
             return 0

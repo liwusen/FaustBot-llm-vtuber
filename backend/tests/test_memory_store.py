@@ -888,3 +888,34 @@ def test_entity_delete_removes_name_vector(memory_store):
     hits = asyncio.run(gs2.entity_find_similar([np.asarray(vec, dtype=np.float32)], threshold=0.99))
     assert hits == [None]
     gs2.close()
+
+
+def test_bm25_index_comes_from_sql_not_filesystem(memory_store, monkeypatch):
+    """BM25 数据源必须是 SQL：写入后立即检索可命中，且不再依赖 meta 目录文件。"""
+    import asyncio
+
+    async def _run():
+        await memory_store.file_write("/bm25/alpha.md", "阿尔法 记忆 检索 内容", description="阿尔法")
+        memory_store._mark_bm25_dirty()
+        hits = await memory_store.search_bm25(["阿尔法"], top_k=3)
+        return hits
+
+    hits = asyncio.run(_run())
+    assert any(h["path"] == "/bm25/alpha.md" for h in hits)
+
+
+def test_changed_and_advanced_search_are_sql_backed(memory_store):
+    import asyncio
+    import time
+
+    async def _run():
+        await memory_store.file_write("/scan/a.md", "内容 A", description="甲")
+        await memory_store.set_tags("/scan/a.md", ["t1", "t2"])
+        changed = await memory_store.get_changed_nodes(time.time() - 60)
+        advanced = await memory_store.advanced_search(tags=["t2"], tag_logic="AND")
+        return changed, advanced
+
+    changed, advanced = asyncio.run(_run())
+    assert any(c["path"] == "/scan/a.md" for c in changed)
+    assert [a["path"] for a in advanced] == ["/scan/a.md"]
+    assert advanced[0]["tags"] == ["t1", "t2"]
