@@ -401,6 +401,8 @@ flowchart TD
 
 已知怪癖（**既有行为，不是本次回归**）：`file_copy` 复制出的节点沿用源节点的 `name` 属性，因此列表里副本显示的是源文件名（旧实现同样 `ndata = dict(self._graph.nodes[nid])` 复制 name，见迁移前 `store.py:979`）。同一目录下同时存在源文件与副本时列表会出现两个同名行；`path`/子树操作均正确。
 
+子树改名实测（同一次真实数据副本，修复子串替换缺陷后）：`file_rename('/records','records_rn')` 819 行 **169.9ms**、`file_rename('/diary','diary_rn')` 393 行 **73.3ms**；两条都验证了「无 bogus 路径 / SQL 与 nx 节点集合完全一致 / 重启后一致 / 改名可回滚」。子树路径改写用单条 `UPDATE ... || substr(path, len(old)+1) ... LIKE ? ESCAPE '\'`：`replace()` 会子串误替换（`/diary/diary_2026.md` → `/journal/journal_2026.md`），逐行 UPDATE 版本正确但同一数据上要 590ms / 431ms（外键 `ON UPDATE CASCADE` + 唯一索引逐行校验），单条语句省掉每行的 prepare/step。
+
 ## 落地顺序
 
 1. `storage.py`（schema + 事务封装）+ 单测。
