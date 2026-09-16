@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import time
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -138,4 +139,75 @@ def test_cancelled_waiter_does_not_wedge_write_lock(store, monkeypatch):
 
     asyncio.run(asyncio.wait_for(store.file_write("/lock/after.md", "a"), 10.0))
     assert store.db.one("SELECT count(*) AS c FROM nodes WHERE path='/lock/after.md'")["c"] == 1
+
+
+def test_cancelled_waiter_after_handoff_returns_lock():
+    """回归：持有权已交出、等待者尚未恢复时的取消，不能永久丢锁。
+
+    `_handoff_locked` 弹出 waiter B 的 future 并排程唤起之后，B 的 `await fut` 在
+    回调跑起来之前被取消：future 既不在 `_waiters`（已弹出）也没有结果（被取消），
+    旧实现 `fut.done() and not fut.cancelled()` 与 `fut in self._waiters` 两个分支
+    都不进，锁从此没人持有，后续写入全部挂死。
+    """
+    import faust_backend.memory.store as store_mod
+
+    async def scenario():
+        lock = store_mod._CrossLoopLock()
+        await lock.__aenter__()  # 主协程持锁
+        waiter = asyncio.ensure_future(lock.__aenter__())
+        await asyncio.sleep(0)  # B 入队并挂在 future 上
+        lock._handoff_locked()  # 持有权交给 B（回调已排程，B 还没恢复）
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        # 另一个等待者必须能拿到锁；拿不到就会超时（而不是挂死）
+        await asyncio.wait_for(lock.__aenter__(), 1.0)
+        await lock.__aexit__()
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_new_ancestor_creation_never_links_missing_parent(store, monkeypatch):
+    """回归：祖先创建必须在写锁内，且 `_add_node` 先写 SQL 再改 nx。
+
+    否则线程 B 会从 nx 看到线程 A 尚未落库的父目录而跳过插入，紧接着
+    `_link_parent` 的 `UPDATE ... SET parent_id=<不存在的父>` 撞
+    `FOREIGN KEY constraint failed`。这里用线程定向延迟把 `_add_node` 的
+    「nx 已改 / SQL 未提交」窗口放大成确定性可复现（没有延迟时这个窗口只有微秒级，
+    并发压测碰不到）。
+    """
+    real_transaction = store.db.transaction
+    entered = threading.Event()
+
+    def delayed_transaction():
+        if threading.current_thread().name == "slow" and not entered.is_set():
+            entered.set()
+            time.sleep(0.3)
+        return real_transaction()
+
+    monkeypatch.setattr(store.db, "transaction", delayed_transaction)
+
+    errors: list[BaseException] = []
+
+    def worker(tag: str) -> None:
+        try:
+            for i in range(5):
+                asyncio.run(store.file_write(f"/race/{tag}_{i}.md", "body", index=False))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    slow = threading.Thread(target=worker, args=("a",), name="slow")
+    fast = threading.Thread(target=worker, args=("b",), name="fast")
+    slow.start()
+    assert entered.wait(5.0), "slow 线程没有进入第一次事务"
+    fast.start()
+    for t in (fast, slow):
+        t.join(20.0)
+        assert not t.is_alive()
+
+    assert errors == []
+    assert store.db.one("SELECT count(*) AS c FROM nodes WHERE path LIKE '/race/%'")["c"] == 10
+    assert store.db.one(
+        "SELECT count(*) AS c FROM nodes c LEFT JOIN nodes p ON c.parent_id=p.id"
+        " WHERE c.parent_id IS NOT NULL AND p.id IS NULL")["c"] == 0
 

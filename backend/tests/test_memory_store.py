@@ -410,20 +410,6 @@ class TestCoreHelpers:
         assert store._normalize_path("\\a\\b") == "/a/b"
         assert store._normalize_path("") == "/"
 
-    def test_cosine_sim(self):
-        a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        b = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        assert abs(store._cosine_sim(a, b) - 1.0) < 1e-6
-
-        c = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-        assert abs(store._cosine_sim(a, c) - 0.0) < 1e-6
-
-        d = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
-        assert abs(store._cosine_sim(a, d) + 1.0) < 1e-6
-
-        zero = np.zeros(3, dtype=np.float32)
-        assert store._cosine_sim(a, zero) == 0.0
-
     def test_chunk_text(self):
         long_text = "A" * 5000
         chunks = store._chunk_text(long_text)
@@ -919,3 +905,100 @@ def test_changed_and_advanced_search_are_sql_backed(memory_store):
     assert any(c["path"] == "/scan/a.md" for c in changed)
     assert [a["path"] for a in advanced] == ["/scan/a.md"]
     assert advanced[0]["tags"] == ["t1", "t2"]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 子树路径改写：必须按「路径段前缀」，不能是子串 / LIKE 通配符
+# ══════════════════════════════════════════════════════════════════════
+
+class TestSubtreePathRewrite:
+    """回归终审 3 处缺陷：目录改名 / 移动用 SQL `replace()`、`_subtree_paths` 用 `LIKE`。"""
+
+    def test_dir_rename_rewrites_descendants_by_prefix(self, memory_store):
+        """`/diary/diary_2026.md` 改名 `/diary`->`journal` 后必须还在子目录里。
+
+        SQL `replace()` 是子串替换，会把孩子改写成 `/journal/journal_2026.md`：
+        同进程内 SQL 与 nx 立刻分歧，重启后原文件读不到正文。
+        """
+        async def _run():
+            await memory_store.file_write("/diary/diary_2026.md", "dear diary", index=False)
+            await memory_store.file_rename("/diary", "journal")
+
+        asyncio.run(_run())
+
+        sql_paths = sorted(r["path"] for r in memory_store.db.all(
+            "SELECT path FROM nodes WHERE path = '/journal' OR path LIKE '/journal/%'"))
+        assert sql_paths == ["/journal", "/journal/diary_2026.md"]
+        assert memory_store.db.one(
+            "SELECT count(*) AS c FROM nodes WHERE path='/journal/journal_2026.md'")["c"] == 0
+        # SQL 是唯一真源，nx 必须与之一致
+        assert memory_store._graph.has_node("path:/journal/diary_2026.md")
+        assert not memory_store._graph.has_node("path:/journal/journal_2026.md")
+
+        memory_store.close()
+        gs2 = store.GraphStore("test_agent")
+        assert asyncio.run(gs2.file_read("/journal/diary_2026.md"))["content"] == "dear diary"
+        with pytest.raises(FileNotFoundError):
+            asyncio.run(gs2.file_read("/journal/journal_2026.md"))
+        gs2.close()
+
+    def test_dir_move_rewrites_descendants_by_prefix(self, memory_store):
+        """移动目录时同样不能子串替换（`/diary/diary_2026.md` -> `/target/diary/target/...`）。"""
+        async def _run():
+            await memory_store.file_write("/diary/diary_2026.md", "dear diary", index=False)
+            await memory_store.file_write("/docs/sub/sub_notes.md", "sub notes", index=False)
+            await memory_store.mkdir("/target")
+            await memory_store.file_move("/diary", "/target")
+            await memory_store.file_move("/docs/sub", "/target")
+
+        asyncio.run(_run())
+
+        sql_paths = sorted(r["path"] for r in memory_store.db.all(
+            "SELECT path FROM nodes WHERE path LIKE '/target/%'"))
+        assert sql_paths == [
+            "/target/diary", "/target/diary/diary_2026.md",
+            "/target/sub", "/target/sub/sub_notes.md",
+        ]
+        assert memory_store._graph.has_node("path:/target/diary/diary_2026.md")
+
+        memory_store.close()
+        gs2 = store.GraphStore("test_agent")
+        assert asyncio.run(gs2.file_read("/target/diary/diary_2026.md"))["content"] == "dear diary"
+        assert asyncio.run(gs2.file_read("/target/sub/sub_notes.md"))["content"] == "sub notes"
+        gs2.close()
+
+    def test_dir_copy_does_not_treat_underscore_as_like_wildcard(self, memory_store):
+        """`/a_b` 的子树查询不能把 `/axb` 也算进去（`_` 是 LIKE 通配符）。"""
+        async def _run():
+            await memory_store.file_write("/a_b/c.md", "in a_b", index=False)
+            await memory_store.file_write("/axb/other.md", "in axb", index=False)
+            await memory_store.file_copy("/a_b", "/copy_a_b")
+
+        asyncio.run(_run())
+
+        assert memory_store._subtree_paths("/a_b") == ["/a_b", "/a_b/c.md"]
+        copied = sorted(r["path"] for r in memory_store.db.all(
+            "SELECT path FROM nodes WHERE path LIKE '/copy_a_b%'"))
+        assert copied == ["/copy_a_b", "/copy_a_b/c.md"]
+
+
+def test_record_entity_has_child_lives_in_edges_not_parent_id(memory_store):
+    """不变量 3：记录节点 -> 实体的 has_child 属于 `edges`，不是 `nodes.parent_id`。
+
+    实体没有 path，`parent_id` 只承载两个 path 节点之间的关系（`migrate.py` 也是这样导入的）。
+    """
+    result = asyncio.run(memory_store.add_chat_record("你好", "回复"))
+    nid = store._path_id(result["path"])
+    ents = memory_store.get_entity_children(result["path"])
+    assert len(ents) == 1
+    eid = ents[0]["id"]
+
+    assert memory_store.db.one("SELECT parent_id FROM nodes WHERE id=?", (eid,))["parent_id"] is None
+    edge_srcs = [r["src"] for r in memory_store.db.all(
+        "SELECT src FROM edges WHERE dst=? AND type=?", (eid, store.TREE_EDGE))]
+    assert edge_srcs == [nid]
+
+    memory_store.close()
+    gs2 = store.GraphStore("test_agent")
+    assert [e["id"] for e in gs2.get_entity_children(result["path"])] == [eid]
+    gs2.close()

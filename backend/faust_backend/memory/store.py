@@ -65,14 +65,19 @@ class _CrossLoopLock:
                 return None
             fut = loop.create_future()
             self._waiters.append(fut)
+        # 不变量：`_granted` 为真 <=> 持有权已经是「我的」，哪怕这次等待再也醒不过来。
+        # 取消发生在「已被 `_handoff_locked` 弹出并唤起、协程尚未恢复」的窗口里时，
+        # future 既不在 `_waiters` 里也没有结果集，只能靠这个标记判断该不该交还锁。
         try:
             await fut
         except BaseException:
             with self._state:
-                if fut.done() and not fut.cancelled():
-                    self._handoff_locked()  # 已被授予但没等到返回：交还持有权
+                if getattr(fut, "_granted", False):
+                    self._handoff_locked()  # 授予后被取消：持有权在我手上，必须交还
                 elif fut in self._waiters:
-                    self._waiters.remove(fut)  # 还在排队：离队
+                    self._waiters.remove(fut)  # 还在排队：从未被授予，离队即可
+                # 其余：已弹出但 `call_soon_threadsafe` 失败（等待者的循环已关），
+                # `_handoff_locked` 已把持有权转给下一个等待者或置为未持有——不归我管。
             raise
         return None
 
@@ -92,6 +97,7 @@ class _CrossLoopLock:
                 fut.get_loop().call_soon_threadsafe(_wake_waiter, fut)
             except RuntimeError:
                 continue  # 等待者的循环已关闭
+            fut._granted = True  # 持有权已交给它（`__aenter__` 的取消分支据此交还）
             return
         self._held = False
 
@@ -158,15 +164,6 @@ def _chunk_text(text: str) -> list[str]:
             break
         start += step
     return chunks
-
-
-def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
-    dot = float(np.dot(a, b))
-    na = float(np.linalg.norm(a))
-    nb = float(np.linalg.norm(b))
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return dot / (na * nb)
 
 
 class GraphStore:
@@ -306,11 +303,16 @@ class GraphStore:
     )
 
     def _add_node(self, nid: str, **attrs) -> None:
+        """新节点：**先写 SQL 行、再改 nx**（设计不变量 2）。
+
+        顺序不能反：nx 是 SQL 的投影，反序会让其他线程/协程从 nx 看到尚未落库的
+        节点而跳过插入，随后的 `_link_parent` 就会撞外键。
+        """
         if self._graph.has_node(nid):
             return
-        self._graph.add_node(nid, **attrs)
         with self.db.transaction() as conn:
             conn.execute(self._NODE_UPSERT, self._node_row(nid, dict(attrs)))
+        self._graph.add_node(nid, **attrs)
 
     def _db_delete_node(self, nid: str) -> None:
         with self.db.transaction() as conn:
@@ -422,14 +424,37 @@ class GraphStore:
                 self._add_node(expected, type="dir", name=Path(_id_to_path(expected)).name or "/")
             self._link_parent(r["id"], expected)
 
+    def _subtree_rows(self, norm_path: str) -> list[tuple[str, str]]:
+        """该路径自身及所有后代的 `(id, path)`，浅 -> 深。
+
+        用 Python 前缀判断而不是 SQL `LIKE '<prefix>%'`：`_` / `%` 是 LIKE 通配符，
+        路径里的 `_`（如 `/records/2026-09-15/193539_6b65ab`）会误匹配到同层兄弟，
+        让子树改名/复制波及无关节点。
+        """
+        prefix = norm_path.rstrip("/") + "/"
+        rows = self.db.all("SELECT id, path FROM nodes WHERE path IS NOT NULL")
+        out = [(r["id"], r["path"]) for r in rows
+               if r["path"] == norm_path or r["path"].startswith(prefix)]
+        out.sort(key=lambda ip: (len(ip[1]), ip[1]))
+        return out
+
     def _subtree_paths(self, norm_path: str) -> list[str]:
         """返回该路径自身及所有后代路径（浅 -> 深）。"""
-        prefix = norm_path.rstrip("/") + "/"
-        rows = self.db.all(
-            "SELECT path FROM nodes WHERE path = ? OR path LIKE ? ORDER BY length(path), path",
-            (norm_path, prefix + "%"),
-        )
-        return [r["path"] for r in rows]
+        return [path for _, path in self._subtree_rows(norm_path)]
+
+    def _rewrite_subtree_paths(self, conn, old_path: str, new_path: str, now: float) -> None:
+        """按前缀改写整棵子树的主键与 `path` 列（浅 -> 深）。
+
+        不能用 SQL `replace()`：子串替换会把 `/diary/diary_2026.md` 改写成
+        `/journal/journal_2026.md`。逐行 `UPDATE nodes SET id=...` 时，主键改名经外键
+        `ON UPDATE CASCADE` 自动重指 edges / tags / chunks。
+        """
+        for old_id, old in self._subtree_rows(old_path):
+            updated = new_path + old[len(old_path):]
+            conn.execute(
+                "UPDATE nodes SET id=?, path=?, updated_at=? WHERE id=?",
+                (_path_id(updated), updated, now, old_id),
+            )
 
     def _relabel_nx(self, old_path: str, new_path: str) -> None:
         mapping = {}
@@ -665,9 +690,11 @@ class GraphStore:
         name = Path(norm).name
         log.info("file_write path=%s declared_by=%s index=%s tags=%s desc_len=%d",
                  norm, declared_by, index, tags or [], len(description))
-        parent_nid = self._ensure_ancestors(norm)
 
         async with self._write_lock:
+            # 祖先创建必须在写锁内：`_ensure_ancestors` 的「查 nx / 插行 / 连父」三步
+            # 不加锁就会与并发写入交错，`_link_parent` 会指向尚未落库的父节点。
+            parent_nid = self._ensure_ancestors(norm)
             with self.db.transaction() as conn:
                 cp = self._content_path(norm)
                 cp.parent.mkdir(parents=True, exist_ok=True)
@@ -684,7 +711,7 @@ class GraphStore:
                     index_text = f"{description}\n\n{content}"
                 chunks = _chunk_text(index_text)
                 existing_tags = [r["tag"] for r in conn.execute(
-                    "SELECT tag FROM tags WHERE node_id=? ORDER BY tag", (nid,)).fetchall()]
+                    "SELECT tag FROM tags WHERE node_id=? ORDER BY rowid", (nid,)).fetchall()]
                 tags_final = [t.strip() for t in (tags or existing_tags) if t and t.strip()]
                 conn.execute("DELETE FROM tags WHERE node_id=?", (nid,))
                 conn.executemany("INSERT OR IGNORE INTO tags(node_id, tag) VALUES (?, ?)",
@@ -746,9 +773,9 @@ class GraphStore:
         log.info("attachment_write path=%s content_type=%s desc_len=%d",
                  norm, content_type, len(description))
         image_bytes = base64.b64decode(image_base64)
-        parent_nid = self._ensure_ancestors(norm)
 
         async with self._write_lock:
+            parent_nid = self._ensure_ancestors(norm)
             with self.db.transaction() as conn:
                 cp = self._content_path(norm)
                 cp.parent.mkdir(parents=True, exist_ok=True)
@@ -912,12 +939,7 @@ class GraphStore:
                         (new_nid, new_path, new_name, _now_epoch(), nid),
                     )
                 else:
-                    conn.execute(
-                        "UPDATE nodes SET id='path:' || replace(path, ?, ?),"
-                        " path=replace(path, ?, ?), updated_at=?"
-                        " WHERE path=? OR path LIKE ?",
-                        (norm, new_path, norm, new_path, _now_epoch(), norm, norm + "/%"),
-                    )
+                    self._rewrite_subtree_paths(conn, norm, new_path, _now_epoch())
                     conn.execute("UPDATE nodes SET name=? WHERE id=?", (new_name, new_nid))
                 self._mark_bm25_dirty()
             self._relabel_nx(norm, new_path)
@@ -987,12 +1009,7 @@ class GraphStore:
                         (dest_nid, dest, _now_epoch(), nid),
                     )
                 else:
-                    conn.execute(
-                        "UPDATE nodes SET id='path:' || replace(path, ?, ?),"
-                        " path=replace(path, ?, ?), updated_at=?"
-                        " WHERE path=? OR path LIKE ?",
-                        (norm, dest, norm, dest, _now_epoch(), norm, norm + "/%"),
-                    )
+                    self._rewrite_subtree_paths(conn, norm, dest, _now_epoch())
                 new_parent = _path_id(str(Path(dest).parent))
                 conn.execute("UPDATE nodes SET parent_id=? WHERE id=?", (new_parent, dest_nid))
                 self._mark_bm25_dirty()
@@ -1005,11 +1022,12 @@ class GraphStore:
         norm = _normalize_path(path)
         nid = _path_id(norm)
         log.info("mkdir path=%s", norm)
-        parent_nid = self._ensure_ancestors(norm)
-
-        if not self._has_node(nid):
-            self._add_node(nid, type="dir", name=Path(norm).name, description=str(description or ""))
-        self._link_parent(nid, parent_nid)
+        async with self._write_lock:
+            parent_nid = self._ensure_ancestors(norm)
+            if not self._has_node(nid):
+                self._add_node(nid, type="dir", name=Path(norm).name,
+                               description=str(description or ""))
+            self._link_parent(nid, parent_nid)
         return {"path": norm, "type": "dir"}
 
     # ── meta（SQL） ──
@@ -2139,7 +2157,9 @@ class GraphStore:
             eid = self.entity_add(name, entity_type=record_type, properties=props, kb_refs=[path])
             nid = _path_id(path)
             if self._has_node(nid):
-                self._link_parent(eid, nid)
+                # 不变量 3：只有「两个 path 节点之间」的 has_child 进 nodes.parent_id；
+                # 记录节点 -> 实体的 has_child 走 edges 表（实体没有 path）。
+                self._add_edge(nid, eid, TREE_EDGE)
             prev = self._find_latest_entity(record_type, exclude=eid)
             if prev:
                 self._add_edge(prev, eid, "next")
