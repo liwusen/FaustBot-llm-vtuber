@@ -360,20 +360,29 @@ flowchart TD
 
 ## 验收标准
 
-以 agent `faust` 真实数据为基准（当前值 → 目标值）：
+以 agent `faust` 真实数据为基准（当前值 → 目标值）。「实测」列为 2026-09-16 在本机对真实数据**副本**（`~/.faustbot/agents/faust/memory`，2739 节点 / 5460 边 / 1301 meta 文件）跑迁移后的复测值：
 
-| 指标 | 现在 | 目标 |
-| --- | --- | --- |
-| `GraphStore()` 冷启动 | 0.873s | ≤ 0.15s（实测 0.078s） |
-| 单次 `file_write`（stub embedding） | 2.289s | ≤ 50ms（实测事务 0.32ms + 文件 IO） |
-| `advanced_search("")` | 0.400s | ≤ 20ms（实测 3ms） |
-| `get_changed_nodes` 全库 | 秒级（rglob 1301 文件） | ≤ 20ms |
-| BM25 冷建 / 写后重建 | 15.08s / 1.78s | ≤ 5s / ≤ 2s，且不再遍历文件系统 |
-| `memory/` 单文件最大 | 48.09MB（entity_vecs.jsonl） | ≤ 20MB（chunks.vdb 11.9MB / entity.vdb 12.1MB 有增长余量） |
-| `graph + meta + 向量` 总量 | 62MB | ≤ 25MB（实测 16.8MB） |
-| 崩溃残留 `.tmp` | 82MB 现存 | 0 |
-| 单元测试 | — | `pytest backend/tests` 全绿 |
-| HTTP 与前端 | — | `/faust/memory/*` 全部路由行为不变（前端记忆页人工验证） |
+| 指标 | 现在 | 目标 | 实测 |
+| --- | --- | --- | --- |
+| `GraphStore()` 冷启动 | 0.873s | ≤ 0.15s | **0.204~0.208s**（未达标，见备注 1） |
+| 单次 `file_write`（stub embedding） | 2.289s | ≤ 50ms | **3.0~3.6ms**（稳态 5 连写；见备注 2） |
+| `advanced_search("")` | 0.400s | ≤ 20ms | **16.6~18.5ms** |
+| `get_changed_nodes` 全库 | 秒级（rglob 1301 文件） | ≤ 20ms | **1.3~1.4ms**（7 天窗口 118 条） |
+| BM25 冷建 / 写后重建 | 15.08s / 1.78s | ≤ 5s / ≤ 2s，且不再遍历文件系统 | **4.17~4.32s / 1.35~1.39s**，数据源为 `chunks` + `nodes(type='entity')` |
+| `memory/` 单文件最大 | 48.09MB（entity_vecs.jsonl） | ≤ 20MB | **12.11MB**（`index/entity.vdb`）；归档目录 `_legacy_json/` 内仍留着 48.09MB 旧文件，删除归档即消失 |
+| `graph + meta + 向量` 总量 | 62MB | ≤ 25MB | **30.02MB**（未达标，见备注 3） |
+| 崩溃残留 `.tmp` | 82MB 现存 | 0 | **0**（迁移清理旧残留并归档） |
+| 单元测试 | — | `pytest backend/tests` 全绿 | **559 passed**（`backend/tests`） |
+| HTTP 与前端 | — | `/faust/memory/*` 全部路由行为不变 | 见「集成验证」 |
+
+其他实测（同一次复测）：冷启动含首次迁移 3.173s（一次性）；`tree_list('/')` 含元数据 33ms（旧 373ms）；BM25 热查 1.8~4.0ms；`file_read` 1.0ms；`entity_iter`（1470 实体）3.2ms；`search("记忆")` 8.1ms；单次覆盖写 74ms（含 `chunks.vdb` 落盘）。
+
+**实测备注**
+
+1. 冷启动 0.204s 的构成：`index/chunks.vdb` 解析 0.102s + `index/entity.vdb` 解析 0.042s + `MemoryDB` 建/开库 0.0036s + 从 SQL 载入 nx（2739 节点 / 4207 边）与建索引约 0.06s。两个 vdb 的 JSON 解析占了 0.14s，而计划要求 `__init__` 预载两个 vdb（`_ensure_vdb()` / `_ensure_entity_vdb()`），因此该目标受 nano-vectordb 存储格式限制，需要改成惰性预载才能达标（本次未改，未超出计划授权范围）。
+2. `file_write` 的「首次调用 1.31s」不是存储成本：分相位计时显示所有 SQL/文件阶段合计约 6ms，首次调用耗时来自 `memory_write_pre` 钩子里的 `from faust_backend.runtime import state` 首次导入（独立进程实测 3.43s），旧实现同样存在该导入。
+3. 总量 30.02MB = `memory.sqlite` 6.03MB（含 `chunks.text` 全量分块正文，1159 条）+ `chunks.vdb` 11.88MB + `entity.vdb` 12.11MB。相对迁移前的 62MB 降 51.6%；超出 25MB 目标的主因是分块正文入库与两个向量库的实际体积高于设计时的估值（16.8MB 是估算值）。
+4. 真实数据额外暴露一个计划未覆盖的形态：`meta/**` 里有 **162 个孤儿元数据**（节点已从 graph.json 删除、meta 文件残留，连带 157 条孤儿分块）。迁移按「graph.json 是树形状真源」跳过它们并计入 `counts["orphan_meta"]`、逐条告警，而不是让外键约束把整次迁移打回。对应回归测试 `test_migration_skips_orphan_meta_without_node`。
 
 ## 落地顺序
 
