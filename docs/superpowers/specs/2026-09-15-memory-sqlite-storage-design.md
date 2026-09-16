@@ -384,6 +384,23 @@ flowchart TD
 3. 总量 30.02MB = `memory.sqlite` 6.03MB（含 `chunks.text` 全量分块正文，1159 条）+ `chunks.vdb` 11.88MB + `entity.vdb` 12.11MB。相对迁移前的 62MB 降 51.6%；超出 25MB 目标的主因是分块正文入库与两个向量库的实际体积高于设计时的估值（16.8MB 是估算值）。
 4. 真实数据额外暴露一个计划未覆盖的形态：`meta/**` 里有 **162 个孤儿元数据**（节点已从 graph.json 删除、meta 文件残留，连带 157 条孤儿分块）。迁移按「graph.json 是树形状真源」跳过它们并计入 `counts["orphan_meta"]`、逐条告警，而不是让外键约束把整次迁移打回。对应回归测试 `test_migration_skips_orphan_meta_without_node`。
 
+## 集成验证（2026-09-16）
+
+环境：用 `CONFIG_ROOT` 指向**真实 `~/.faustbot` 的隔离副本**（顶层配置 JSON + `agents/*` + `plugins/` + `skill.d/`；`memory/**` 排除 `*.tmp` 与 `memory.sqlite*`，其余大目录为空占位），再启动后端 `.runtime/python.exe backend/main.py`（127.0.0.1:13900），**不触碰用户真实 memory 目录**。前端用 `frontend/node_modules/electron/dist/electron.exe . --remote-debugging-port=9222` 启动，经 CDP 驱动配置中心的「记忆」页。
+
+后端首启日志显示迁移按预期执行并归档 legacy 文件；`/faust/memory/*` 路由逐条实测 **32 项通过**（1 项为下述既有命名怪癖，非回归）：
+
+| 组 | 结果 |
+| --- | --- |
+| 树/详情 | `/tree`（含 `include_metadata`）返回真实树；`/get` 返回正文与完整 meta 键（`path/declared_by/description/updated_at/chunk_count/indexed/tags/score_patch/score_patch_updated_at/managed_by/content_type`） |
+| 检索 | `/search`（hybrid，命中带 snippet，`_source=hybrid`）、`/search-compact`、`/advanced-search`（空查询 5 条；`tags=['diary']` 20 条）、`/graph/search` |
+| 变更/任务 | `/changed` 1139~1141 条、`/tasks`、`/extraction-status` |
+| 图谱 | `/graph/entities` 1470 条、`/graph/full`（2745 实体 / 5465 关系）、`/graph/entity-detail`、`/graph/neighbors`、`/graph/relations` |
+| 写路径 | `/save` → `/get` → `/tags` → `/score-patch` → `/mkdir` → `/rename` → `/copy` → `/move` → `/delete`（全部 200，改名后 tags/score_patch 保留）；`/diary` 落盘并可检索 |
+| 前端「记忆」页 | 树可展开（`/diary` 48 项）、文件详情渲染（路径/更新时间/索引块/权重 0.15/标签/关联实体）、「图谱」页渲染力导向图（实体 280 / 关系 1415 / 深度 3 + 类型图例）、关键词搜索返回「命中 112 条」带相关度与标签 |
+
+已知怪癖（**既有行为，不是本次回归**）：`file_copy` 复制出的节点沿用源节点的 `name` 属性，因此列表里副本显示的是源文件名（旧实现同样 `ndata = dict(self._graph.nodes[nid])` 复制 name，见迁移前 `store.py:979`）。同一目录下同时存在源文件与副本时列表会出现两个同名行；`path`/子树操作均正确。
+
 ## 落地顺序
 
 1. `storage.py`（schema + 事务封装）+ 单测。
