@@ -44,7 +44,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   const asrStatusEl = document.getElementById('asrStatus');
   const chatStatusEl = document.getElementById('chatStatus');
   const asrBubbleEl = document.getElementById('asrBubble');
-  const asrTextEl = document.getElementById('asrText');
   const subagentSummaryEl = document.getElementById('subagentSummary');
   const hideAsrBubbleBtn = document.getElementById('hideAsrBubbleBtn');
   const vadProbEl = document.getElementById('vadProb');
@@ -94,6 +93,14 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   let appPluginAssetsLoaded = false;
   let persistedUiWidgetSettings = {};
   let lastLocalUiSaveTs = 0;
+  // transientHidden 的组件（asr-bubble / rss-banner）显隐由运行时业务逻辑驱动：
+  // hidden 不落盘，磁盘上的历史值也被忽略，否则旧配置会让组件开机即不可见且没有恢复入口
+  function stripTransientHidden(id, payload) {
+    const widget = uiWidgetManager.getWidget(id);
+    if (!widget || !widget.transientHidden) return payload;
+    const { hidden, ...rest } = payload || {};
+    return rest;
+  }
   // ── 响应式布局：脏标记驱动，变化才重绘（模型/视口/组件/编辑态） ──
   const layoutDirty = { model: false, viewport: false, widget: false, edit: false };
   function markLayoutDirty(kind) {
@@ -117,7 +124,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
 
   function applyUiWidgetSettings(widgets) {
     Object.entries(widgets || {}).forEach(([id, payload]) => {
-      try { uiWidgetManager.updateWidget(id, payload || {}); } catch (_e) {}
+      try { uiWidgetManager.updateWidget(id, stripTransientHidden(id, payload)); } catch (_e) {}
     });
   }
 
@@ -139,14 +146,15 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     uiWidgetManager.listWidgets().forEach((widget) => {
       // 临时灵动窗口的 widget 不落盘；持久化窗口 id 稳定，允许保存布局
       if (widget.id.startsWith('nimble::') && !widget.id.startsWith('nimble::persistent_')) return;
-      widgets[widget.id] = {
+      const entry = {
         bindingType: widget.bindingType,
         coord: widget.coord,
         offset: widget.offset,
         scale: widget.scale,
-        hidden: widget.hidden,
         props: widget.props || {},
       };
+      if (!widget.transientHidden) entry.hidden = widget.hidden;
+      widgets[widget.id] = entry;
     });
     lastLocalUiSaveTs = Date.now();
     try {
@@ -186,10 +194,12 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       coord: { x: 0.5, y: 0 },
       offset: { x: 0, y: -108 },
       scale: 1,
-      hidden: false,
+      // 启动即隐藏：只有 chat 流 start / SAY / MD_BLOCK 才会 reveal（见 libs/asr-bubble.js）
+      hidden: true,
+      transientHidden: true,
       onLayout: () => bubble.updateAsrTextPosition(false),
       schema: {
-        bindingType: 'model', coord: 'point', offset: 'point', scale: 'number', hidden: 'boolean',
+        bindingType: 'model', coord: 'point', offset: 'point', scale: 'number',
         props: {
           fontSize: { type: 'number', label: '字体大小' },
           textColor: { type: 'color', label: '文字颜色' },
@@ -197,6 +207,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
           showReasoning: { type: 'boolean', label: '显示推理内容' },
           showTools: { type: 'boolean', label: '显示工具调用' },
           showSubagents: { type: 'boolean', label: '显示 Subagents' },
+          hideScrollbar: { type: 'boolean', label: '隐藏滚动条' },
         },
       },
       props: {
@@ -207,6 +218,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         showReasoning: true,
         showTools: true,
         showSubagents: true,
+        hideScrollbar: false,
       },
     });
     uiWidgetManager.registerWidget({
@@ -243,7 +255,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       schema: { bindingType: 'screen', coord: 'point', scale: 'number', hidden: 'boolean' },
     });
     Object.entries(persistedUiWidgetSettings || {}).forEach(([id, payload]) => {
-      try { uiWidgetManager.updateWidget(id, payload || {}); } catch (_e) {}
+      try { uiWidgetManager.updateWidget(id, stripTransientHidden(id, payload)); } catch (_e) {}
     });
   }
 
@@ -383,7 +395,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         const widget = uiWidgetManager.registerWidget(spec);
         const persisted = persistedUiWidgetSettings && persistedUiWidgetSettings[widget.id];
         if (persisted) {
-          try { return uiWidgetManager.updateWidget(widget.id, persisted); } catch (_e) {}
+          try { return uiWidgetManager.updateWidget(widget.id, stripTransientHidden(widget.id, persisted)); } catch (_e) {}
         }
         return widget;
       },
@@ -797,7 +809,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   }
 
   function isPointOverAsrBubble(clientX, clientY){
-    if (!asrBubbleEl || asrBubbleEl.style.display === 'none') return false;
+    if (!asrBubbleEl || !bubble.isVisible()) return false;
     const rect = asrBubbleEl.getBoundingClientRect();
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
@@ -1743,6 +1755,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         // use existing synthesizeAndPlay TTS function; prefer UI-selected lang
         const lang = getCurrentTtsLang();
         useVAD = false;
+        bubble.reveal();
         bubble.showResultBubble('ai', arg);
         await audio.synthesizeAndPlay(arg, lang);
       } else if (cmd === 'STOP'){
@@ -1783,14 +1796,14 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         try{ payload = JSON.parse(arg); }catch(e){ console.warn('Invalid MD_BLOCK payload', e, arg); return; }
         const content = String(payload?.content || '').trim();
         if (!content) return;
+        bubble.reveal();
         const entry = { type: 'md', text: content };
         if (currentChatRequest && Array.isArray(currentChatRequest.entries)) {
           currentChatRequest.entries.push(entry);
           bubble.showResultBubble('ai', currentChatRequest.entries);
         } else {
-          const bubbleVisible = asrBubbleEl && asrBubbleEl.style.display !== 'none';
           const bubbleState = bubble.getState();
-          const base = (bubbleVisible && bubbleState.source === 'ai') ? bubbleState.entries : [];
+          const base = (bubble.isVisible() && bubbleState.source === 'ai') ? bubbleState.entries : [];
           bubble.showResultBubble('ai', base.concat([entry]));
         }
       } else if (cmd=="SET_MOTION"){
@@ -2136,6 +2149,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       cancelPendingWaitingNotice();
       // 收到新消息：立刻停止上一条消息的 TTS（清空待播队列并停掉正在播放的音频）
       interruptPlayback();
+      // 新消息是唯一把气泡从隐藏态拉回来的时机（× 之后不会因为流式增量自动重现）
+      bubble.reveal();
       req.replyText = '';
       req.ttsChunker = null; // 新会话重置流式分块器（偏移从 0 重新累计）
       req.motionTokenBuffer = '';
@@ -3703,7 +3718,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   }
   if (asrBubbleEl){
     asrBubbleEl.addEventListener('toggle', bubble.handleResultBubbleToggle, true);
-    asrTextEl.addEventListener('scroll', ()=>{ bubble.rememberAsrScrollIntent(); });
+    // scroll / 用户滚动输入的事件绑定在 libs/asr-bubble.js 内部（滚动行为归气泡模块所有）
     asrBubbleEl.addEventListener('mouseenter', ()=>{
       if (clickThroughController) clickThroughController.forceInteractive();
     });
@@ -3794,10 +3809,11 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   // ── 布景台：系统组件组 ──
   layoutSidePanel.registerGroup({ id: 'system-widgets', label: '系统组件', order: 0 });
   layoutSidePanel.setGroupRender('system-widgets', (container) => {
+    // asr-bubble 不在此列：它的显隐是运行时状态（× 按钮关闭、新消息/SAY/MD_BLOCK 自动拉回），
+    // 没有可切换的用户开关，只保留下方的属性面板
     const items = [
       ['quick-controller', '快捷控制器'],
       ['text-chat-bar', '文字聊天条'],
-      ['asr-bubble', 'ASR 气泡'],
       ['log-panel', '日志面板'],
       ['subagent-panel', '子代理面板'],
     ];
@@ -3824,17 +3840,16 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       switchWrap.append(input, slider);
       row.append(text, switchWrap);
       container.appendChild(row);
-      if (widgetId === 'asr-bubble') {
-        container.appendChild(buildAsrBubblePropPanel());
-      }
     }
+    container.appendChild(buildAsrBubblePropPanel());
   });
 
-  // AsrBubble 属性编辑面板：字体大小 / 白色背景 / 长宽比 / 推理 / 工具 / Subagents
+  // AsrBubble 属性编辑面板：字体大小 / 白色背景 / 长宽比 / 推理 / 工具 / Subagents / 滚动条
   function buildAsrBubblePropPanel(){
     const panel = document.createElement('div');
     panel.className = 'lsp-props';
     panel.innerHTML =
+      '<div class="lsp-props-title">ASR 气泡属性</div>' +
       '<div class="lsp-prop-row"><span>字体大小</span>' +
         '<input type="number" min="10" max="48" step="1" data-k="fontSize"></div>' +
       '<div class="lsp-prop-row"><span>文字颜色</span>' +
@@ -3851,7 +3866,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       '<div class="lsp-prop-row"><span>显示工具调用</span>' +
         '<label class="lsp-switch"><input type="checkbox" data-k="showTools"><span class="lsp-switch-slider"></span></label></div>' +
       '<div class="lsp-prop-row"><span>显示 Subagents</span>' +
-        '<label class="lsp-switch"><input type="checkbox" data-k="showSubagents"><span class="lsp-switch-slider"></span></label></div>';
+        '<label class="lsp-switch"><input type="checkbox" data-k="showSubagents"><span class="lsp-switch-slider"></span></label></div>' +
+      '<div class="lsp-prop-row"><span title="隐藏后仍可用滚轮/键盘滚动">隐藏滚动条</span>' +
+        '<label class="lsp-switch"><input type="checkbox" data-k="hideScrollbar"><span class="lsp-switch-slider"></span></label></div>';
     const props = bubble.getAsrBubbleProps();
     panel.querySelectorAll('[data-k]').forEach((el) => {
       const k = el.dataset.k;

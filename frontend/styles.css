@@ -404,13 +404,15 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
 
 /* ASR result bubble above model */
 #asrBubble{
-  transition: left 0.08s linear, top 0.08s linear, opacity 0.12s, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  /* 位置平滑由 asr-bubble.js 的 rAF 插值负责，这里不再对 left/top 做 transition（避免双重平滑） */
+  transition: opacity 0.12s, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
   position:absolute;
   left:0;
   top:0;
   z-index:2000;
   width: 350px;
   pointer-events:auto;
+  /* 初始态（JS 起来前不闪空壳）；运行期由 asr-bubble.js 的 applyBubbleVisibility 写 inline */
   display:none;
   flex-direction: column;
   background: linear-gradient(180deg, rgba(24,29,37,0.92), rgba(15,18,24,0.84));
@@ -674,6 +676,24 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
 #asrText::-webkit-scrollbar-track {
   background: rgba(255,255,255,0.08);
   border-radius: 999px;
+}
+
+/* 布景台属性「隐藏滚动条」：视觉隐藏但保留 overflow-y:auto（滚轮/键盘/程序化滚动照常） */
+#asrBubble.asr-bubble-hide-scrollbar #asrText,
+#asrBubble.asr-bubble-hide-scrollbar #subagentSummary {
+  scrollbar-width: none;
+}
+#asrBubble.asr-bubble-hide-scrollbar #asrText::-webkit-scrollbar,
+#asrBubble.asr-bubble-hide-scrollbar #subagentSummary::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 长会话渲染优化：倒数第 5 条之前的旧条目跳过布局/绘制。
+   最后 5 条保持真实布局，避免滚动跟随的目标高度在「估算 ↔ 实测」之间跳动。 */
+#asrText > *:nth-last-child(n+6) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 
 #hideAsrBubbleBtn {

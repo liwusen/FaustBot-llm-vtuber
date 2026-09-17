@@ -83,20 +83,25 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
     title.className = 'card-title';
     title.textContent = `组件: ${widget.id}`;
 
-    const hiddenRow = document.createElement('label');
-    hiddenRow.className = 'switch-row';
-    hiddenRow.innerHTML = '<span class="switch-text">隐藏</span>';
-    const hiddenInput = document.createElement('input');
-    hiddenInput.type = 'checkbox';
-    hiddenInput.checked = !!widget.hidden;
-    hiddenInput.addEventListener('change', () => {
-      manager.updateWidget(widget.id, { hidden: hiddenInput.checked });
-      if (typeof refreshLayout === 'function') refreshLayout();
-      applyGhostState();
-      updateSelectionBox();
-      persist();
-    });
-    hiddenRow.append(hiddenInput);
+    // transientHidden 组件（asr-bubble / rss-banner）的显隐由运行时业务逻辑驱动，
+    // 没有用户可切换的开关，属性面板不提供「隐藏」
+    let hiddenRow = null;
+    if (!widget.transientHidden) {
+      hiddenRow = document.createElement('label');
+      hiddenRow.className = 'switch-row';
+      hiddenRow.innerHTML = '<span class="switch-text">隐藏</span>';
+      const hiddenInput = document.createElement('input');
+      hiddenInput.type = 'checkbox';
+      hiddenInput.checked = !!widget.hidden;
+      hiddenInput.addEventListener('change', () => {
+        manager.updateWidget(widget.id, { hidden: hiddenInput.checked });
+        if (typeof refreshLayout === 'function') refreshLayout();
+        applyGhostState();
+        updateSelectionBox();
+        persist();
+      });
+      hiddenRow.append(hiddenInput);
+    }
 
     const makeNumberField = (label, value, onChange) => {
       const wrap = document.createElement('label');
@@ -193,7 +198,7 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       propertyPanel.style.display = 'none';
     });
 
-    propertyPanel.append(title, hiddenRow, scaleField, xField, yField, ...propFields, closeBtn);
+    propertyPanel.append(title, ...(hiddenRow ? [hiddenRow] : []), scaleField, xField, yField, ...propFields, closeBtn);
   }
 
   function beginDrag(widget, event) {

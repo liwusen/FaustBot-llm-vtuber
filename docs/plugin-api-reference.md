@@ -799,6 +799,7 @@ TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-e
   offset: { x: 0, y: 0 },      // 偏移量（像素）
   scale: 1,                     // 缩放比例（最小 0.2）
   hidden: false,                // 是否隐藏
+  transientHidden: false,        // 可选：显隐由运行时业务逻辑驱动时置 true（hidden 不落盘）
   managed: true,                // 缺省 true，由小组件管理器统一负责显隐/定位/缩放
   onLayout: (el, anchor, widget, ctx) => {},  // 可选，managed=true 时的自定义布局回调
   schema: {                     // 属性 schema（用于编辑器）
@@ -897,6 +898,8 @@ TTS 播放开始/结束时，主窗口会派发 `faust-tts-start` / `faust-tts-e
   - 拖拽右下角手柄调整缩放
   - 切换小组件可见性
 - 配置自动保存到 `~/.faustbot/ui-settings.json`
+
+> **`hidden` 的持久化**：默认随配置落盘（编辑模式里关掉的组件重启后仍隐藏）。若组件的显隐由运行时业务逻辑决定（如内建 `asr-bubble` 由 × 按钮与聊天流控制、RSS 横幅由是否有新条目控制），注册时传 `transientHidden: true`：它的 `hidden` 不落盘，磁盘上的历史值也会被忽略，避免组件开机即不可见且没有恢复入口。
 
 ### 后端 API
 

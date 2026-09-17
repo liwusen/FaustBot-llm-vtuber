@@ -210,6 +210,13 @@ body.layout-side-panel-open #nimble-host {
   padding: 4px 12px 10px;
   border-bottom: 1px solid var(--faust-line);
 }
+.lsp-props-title {
+  padding: 6px 2px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--faust-muted);
+}
 .lsp-prop-row {
   display: flex;
   align-items: center;

@@ -170,6 +170,68 @@ export function renderBubbleEntryHtml(source, entry, index, reasoningIdx) {
   );
 }
 
+// 同键就地打补丁：流式分片只改变条目内容时不再重建节点，
+// 保证 <details> 元素存活（mousedown/mouseup 落在同一节点上，click 不丢、open 状态天然保留）。
+// 返回 false 表示该条目的 DOM 形态不支持原地更新，调用方应回退为重建节点。
+export function patchBubbleEntryNode(node, source, entry, index, reasoningIdx) {
+  if (!node || !entry || typeof entry !== 'object') return false;
+
+  if (entry.type === 'reasoning') {
+    const details = node.querySelector('details.thinking-details');
+    const content = node.querySelector('.thinking-content');
+    const counter = node.querySelector('.thinking-word-count');
+    if (!details || !content || !counter) return false;
+    if (details.dataset.r !== String(reasoningIdx === undefined ? index : reasoningIdx)) return false;
+    const reasoningText = escapeHtml(entry.text || '');
+    // textContent 赋值与渲染期的 escapeHtml + innerHTML 等价
+    content.textContent = entry.text || '';
+    counter.textContent = '思考:' + reasoningText.length + '字';
+    if (details.open !== !!entry.expanded) details.open = !!entry.expanded;
+    return true;
+  }
+
+  if (entry.type === 'text') {
+    const formatted = formatResultBubbleText(source, entry.text || '');
+    const main = node.firstElementChild;
+    // 渲染期：formatted 为空时该条目产出空节点（占位，保持条目与子节点一一对应）
+    if (!main) return formatted === '';
+    if (!main.classList.contains('result-bubble-main') || main.classList.contains('md-block')) return false;
+    if (main.textContent !== formatted) main.textContent = formatted;
+    return true;
+  }
+
+  if (entry.type === 'md') {
+    const main = node.firstElementChild;
+    if (!main || !main.classList.contains('md-block')) return false;
+    const raw = entry.text || '';
+    let html = getMarkdownCached(raw);
+    if (html === undefined) {
+      html = renderMarkdownHtml(raw);
+      setMarkdownCached(raw, html);
+    }
+    main.innerHTML = html;
+    return true;
+  }
+
+  if (entry.type === 'tool') {
+    const details = node.querySelector('details.thinking-details');
+    if (!details || details.dataset.callId !== String(entry.callId || `tool-${index}`)) return false;
+    const label = details.querySelector('.thinking-label');
+    const status = details.querySelector('.thinking-status');
+    const pres = details.querySelectorAll('.thinking-pre');
+    if (!label || !status || pres.length < 2) return false;
+    const args = Object.prototype.hasOwnProperty.call(entry, 'args') ? entry.args : {};
+    label.textContent = summarizeToolCall(entry.toolName, args);
+    status.textContent = entry.done ? '完成' : '运行中';
+    pres[0].textContent = formatToolBubbleValue(args) || '(空)';
+    pres[1].textContent = formatToolBubbleValue(entry.output ? entry.output : '') || (entry.done ? '(空)' : '等待...');
+    if (details.open !== !!entry.expanded) details.open = !!entry.expanded;
+    return true;
+  }
+
+  return false;
+}
+
 export function renderResultBubbleHtml(source, entries) {
   const blocks = [];
   const items = Array.isArray(entries) ? entries : [];

@@ -11,8 +11,6 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
   const subagentPanelHeader = document.getElementById('subagentPanelHeader');
   const subagentPanelTitle = document.getElementById('subagentPanelTitle');
   const subagentPanelBody = document.getElementById('subagentPanelBody');
-  const asrBubbleEl = document.getElementById('asrBubble');
-  const asrTextEl = document.getElementById('asrText');
 
   let subagentStatuses = [];
   let subagentEventCache = {};
@@ -56,16 +54,10 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     if (!visibleItems.length){
       subagentSummaryEl.style.display = 'none';
       subagentSummaryEl.innerHTML = '';
-      // 如果 asrText 也没有内容，隐藏整个气泡
-      if (asrBubbleEl && asrBubbleEl.style.display !== 'none' && asrTextEl && !asrTextEl.textContent.trim()) {
-        asrBubbleEl.style.display = 'none';
-      }
+      // #asrBubble 的显隐由 asr-bubble.js 统一负责（它观察本节点的变化并重算可见性）
       return;
     }
     subagentSummaryEl.style.display = 'flex';
-    if (asrBubbleEl && asrBubbleEl.style.display === 'none'){
-      asrBubbleEl.style.display = 'flex';
-    }
     subagentSummaryEl.innerHTML = visibleItems.map((item)=>{
       const name = escapeHtml(String(item.name || 'Unnamed'));
       const rawStatus = String(item.status || 'unknown').trim().toLowerCase();

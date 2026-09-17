@@ -56,6 +56,8 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange, onLayout
       },
       scale: Math.max(0.2, normalizeNumber(spec.scale, prev.scale || 1)),
       hidden: spec.hidden === undefined ? !!prev.hidden : !!spec.hidden,
+      // transientHidden=true：显隐由运行时业务逻辑驱动（气泡/横幅），hidden 不落盘也不接受磁盘值
+      transientHidden: spec.transientHidden === undefined ? !!prev.transientHidden : !!spec.transientHidden,
       // managed=true 时由管理器统一处理显隐/定位/拖动等通用逻辑，默认开启
       managed: spec.managed === undefined ? (prev.managed === undefined ? true : prev.managed) : !!spec.managed,
       // 可选钩子：特殊组件在通用显隐判定后自定义定位（VRM 分支/缩放/平滑等）
