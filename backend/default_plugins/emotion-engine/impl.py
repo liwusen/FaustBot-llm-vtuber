@@ -612,14 +612,8 @@ class EmotionEngineStore:
                 "[Emotion Engine]",
                 "FaustBot 具有情绪系统。",
                 "允许的 emotionName: JOY / IRRITATION / PRIDE / CURIOSITY / SHARPNESS / BOREDOM / CARE / CALM。",
-                "你应该(SHOULD)在每次回复最后调用一次 EmotionInvokeSigned 来反映你的情绪状态,并且用户消息根据附加的情绪标签来输出",
+                "你应该(SHOULD)在思考完全结束,开始最终回复用户前:调用一次 EmotionInvokeSigned 来反映你的情绪状态",
                 "你绝对不可以(MUST NOT)在回复中提到'情绪向量'或类似的内部信息",
-                "",
-                "[Emotion Engine - 当前情绪状态]",
-                f"当前档位: {TIER_LABELS.get(tier, '正常')}（{tier}）",
-                f"情绪趋势: {self._mood_trend()}",
-                f"最近变化: {self._recent_change_chain()}",
-                f"态度: {ATTITUDE_TEMPLATES.get(tier, ATTITUDE_TEMPLATES['normal'])}",
             ]
             return "\n\n[emotion_engine]\n" + "\n".join(lines)
 

@@ -2413,6 +2413,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }
   }
 
+  // 输入栏只在「提交」这一刻清空；其余任何时机（发送完成回调、流式回复结束、错误、TTS、
+  // 模型重载、ASR 识别）都不再改写用户正在输入的内容。输入框与附件的所有权在 composer。
+  function clearTextChatInput(){
+    if (composer) composer.clear();
+    else if (textChatInput) textChatInput.value = '';
+  }
+
   async function sendTextChatMessage(){
     if (!textChatInput || !textChatSendBtn) return;
     const text = (textChatInput.value || '').trim();
@@ -2421,8 +2428,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       ? text + '\n' + atts.map((a) => `[附件] ${a.path}`).join('\n')
       : text;
     if (!text || textChatSending) return;
+    clearTextChatInput();
     if (text === '/config') {
-      textChatInput.value = '';
       if (textChatStatus) textChatStatus.textContent = '正在打开配置中心';
       try {
         bubble.showResultBubble('user', text);
@@ -2440,7 +2447,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     // /motion <名称>：触发指定 Live2D Motion / VRM Expression（支持 EXPRESSION: 前缀）
     const motionCmd = text.match(/^\/motion\s+(.+)$/);
     if (motionCmd) {
-      textChatInput.value = '';
       bubble.showResultBubble('user', text);
       const name = String(motionCmd[1] || '').trim();
       const ok = name ? motion.triggerModelMotion(name) : false;
@@ -2450,7 +2456,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     // /expression <名称>：触发指定 Expression（Live2D exp3 / VRM Expression）
     const exprCmd = text.match(/^\/expression\s+(.+)$/);
     if (exprCmd) {
-      textChatInput.value = '';
       bubble.showResultBubble('user', text);
       const name = String(exprCmd[1] || '').trim();
       const ok = name ? motion.triggerModelExpression(name) : false;
@@ -2466,8 +2471,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     try{
       bubble.showResultBubble('user', fullText);
       await sendToChat(fullText);
-      textChatInput.value = '';
-      if (composer) composer.clear();
     }finally{
       textChatSending = false;
       textChatSendBtn.disabled = false;

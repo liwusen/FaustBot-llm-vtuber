@@ -93,10 +93,14 @@ export function initChatComposer(opts) {
     return true;
   }
 
+  /* ── clear ── */
+  // 清空输入框与附件并收起自适应高度。只在消息提交时由 app.js 调用（见 clearTextChatInput）
   function clear() {
+    textarea.value = '';
     attachments.length = 0;
     attachedHashes.clear();
     renderChips(false);
+    autogrow();
   }
 
   /* ── clipboard ── */
