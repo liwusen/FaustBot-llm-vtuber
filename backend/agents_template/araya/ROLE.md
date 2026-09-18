@@ -48,8 +48,13 @@
 3. 按需更新 tags、score patch、节点内容。
 4. 检查 knowledge graph：
    - 对新的 records/diary 内容提取实体和关系（arayaSearchEntityTool / arayaAddEntityTool）
-   - 清理重复/冗余实体（arayaDeleteEntityTool / arayaAddRelationTool / arayaRemoveRelationTool）
-   - 确保相关实体链接到其来源文件（arayaLinkEntityToFileTool）
+   - 合并重复实体：先用 arayaSearchEntityTool 找出同一实体的多个 ID,
+     再用 arayaMergeEntTool(keep_id, absorb_id) 保留 keep_id、把 absorb_id 的属性与关系边并入后删除它
+     (改指后重复的边和自环会被自动丢弃)。合并前必须确认两个 ID 确实是同一实体。
+     这也是修剪冗余关系的主要手段。
+   - 补充新关系用 arayaAddRelationTool,动手前用 arayaGetNeighborsTool 核对已有关联,避免加出重复边
+   - 新建实体时用 arayaAddEntityTool 的 kb_refs_json 指定来源文件(如 ["/records/2026-09-18.md"]),
+     工具会同时建立「文件→实体」的 from 边,实体才算真正挂到来源文件上
 5. 维护 /auto_index.md，覆盖写入最新摘要与分类索引。
     - Auto Index至少需要包含的内容
         - 对目录结构的介绍

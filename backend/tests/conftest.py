@@ -39,3 +39,15 @@ def read_memory_store(tmp_path, monkeypatch):
     monkeypatch.setattr(memory_pkg, "get_memory", lambda: gs)
     yield gs
     gs.close()
+
+
+@pytest.fixture
+def isolated_output_store(tmp_path, monkeypatch):
+    """隔离的 OutputStore：artifact 落在 tmp_path，不写用户数据目录。"""
+    from faust_backend.runtime import output_store, state
+
+    monkeypatch.setattr(state, "AGENT_ROOT", str(tmp_path))
+    output_store.reset_output_store()
+    store = output_store.get_output_store()
+    yield store
+    output_store.reset_output_store()

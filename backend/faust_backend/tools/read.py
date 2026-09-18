@@ -156,16 +156,19 @@ async def read(
 
     **Reading image sources (img_source://):**
     - `read("img_source://")` → list available image sources (screenshot, camera).
-    - `read("img_source://screenshot")` → take a screenshot (base64 multimodal image).
+    - `read("img_source://screenshot")` → take a screenshot and see it directly.
     - `read("img_source://camera_0")` → capture from camera #0.
     - `read("img_source://screenshot?grid=true&scale=0.5")` → screenshot with grid overlay at 50% scale.
     - Use this when: you need visual information from the screen or a camera.
 
     **Reading images (multimodal vs plain text):**
-    - `read("screenshot.png")` → returns multimodal JSON with the image in base64,
-      allowing vision-capable models to see it. If you are not a vision-capable model, you MUST NOT use this.
+    - `read("screenshot.png")` → the picture is attached to the conversation as an image
+      block, so vision-capable models actually see it. If you are not a vision-capable
+      model, you MUST NOT use this.
+    - The tool result itself only carries the file description and an `artifact://` ID
+      (the image bytes never enter your text context); re-read it with `read("artifact://<id>")`.
     - `read("screenshot.png", force_plain_text=True)` → returns only the file metadata
-      (name, size) as plain text, WITHOUT the base64 image data.
+      (name, size) as plain text, WITHOUT attaching the image.
     - Use `force_plain_text=True` when: you only need the image metadata, or when
       you know the current model cannot process images and you want to save context.
 
@@ -185,7 +188,7 @@ async def read(
         uri: Path or URI with optional selector suffix (`:50-100` line range,
              `:raw` 关闭结构化摘要).
         force_plain_text: If True, images and multimodal artifacts return only
-                          text description (no base64 data). Defaults to False.
+                          the text description (no image attached). Defaults to False.
         show_line_number: If True, prefix each output line with its absolute
                           line number (e.g. "36:print(xxx)"). Applies to any
                           text output: a line range, a whole-file read, or
@@ -199,14 +202,15 @@ async def read(
     Returns:
         For files: structural summary (code) or first 300 lines; or specified range;
             `:raw` returns the file content without the structural summary.
-        For images: multimodal JSON with base64 (unless force_plain_text=True).
+        For images: description + artifact:// reference, with the picture attached
+        to the conversation as an image block (unless force_plain_text=True).
         For directories: list of entries.
         For artifacts: full or ranged tool output.
         For memory: document content or file tree.
         For faustbot://: system resources.
         For sourceCode://: FaustBot repository source files and directory listings.
         For skill://: skill files and directory listings.
-        For img_source://: screenshot or camera images (multimodal).
+        For img_source://: screenshot or camera images (attached as image blocks).
     """
     log.info(
         "read INPUT uri=%s force_plain_text=%s show_line_number=%s with_metadata=%s",
@@ -274,9 +278,20 @@ def _read_artifact(parsed, *, force_plain_text: bool = False, show_line_number: 
     ):
         return _apply_selector_to_text(art.content, parsed.selector_lines, show_line_number=show_line_number)
 
-    # Image/multimodal artifacts: return plain text if requested
-    if force_plain_text and art.content_type in ("image", "multimodal"):
-        return art.content or f"[图片 artifact: {output_id}]"
+    # 图片 artifact：文本里只回引用，真实 base64 由 MultimodalBridgeMiddleware
+    # 从 OutputStore 取回并转成 image_url 块（写进文本会被按文本计 token）
+    if art.content_type in ("image", "multimodal"):
+        desc = art.content or f"图片 artifact: {output_id}"
+        if force_plain_text:
+            return desc
+        return json.dumps(
+            {
+                "kind": "multimodal_tool_result",
+                "text": f"{desc}\n[图片: artifact://{output_id}]",
+                "artifact": output_id,
+            },
+            ensure_ascii=False,
+        )
 
     return art.get()
 

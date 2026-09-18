@@ -853,7 +853,8 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
-	min-width: 320px;
+	width: 100%;
+	max-width: 560px;
 }
 
 .araya-trigger-canvas {
@@ -869,6 +870,215 @@ body {
 	font-size: 12px;
 	color: var(--muted);
 	padding-left: 4px;
+}
+
+/* ── Araya 页面：概览 / 设置 / 运行结果 / 轨迹 ── */
+
+.badge-run {
+	color: var(--blue);
+	background: var(--blue-soft);
+	border-color: #c3d3fb;
+}
+
+.badge-muted {
+	color: var(--muted);
+	background: #eef2f7;
+	border-color: #d5deea;
+}
+
+.araya-card-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.araya-card-head .card-title {
+	margin: 0;
+}
+
+.araya-card-meta {
+	color: var(--muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.araya-stat-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: 10px;
+}
+
+.araya-stat {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: #fbfdff;
+}
+
+.araya-stat-value {
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--text);
+	line-height: 1.4;
+}
+
+.araya-stat-label {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.araya-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: var(--text);
+}
+
+.araya-number {
+	width: 72px;
+}
+
+.araya-output {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: #fbfdff;
+}
+
+.araya-output-label {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.araya-output-text {
+	font-size: 13.5px;
+	line-height: 1.65;
+	color: var(--text);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 260px;
+	overflow: auto;
+}
+
+.araya-timeline {
+	display: flex;
+	flex-direction: column;
+	max-height: 560px;
+	overflow: auto;
+	padding-right: 4px;
+}
+
+.araya-step {
+	position: relative;
+	padding: 10px 0 10px 22px;
+}
+
+.araya-step::before {
+	content: "";
+	position: absolute;
+	left: 5px;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--line);
+}
+
+.araya-step:first-child::before {
+	top: 15px;
+}
+
+.araya-step:last-child::before {
+	bottom: calc(100% - 15px);
+}
+
+.araya-step-dot {
+	position: absolute;
+	left: 0;
+	top: 13px;
+	width: 11px;
+	height: 11px;
+	border-radius: 50%;
+	border: 2px solid var(--blue);
+	background: #fff;
+}
+
+.araya-step-tool .araya-step-dot {
+	border-color: #9fb0c9;
+}
+
+.araya-step-result .araya-step-dot {
+	border-color: var(--ok);
+}
+
+.araya-step-label {
+	margin-bottom: 4px;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.araya-step-text {
+	font-size: 13.5px;
+	line-height: 1.65;
+	color: var(--text);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.araya-tool summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.araya-tool-caret {
+	color: var(--muted);
+	font-size: 11px;
+	transition: transform 0.15s ease;
+}
+
+.araya-tool[open] .araya-tool-caret {
+	transform: rotate(90deg);
+}
+
+.araya-tool-name {
+	font-weight: 600;
+	color: var(--text);
+}
+
+.araya-tool-time {
+	margin-left: auto;
+	font-size: 12px;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.araya-tool-pre {
+	margin: 8px 0 0;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: #fbfdff;
+	font-size: 12px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 240px;
+	overflow: auto;
+}
+
+.araya-tool-result:empty {
+	display: none;
 }
 
 .plugin-form {

@@ -394,7 +394,9 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
     _tools, middlewares = _compose_runtime_extensions()
     manager.setMiddlewares(middlewares)
     for name, toolset in _build_subagent_toolsets().items():
-        manager.newToolset(name, toolset)
+        # Subagent 与主 Agent 共用 _registry 里的工具对象；不包装的话
+        # 工具输出（含图片 base64）会原样进入消息文本
+        manager.newToolset(name, middleware.wrap_tools(toolset))
     manager.restore_persisted_state()
     state.subagent_manager = manager
     get_output_store()

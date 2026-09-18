@@ -15,25 +15,25 @@ ORIGINAL_TOOL_FUNCS = {}
 DIARY_DIR = Path(conf.CONFIG_ROOT) / "agents" / Path(conf.AGENT_NAME) / "diary"
 STARTED = False
 
+# 必须与 ArayaRuntime._build_tools() 实际暴露的工具集保持一致：
+# 白名单里出现未暴露的名字（或漏掉已暴露的名字）都会让过滤结果与实际能力脱节。
 ARAYA_ALLOWED_TOOL_NAMES = {
     "arayaGetTimeTool",
     "arayaListTreeTool",
     "arayaReadFileTool",
     "arayaWriteFileTool",
     "arayaDeleteFileTool",
+    "arayaFileEditTool",
     "arayaSearchMemoryTool",
     "arayaSetTagsTool",
     "arayaSetScorePatchTool",
     "arayaChangedNodesTool",
     "arayaSearchEntityTool",
-    "arayaListEntitiesTool",
     "arayaGetNeighborsTool",
     "arayaAddEntityTool",
-    "arayaDeleteEntityTool",
+    "arayaMergeEntTool",
     "arayaAddRelationTool",
-    "arayaRemoveRelationTool",
-    "arayaListRelationsTool",
-    "arayaLinkEntityToFileTool",
+    "arayaAttachmentReadTool",
 }
 
 DEFAULT_EXCLUDED_TOOL_NAMES = {

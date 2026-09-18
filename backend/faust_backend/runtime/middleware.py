@@ -31,7 +31,11 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
     The LLM receives only the truncated summary; full output is available
     via artifact://<id> reference in the summary footer.
     """
-    store = get_output_store()
+    # 主 Agent 与 Subagent toolset 共享同一批工具对象（_registry.toollist），
+    # 重复包装会让输出被二次存储、摘要里出现嵌套 artifact
+    if getattr(tool, "_output_store_wrapped", False):
+        return tool
+    tool._output_store_wrapped = True
     tool_name = tool.name
     import inspect as _inspect
 
@@ -44,6 +48,9 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
         # ── async @tool：只包装 _arun，委托 coroutine ──
         @wraps(original_coro)
         async def _wrapped_arun(*args, **kwargs):
+            # store 必须每次调用现取：reset_output_store()（新对话/清空对话）
+            # 之后单例会被重建，包装期捕获的实例会变成写不到的死实例
+            store = get_output_store()
             pm = getattr(state, 'plugin_manager', None)
             if pm:
                 try:
@@ -69,7 +76,7 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
                     metadata={"status": "error"}
                 )
                 return f"工具执行出错\n[完整输出: artifact://{output_id}]"
-            return _store_and_summarize(store, tool_name, result, args, kwargs)
+            return _store_and_summarize(store, tool_name, result)
         tool._arun = _wrapped_arun
         return tool
 
@@ -83,6 +90,7 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
         # invoke/ainvoke 能探测到 config 参数并注入。
         @wraps(original_run)
         def _wrapped_run(*args, config: Any = None, run_manager: Any = None, **kwargs):
+            store = get_output_store()
             pm = getattr(state, 'plugin_manager', None)
             if pm:
                 try:
@@ -108,7 +116,7 @@ def wrap_tool_output(tool: BaseTool) -> BaseTool:
                     metadata={"status": "error"}
                 )
                 return f"工具执行出错\n[完整输出: artifact://{output_id}]"
-            return _store_and_summarize(store, tool_name, result, args, kwargs)
+            return _store_and_summarize(store, tool_name, result)
 
         tool._run = _wrapped_run
 
@@ -141,13 +149,13 @@ def wrap_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return out
 
 
-def _store_and_summarize(store, tool_name: str, result: Any,
-                         args: tuple | None = None,
-                         kwargs: dict | None = None) -> str:
+def _store_and_summarize(store, tool_name: str, result: Any) -> str:
     """Store tool output and return truncated summary.
-    Multimodal JSON: store a copy in OutputStore, return full content to
-    the LLM with the artifact ID in the text. Skipped when `read` is
-    reading from an existing artifact:// URI (avoids circular storage)."""
+
+    多模态 JSON：图片本体存进 OutputStore，消息文本里只留 artifact 引用。
+    data URL 一旦写进文本就会被模型按文本计 token（一张截图 ≈ 250 万 token），
+    真实图片由 MultimodalBridgeMiddleware 从 OutputStore 取回并转成 image_url 块。
+    """
     # Detect multimodal JSON
     data = None
     if isinstance(result, str):
@@ -158,16 +166,21 @@ def _store_and_summarize(store, tool_name: str, result: Any,
     elif isinstance(result, dict):
         data = result
     if isinstance(data, dict) and data.get("kind") == "multimodal_tool_result":
-        # Read from artifact → don't store a second copy
-        if tool_name == "read" and _is_read_from_artifact(args, kwargs):
-            if isinstance(result, str):
-                return result
-            return json.dumps(result, ensure_ascii=False)
+        # 已经是引用形态（read artifact:// 的产物）→ 不重复存副本
+        if data.get("artifact") and not data.get("images"):
+            return json.dumps(data, ensure_ascii=False)
         # Store a copy in OutputStore, inject artifact ID into text
         output_id = store.put_multimodal(data, tool_name=tool_name)
         text = str(data.get("text") or "")
-        data["text"] = f"{text}\n[图片副本已保存: artifact://{output_id}]"
-        return json.dumps(data, ensure_ascii=False)
+        count = len(data.get("images") or [])
+        return json.dumps(
+            {
+                "kind": "multimodal_tool_result",
+                "text": f"{text}\n[{count} 张图片已保存: artifact://{output_id}]",
+                "artifact": output_id,
+            },
+            ensure_ascii=False,
+        )
 
     if isinstance(result, str):
         output = result
@@ -184,15 +197,3 @@ def _store_and_summarize(store, tool_name: str, result: Any,
     summary = store.summary(output_id)
     return summary
 
-
-def _is_read_from_artifact(args: tuple | None, kwargs: dict | None) -> bool:
-    """Check if the tool call is read() with an artifact:// URI."""
-    if kwargs:
-        uri_val = str(kwargs.get("uri", ""))
-        if uri_val.startswith("artifact://"):
-            return True
-    if args:
-        uri_val = str(args[0])
-        if uri_val.startswith("artifact://"):
-            return True
-    return False

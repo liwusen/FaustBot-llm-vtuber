@@ -60,18 +60,11 @@ class Artifact:
         return preview + footer
 
     def get(self, offset: int = 0, limit: int | None = None) -> str:
-        """Retrieve content with pagination (0-indexed line offset)."""
-        if self.content_type in ("image", "multimodal") and self.content_base64:
-            import json as _json
-            return _json.dumps({
-                "kind": "multimodal_tool_result",
-                "text": self.content,
-                "images": [{"url": f"data:{self.mime_type};base64,{self.content_base64}"}],
-            }, ensure_ascii=False)
-        if self.content_type == "multimodal":
-            import json as _json
-            images = self.metadata.get("images", []) or []
-            return _json.dumps(images, ensure_ascii=False)
+        """Retrieve text content with pagination (0-indexed line offset).
+
+        图片不在这里还原成 data URL：图片路径一律走 artifact 引用 +
+        MultimodalBridgeMiddleware，见 tools/read.py::_read_artifact。
+        """
         if not self.content:
             return ""
         lines_obj = self.content.split("\n")

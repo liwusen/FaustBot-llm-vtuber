@@ -3,6 +3,9 @@
 Converts tool image outputs (kind: "multimodal_tool_result") into image_url
 multimodal blocks so vision-capable LLMs can see tool-returned images directly.
 
+工具结果的文本里不带 base64（会被按文本计 token），只带 artifact 引用；
+图片本体在 OutputStore 里，桥接时按引用取回。
+
 Config keys (in faust.config.json, AI Provider section):
     MM_BRIDGE_MAX_SCAN  (int, default 6)   — max ToolMessages scanned per turn
     MM_BRIDGE_REMOVE_SOURCE (bool, default False) — delete source ToolMessage after bridging
@@ -26,6 +29,18 @@ from langgraph.runtime import Runtime
 from typing_extensions import override
 
 import faust_backend.config_loader as conf
+from faust_backend.runtime.output_store import get_output_store
+
+
+def _collect_urls(images: Any) -> list[str]:
+    """把 images 字段（URL 字符串或 {"url": ...} 字典的列表）规范成 URL 列表。"""
+    urls: list[str] = []
+    for img in images or []:
+        if isinstance(img, str) and img:
+            urls.append(img)
+        elif isinstance(img, dict) and img.get("url"):
+            urls.append(str(img["url"]))
+    return urls
 
 
 class MultimodalBridgeMiddleware(AgentMiddleware):
@@ -177,26 +192,47 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
         return None
 
     def _payload_to_mm_message(self, payload: dict[str, Any]) -> HumanMessage | None:
+        max_pixels = getattr(self, "_max_pixels", 2000000)
+        images: list[dict[str, Any]] = []
+        for url in self._image_urls(payload):
+            resized = self._maybe_resize_image_url(url, max_pixels)
+            if resized:
+                images.append({"type": "image_url", "image_url": {"url": resized}})
+        if not images:
+            # 没有可用图片就不注入（ToolMessage 里已有描述文本，注入只会重复一遍）
+            return None
         blocks: list[dict[str, Any]] = []
         if payload.get("text"):
             blocks.append({"type": "text", "text": str(payload["text"])})
-        images = payload.get("images") or []
-        max_pixels = getattr(self, "_max_pixels", 2000000)
-        for img in images:
-            if isinstance(img, str):
-                url = self._maybe_resize_image_url(img, max_pixels)
-                if url:
-                    blocks.append({"type": "image_url", "image_url": {"url": url}})
-            elif isinstance(img, dict):
-                url = self._maybe_resize_image_url(str(img.get("url") or ""), max_pixels)
-                if url:
-                    blocks.append({"type": "image_url", "image_url": {"url": url}})
-        if not blocks:
-            return None
+        blocks.extend(images)
         return HumanMessage(
             content=blocks,
             additional_kwargs={"_mm_bridge_generated": True},
         )
+
+    @staticmethod
+    def _image_urls(payload: dict[str, Any]) -> list[str]:
+        """收集 payload 里的图片 URL。
+
+        工具结果通常只带 artifact 引用（工具文本里不放 base64），此时从
+        OutputStore 取回真实图片；取不到（artifact 已被清理/重启）就不加图片块，
+        消息保持小体积，Agent 仍可用 read artifact://<id> 复看。
+        """
+        urls = _collect_urls(payload.get("images"))
+        if urls:
+            return urls
+        artifact_id = str(payload.get("artifact") or "").strip()
+        if not artifact_id:
+            return []
+        art = get_output_store().get(artifact_id)
+        if art is None:
+            return []
+        urls = _collect_urls((art.metadata or {}).get("images"))
+        if urls:
+            return urls
+        if art.content_base64:
+            return [f"data:{art.mime_type or 'image/png'};base64,{art.content_base64}"]
+        return []
 
     @staticmethod
     def _maybe_resize_image_url(url: str, max_pixels: int) -> str | None:

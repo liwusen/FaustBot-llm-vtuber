@@ -1527,6 +1527,101 @@ class GraphStore:
         log.info("entity_delete eid=%s", entity_id[:16])
         return True
 
+    def entity_merge(self, keep_id: str, absorb_id: str) -> dict:
+        """把 absorb 实体并入 keep 实体，随后删除 absorb。
+
+        合并规则：
+        - description/entity_type 空则取被吸收者；properties 以 keep 为准、缺失键从 absorb 补；
+          kb_refs 取并集（顺序：keep 原有 + absorb 新增）。
+        - absorb 的入射/出射边全部改指到 keep：改指后成为自环的边丢弃，
+          (src, dst, type) 与既有边重复的边丢弃。
+        - absorb 的节点行、内容文件 `/entities/<id>.md`、实体名向量一并删除。
+        """
+        keep_id = str(keep_id or "").strip()
+        absorb_id = str(absorb_id or "").strip()
+        if not keep_id or not absorb_id or keep_id == absorb_id:
+            return {"ok": False, "error": "keep_id 与 absorb_id 必须非空且互不相同"}
+        for eid in (keep_id, absorb_id):
+            if not self._has_node(eid):
+                return {"ok": False, "error": f"节点不存在: {eid}"}
+            if self._get_node_attr(eid, "type") != "entity":
+                return {"ok": False, "error": f"节点不是实体: {eid}"}
+        log.info("entity_merge keep=%s absorb=%s", keep_id[:16], absorb_id[:16])
+
+        keep_attrs = dict(self._graph.nodes[keep_id])
+        absorb_attrs = dict(self._graph.nodes[absorb_id])
+
+        merged_props = dict(absorb_attrs.get("properties") or {})
+        merged_props.update(keep_attrs.get("properties") or {})
+        merged_refs = list(keep_attrs.get("kb_refs") or [])
+        absorb_self_ref = f"/entities/{absorb_id}.md"
+        for ref in absorb_attrs.get("kb_refs") or []:
+            if ref == absorb_self_ref or ref in merged_refs:
+                continue
+            merged_refs.append(ref)
+        entity_type = str(keep_attrs.get("entity_type") or "custom")
+        if entity_type == "custom":
+            entity_type = str(absorb_attrs.get("entity_type") or entity_type)
+        description = str(keep_attrs.get("description") or "") or str(absorb_attrs.get("description") or "")
+
+        incident: set[tuple[str, str, str]] = set()
+        for u, v, _k, edata in self._graph.in_edges(absorb_id, data=True, keys=True):
+            incident.add((u, v, str((edata or {}).get("type") or "relates_to")))
+        for u, v, _k, edata in self._graph.out_edges(absorb_id, data=True, keys=True):
+            incident.add((u, v, str((edata or {}).get("type") or "relates_to")))
+
+        existing: set[tuple[str, str, str]] = set()
+        for u, v, _k, edata in self._graph.edges(data=True, keys=True):
+            if absorb_id in (u, v):
+                continue
+            existing.add((u, v, str((edata or {}).get("type") or "relates_to")))
+
+        rewired: list[tuple[str, str, str, str]] = []
+        dropped_duplicates = 0
+        dropped_self_loops = 0
+        for u, v, etype in incident:
+            src = keep_id if u == absorb_id else u
+            dst = keep_id if v == absorb_id else v
+            if src == dst:
+                dropped_self_loops += 1
+                continue
+            if (src, dst, etype) in existing:
+                dropped_duplicates += 1
+                continue
+            existing.add((src, dst, etype))
+            rewired.append((src, dst, etype, uuid.uuid4().hex))
+
+        with self.db.transaction() as conn:
+            self._set_node_attr(keep_id, entity_type=entity_type, description=description,
+                                properties=merged_props, kb_refs=merged_refs,
+                                updated_at=_utc_iso())
+            conn.execute("DELETE FROM edges WHERE src=? OR dst=?", (absorb_id, absorb_id))
+            for src, dst, etype, key in rewired:
+                self._graph.add_edge(src, dst, key=key, type=etype)
+                conn.execute(
+                    "INSERT OR REPLACE INTO edges(src, dst, type, key) VALUES (?, ?, ?, ?)",
+                    (src, dst, etype, key),
+                )
+            self._db_delete_node(absorb_id)
+
+        self._content_path(f"/entities/{absorb_id}.md").unlink(missing_ok=True)
+        if self._entity_vdb is not None or self.entity_index_file.exists():
+            vdb = self._ensure_entity_vdb()
+            vdb.delete([absorb_id])
+            vdb.save()
+        log.info("entity_merge done keep=%s absorb=%s rewired=%d dup=%d loops=%d",
+                 keep_id[:16], absorb_id[:16], len(rewired), dropped_duplicates, dropped_self_loops)
+        return {
+            "ok": True,
+            "keep_id": keep_id,
+            "absorb_id": absorb_id,
+            "keep_name": str(keep_attrs.get("name") or ""),
+            "absorb_name": str(absorb_attrs.get("name") or ""),
+            "rewired_edges": len(rewired),
+            "dropped_duplicate_edges": dropped_duplicates,
+            "dropped_self_loops": dropped_self_loops,
+        }
+
     def entity_search(self, query: str, type_filter: str | None = None, top_k: int = 20) -> list[dict]:
         q = str(query or "").strip().lower()
         results = []
@@ -2063,7 +2158,7 @@ class GraphStore:
     async def get_changed_nodes(self, since_ts: float, scope: str | None = None,
                                 tags: list[str] | None = None) -> list[dict]:
         scope_prefix = _normalize_path(scope or "").strip("/")
-        scope_prefix = f"{scope_prefix}/" if scope_prefix else ""
+        scope_prefix = f"/{scope_prefix}/" if scope_prefix else ""
         required_tags = {t.casefold() for t in (tags or [])}
         rows = self.db.all(
             "SELECT n.path AS path, n.updated_at AS updated_at, n.score_patch AS score_patch,"

@@ -1356,92 +1356,116 @@ class TestReadForcePlainText:
 
 
 # ============================================================
-# Multimodal Artifact Copy (middleware)
+# Multimodal results → artifact reference (middleware)
 # ============================================================
 
 class TestMiddlewareMultimodal:
-    """Test the image artifact copy logic in _store_and_summarize."""
+    """图片本体只能进 OutputStore + image_url 块，绝不能进消息文本。
 
-    def test_multimodal_string_stores_copy_and_injects_artifact_ref(self):
-        """When a tool returns multimodal JSON, store a copy in OutputStore."""
-        import json
-        from faust_backend.runtime.output_store import reset_output_store
-        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
-        reset_output_store()
-        store = get_output_store()
-        payload = json.dumps({
+    回归背景：一张 3.4MB 截图的 base64 被当作文本送进模型，
+    DeepSeek 按 2,550,260 token 计费直接 400（上限 1,048,576）。
+    """
+
+    @staticmethod
+    def _payload(text: str, base64_data: str = "abc123") -> dict:
+        return {
             "kind": "multimodal_tool_result",
-            "text": "截图描述",
-            "images": [{"url": "data:image/png;base64,abc123"}],
-        }, ensure_ascii=False)
-        result = _store_and_summarize(store, "screenshot_tool", payload)
+            "text": text,
+            "images": [{"url": f"data:image/png;base64,{base64_data}"}],
+        }
+
+    @pytest.mark.parametrize("as_json", [True, False])
+    def test_result_carries_artifact_ref_not_image_bytes(self, isolated_output_store, as_json):
+        import json
+        from faust_backend.runtime.middleware import _store_and_summarize
+
+        payload = self._payload("截图描述")
+        result = _store_and_summarize(
+            isolated_output_store, "screenshot_tool",
+            json.dumps(payload, ensure_ascii=False) if as_json else payload,
+        )
         data = json.loads(result)
         assert data["kind"] == "multimodal_tool_result"
         assert "截图描述" in data["text"]
-        assert "artifact://" in data["text"]
-        assert "图片副本已保存" in data["text"]
-        assert len(data["images"]) == 1
-
-    def test_multimodal_dict_stores_copy_and_injects_artifact_ref(self):
-        """Same for dict input."""
-        import json
-        from faust_backend.runtime.output_store import reset_output_store
-        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
-        reset_output_store()
-        store = get_output_store()
-        payload = {
-            "kind": "multimodal_tool_result",
-            "text": "dict截图",
-            "images": [{"url": "data:image/png;base64,xyz"}],
-        }
-        result = _store_and_summarize(store, "screenshot_tool", payload)
-        data = json.loads(result)
-        assert data["kind"] == "multimodal_tool_result"
-        assert "dict截图" in data["text"]
-        assert "artifact://" in data["text"]
-        assert "图片副本已保存" in data["text"]
-
-    def test_read_from_artifact_skips_copy(self):
-        """read tool with artifact:// URI should pass through without storing a copy."""
-        import json
-        from faust_backend.runtime.output_store import reset_output_store
-        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
-        reset_output_store()
-        store = get_output_store()
-        payload = json.dumps({
-            "kind": "multimodal_tool_result",
-            "text": "已有图片",
-            "images": [{"url": "data:image/png;base64,xyz"}],
-        }, ensure_ascii=False)
-        # read tool with artifact:// URI → no copy
-        result = _store_and_summarize(store, "read", payload, args=("artifact://read_1",))
-        data = json.loads(result)
-        assert data["kind"] == "multimodal_tool_result"
-        assert "已有图片" in data["text"]
-        assert "artifact://" not in data["text"]  # no copy was made
-
-    def test_artifact_contains_original_multimodal_data(self):
-        """After multimodal copy, the artifact should contain the original data."""
-        import json
-        from faust_backend.runtime.output_store import reset_output_store
-        from faust_backend.runtime.middleware import _store_and_summarize, get_output_store
-        reset_output_store()
-        store = get_output_store()
-        original_text = "测试图片"
-        payload = json.dumps({
-            "kind": "multimodal_tool_result",
-            "text": original_text,
-            "images": [{"url": "data:image/png;base64,abc123"}],
-        }, ensure_ascii=False)
-        result = _store_and_summarize(store, "test_tool", payload)
-        data = json.loads(result)
-        assert "artifact://" in data["text"]
-        # Extract artifact ID from the text
-        artifact_id = data["text"].split("artifact://")[-1].split("]")[0].strip()
-        art = store.get(artifact_id)
+        assert "data:image" not in result
+        assert "base64" not in result
+        artifact_id = data["artifact"]
+        assert f"artifact://{artifact_id}" in data["text"]
+        # 图片本体在 store 里，桥接中间件靠它还原 image_url 块
+        art = isolated_output_store.get(artifact_id)
         assert art is not None
         assert art.content_type == "multimodal"
-        assert original_text in art.content
+        assert art.content_base64 == "abc123"
+        assert art.mime_type == "image/png"
+
+    def test_multi_megabyte_image_result_stays_small(self, isolated_output_store):
+        """核心回归：图片再大，进消息文本的也只有引用。"""
+        import base64
+        from faust_backend.runtime.middleware import _store_and_summarize
+
+        big = base64.b64encode(b"\x89PNG" + b"x" * 2_600_000).decode("ascii")
+        result = _store_and_summarize(isolated_output_store, "read", self._payload("大截图", big))
+
+        assert len(result) < 1000
+        assert "base64" not in result
+
+    def test_existing_artifact_ref_is_not_re_stored(self, isolated_output_store):
+        """read artifact:// 已经返回引用形态 → 不再复制一份 artifact。"""
+        import json
+        from faust_backend.runtime.middleware import _store_and_summarize
+
+        ref = {
+            "kind": "multimodal_tool_result",
+            "text": "已有图片\n[图片: artifact://read_7]",
+            "artifact": "read_7",
+        }
+        before = len(isolated_output_store.list_ids())
+        result = _store_and_summarize(isolated_output_store, "read", json.dumps(ref, ensure_ascii=False))
+
+        assert json.loads(result) == ref
+        assert len(isolated_output_store.list_ids()) == before
+
+
+# ============================================================
+# Tool wrapper ↔ OutputStore binding
+# ============================================================
+
+class TestToolOutputStoreBinding:
+    """包装过的工具必须每次调用现取 OutputStore 单例。
+
+    回归背景：store 在包装期被捕获，用户点过「新对话/清空对话」
+    (`reset_output_store`) 后包装器还在往旧实例写，而 read(artifact://…) 与
+    多模态桥接读的是新单例 → artifact 查不到，模型只看到引用文本、看不到图。
+    """
+
+    def test_artifact_written_after_store_reset_is_resolvable(self, isolated_output_store):
+        import json as _json
+
+        from langchain.tools import tool as lc_tool
+
+        from faust_backend.runtime import output_store
+        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.tools.read import read as read_tool
+
+        @lc_tool
+        async def image_tool(uri: str) -> dict:
+            """假图片工具。"""
+            return {
+                "kind": "multimodal_tool_result",
+                "text": "屏幕截图: 1920x1080",
+                "images": [{"url": "data:image/png;base64,abc123"}],
+            }
+
+        wrapped = wrap_tool_output(image_tool)
+        output_store.reset_output_store(clear_persisted=True)
+        output_store.get_output_store()  # 任何一次解析都会先建出新的单例
+
+        content = asyncio.run(wrapped.ainvoke({"uri": "img_source://screenshot"}))
+        artifact_id = _json.loads(content)["artifact"]
+        back = asyncio.run(read_tool.ainvoke({"uri": f"artifact://{artifact_id}"}))
+
+        assert artifact_id in back
+        assert "找不到 artifact" not in back
 
 
 # ============================================================

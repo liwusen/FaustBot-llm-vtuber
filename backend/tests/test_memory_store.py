@@ -907,6 +907,110 @@ def test_changed_and_advanced_search_are_sql_backed(memory_store):
     assert advanced[0]["tags"] == ["t1", "t2"]
 
 
+def test_get_changed_nodes_scope_matches_path_prefix(memory_store):
+    """回归：scope 必须按 `/scope/` 前缀匹配（曾漏掉前导斜杠，导致 scope 过滤恒为空）。"""
+    import asyncio
+    import time
+
+    async def _run():
+        since = time.time() - 3600
+        await memory_store.file_write("/notes/a.md", "甲")
+        await memory_store.file_write("/notes/sub/b.md", "乙")
+        await memory_store.file_write("/other/c.md", "丙")
+        return await memory_store.get_changed_nodes(since, scope="/notes")
+
+    assert sorted(item["path"] for item in asyncio.run(_run())) == ["/notes/a.md", "/notes/sub/b.md"]
+
+
+def test_entity_merge_rewires_edges_without_duplicates_or_self_loops(memory_store):
+    import asyncio
+
+    import faust_backend.memory.store as store
+
+    async def _write_doc():
+        await memory_store.file_write("/kb/doc.md", "文档")
+
+    asyncio.run(_write_doc())
+    doc_nid = store._path_id("/kb/doc.md")
+
+    keep = memory_store.entity_add("重复实体", "custom", properties={"y": 9}, kb_refs=["/a.md"])
+    absorb = memory_store.entity_add("重复实体别名", "concept", description="描述B",
+                                     properties={"x": 1, "y": 2}, kb_refs=["/b.md"])
+    other = memory_store.entity_add("其他", "concept")
+
+    memory_store._add_edge(doc_nid, keep, "from")
+    memory_store._add_edge(doc_nid, absorb, "from")        # 改指后与上一条重边
+    memory_store._add_edge(keep, absorb, "relates_to")     # 改指后成自环
+    memory_store._add_edge(keep, other, "relates_to")
+    memory_store._add_edge(absorb, other, "relates_to")    # 改指后与上一条重边
+    memory_store._add_edge(other, absorb, "relates_to")    # 改指后成为 other -> keep
+
+    stats = memory_store.entity_merge(keep, absorb)
+
+    assert stats["ok"] is True
+    assert stats["rewired_edges"] == 1
+    assert stats["dropped_duplicate_edges"] == 2
+    assert stats["dropped_self_loops"] == 1
+    assert stats["absorb_name"] == "重复实体别名"
+
+    assert memory_store._has_node(absorb) is False
+    assert not memory_store._graph.has_edge(keep, keep)
+    assert not memory_store._graph.has_edge(keep, absorb)
+    assert not memory_store._content_path(f"/entities/{absorb}.md").exists()
+
+    triples = [(u, v, d.get("type")) for u, v, _k, d in memory_store._graph.edges(data=True, keys=True)]
+    assert len(triples) == len(set(triples)), "合并后不允许出现 (src, dst, type) 重复边"
+    assert triples.count((doc_nid, keep, "from")) == 1
+    assert triples.count((keep, other, "relates_to")) == 1
+    assert triples.count((other, keep, "relates_to")) == 1
+
+    detail = memory_store.get_entity_detail(keep)
+    assert detail["entity_type"] == "concept"
+    assert detail["description"] == "描述B"
+    assert detail["properties"] == {"x": 1, "y": 9}
+    assert detail["kb_refs"] == ["/a.md", f"/entities/{keep}.md", "/b.md"]
+
+
+def test_entity_merge_rejects_invalid_arguments(memory_store):
+    keep = memory_store.entity_add("甲", "concept")
+    assert memory_store.entity_merge(keep, keep)["ok"] is False
+    assert memory_store.entity_merge(keep, "ent_不存在")["ok"] is False
+    assert memory_store.entity_merge("path:/somewhere", keep)["ok"] is False
+    assert memory_store._has_node(keep) is True
+
+
+def test_entity_merge_persists_and_drops_absorbed_name_vector(memory_store):
+    import asyncio
+
+    import numpy as np
+
+    import faust_backend.memory.store as store
+
+    keep_vec = [1.0] + [0.0] * 1535
+    absorb_vec = [0.0, 1.0] + [0.0] * 1534
+    other_vec = [0.0, 0.0, 1.0] + [0.0] * 1533
+    keep = memory_store.entity_add("保留", "concept", properties={"y": 9}, name_embedding=keep_vec)
+    absorb = memory_store.entity_add("吸收", "concept", description="别名", properties={"x": 1},
+                                     name_embedding=absorb_vec)
+    other = memory_store.entity_add("邻居", "concept", name_embedding=other_vec)
+    memory_store._add_edge(absorb, other, "relates_to")
+
+    assert memory_store.entity_merge(keep, absorb)["ok"] is True
+    memory_store.close()
+
+    gs2 = store.GraphStore("test_agent")
+    assert gs2._has_node(absorb) is False
+    assert list(gs2._graph.edges(keep)) == [(keep, other)]
+    detail = gs2.get_entity_detail(keep)
+    assert detail["properties"] == {"x": 1, "y": 9}
+    assert detail["description"] == "别名"
+    assert detail["kb_refs"] == [f"/entities/{keep}.md"]
+    assert not gs2._content_path(f"/entities/{absorb}.md").exists()
+    assert asyncio.run(gs2.entity_find_similar([np.asarray(absorb_vec, dtype=np.float32)], 0.99)) == [None]
+    assert asyncio.run(gs2.entity_find_similar([np.asarray(keep_vec, dtype=np.float32)], 0.99)) == [keep]
+    gs2.close()
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 子树路径改写：必须按「路径段前缀」，不能是子串 / LIKE 通配符
 # ══════════════════════════════════════════════════════════════════════

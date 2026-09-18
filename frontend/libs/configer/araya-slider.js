@@ -1,15 +1,17 @@
-function createArayaTriggerSlider(onTrigger) {
+function createArayaTriggerSlider(onTrigger, initialHint = "向右拖动触发 Araya") {
   const wrap = el("div", "araya-trigger-wrap");
   const canvas = document.createElement("canvas");
   canvas.className = "araya-trigger-canvas";
-  const hint = el("div", "araya-trigger-hint", "向右拖动触发 Araya");
+  const idleHint = initialHint;
+  const hint = el("div", "araya-trigger-hint", idleHint);
   wrap.append(canvas, hint);
 
-  const dpr = window.devicePixelRatio || 1;
-  const W = 320;
+  let dpr = window.devicePixelRatio || 1;
+  const MIN_W = 320;
   const H = 46;
   const pad = 10;
   const knobR = 14;
+  let W = MIN_W;
   let x = 0;
   let v = 0;
   let target = 0;
@@ -24,7 +26,14 @@ function createArayaTriggerSlider(onTrigger) {
   const range = () => max() - min();
   const threshold = () => range() * 0.82;
 
+  // 画布铺满卡片宽度（创建时还没进 DOM → 先按最小宽度，ResizeObserver 再校正）
+  function measuredWidth() {
+    return Math.max(MIN_W, Math.floor(wrap.clientWidth || 0));
+  }
+
   function setupCanvas() {
+    dpr = window.devicePixelRatio || 1;
+    W = measuredWidth();
     canvas.width = Math.floor(W * dpr);
     canvas.height = Math.floor(H * dpr);
     canvas.style.width = `${W}px`;
@@ -111,6 +120,9 @@ function createArayaTriggerSlider(onTrigger) {
   }
 
   function tick() {
+    raf = 0;
+    // 页面 re-render 后旧画布会被丢弃：动画自动停，不能靠已废弃的 DOMNodeRemoved
+    if (!canvas.isConnected) return;
     if (!dragging) {
       const force = (target - x) * 0.18;
       v = v * 0.78 + force;
@@ -121,7 +133,22 @@ function createArayaTriggerSlider(onTrigger) {
       }
     }
     draw();
-    raf = window.requestAnimationFrame(tick);
+    if (!dragging && (Math.abs(target - x) >= 0.03 || Math.abs(v) >= 0.03)) startLoop();
+  }
+
+  // 只在需要动画时跑 rAF（拖动中由 pointermove 直接重绘），静止时零开销
+  function startLoop() {
+    if (!raf && canvas.isConnected) raf = window.requestAnimationFrame(tick);
+  }
+
+  function stopLoop() {
+    if (raf) window.cancelAnimationFrame(raf);
+    raf = 0;
+  }
+
+  function setTarget(value) {
+    target = value;
+    startLoop();
   }
 
   function pointX(evt) {
@@ -138,7 +165,7 @@ function createArayaTriggerSlider(onTrigger) {
     }
     armed = x >= threshold();
     if (!triggered) {
-      hint.textContent = armed ? "松手触发 Araya" : "向右拖动触发 Araya";
+      hint.textContent = armed ? "松手触发 Araya" : idleHint;
     }
   }
 
@@ -146,33 +173,36 @@ function createArayaTriggerSlider(onTrigger) {
     dragging = false;
     if (armed && !triggered) {
       triggered = true;
-      target = range();
+      setTarget(range());
       hint.textContent = "触发中...";
       draw();
       try {
-        await onTrigger();
-        hint.textContent = "触发成功";
+        // onTrigger 可以用字符串说明「为什么没触发」，直接当作提示文案
+        const message = await onTrigger();
+        hint.textContent = typeof message === "string" && message ? message : "触发成功";
       } catch (_e) {
         hint.textContent = "触发失败，请重试";
       }
       window.setTimeout(() => {
         triggered = false;
         armed = false;
-        target = 0;
-        hint.textContent = "向右拖动触发 Araya";
+        setTarget(0);
+        hint.textContent = idleHint;
       }, 800);
       return;
     }
     armed = false;
-    target = 0;
-    hint.textContent = "向右拖动触发 Araya";
+    setTarget(0);
+    hint.textContent = idleHint;
   }
 
   canvas.addEventListener("pointerdown", (evt) => {
     if (triggered) return;
     canvas.setPointerCapture(evt.pointerId);
     dragging = true;
+    v = 0;
     target = x;
+    stopLoop();
     const px = pointX(evt);
     draggingOffset = px - (min() + x);
   });
@@ -197,13 +227,21 @@ function createArayaTriggerSlider(onTrigger) {
     if (dragging) await releaseHandle();
   });
 
+  const resizeObserver = window.ResizeObserver ? new ResizeObserver(() => {
+    // 页面 re-render 后 wrap 已脱离文档：断开观察，别再为废弃画布重绘
+    if (!canvas.isConnected) {
+      resizeObserver.disconnect();
+      return;
+    }
+    if (measuredWidth() === W) return;
+    setupCanvas();
+    x = Math.max(-28, Math.min(range(), x));
+    draw();
+  }) : null;
+  if (resizeObserver) resizeObserver.observe(wrap);
+
   setupCanvas();
   draw();
-  raf = window.requestAnimationFrame(tick);
-
-  wrap.addEventListener("DOMNodeRemoved", () => {
-    if (raf) window.cancelAnimationFrame(raf);
-  });
 
   return wrap;
 }

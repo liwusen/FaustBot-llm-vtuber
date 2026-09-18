@@ -369,12 +369,11 @@ class ArayaRuntime:
                 return {"success": False, "error": str(e)}
 
         @tool
-        def arayaChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
+        async def arayaChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
             """获取自某个时间戳以来发生变更的记忆库节点。"""
-            import asyncio
-            log.info("arayaChangedNodesTool called")
+            log.info("arayaChangedNodesTool called since_ts=%s scope=%s tags=%s", since_ts, scope, tags or [])
             try:
-                return asyncio.run(_m().get_changed_nodes(since_ts, scope=scope, tags=tags or []))
+                return await _m().get_changed_nodes(since_ts, scope=scope, tags=tags or [])
             except Exception as e:
                 log.error("Error in arayaChangedNodesTool: %s", e)
                 return []
@@ -413,13 +412,20 @@ class ArayaRuntime:
         def arayaAddEntityTool(name: str, entity_type: str = "custom",
                                 properties_json: str = "{}", kb_refs_json: str = "[]",
                                 description: str = "") -> str:
-            """向知识图谱中添加一个实体节点。description 为实体的自然语言描述。返回实体 ID。"""
+            """向知识图谱中添加一个实体节点。description 为实体的自然语言描述。
+            kb_refs_json 传来源文件路径（如 ["/records/2026-09-18.md"]），会同时建立「文件→实体」的 from 边。
+            返回实体 ID。"""
             try:
-                import json
+                from faust_backend.memory.store import _path_id
                 properties = json.loads(properties_json) if str(properties_json or "").strip() else {}
                 kb_refs = json.loads(kb_refs_json) if str(kb_refs_json or "").strip() else []
-                eid = _m().entity_add(name, entity_type, description=description,
-                                       properties=properties, kb_refs=kb_refs)
+                m = _m()
+                eid = m.entity_add(name, entity_type, description=description,
+                                   properties=properties, kb_refs=kb_refs)
+                for ref in kb_refs:
+                    ref_nid = _path_id(str(ref))
+                    if m._has_node(ref_nid):
+                        m._add_edge(ref_nid, eid, "from")
                 return str(eid)
             except Exception as e:
                 log.error("Error in arayaAddEntityTool: %s", e)
@@ -453,6 +459,20 @@ class ArayaRuntime:
             except Exception as e:
                 log.error("Error in arayaRemoveRelationTool: %s", e)
                 return False
+
+        @tool
+        def arayaMergeEntTool(keep_id: str, absorb_id: str) -> dict:
+            """合并两个重复实体：保留 keep_id，把 absorb_id 并入后删除。
+
+            属性/描述/kb_refs 会合并到保留实体；被吸收实体的全部关系边改指到保留实体，
+            重复边与自环自动丢弃。先用 arayaSearchEntityTool 确认两个 ID 是同一实体。
+            """
+            try:
+                log.info("arayaMergeEntTool keep=%s absorb=%s", keep_id, absorb_id)
+                return _m().entity_merge(keep_id, absorb_id)
+            except Exception as e:
+                log.error("Error in arayaMergeEntTool: %s", e)
+                return {"ok": False, "error": str(e)}
 
         @tool
         def arayaListRelationsTool() -> list[dict]:
@@ -556,6 +576,7 @@ class ArayaRuntime:
             arayaGetNeighborsTool,
             arayaAddEntityTool,
         #    arayaDeleteEntityTool,
+            arayaMergeEntTool,
             arayaAddRelationTool,
         #    arayaRemoveRelationTool,
         #    arayaListRelationsTool,
@@ -567,14 +588,17 @@ class ArayaRuntime:
     async def _init_agent(self) -> None:
         from faust_backend.runtime import state as runtime_state
         from faust_backend.provider import build_main_chat_model
+        from faust_backend.runtime.middleware import wrap_tools
+        from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
         self._chat_model = await build_main_chat_model(
             runtime_state.get_model_providers(), intensity=None
         )
         log.info("Creating Araya agent with model: %s", self._chat_model.model_name)
         self._agent = create_agent(
             model=self._chat_model,
-            tools=self._build_tools(),
-            middleware=with_model_retry(),
+            # 与主 Agent 同一套输出管线：工具输出进 OutputStore，图片经桥接注入
+            tools=wrap_tools(self._build_tools()),
+            middleware=with_model_retry([MultimodalBridgeMiddleware()]),
         )
 
     async def _close_model(self) -> None:

@@ -1,183 +1,236 @@
 // Araya module renderer
 
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = String(s);
-  return d.innerHTML;
+// 实时运行态：SSE 连接存在 state 里跨页面存活，渲染层状态也必须放在闭包外，
+// 否则每次 re-render（保存设置 / 刷新状态）都会把流式更新写进被丢弃的节点。
+const arayaLive = {
+  trace: null,     // 本次运行的 trace，结构同后端 /faust/araya/trace（messages: user|assistant|tool|tool_result）
+  timeline: null,  // 当前挂在页面上的轨迹渲染器，re-render 时指向新节点
+};
+
+function arayaReasonLabel(reason) {
+  const map = {
+    idle: "空闲自动触发",
+    manual: "手动触发",
+    manual_from_configer: "配置中心手动触发",
+  };
+  const key = String(reason || "");
+  return map[key] || (key || "-");
 }
 
-function buildArayaTraceEntry(item) {
-  const row = el("div", "card-content");
-  row.style.cssText = "padding:10px 12px;border-left:2px solid var(--border);margin:8px 0;background:var(--bg2);border-radius:6px";
-  if (!item || typeof item !== "object") {
-    row.textContent = String(item || "");
-    return row;
+function arayaStatusLabel(status) {
+  const map = { ok: "成功", running: "运行中", error: "失败", idle: "未运行" };
+  const key = String(status || "");
+  return map[key] || (key || "-");
+}
+
+function arayaDuration(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s < 0) return "-";
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} 秒`;
+  const m = Math.floor(s / 60);
+  const rest = Math.round(s - m * 60);
+  return rest ? `${m} 分 ${rest} 秒` : `${m} 分钟`;
+}
+
+function arayaRelative(iso) {
+  const t = Date.parse(String(iso || ""));
+  if (Number.isNaN(t)) return "-";
+  const diff = Math.max(0, (Date.now() - t) / 1000);
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  return `${Math.floor(diff / 86400)} 天前`;
+}
+
+function arayaText(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (_e) {
+    return String(value);
   }
-  // 跳过内部指令（user）和工具结果（tool_result），已有工具调用折叠展示
-  if (item.role === "user") return null;
-  if (item.role === "tool_result") return null;
-  if (item.role === "assistant") {
-    row.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:4px">Araya 输出</div><div style="white-space:pre-wrap">${escapeHtml(item.content || "")}</div>`;
-    return row;
+}
+
+// 轨迹时间线：全量渲染与流式追加共用同一组原语，避免两条渲染路径漂移。
+function createArayaTimeline(onToolAdded) {
+  const list = el("div", "araya-timeline");
+  const placeholder = el("div", "empty-state", "等待 Araya 输出…");
+  const toolRows = new Map();
+  let lastAssistant = null;
+  let steps = 0;
+  reset();
+
+  function syncPlaceholder() {
+    placeholder.classList.toggle("hidden", steps > 0);
   }
-  if (item.role === "tool") {
+
+  function reset() {
+    list.innerHTML = "";
+    list.append(placeholder);
+    toolRows.clear();
+    lastAssistant = null;
+    steps = 0;
+    syncPlaceholder();
+  }
+
+  function step(kind) {
+    steps += 1;
+    syncPlaceholder();
+    const row = el("div", `araya-step araya-step-${kind}`);
+    row.append(el("span", "araya-step-dot"));
+    const body = el("div", "araya-step-body");
+    row.append(body);
+    list.append(row);
+    return body;
+  }
+
+  function addAssistant(text) {
+    const chunk = String(text ?? "");
+    if (!chunk) return;
+    if (!lastAssistant) {
+      const body = step("assistant");
+      body.append(el("div", "araya-step-label", "Araya 输出"));
+      lastAssistant = el("div", "araya-step-text", "");
+      body.append(lastAssistant);
+    }
+    lastAssistant.textContent += chunk;
+  }
+
+  function addTool(callId, name, args) {
+    lastAssistant = null;
+    const body = step("tool");
     const details = document.createElement("details");
-    details.style.cssText = "white-space:pre-wrap";
-    details.innerHTML = `<summary style="cursor:pointer">工具调用: ${escapeHtml(item.tool_name || "tool")}</summary><pre style="margin:8px 0 0 0">${escapeHtml(JSON.stringify(item.args || {}, null, 2))}</pre>`;
-    row.append(details);
-    return row;
+    details.className = "araya-tool";
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.append(el("span", "araya-tool-caret", "▸"));
+    summary.append(el("span", "araya-tool-name", String(name || "工具调用")));
+    const timer = el("span", "araya-tool-time", "运行中…");
+    summary.append(timer);
+    const argsPre = el("pre", "araya-tool-pre", arayaText(args));
+    const resultPre = el("pre", "araya-tool-pre araya-tool-result", "");
+    details.append(summary, argsPre, resultPre);
+    body.append(details);
+    toolRows.set(String(callId || name || ""), { details, timer, resultPre });
+    if (onToolAdded) onToolAdded();
   }
-  row.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:4px">${escapeHtml(item.role || "event")}</div><div style="white-space:pre-wrap">${escapeHtml(JSON.stringify(item, null, 2))}</div>`;
-  return row;
+
+  function endTool(callId, name, result, duration) {
+    const key = String(callId || "");
+    const row = toolRows.get(key) || toolRows.get(String(name || ""));
+    const seconds = Number(duration);
+    if (!row) {
+      // 只有结果没有调用（截断的历史 trace）：单独成行，别丢信息
+      const body = step("result");
+      body.append(el("div", "araya-step-label", `${String(name || "工具")} 结果`));
+      body.append(el("pre", "araya-tool-pre", arayaText(result)));
+      return;
+    }
+    row.timer.textContent = Number.isFinite(seconds) ? `${seconds.toFixed(2)}s` : "完成";
+    row.resultPre.textContent = arayaText(result);
+    row.details.open = false;
+  }
+
+  function render(items) {
+    reset();
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!item || typeof item !== "object") continue;
+      if (item.role === "user") continue;  // 内部指令，不是给用户看的输出
+      if (item.role === "assistant") {
+        addAssistant(item.content);
+      } else if (item.role === "tool") {
+        addTool(item.call_id, item.tool_name, item.args);
+      } else if (item.role === "tool_result") {
+        endTool(item.call_id, item.tool_name, item.result, item.duration_seconds);
+      }
+    }
+  }
+
+  return { list, reset, addAssistant, addTool, endTool, render };
 }
 
-function renderArayaTrace(container, trace) {
-  container.innerHTML = "";
-  if (!trace || typeof trace !== "object") {
-    container.append(el("div", "empty-state", "暂无 Araya Trace"));
-    return;
+// 把一份 trace 填进 host（同步调用；host 被丢弃后继续写入不会污染新页面）
+function mountArayaTrace(host, trace, onToolCount, keepEmpty) {
+  host.innerHTML = "";
+  const messages = trace && Array.isArray(trace.messages) ? trace.messages : [];
+  if (!messages.length && !keepEmpty) {
+    host.append(el("div", "empty-state", "还没有运行记录。触发一次后，这里会按顺序显示 Araya 的输出与每次工具调用。"));
+    return null;
   }
-  const meta = makeInfoCard("最近一次 Trace", [
-    { label: "Conversation ID", value: trace.conversation_id || "-" },
-    { label: "原因", value: trace.reason || "-" },
-    { label: "状态", value: trace.status || "-" },
-    { label: "耗时", value: trace.duration_seconds ?? "-" },
-  ]);
-  container.append(meta);
-  const messages = Array.isArray(trace.messages) ? trace.messages : [];
-  for (const item of messages) {
-    const entry = buildArayaTraceEntry(item);
-    if (entry) container.append(entry);
-  }
+  let toolCount = 0;
+  const timeline = createArayaTimeline(() => {
+    toolCount += 1;
+    if (onToolCount) onToolCount(toolCount);
+  });
+  host.append(timeline.list);
+  timeline.render(messages);
+  if (onToolCount) onToolCount(toolCount);
+  return timeline;
 }
 
-function renderArayaModule() {
-  const status = state.araya || {};
+function renderArayaOverviewCard(status, lastLog, running) {
+  const card = el("article", "card full-span");
+  const head = el("div", "araya-card-head");
+  let badgeText = "等待触发";
+  let badgeClass = "badge badge-valid";
+  if (running) {
+    badgeText = "运行中";
+    badgeClass = "badge badge-run";
+  } else if (status.last_error) {
+    badgeText = "上次运行异常";
+    badgeClass = "badge badge-dirty";
+  } else if (status.enabled === false) {
+    badgeText = "自动触发已停用";
+    badgeClass = "badge badge-muted";
+  }
+  head.append(el("h3", "card-title", "运行概览"), el("span", badgeClass, badgeText));
+  card.append(head);
+
+  const idleMinutes = Number(status.idle_minutes || 0);
+  const idleSeconds = Math.max(0, Number(status.idle_seconds || 0));
+  const remainSeconds = Math.max(0, idleMinutes * 60 - idleSeconds);
+  const stats = el("div", "araya-stat-grid");
+  const cell = (value, label) => {
+    const box = el("div", "araya-stat");
+    box.append(el("div", "araya-stat-value", value), el("div", "araya-stat-label", label));
+    return box;
+  };
+  stats.append(
+    cell(String(status.target_agent || "-"), "目标 Agent"),
+    cell(arayaDuration(idleSeconds), `主 Agent 空闲（阈值 ${idleMinutes || "-"} 分钟）`),
+    cell(status.enabled === false ? "已停用" : arayaDuration(remainSeconds), "距下次自动触发"),
+    cell(lastLog && lastLog.finished_at_iso ? arayaRelative(lastLog.finished_at_iso) : "无记录", "上次运行")
+  );
+  card.append(stats);
+  card.append(el("p", "card-help",
+    `主 Agent 最近活跃 ${status.last_main_activity_at || "-"} · 状态更新 ${status.updated_at || "-"}`));
+  appendToActiveModule(card);
+}
+
+function renderArayaSettingsCard(status) {
+  const card = el("article", "card full-span");
+  card.append(el("h3", "card-title", "自动维护设置"));
+
   const enabled = document.createElement("input");
   enabled.type = "checkbox";
-  enabled.checked = Boolean(status.enabled);
-  const idle = el("input", "number");
+  enabled.checked = status.enabled !== false;
+  const enableLabel = el("label", "araya-check");
+  enableLabel.append(enabled, el("span", "", "启用自动维护"));
+
+  const idle = document.createElement("input");
   idle.type = "number";
+  idle.className = "araya-number";
+  idle.min = "1";
+  idle.step = "1";
   idle.value = String(status.idle_minutes || 30);
+  const idleLabel = el("label", "araya-check");
+  idleLabel.append(idle, el("span", "", "空闲分钟"));
 
   const bar = el("div", "toolbar");
-  const traceContainer = el("div", "field-wrap");
-
-  const liveTrace = {
-    conversation_id: "",
-    reason: "",
-    status: "idle",
-    messages: [],
-    tool_calls: [],
-  };
-
-  async function loadLastTrace() {
-    try {
-      const data = await cfgApi("GET", "/faust/araya/trace");
-      renderArayaTrace(traceContainer, data.trace || null);
-    } catch (e) {
-      traceContainer.innerHTML = `<div class="empty-state">读取 Trace 失败: ${escapeHtml(String(e.message || e))}</div>`;
-    }
-  }
-
-  loadLastTrace();
-
-  const triggerSlider = createArayaTriggerSlider(async () => {
-    if (state.arayaEventSource) {
-      state.arayaEventSource.close();
-      state.arayaEventSource = null;
-    }
-
-    const baseUrl = (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900";
-    const url = baseUrl + "/faust/araya/trigger-sse?reason=manual_from_configer";
-
-
-    return new Promise((resolve, reject) => {
-      const es = new EventSource(url);
-      state.arayaEventSource = es;
-
-      es.addEventListener("step", (evt) => {
-        try {
-          const data = JSON.parse(evt.data);
-          switch (data.type) {
-            case "start":
-              liveTrace.conversation_id = `araya-live-${Date.now()}`;
-              liveTrace.reason = data.reason || "-";
-              liveTrace.status = "running";
-              liveTrace.messages = [];
-              liveTrace.tool_calls = [];
-              renderArayaTrace(traceContainer, liveTrace);
-              break;
-            case "llm_start":
-              break;
-            case "llm_chunk":
-              if (liveTrace.messages.length && liveTrace.messages[liveTrace.messages.length - 1].role === "assistant") {
-                liveTrace.messages[liveTrace.messages.length - 1].content += data.content || "";
-              } else {
-                liveTrace.messages.push({ role: "assistant", content: data.content || "" });
-              }
-              renderArayaTrace(traceContainer, liveTrace);
-              break;
-            case "tool_start":
-              liveTrace.messages.push({ role: "tool", tool_name: data.tool || "tool", call_id: data.call_id || "", args: data.args || {} });
-              renderArayaTrace(traceContainer, liveTrace);
-              break;
-            case "tool_end":
-              liveTrace.messages.push({ role: "tool_result", tool_name: data.tool || "tool", call_id: data.call_id || "", result: data.result ?? "", duration_seconds: data.duration ?? null });
-              renderArayaTrace(traceContainer, liveTrace);
-              break;
-            default:
-              break;
-          }
-        } catch (e) {
-          console.warn("SSE step parse error", e);
-        }
-      });
-
-      es.addEventListener("done", (evt) => {
-        es.close();
-        state.arayaEventSource = null;
-        liveTrace.status = "ok";
-        try {
-          const data = JSON.parse(evt.data);
-          liveTrace.duration_seconds = data.duration || null;
-        } catch (e) {
-        }
-        renderArayaTrace(traceContainer, liveTrace);
-        ensureModuleData("araya").then(() => {
-          refreshModule();
-          showBanner("success", "Araya 执行完成。");
-        });
-        resolve();
-      });
-
-      es.addEventListener("error", (evt) => {
-        es.close();
-        state.arayaEventSource = null;
-        liveTrace.status = "error";
-        let msg = "未知错误";
-        try {
-          if (evt.data) {
-            const data = JSON.parse(evt.data);
-            msg = data.message || data.error || msg;
-          }
-        } catch (e) {}
-        liveTrace.error = msg;
-        renderArayaTrace(traceContainer, liveTrace);
-        ensureModuleData("araya").then(() => {
-          refreshModule();
-          showBanner("error", `Araya 错误: ${msg}`);
-        });
-        reject(new Error(msg));
-      });
-    });
-  });
-
   bar.append(
-    enabled,
-    el("span", "switch-text", "启用 Araya 自动维护"),
-    el("span", "switch-text", "空闲分钟"),
-    idle,
+    enableLabel,
+    idleLabel,
     makeButton("保存设置", async () => {
       try {
         const data = await cfgApi("POST", "/faust/araya/settings", {
@@ -194,47 +247,206 @@ function renderArayaModule() {
     makeButton("刷新状态", async () => {
       await ensureModuleData("araya");
       refreshModule();
-    }),
-    triggerSlider
+    })
   );
-  addSection("Araya 控制", [bar]);
-  addSection("Araya Trace", [traceContainer]);
+  card.append(bar);
+  if (status.enabled_by_config === false) {
+    card.append(el("p", "card-help", "配置文件里 ARAYA_ENABLED 为 false，这里的开关不会生效。"));
+  }
+  appendToActiveModule(card);
+}
 
-  const idleMinutes = Number(status.idle_minutes || 0);
-  const idleSeconds = Number(status.idle_seconds || 0);
-  const thresholdSeconds = idleMinutes > 0 ? idleMinutes * 60 : 0;
-  const remainSeconds = Math.max(0, thresholdSeconds - idleSeconds);
+function renderArayaTriggerCard(running) {
+  const card = el("article", "card full-span");
+  const busyHint = "Araya 正在运行，请等这次跑完";
+  card.append(el("h3", "card-title", "手动触发"));
+  card.append(createArayaTriggerSlider(
+    running ? async () => busyHint : arayaStartRun,
+    running ? busyHint : undefined
+  ));
+  appendToActiveModule(card);
+}
 
-  const summaryCard = makeInfoCard("运行状态", [
-    { label: "目标 Agent", value: status.target_agent },
-    { label: "运行线程", value: status.running },
-    { label: "执行中", value: status.run_in_progress },
-    { label: "配置启用", value: status.enabled_by_config },
-    { label: "运行启用", value: status.enabled },
-  ]);
+function renderArayaRunCard(lastLog, status) {
+  const hasLog = Boolean(lastLog && Object.keys(lastLog).length);
+  if (!hasLog) {
+    const card = el("article", "card full-span");
+    card.append(el("h3", "card-title", "最近一次运行"));
+    card.append(el("p", "card-help", status.last_error
+      ? `上次运行异常：${status.last_error}`
+      : "还没有运行记录。等空闲自动触发，或拖动「手动触发」里的滑块跑一次。"));
+    appendToActiveModule(card);
+    return;
+  }
 
-  const idleCard = makeInfoCard("空闲触发", [
-    { label: "空闲阈值(分钟)", value: idleMinutes || "-" },
-    { label: "当前空闲(秒)", value: Math.floor(idleSeconds) },
-    { label: "预计剩余(秒)", value: Math.floor(remainSeconds) },
-    { label: "最近主 Agent 活跃", value: status.last_main_activity_at },
-    { label: "最后更新时间", value: status.updated_at },
-  ]);
+  const rows = [
+    { label: "触发原因", value: arayaReasonLabel(lastLog.reason) },
+    { label: "结果", value: arayaStatusLabel(lastLog.status) },
+    { label: "耗时", value: arayaDuration(lastLog.duration_seconds) },
+    { label: "开始时间", value: lastLog.started_at_iso },
+    { label: "结束时间", value: lastLog.finished_at_iso },
+  ];
+  if (lastLog.error) rows.push({ label: "错误", value: lastLog.error });
 
-  const lastLog = status.last_log && typeof status.last_log === "object" ? status.last_log : {};
-  const logCard = makeInfoCard("最近一次执行", [
-    { label: "触发原因", value: lastLog.reason },
-    { label: "结果", value: lastLog.status || lastLog.result || "-" },
-    { label: "开始时间", value: lastLog.started_at },
-    { label: "结束时间", value: lastLog.finished_at },
-    { label: "错误", value: lastLog.error },
-  ]);
+  const card = makeInfoCard("最近一次运行", rows);
+  card.classList.add("full-span");
+  const output = el("div", "araya-output");
+  output.append(el("div", "araya-output-label", "Araya 输出"));
+  output.append(el("div", "araya-output-text", String(lastLog.response || "（本次没有文本输出）")));
+  card.append(output);
+  appendToActiveModule(card);
+}
 
-  addSection("Araya 状态", [summaryCard, idleCard, logCard]);
+function renderArayaTraceCard() {
+  const card = el("article", "card full-span");
+  const head = el("div", "araya-card-head");
+  const host = el("div", "araya-trace-host");
+  card.append(head, host);
+  appendToActiveModule(card);
 
-  const msgs = Array.isArray(lastLog.messages) ? lastLog.messages : [];
-  const lastMsgs = el("textarea", "textarea code-area");
-  lastMsgs.readOnly = true;
-  lastMsgs.value = msgs.map((x, i) => `#${i + 1} ${String(x || "")}`).join("\n\n") || "无消息片段";
-  addSection("最近执行消息片段", [lastMsgs]);
+  const live = arayaLive.trace;
+  const title = live ? "本次运行轨迹" : "上次运行轨迹";
+  head.append(el("h3", "card-title", title));
+  const meta = el("span", "araya-card-meta", "");
+  head.append(meta);
+  // trace 与 last_run.json 可能来自不同的两次运行，标上它自己的时间，避免两张卡看起来互相矛盾
+  const setMeta = (trace, count) => {
+    const when = arayaRelative(trace && trace.started_at_iso);
+    meta.textContent = when && when !== "-" ? `${count} 次工具调用 · ${when}` : `${count} 次工具调用`;
+  };
+
+  if (live) {
+    arayaLive.timeline = mountArayaTrace(host, live, (n) => setMeta(live, n), true);
+    return;
+  }
+
+  // 空闲态读后端最后一份 trace；只填自己这张卡的 host，晚到的响应不会重复挂卡片
+  cfgApi("GET", "/faust/araya/trace").then((data) => {
+    const trace = data && data.trace ? data.trace : null;
+    if (!trace) {
+      host.append(el("div", "empty-state", "还没有运行记录。触发一次后，这里会按顺序显示 Araya 的输出与每次工具调用。"));
+      return;
+    }
+    mountArayaTrace(host, trace, (n) => setMeta(trace, n));
+  }).catch((e) => {
+    host.innerHTML = "";
+    host.append(el("div", "empty-state", `读取轨迹失败: ${e.message || String(e)}`));
+  });
+}
+
+function renderArayaModule() {
+  const status = state.araya || {};
+  // 运行中 = 本页发起的 SSE，或后端报告的进行中运行（空闲自动触发 / 其他客户端触发）
+  const running = Boolean(state.arayaEventSource) || status.run_in_progress === true;
+  const lastLog = status.last_log && typeof status.last_log === "object" ? status.last_log : null;
+
+  renderArayaOverviewCard(status, lastLog, running);
+  renderArayaSettingsCard(status);
+  renderArayaTriggerCard(running);
+  renderArayaRunCard(lastLog, status);
+  renderArayaTraceCard();
+}
+
+// 手动触发一次：SSE 全程只写 arayaLive，re-render 后由 renderArayaTraceCard 重新挂载
+function arayaInvalidate() {
+  // 运行结束时若用户停在别的模块，也要让 Araya 页失效，下次切回来才是新数据
+  const entry = state.moduleContainers && state.moduleContainers.araya;
+  if (entry) entry.rendered = false;
+}
+
+function arayaStartRun() {
+  if (state.arayaEventSource) return Promise.resolve("Araya 正在运行");
+  const baseUrl = (window.api && window.api.backendBaseUrl) || "http://127.0.0.1:13900";
+  const url = baseUrl + "/faust/araya/trigger-sse?reason=manual_from_configer";
+
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(url);
+    state.arayaEventSource = es;
+
+    const finish = () => {
+      es.close();
+      state.arayaEventSource = null;
+      arayaLive.trace = null;
+      arayaLive.timeline = null;
+    };
+
+    es.addEventListener("step", (evt) => {
+      let data = null;
+      try {
+        data = JSON.parse(evt.data);
+      } catch (e) {
+        console.warn("SSE step parse error", e);
+        return;
+      }
+      const timeline = arayaLive.timeline;
+      switch (data.type) {
+        case "start":
+          arayaLive.trace = {
+            conversation_id: `araya-live-${Date.now()}`,
+            reason: data.reason || "-",
+            status: "running",
+            started_at_iso: new Date().toISOString(),
+            messages: [],
+            tool_calls: [],
+          };
+          // 先把页面切到「运行中 + 本次运行轨迹」，流式事件才有正确的落点
+          arayaInvalidate();
+          refreshModule();
+          break;
+        case "llm_chunk":
+          if (!arayaLive.trace) return;
+          arayaLive.trace.messages.push({ role: "assistant", content: data.content || "" });
+          if (timeline) timeline.addAssistant(data.content || "");
+          break;
+        case "tool_start":
+          if (!arayaLive.trace) return;
+          arayaLive.trace.messages.push({ role: "tool", tool_name: data.tool || "tool", call_id: data.call_id || "", args: data.args || {} });
+          if (timeline) timeline.addTool(data.call_id, data.tool, data.args);
+          break;
+        case "tool_end":
+          if (!arayaLive.trace) return;
+          arayaLive.trace.messages.push({ role: "tool_result", tool_name: data.tool || "tool", call_id: data.call_id || "", result: data.result ?? "", duration_seconds: data.duration ?? null });
+          if (timeline) timeline.endTool(data.call_id, data.tool, data.result, data.duration);
+          break;
+        default:
+          break;
+      }
+    });
+
+    es.addEventListener("done", (evt) => {
+      finish();
+      let duration = null;
+      try {
+        const data = JSON.parse(evt.data);
+        duration = data.duration ?? null;
+      } catch (e) {
+        console.warn("SSE done parse error", e);
+      }
+      arayaInvalidate();
+      ensureModuleData("araya").then(() => {
+        refreshModule();
+        showBanner("success", `Araya 执行完成${duration ? `（${arayaDuration(duration)}）` : ""}。`);
+      });
+      resolve();
+    });
+
+    es.addEventListener("error", (evt) => {
+      let msg = "连接中断";
+      if (evt && evt.data) {
+        try {
+          const data = JSON.parse(evt.data);
+          msg = data.message || data.error || msg;
+        } catch (e) {
+          console.warn("SSE error parse error", e);
+        }
+      }
+      finish();
+      arayaInvalidate();
+      ensureModuleData("araya").then(() => {
+        refreshModule();
+        showBanner("error", `Araya 错误: ${msg}`);
+      });
+      reject(new Error(msg));
+    });
+  });
 }
