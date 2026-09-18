@@ -24,14 +24,14 @@ class _FakeChat:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def ainvoke(self, messages: list) -> SimpleNamespace:
+    async def ainvoke(self, messages: list, config: Any = None) -> SimpleNamespace:
         self.calls += 1
         return SimpleNamespace(content="# 屏幕概览\n- 模拟屏幕内容\n\n## 与 focus 相关\n- 模拟 focus 细节")
 
 
 class _FakeModelBuilder:
-    def __init__(self) -> None:
-        self.chat = _FakeChat()
+    def __init__(self, chat: Any | None = None) -> None:
+        self.chat = chat if chat is not None else _FakeChat()
 
     async def build(self, providers: Any, spec: str, intensity: str | None = None) -> _FakeChat:
         return self.chat
@@ -61,8 +61,8 @@ def _patch_screenshot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pyautogui, "screenshot", lambda: Image.new("RGB", (100, 50), "white"))
 
 
-def _patch_model(monkeypatch: pytest.MonkeyPatch) -> _FakeModelBuilder:
-    fake = _FakeModelBuilder()
+def _patch_model(monkeypatch: pytest.MonkeyPatch, chat: Any | None = None) -> _FakeModelBuilder:
+    fake = _FakeModelBuilder(chat)
     import faust_backend.provider as provider_mod
     import faust_backend.runtime.state as state_mod
 
@@ -145,6 +145,46 @@ async def test_bubble_event_hides_analysis_text(
     assert await plugin.agent_event_sent(other, [], None) is other
     delta = {"type": "delta", "content": "你好"}
     assert await plugin.agent_event_sent(delta, [], None) is delta
+
+
+@pytest.mark.asyncio
+async def test_analysis_does_not_leak_into_agent_event_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """内层视觉模型的 token 不能冒泡进主 Agent 的事件流。
+
+    回归背景：插件在工具里调 screen-model，未切断父 run 回调继承时，它的
+    on_chat_model_stream 会随主 Agent 的 astream_events 一起出来，被前端当成
+    正常消息渲染进气泡并交给 TTS 朗读（工具还在"调用中"就已经开始念）。
+    """
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    await _clean_vfs_async()
+    _patch_screenshot(monkeypatch)
+    stream_model = GenericFakeChatModel(
+        messages=iter([AIMessage(content="# 屏幕概览\n- 模拟屏幕内容")])
+    )
+    _patch_model(monkeypatch, chat=stream_model)
+    pm = await _build_manager_async(tmp_path)
+    pm.set_plugin_config_values("quick-screen-view", {"screen-model": "test::fake"})
+    await pm.reload(force=True)
+    plugin = pm._faust_plugins["quick-screen-view"]
+
+    box: dict[str, str] = {}
+
+    async def _drive(_payload: Any) -> str:
+        box["text"] = await plugin._analyze("重点看终端")
+        return "ok"
+
+    leaked: list[str] = []
+    async for event in RunnableLambda(_drive).astream_events({"q": 1}, version="v2"):
+        if event.get("event") == "on_chat_model_stream":
+            leaked.append(str(event["data"]["chunk"].content))
+
+    assert leaked == []
+    assert "屏幕概览" in box["text"]  # 分析结果本身照常返回给工具
 
 
 # ── VFS 模式 ──

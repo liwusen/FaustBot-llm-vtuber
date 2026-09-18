@@ -188,7 +188,11 @@ class Plugin(FaustPlugin):
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ]
             )
-            response = await chat.ainvoke([message])
+            # callbacks=[] 切断父 run 的回调继承：屏幕分析跑在工具调用的上下文里，
+            # 不隔离的话它的 token 会作为 on_chat_model_stream 冒泡进主 Agent 的
+            # astream_events 流，被前端当成正常消息渲染（气泡）并交给 TTS 朗读。
+            # 同一惯例见 faust_backend/security.py 的内部模型调用。
+            response = await chat.ainvoke([message], config={"callbacks": []})
             text = str(getattr(response, "content", "") or "").strip()
             if not text:
                 return f"{ERROR_PREFIX} 模型返回了空结果"
