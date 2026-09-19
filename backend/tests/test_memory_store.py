@@ -1002,6 +1002,7 @@ def test_entity_merge_persists_and_drops_absorbed_name_vector(memory_store):
     assert gs2._has_node(absorb) is False
     assert list(gs2._graph.edges(keep)) == [(keep, other)]
     detail = gs2.get_entity_detail(keep)
+    assert detail is not None
     assert detail["properties"] == {"x": 1, "y": 9}
     assert detail["description"] == "别名"
     assert detail["kb_refs"] == [f"/entities/{keep}.md"]

@@ -36,10 +36,24 @@ _NODE_PATH = "memory"
 TREE_EDGE = "has_child"
 
 
-def _wake_waiter(fut: asyncio.Future) -> None:
+class _Waiter:
+    """排队中的等待者：`fut` 用于唤醒，`granted` 记录持有权是否已交给它。
+
+    `granted` 不能省：取消发生在「已被 `_handoff_locked` 弹出并排程唤起、协程尚未
+    恢复」的窗口时，future 既不在 `_waiters` 里也没有结果，只能靠它判断该不该交还锁。
+    """
+
+    __slots__ = ("fut", "granted")
+
+    def __init__(self, fut: asyncio.Future) -> None:
+        self.fut = fut
+        self.granted = False
+
+
+def _wake_waiter(waiter: _Waiter) -> None:
     """在等待者自己的循环里唤醒它（`call_soon_threadsafe` 回调）。"""
-    if not fut.done():
-        fut.set_result(None)
+    if not waiter.fut.done():
+        waiter.fut.set_result(None)
 
 
 class _CrossLoopLock:
@@ -55,7 +69,7 @@ class _CrossLoopLock:
     def __init__(self) -> None:
         self._state = threading.Lock()
         self._held = False
-        self._waiters: deque[asyncio.Future] = deque()
+        self._waiters: deque[_Waiter] = deque()
 
     async def __aenter__(self) -> None:
         loop = asyncio.get_running_loop()
@@ -63,19 +77,19 @@ class _CrossLoopLock:
             if not self._held:
                 self._held = True
                 return None
-            fut = loop.create_future()
-            self._waiters.append(fut)
-        # 不变量：`_granted` 为真 <=> 持有权已经是「我的」，哪怕这次等待再也醒不过来。
+            waiter = _Waiter(loop.create_future())
+            self._waiters.append(waiter)
+        # 不变量：`granted` 为真 <=> 持有权已经是「我的」，哪怕这次等待再也醒不过来。
         # 取消发生在「已被 `_handoff_locked` 弹出并唤起、协程尚未恢复」的窗口里时，
-        # future 既不在 `_waiters` 里也没有结果集，只能靠这个标记判断该不该交还锁。
+        # waiter 既不在 `_waiters` 里也没有结果集，只能靠这个标记判断该不该交还锁。
         try:
-            await fut
+            await waiter.fut
         except BaseException:
             with self._state:
-                if getattr(fut, "_granted", False):
+                if waiter.granted:
                     self._handoff_locked()  # 授予后被取消：持有权在我手上，必须交还
-                elif fut in self._waiters:
-                    self._waiters.remove(fut)  # 还在排队：从未被授予，离队即可
+                elif waiter in self._waiters:
+                    self._waiters.remove(waiter)  # 还在排队：从未被授予，离队即可
                 # 其余：已弹出但 `call_soon_threadsafe` 失败（等待者的循环已关），
                 # `_handoff_locked` 已把持有权转给下一个等待者或置为未持有——不归我管。
             raise
@@ -90,14 +104,14 @@ class _CrossLoopLock:
     def _handoff_locked(self) -> None:
         """把持有权直接交给下一个等待者；没有等待者就置为未持有。"""
         while self._waiters:
-            fut = self._waiters.popleft()
-            if fut.cancelled():
+            waiter = self._waiters.popleft()
+            if waiter.fut.cancelled():
                 continue
             try:
-                fut.get_loop().call_soon_threadsafe(_wake_waiter, fut)
+                waiter.fut.get_loop().call_soon_threadsafe(_wake_waiter, waiter)
             except RuntimeError:
                 continue  # 等待者的循环已关闭
-            fut._granted = True  # 持有权已交给它（`__aenter__` 的取消分支据此交还）
+            waiter.granted = True  # 持有权已交给它（`__aenter__` 的取消分支据此交还）
             return
         self._held = False
 
@@ -1507,7 +1521,6 @@ class GraphStore:
             vdb.upsert([{
                 "__id__": eid,
                 "__vector__": np.asarray(name_embedding, dtype=np.float32),
-                "name": name,
             }])
             vdb.save()
         log.info("entity_add name=%s type=%s eid=%s desc_len=%d refs=%d",
@@ -1738,8 +1751,8 @@ class GraphStore:
         log.warning("entities missing name_vec count=%d", len(missing))
         vecs = await self._embed_texts([name for _, name in missing])
         rows = []
-        for (eid, name), vec in zip(missing, vecs):
-            rows.append({"__id__": eid, "__vector__": np.asarray(vec, dtype=np.float32), "name": name})
+        for (eid, _), vec in zip(missing, vecs):
+            rows.append({"__id__": eid, "__vector__": np.asarray(vec, dtype=np.float32)})
         if rows:
             vdb.upsert(rows)
             vdb.save()
@@ -1827,10 +1840,7 @@ class GraphStore:
         emb = await self._embed_texts([query])
         vdb = self._ensure_vdb()
         qv = emb[0].tolist()
-        try:
-            hits = vdb.query(query=qv, top_k=max(top_k * 3, 10), better_than_threshold=None)
-        except TypeError:
-            hits = vdb.query(qv, top_k=max(top_k * 3, 10))
+        hits = vdb.query(query=qv, top_k=max(top_k * 3, 10))
 
         if isinstance(hits, dict):
             raw = [hits]
@@ -1859,7 +1869,8 @@ class GraphStore:
             elif metrics is not None:
                 score = float(metrics)
             else:
-                score = float(hit.get("__score__", hit.get("score", 0)))
+                raw_score: Any = hit.get("__score__", hit.get("score", 0))
+                score = float(raw_score)
             if not math.isfinite(score):
                 score = 0.0
             patch = float(meta.get("score_patch", 0.0))

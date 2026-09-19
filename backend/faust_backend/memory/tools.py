@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import json
 from typing import Any
 import traceback
@@ -21,12 +22,20 @@ def schedule_extract(content: str, doc_path: str) -> None:
     """后台调度 LLM 实体抽取（fire-and-forget）。
 
     必须在运行中的事件循环内调用（async 上下文）。
+
+    用空白 contextvars 上下文创建任务：本函数常在 Agent tool 内被调用，若继承
+    LangChain 的 `var_child_runnable_config`，抽取那次 LLM 调用会成为主 run 的子
+    run，它的 `on_chat_model_stream` 会冒泡进主 Agent 的 astream_events，被当成
+    主回复的 delta 发给前端（subagent_manager 踩过同一个坑）。
     """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(_bg_extract_and_save(content, doc_path))
+    loop.create_task(
+        _bg_extract_and_save(content, doc_path),
+        context=contextvars.Context(),
+    )
 
 
 async def memoryListTool(scope: str = "") -> str:
