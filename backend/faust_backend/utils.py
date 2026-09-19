@@ -170,7 +170,7 @@ class DownloadTask:
         self.num_threads = num_threads
         self.total_bytes: int = 0
         self.downloaded_bytes: int = 0
-        self.a = threading.Lock()
+        self._lock = threading.Lock()
         self._start_time: float = 0.0
         self._done = False
         self._error: str | None = None
