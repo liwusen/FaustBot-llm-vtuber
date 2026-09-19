@@ -1,0 +1,18 @@
+{
+  "include": ["backend"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    ".runtime",
+    ".nodejs",
+    "frontend",
+    "backend/tts-hub"
+  ],
+  "venvPath": ".",
+  "venv": ".runtime",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingTypeStubs": "none",
+  "reportMissingImports": "error"
+}

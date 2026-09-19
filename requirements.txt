@@ -68,3 +68,7 @@ mcp>=1.28,<2
 winsdk; platform_system == "Windows"
 
 jieba
+
+# 测试框架 (pytest)
+pytest>=9.0
+pytest-asyncio>=1.3
