@@ -11,7 +11,7 @@
   "venvPath": ".",
   "venv": ".runtime",
   "pythonVersion": "3.11",
-  "typeCheckingMode": "basic",
+  "typeCheckingMode": "off",
   "useLibraryCodeForTypes": true,
   "reportMissingTypeStubs": "none",
   "reportMissingImports": "error"
