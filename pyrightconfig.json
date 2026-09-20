@@ -6,7 +6,7 @@
     ".runtime",
     ".nodejs",
     "frontend",
-    "backend/tts-hub"
+    "backend/tts-hub", "**/.*"
   ],
   "venvPath": ".",
   "venv": ".runtime",

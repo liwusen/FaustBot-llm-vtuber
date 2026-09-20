@@ -328,11 +328,11 @@ if "%INSTALL_TORCH%"=="1" (
   if "%SOURCE_MODE%"=="cn" (
     set "TORCH_INDEX_FLAG=-f https://mirrors.aliyun.com/pytorch-wheels/%TORCH_VARIANT%/"
     echo 安装 PyTorch %TORCH_VARIANT% 版（%SOURCE_MODE% 源）...
-    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --no-index --user
+    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --no-index
   ) else (
     set "TORCH_INDEX_FLAG=--index-url https://download.pytorch.org/whl/%TORCH_VARIANT%"
     echo 安装 PyTorch %TORCH_VARIANT% 版（%SOURCE_MODE% 源）...
-    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG! --user
+    %PIP_CMD% install torch torchvision torchaudio !TORCH_INDEX_FLAG!
   )
   
   if errorlevel 1 goto fail
@@ -346,8 +346,45 @@ if "%INSTALL_PY_REQ%"=="1" (
     echo .runtime 中没有可用的 pip，请先安装 Python 基础环境。
     goto fail
   )
+  rem 迁移期护栏：.runtime 里没有 pip 认得的 torch，但用户级装了 PyTorch —— 若直接在
+  rem 屏蔽用户级的模式下装 requirements，funasr 会从 PyPI 拉 CPU 版 torch 进 .runtime
+  rem （它优先于用户级目录），GPU 用户会被无声降级。这里要求显式指定变体重建一次。
+  if not exist "%RUNTIME_DIR%\Lib\site-packages\torch-*.dist-info" (
+    set "FAUST_USER_TORCH="
+    if exist "%APPDATA%\Python\Python311\site-packages\torch" set "FAUST_USER_TORCH=1"
+    if exist "%PYTHONUSERBASE%\Python311\site-packages\torch" set "FAUST_USER_TORCH=1"
+    if defined FAUST_USER_TORCH (
+      echo.
+      echo [需要处理] 检测到 PyTorch 只装在用户级 site-packages，.runtime 内没有。
+      echo            直接装 requirements 会把 PyPI 的 CPU 版 torch 装进 .runtime，
+      echo            让你在用的 GPU 版失效。请先显式重建一次 torch：
+      echo                setup-runtime.bat --torch cu128
+      echo            也可用 cu121 / cu130 / cpu。
+      goto fail
+    )
+  )
+  rem 屏蔽用户级 site-packages：否则 pip 会把那里的同名包当成"已满足"，
+  rem 声明的依赖就落不进 .runtime —— 换机器/搬目录后直接 ModuleNotFoundError。
+  set "PYTHONNOUSERSITE=1"
   %PIP_CMD% install -r "%CD%\requirements.txt" -i %PIP_INDEX_URL%
-  if errorlevel 1 goto fail
+  if errorlevel 1 (
+    set "PYTHONNOUSERSITE="
+    goto fail
+  )
+  echo 校验声明的依赖是否都落在 .runtime 内...
+  %PIP_CMD% install -r "%CD%\requirements.txt" -i %PIP_INDEX_URL% --dry-run > "%TEMP%\faust_req_check.txt" 2>&1
+  findstr /C:"Would install" "%TEMP%\faust_req_check.txt" >nul
+  if not errorlevel 1 (
+    echo.
+    echo 依赖校验失败：以下包没有装进 .runtime（多为被用户级 site-packages 顶替）：
+    findstr /C:"Would install" "%TEMP%\faust_req_check.txt"
+    del "%TEMP%\faust_req_check.txt" >nul 2>&1
+    set "PYTHONNOUSERSITE="
+    goto fail
+  )
+  del "%TEMP%\faust_req_check.txt" >nul 2>&1
+  set "PYTHONNOUSERSITE="
+  echo 依赖校验通过。
 )
 
 if "%INSTALL_SYS_NODE%"=="1" (

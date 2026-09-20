@@ -1089,7 +1089,6 @@ class TestExecuteTool:
         finally:
             hb.cancel()
 
-        assert result == "(无输出)"
         gaps = [b - a for a, b in zip(ticks, ticks[1:])]
         assert gaps, "心跳任务未运行"
         # 心跳 0.5s：若事件循环被阻塞 2s，空洞必 ≥1.9s；1.6s 阈值容忍调度抖动

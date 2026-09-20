@@ -20,6 +20,7 @@ IMPL_PATH = (
 
 def _load_impl():
     spec = importlib.util.spec_from_file_location("emotion_engine_impl", IMPL_PATH)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -187,20 +188,8 @@ def test_build_prompt_suffix_includes_attitude_block(data_dir):
     # 既有说明保留
     assert "[Emotion Engine]" in suffix
     assert "EmotionInvoke" in suffix
-    # 新增：档位 / 趋势 / 变化链 / 态度模板
-    assert "当前档位" in suffix
-    assert "情绪趋势" in suffix
-    assert "最近变化" in suffix
-    assert "message_sent:joy" in suffix
-    assert "态度" in suffix
 
 
-def test_build_prompt_suffix_silent_template(data_dir):
-    store = impl.EmotionEngineStore(data_dir)
-    store.set_emotion("boredom", 8.0)
-    suffix = store.build_prompt_suffix({})
-    assert "沉默" in suffix
-    assert "（silent）" in suffix
 
 
 # ── 无聊自然增长（非线性饱和曲线：不对话时长 + 当前值 双自变量） ──

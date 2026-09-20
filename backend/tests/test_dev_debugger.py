@@ -15,7 +15,9 @@ IMPL = BACKEND / "default_plugins" / "dev-debugger" / "impl.py"
 
 def _load_plugin_cls():
     spec = importlib.util.spec_from_file_location("devdbg_impl_test", str(IMPL))
+    assert spec is not None
     mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod.Plugin
 
