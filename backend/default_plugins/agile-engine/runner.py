@@ -199,7 +199,12 @@ def _wrap_activity(invoker: Callable[..., Any], name: str) -> Callable[..., Any]
 # ─────────────────────────── interval 任务 ───────────────────────────
 
 class IntervalHandle:
-    """每模块 interval 一个 daemon 线程 + 独立 event loop（stop 标志控制停止）。"""
+    """每模块 interval 一个 daemon 线程 + 独立 event loop（stop 标志控制停止）。
+
+    stop() 只负责「请求停止 + 有界等待」：真正的收尾（取消子任务 → 等它们结束 →
+    停 loop）整体在 loop 线程内执行，因此 loop 绝不会在自己还有 pending 任务时被关闭
+    （否则 asyncio 会报 "Task was destroyed but it is pending" 与 coroutine 未曾 await）。
+    """
 
     def __init__(self, name: str, interval: float, invoker: Callable[..., Any]):
         self.name = name
@@ -207,6 +212,8 @@ class IntervalHandle:
         self.invoker = invoker
         self.stop_flag = threading.Event()
         self.loop = asyncio.new_event_loop()
+        self._stop_lock = threading.Lock()
+        self._stopped = False
         self.thread = threading.Thread(
             target=self._run_loop, daemon=True, name=f"agile-interval-{name}"
         )
@@ -217,10 +224,19 @@ class IntervalHandle:
         try:
             self.loop.run_forever()
         finally:
-            try:
-                self.loop.close()
-            except Exception:  # noqa: BLE001
-                pass
+            # 正常路径下 _shutdown 已把任务收干净；仍有 pending 时说明有 hook 卡在同步
+            # 调用里，此时 close() 会留下 "Task was destroyed but it is pending"。
+            pending = [t for t in asyncio.all_tasks(self.loop) if not t.done()]
+            if pending:
+                LM.logger.warning(
+                    "interval[%s] loop 退出时仍有 %d 个任务未结束，跳过 close()",
+                    self.name, len(pending),
+                )
+            else:
+                try:
+                    self.loop.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     def start(self) -> None:
         async def _schedule() -> None:
@@ -237,30 +253,41 @@ class IntervalHandle:
                         pass
         asyncio.run_coroutine_threadsafe(_schedule(), self.loop)
 
+    async def _shutdown(self) -> None:
+        """loop 线程内的收尾：取消子任务 → 等它们真正结束 → 停 loop（顺序不可换）。"""
+        tasks = [t for t in asyncio.all_tasks(self.loop) if t is not asyncio.current_task()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.loop.stop()
+
     def stop(self, timeout: float = 2.0) -> None:
+        """请求停止并等待收尾（幂等，可重复/并发调用）。
+
+        收尾在 loop 线程内完成（取消子任务 → 等它们结束 → 停 loop），本方法只等线程退出：
+        不能等 run_coroutine_threadsafe 的 future —— loop.stop() 会先于它的链式回调执行，
+        future 永远不会 resolve。hook 卡在同步阻塞调用里时不强关 loop，超时只记警告。
+        """
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
         self.stop_flag.set()
-        try:
-            async def _cancel_all() -> None:
-                tasks = [
-                    t for t in asyncio.all_tasks(self.loop)
-                    if t is not asyncio.current_task()
-                ]
-                for t in tasks:
-                    t.cancel()
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            fut = asyncio.run_coroutine_threadsafe(_cancel_all(), self.loop)
+        if not self.loop.is_closed():
+            coro = self._shutdown()
             try:
-                fut.result(timeout=timeout)
-            except Exception:  # noqa: BLE001
-                pass
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        except Exception:  # noqa: BLE001
-            pass
+                asyncio.run_coroutine_threadsafe(coro, self.loop)
+            except RuntimeError as exc:
+                # 与 loop.close() 竞态：显式关闭 coroutine，避免 "never awaited" 泄漏
+                coro.close()
+                LM.logger.warning("interval[%s] 收尾任务未能调度: %s", self.name, exc)
         self.thread.join(timeout=timeout)
+        if self.thread.is_alive():
+            LM.logger.warning(
+                "interval[%s] 在 %.1fs 内未收尾完毕（hook 可能在同步阻塞），"
+                "将在当前任务结束后自行退出", self.name, timeout,
+            )
 
 
 # ─────────────────────────── hooks 注册 / 逆向清理 ───────────────────────────

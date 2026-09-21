@@ -210,6 +210,46 @@ def get_agile_module():
 
 
 @pytest.mark.asyncio
+async def test_interval_stop_with_blocking_hook_closes_cleanly(agile_env):
+    """回归：hook 在 loop 线程里同步阻塞时，stop() 不得关掉还有 pending 任务的 loop。
+
+    旧实现在收尾等待超时后无条件 loop.stop()，loop 随即被 close()，
+    于是取消任务从未被 await（"coroutine ... was never awaited"）并在销毁时
+    留下 "Task was destroyed but it is pending"；重复 stop() 还会再泄漏一个。
+    """
+    import gc
+    import warnings
+
+    async def blocking_hook():
+        time.sleep(0.6)  # 模拟模块 hook 内的同步阻塞 I/O（urllib/subprocess）
+
+    handle = runner.IntervalHandle("blocking", 0.05, blocking_hook)
+    handle.start()
+    await asyncio.sleep(0.3)  # 确保正卡在阻塞调用中
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        handle.stop(timeout=0.2)  # 故意让收尾等待超时
+        handle.thread.join(5.0)
+        gc.collect()
+        await asyncio.sleep(0.1)
+        gc.collect()
+
+    leaked = [str(w.message) for w in caught if "never awaited" in str(w.message)]
+    assert leaked == [], f"stop() 泄漏了未收尾的 coroutine: {leaked}"
+    assert not handle.thread.is_alive()
+    # 任务真正结束后 loop 才关闭（而不是带着 pending 任务被 close）
+    assert handle.loop.is_closed()
+
+    # 幂等：重复 stop() 不产生额外副作用
+    with warnings.catch_warnings(record=True) as caught_again:
+        warnings.simplefilter("always")
+        handle.stop(timeout=0.2)
+        gc.collect()
+    assert [str(w.message) for w in caught_again if "never awaited" in str(w.message)] == []
+
+
+@pytest.mark.asyncio
 async def test_error_module_isolated(agile_env):
     mods_dir = agile_env["mods_dir"]
     (mods_dir / "bad.py").write_text("this is not python {{{", encoding="utf-8")

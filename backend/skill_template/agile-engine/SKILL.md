@@ -117,6 +117,8 @@ def get_agile_module():
 
 Hook 函数**签名中类型注解为 `AgileContext` 的参数**（任意参数名）会被自动注入 agile 实例。同步/异步函数均支持，无需手动 await 判断。
 
+**interval hook 跑在模块专属的 event loop 线程里**：hook 内做同步阻塞调用（`urllib.request.urlopen`、`subprocess.run`、`time.sleep`、`requests` 等）会把该 loop 卡住 —— 期间该模块的其它定时任务全停，模块卸载时的取消/收尾也要等它返回（引擎只等 2 秒就记警告放行，之后 loop 会在 hook 结束后自行退出）。需要网络/子进程的 hook 请自设短超时，或改用 `asyncio.to_thread(...)` 把阻塞调用挪出 loop 线程。
+
 ```python
 def state(_path, agile: AgileContext):       # 同时拿到 path 和 agile
     ...
