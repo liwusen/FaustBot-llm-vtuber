@@ -174,14 +174,14 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     if (window.nimble && window.nimble.callbackId === callbackId) window.nimble = null;
   }
 
-  function closeWindowFn(callbackId, notifyBackend = true, reason = 'closed_locally') {
+  function closeWindowFn(callbackId, notifyBackend = true, reason = 'closed_locally', byAgent = false) {
     removeWindow(callbackId);
     pendingNimbleMessages.delete(callbackId);
     if (!notifyBackend) return;
     fetch(closeEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_id: callbackId, reason }),
+      body: JSON.stringify({ callback_id: callbackId, reason, by_agent: byAgent }),
     }).catch((e) => console.warn('nimble close notify failed', e));
   }
 
@@ -191,7 +191,8 @@ export function initNimbleWindows({ messageEndpoint, closeEndpoint, widgetManage
     const args = message.args || {};
     switch (message.command) {
       case 'close-window':
-        closeWindowFn(callbackId, true, 'closed_by_agent');
+        // by_agent=true：关闭由 AI 自己发起，后端不应再补一条 trigger 唤醒它
+        closeWindowFn(callbackId, true, 'closed_by_agent', true);
         return true;
       case 'set-scale': {
         const scale = Number(args.scale);

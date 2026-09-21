@@ -57,6 +57,17 @@ write("faustbot://nimble/{callback_id}/console", '{"type":"move","pos":[1,1]}')
 - `{"type":"command","command":"set-scale","args":{"scale":1.2}}` — 设置缩放
 - `{"type":"command","command":"set-coord","args":{"x":0.5,"y":0.5}}` — 设置屏幕坐标（0~1）
 
+## 2.1 关闭窗口
+
+两种等价方式，任选其一：
+
+- 工具：`closeNimbleWindowTool(callback_id="nimble_xxx")` — 直接关闭并清理 trigger 与 VFS 节点；
+- 命令：`write("faustbot://nimble/{callback_id}/console", '{"type":"command","command":"close-window"}')`。
+
+**你自己关掉的窗口不会再唤醒你**（不会有"窗口已关闭"的 trigger），所以关闭前该说的话要说完。
+反之，用户点右上角 × 关闭窗口时会唤醒你一次（payload 为 `{"type":"window-closed","reason":"closed_by_user"}`），
+此时 console 节点已被删除，你只需知道"窗口没了"，不必再去读 console。
+
 ## 3. 对弈游戏协议（模板已实现）
 
 ### 3.1 棋类（三子棋 / 五子棋）

@@ -132,6 +132,7 @@ async def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_te
         - `{"type":"command","command":"close-window","args":{}}` — 关闭窗口；
         - `{"type":"command","command":"set-scale","args":{"scale":1.2}}` — 设置缩放；
         - `{"type":"command","command":"set-coord","args":{"x":0.5,"y":0.5}}` — 设置屏幕坐标（0~1）。
+        你自己关掉的窗口（命令或 closeNimbleWindowTool）不会再唤醒你；用户手动关闭会唤醒你一次。
 
         HTML 元素上添加 class="nimble-pass-through" 可让该区域在点击穿透模式下不阻挡桌面操作，
         适合全屏叠加（setFullscreen(true)）中的背景装饰、文字显示等非交互区域。
@@ -208,6 +209,8 @@ async def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent
         主动关闭一个已存在的灵动交互窗口，并清理其关联的 trigger 与 VFS 通信节点
         （faustbot://nimble/{callback_id}/ 目录会被删除）。
         当你确认这个窗口已不再需要，或者任务已经结束、用户已取消时，应调用此工具清理资源。
+        这是"你自己关的窗口"：不会再产生 trigger 唤醒你（用户手动点 × 关闭才会唤醒你），
+        所以关闭前该对用户说的话要先说完。
     Args:
         callback_id (str): 需要关闭的灵动窗口 callback_id。
         reason (str): 关闭原因。
@@ -215,7 +218,7 @@ async def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent
         str: 关闭结果。
     """
     try:
-        session = nimble.finalize_close(callback_id, reason=reason)
+        session = await nimble.finalize_close(callback_id, reason=reason)
         if not session:
             return f"未找到 callback_id={callback_id} 对应的灵动窗口。"
         return f"灵动窗口已关闭，callback_id={callback_id}"

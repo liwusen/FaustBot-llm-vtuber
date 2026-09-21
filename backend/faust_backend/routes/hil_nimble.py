@@ -73,22 +73,27 @@ async def nimble_message_post(payload: dict):
 async def nimble_close_post(payload: dict):
     callback_id = None
     reason = "closed_by_user"
+    by_agent = False
     if isinstance(payload, dict):
         callback_id = payload.get("callback_id")
         reason = payload.get("reason") or reason
+        by_agent = bool(payload.get("by_agent"))
     if not callback_id:
         return {"error": "no callback_id provided"}
     session = await nimble.finalize_close(callback_id, reason=reason)
     if not session:
         return {"error": f"unknown callback_id: {callback_id}"}
 
-    trigger_manager.append_trigger({
-        "id": f"nimble_closed::{callback_id}",
-        "type": "event",
-        "event_name": "nimble_message",
-        "callback_id": callback_id,
-        "payload": {"payload": {"type": "window-closed", "reason": reason}},
-        "recall_description": f"灵动窗口 {callback_id} 已被关闭（{reason}）。",
-        "lifespan": 7200,
-    })
+    # AI 主动关闭（console 保留命令）不该再 append trigger：它自己刚关掉窗口，
+    # 唤醒只会让它读到已关闭的 console。用户点 × 关闭照旧唤醒。
+    if not by_agent:
+        trigger_manager.append_trigger({
+            "id": f"nimble_closed::{callback_id}",
+            "type": "event",
+            "event_name": "nimble_message",
+            "callback_id": callback_id,
+            "payload": {"payload": {"type": "window-closed", "reason": reason}},
+            "recall_description": f"灵动窗口 {callback_id} 已被关闭（{reason}）。",
+            "lifespan": 7200,
+        })
     return {"status": "closed", "callback_id": callback_id}

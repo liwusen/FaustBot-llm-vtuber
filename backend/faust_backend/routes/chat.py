@@ -687,12 +687,20 @@ async def command_websocket(websocket: WebSocket):
                     callback_id = task.get("callback_id")
                     if ttype == "event" and task.get("event_name") == "nimble_message" and callback_id:
                         msg_payload = (task.get("payload") or {}).get("payload")
-                        trigger_text = (
-                            f"<Trigger>灵动交互窗口消息。callback_id={callback_id}，"
-                            f"payload={json.dumps(msg_payload, ensure_ascii=False)}。"
-                            f"完整对话记录在 faustbot://nimble/{callback_id}/console，"
-                            f"如需回复请用 write 工具向该 console 路径写入消息。"
-                        )
+                        if isinstance(msg_payload, dict) and msg_payload.get("type") == "window-closed":
+                            # 关闭时 console 节点已随会话销毁，不能再让 Agent 去读
+                            trigger_text = (
+                                f"<Trigger>灵动交互窗口 {callback_id} 已被用户关闭"
+                                f"（reason={msg_payload.get('reason')}）。窗口与 console 节点已销毁，"
+                                f"不要再读写 faustbot://nimble/{callback_id}/console；如需继续互动请重新创建窗口。"
+                            )
+                        else:
+                            trigger_text = (
+                                f"<Trigger>灵动交互窗口消息。callback_id={callback_id}，"
+                                f"payload={json.dumps(msg_payload, ensure_ascii=False)}。"
+                                f"完整对话记录在 faustbot://nimble/{callback_id}/console，"
+                                f"如需回复请用 write 工具向该 console 路径写入消息。"
+                            )
                     elif ttype == "event" and task.get("event_name") == "blive_danmaku":
                         payload = task.get("payload") or {}
                         uname = payload.get("uname", "匿名")
