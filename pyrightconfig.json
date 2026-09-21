@@ -14,5 +14,11 @@
   "typeCheckingMode": "off",
   "useLibraryCodeForTypes": true,
   "reportMissingTypeStubs": "none",
-  "reportMissingImports": "error"
+  "reportMissingImports": "error",
+  "executionEnvironments": [
+    {
+      "root": "backend/tests",
+      "extraPaths": ["backend", "backend/default_plugins/agile-engine"]
+    }
+  ]
 }
