@@ -95,15 +95,3 @@ def refresh_runtime_paths() -> None:
     get_memory(refresh=True)
 
 
-def _run_async_in_thread(coro) -> None:
-    def runner():
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(coro)
-        finally:
-            try:
-                loop.close()
-            except Exception:
-                pass
-    threading.Thread(target=runner, daemon=True).start()

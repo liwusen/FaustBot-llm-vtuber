@@ -4,7 +4,7 @@ import json
 
 from langchain.tools import tool
 
-from faust_backend.tools._registry import register, _run_async_in_thread
+from faust_backend.tools._registry import register
 import faust_backend.events as events
 import faust_backend.backend2front as backend2frontend
 

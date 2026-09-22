@@ -3,7 +3,6 @@ from faust_backend.tools._registry import (
     get_tools_for_agent,
     refresh_runtime_paths,
     _tool_func_name,
-    _run_async_in_thread,
     toollist,
     ORIGINAL_TOOL_FUNCS,
     STARTED,
