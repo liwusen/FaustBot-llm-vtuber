@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from os.path import join as pjoin
 import faust_backend.config_loader as conf
 import faust_backend.admin_runtime as admin_runtime
+import faust_backend.character_card as character_card
 from faust_backend.runtime import state
 from faust_backend.runtime.lifecycle import rebuild_runtime
 
@@ -21,6 +22,40 @@ async def admin_create_agent(payload: dict):
     template_agent = (payload or {}).get("template_agent")
     detail = admin_runtime.create_agent(agent_name, template_agent=template_agent)
     return {"status": "ok", "detail": detail}
+
+
+def _require_card_path(payload: dict) -> str:
+    card_path = str((payload or {}).get("card_path", "") or "").strip()
+    if not card_path:
+        raise HTTPException(status_code=400, detail="缺少 card_path")
+    return card_path
+
+
+@router.post("/faust/admin/agents/parse-card")
+async def admin_parse_character_card(payload: dict):
+    """只读预览角色卡内容，供前端确认目录名后再导入。"""
+    card_path = _require_card_path(payload)
+    try:
+        source = character_card.load_card_file(card_path)
+    except character_card.CardParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok", **character_card.card_summary(source)}
+
+
+@router.post("/faust/admin/agents/import-card")
+async def admin_import_character_card(payload: dict):
+    body = payload or {}
+    card_path = _require_card_path(body)
+    agent_name = str(body.get("agent_name", "") or "").strip() or None
+    try:
+        detail = await admin_runtime.import_character_card(card_path, agent_name=agent_name)
+    except character_card.CardParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"status": "ok", **detail}
 
 
 @router.get("/faust/admin/agents/{agent_name}")

@@ -13,11 +13,12 @@ contextBridge.exposeInMainWorld('api', {
   resolveFrontendAssetPath: (relativePath) => ipcRenderer.invoke('resolve-frontend-asset-path', String(relativePath || '')),
   getFaustbotRoot: () => ipcRenderer.invoke('get-faustbot-root'),
   restartFaust: () => ipcRenderer.invoke('restart-faust'),
-  configRequest: (method, path, payload, query) => ipcRenderer.invoke('config-api', {
+  configRequest: (method, path, payload, query, options) => ipcRenderer.invoke('config-api', {
     method: String(method || 'GET'),
     path: String(path || ''),
     payload: payload ?? null,
     query: query ?? null,
+    timeoutMs: (options && Number(options.timeoutMs) > 0) ? Number(options.timeoutMs) : null,
   }),
   configOpenFile: (options) => ipcRenderer.invoke('config-dialog-open-file', options || {}),
   configOpenDirectory: (options) => ipcRenderer.invoke('config-dialog-open-directory', options || {}),

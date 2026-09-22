@@ -90,8 +90,8 @@ function hideBanner() {
   els.banner.classList.add("hidden");
 }
 
-function cfgApi(method, path, payload, query) {
-  if (window.api && typeof window.api.configRequest === "function") return window.api.configRequest(method, path, payload, query);
+function cfgApi(method, path, payload, query, options) {
+  if (window.api && typeof window.api.configRequest === "function") return window.api.configRequest(method, path, payload, query, options);
   return Promise.reject(new Error("window.api.configRequest 未实现"));
 }
 

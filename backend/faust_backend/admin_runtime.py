@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import re
@@ -9,6 +10,9 @@ from datetime import datetime
 
 import faust_backend.config_loader as conf
 import faust_backend.backend2front as backend2frontend
+from faust_backend.logger import get_logger
+
+log = get_logger("faust.admin_runtime")
 
 BACKEND_ROOT = Path(conf.CONFIG_ROOT)
 PROJECT_ROOT = Path(conf.PROJECT_ROOT)
@@ -39,6 +43,8 @@ OBSOLETE_PUBLIC_CONFIG_KEYS = {
 AGENT_TEMPLATE_FILES = ["AGENT.md", "ROLE.md", "COREMEMORY.md", "TASK.md"]
 AGENT_EDITABLE_FILES: list[str] = []
 AGENT_CORE_FILES = AGENT_TEMPLATE_FILES + AGENT_EDITABLE_FILES
+# 只有 faust 自身的核心文件随 agents_template/faust/ 同步（见 sync_template_files）；
+# 其它 agent 的四文件在创建时初始化一次，之后归该 agent 所有（角色卡导入 / UI 编辑均生效）。
 AGENT_SYNC_FILES = AGENT_CORE_FILES
 PUBLIC_CONFIG_DEFAULTS = {
     "EMBED_API_BASE": "https://www.dmxapi.cn/v1",
@@ -156,6 +162,8 @@ def _sanitize_agent_name(name: str) -> str:
     candidate = (name or "").strip()
     if not candidate:
         raise ValueError("agent 名称不能为空")
+    if candidate in (".", ".."):
+        raise ValueError("agent 名称不能是 . 或 ..")
     if not _AGENT_NAME_RE.match(candidate):
         raise ValueError("agent 名称只能包含字母、数字、下划线、横线和点")
     return candidate
@@ -331,8 +339,14 @@ def _ensure_agent_core_files(agent_dir: Path, template: Dict[str, str] | None = 
 def sync_template_files(agent_name: str) -> Dict[str, bool]:
     """Sync template-bound files from agents_template/faust/ to the agent directory.
 
+    仅对 faust 自身生效：faust 的核心文件是只读模板，随源码更新。
+    其它 agent（含角色卡导入创建的角色）的四文件在创建时初始化一次，之后归该 agent 所有，
+    否则卡片人设会在每次运行时重建时被浮士德模板覆盖。
+
     Returns {filename: updated} for each file.
     """
+    if agent_name != "faust":
+        return {filename: False for filename in AGENT_SYNC_FILES}
     agent_dir = _agent_dir(agent_name)
     agent_dir.mkdir(parents=True, exist_ok=True)
     template_dir = Path(conf.PROJECT_ROOT) / "agents_template" / "faust"
@@ -416,6 +430,141 @@ def create_agent(agent_name: str, template_agent: str | None = None) -> Dict[str
 
     _ensure_agent_core_files(target_dir, template_content)
     return get_agent_detail(agent_name)
+
+
+_MAX_REPORTED_LOREBOOK_ERRORS = 20
+
+
+def _lorebook_node_path(book_name: str, entry_name: str, index: int) -> str:
+    """世界书条目在目标 agent 记忆库中的路径。"""
+
+    def _segment(value: str, fallback: str) -> str:
+        cleaned = re.sub(r"[/\\:]", "-", str(value or "")).strip().strip(".")
+        return cleaned or fallback
+
+    return f"/角色卡/{_segment(book_name, '未命名')}/{_segment(entry_name, f'entry-{index}')}.md"
+
+
+def _lorebook_description(entry) -> str:
+    parts: list[str] = []
+    if entry.keys:
+        parts.append(f"触发词: {', '.join(entry.keys)}")
+    if entry.comment:
+        parts.append(entry.comment)
+    return " ｜ ".join(parts)
+
+
+async def import_character_card(card_path: str, agent_name: str | None = None) -> Dict[str, Any]:
+    """从 SillyTavern 角色卡（PNG / JSON）创建一个新 agent。
+
+    - AGENT.md / TASK.md 恒为 agents_template/faust/ 的模板（卡片 system_prompt 不会进入 AGENT.md）
+    - ROLE.md / COREMEMORY.md 由卡片渲染生成
+    - 原始卡片存档到 agents/<name>/card.json
+    - 立绘写为目标 agent 记忆库附件，世界书逐条写为记忆节点
+    """
+    from faust_backend import character_card
+    from faust_backend.memory.store import GraphStore
+
+    source = character_card.load_card_file(card_path)
+    card = source.card
+    name = _sanitize_agent_name(agent_name or character_card.suggest_agent_name(card))
+    target_dir = _agent_dir(name)
+    if target_dir.exists():
+        raise FileExistsError(f"agent 已存在: {name}")
+
+    book = card.book
+    entries = book.entries if book else ()
+    book_name = book.name if book and book.name else card.name
+    enabled_entries = [entry for entry in entries if entry.enabled]
+    lorebook_report: Dict[str, Any] = {
+        "book": book_name if book else "",
+        "total": len(entries),
+        "enabled": len(enabled_entries),
+        "imported": 0,
+        "skipped_disabled": len(entries) - len(enabled_entries),
+        "error_count": 0,
+        "errors": [],
+    }
+    avatar_result: Dict[str, Any] | None = None
+
+    try:
+        _ensure_agent_core_files(target_dir)
+        (target_dir / "ROLE.md").write_text(character_card.render_role_md(card), encoding="utf-8")
+        (target_dir / "COREMEMORY.md").write_text(
+            character_card.render_corememory_md(card), encoding="utf-8"
+        )
+        _write_json(
+            target_dir / "card.json",
+            {
+                "imported_at": datetime.now().isoformat(timespec="seconds"),
+                "source_path": source.source_path,
+                "source_format": source.source_format,
+                "spec": card.spec,
+                "card": card.raw,
+            },
+        )
+
+        if source.image_bytes is not None or enabled_entries:
+            store = GraphStore(name)
+            try:
+                if source.image_bytes is not None:
+                    avatar_path = f"/images/{name}.png"
+                    await store.attachment_write(
+                        avatar_path,
+                        base64.b64encode(source.image_bytes).decode("ascii"),
+                        description=f"角色卡立绘：{card.name}（SillyTavern 卡片导入）",
+                        content_type=source.image_content_type or "image/png",
+                        declared_by="config",
+                    )
+                    avatar_result = {"path": avatar_path}
+                for index, entry in enumerate(enabled_entries, 1):
+                    try:
+                        await store.file_write(
+                            _lorebook_node_path(book_name, entry.name, index),
+                            entry.content,
+                            description=_lorebook_description(entry),
+                            declared_by="config",
+                            tags=list(entry.keys) or None,
+                            index=True,
+                        )
+                        lorebook_report["imported"] += 1
+                    except Exception as exc:
+                        lorebook_report["error_count"] += 1
+                        if len(lorebook_report["errors"]) < _MAX_REPORTED_LOREBOOK_ERRORS:
+                            lorebook_report["errors"].append(f"{entry.name}: {exc}")
+                        log.warning("角色卡世界书条目写入失败 agent=%s entry=%s: %s", name, entry.name, exc)
+            finally:
+                store.close()
+    except Exception:
+        # 导入不完整就不留下半成品 agent 目录，保证用户可以改完配置后重试
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise
+
+    log.info(
+        "角色卡导入完成 agent=%s spec=%s 世界书=%s/%s 错误=%s 立绘=%s",
+        name, card.spec, lorebook_report["imported"], lorebook_report["enabled"],
+        lorebook_report["error_count"], bool(avatar_result),
+    )
+    return {
+        "agent_name": name,
+        "card": {
+            "spec": card.spec,
+            "name": card.name,
+            "creator": card.creator,
+            "character_version": card.character_version,
+            "tags": list(card.tags),
+            "source_format": source.source_format,
+            "source_path": source.source_path,
+        },
+        "files": {
+            "AGENT.md": "template",
+            "ROLE.md": "card",
+            "COREMEMORY.md": "card",
+            "TASK.md": "template",
+        },
+        "avatar": avatar_result,
+        "lorebook": lorebook_report,
+    }
 
 
 def delete_agent(agent_name: str) -> None:

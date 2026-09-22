@@ -1520,7 +1520,8 @@ ipcMain.handle('config-api', async (event, req) => {
   }
 
   const fullUrl = buildBackendUrl(pathValue, query);
-  return requestJson(method, fullUrl, payload);
+  const timeoutMs = Number(req && req.timeoutMs) > 0 ? Number(req.timeoutMs) : 30000;
+  return requestJson(method, fullUrl, payload, timeoutMs);
 });
 
 ipcMain.handle('config-dialog-open-file', async (_event, options) => {

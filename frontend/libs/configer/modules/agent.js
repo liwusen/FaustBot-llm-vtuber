@@ -152,6 +152,7 @@ function renderAgentModule() {
       showBanner("success", `已创建 Agent: ${name.trim()}`);
       refreshModule();
     }),
+    makeButton("从角色卡导入", () => pickAndImportCharacterCard(), "btn btn-secondary"),
     makeButton("切换为当前", async () => {
       if (!state.selectedAgent) return;
       await cfgApi("POST", "/faust/admin/agents/switch", { agent_name: state.selectedAgent });
