@@ -236,6 +236,7 @@ def load_configs():
     global MD_BLOCK_ENABLED
     global AUTO_FORCE_INTERRUPT
     global TTS_CHUNK_IDEAL_TOKENS
+    global PROCESSOR_PRUNE_INTERVAL, PROCESSOR_IDLE_TIMEOUT
     _ensure_private_config_exists()
     with open(CONFIG_FILE_P_PATH, 'r', encoding='utf-8') as f:
         private_config = json.load(f)
@@ -341,6 +342,10 @@ def load_configs():
     AUTO_FORCE_INTERRUPT = bool(config.get('AUTO_FORCE_INTERRUPT', True))
     # TTS 流式分块的理想块长(单位 Token, 10~100): 1字母=0.5 Token, 1汉字=1 Token
     TTS_CHUNK_IDEAL_TOKENS = int(config.get('TTS_CHUNK_IDEAL_TOKENS', 30) or 30)
+    # Processor（子进程计算任务）空闲回收策略，单位秒
+    # PROCESSOR_PRUNE_INTERVAL = 0 表示禁用后台 prune（仍可手动调 admin 接口）
+    PROCESSOR_PRUNE_INTERVAL = float(config.get('PROCESSOR_PRUNE_INTERVAL', 30) or 0)
+    PROCESSOR_IDLE_TIMEOUT = float(config.get('PROCESSOR_IDLE_TIMEOUT', 300) or 0)
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
     return config, private_config
 

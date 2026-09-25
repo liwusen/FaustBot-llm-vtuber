@@ -711,3 +711,88 @@ async def test_config_change_restarts_when_unreferenced(manager_factory):
     assert await lease.invoke({}) == {"config": {"langs": ["ch_sim", "en"]}}
     assert manager.handle("TEST_CONFIG_ECHO").pid != first_pid
     lease.release()
+
+
+# ── Task 8: prune 与后台回收 ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prune_skips_stopped_and_referenced(manager_factory):
+    manager = manager_factory()
+    report = await manager.prune(timeout=0.0, whitelist=["TEST_ECHO"])
+    assert report.items == [{"name": "TEST_ECHO", "action": "skipped", "reason": "already stopped"}]
+
+    lease = await manager.startRequire("TEST_ECHO", requirer="chat")
+    await lease.wait_until_ready(timeout=30)
+    report = await manager.prune(timeout=0.0, whitelist=["TEST_ECHO"])
+    assert report.items[0]["action"] == "skipped"
+    assert "referenced by" in report.items[0]["reason"]
+    assert manager.handle("TEST_ECHO").state == "ACTIVE"
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_prune_respects_idle_timeout_and_stops_when_expired(manager_factory):
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_ECHO", requirer="chat")
+    await lease.wait_until_ready(timeout=30)
+    lease.release()
+
+    report = await manager.prune(timeout=60.0, whitelist=["TEST_ECHO"])
+    assert report.items[0]["action"] == "skipped"
+    assert "idle" in report.items[0]["reason"]
+    assert manager.handle("TEST_ECHO").state == "ACTIVE"
+
+    pid = manager.handle("TEST_ECHO").pid
+    report = await manager.prune(timeout=0.0, whitelist=["TEST_ECHO"])
+    assert report.as_dict()["timeout"] == 0.0
+    assert report.items[0]["action"] == "stopped"
+    snapshot = manager.handle("TEST_ECHO").status()
+    assert snapshot["state"] == "STOPPED"
+    assert snapshot["pid"] is None
+    assert not psutil.pid_exists(int(pid))
+
+
+@pytest.mark.asyncio
+async def test_prune_whitelist_and_unknown_name(manager_factory):
+    from faust_backend.processors.errors import ProcessorNotFoundError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_SLOW", requirer="chat")
+    await lease.wait_until_ready(timeout=30)
+    peer = await manager.startRequire("TEST_SLOW_PEER", requirer="chat")
+    await peer.wait_until_ready(timeout=30)
+    lease.release()
+    peer.release()
+
+    report = await manager.prune(timeout=0.0, whitelist=["TEST_SLOW"])
+    assert [item["name"] for item in report.items] == ["TEST_SLOW"]
+    assert manager.handle("TEST_SLOW").state == "STOPPED"
+    assert manager.handle("TEST_SLOW_PEER").state == "ACTIVE"   # 白名单外的没被动
+
+    with pytest.raises(ProcessorNotFoundError):
+        await manager.prune(timeout=0.0, whitelist=["NOT_REGISTERED"])
+    await manager.stop("TEST_SLOW_PEER")
+
+
+@pytest.mark.asyncio
+async def test_prune_loop_reads_config_and_recycles(manager_factory, monkeypatch):
+    import faust_backend.config_loader as conf
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_ECHO", requirer="chat")
+    await lease.wait_until_ready(timeout=30)
+    lease.release()
+
+    monkeypatch.setattr(conf, "PROCESSOR_PRUNE_INTERVAL", 0.1)
+    monkeypatch.setattr(conf, "PROCESSOR_IDLE_TIMEOUT", 0.0)
+    task = asyncio.create_task(manager.prune_loop())
+    try:
+        for _ in range(50):
+            if manager.handle("TEST_ECHO").state == "STOPPED":
+                break
+            await asyncio.sleep(0.1)
+        assert manager.handle("TEST_ECHO").state == "STOPPED"
+    finally:
+        task.cancel()
+        await task           # prune_loop 自己吞掉 CancelledError 后正常返回（对齐 _plugin_heartbeat_loop 写法）

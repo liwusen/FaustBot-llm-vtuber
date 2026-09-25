@@ -103,3 +103,14 @@ Embedding 模型同样有 Embedding 模型、Embedding 接口地址与 Embedding
 | Edge-tts | 使用 Microsoft Edge API 进行语音生成，无需任何配置，默认选项 | 无（默认） |
 
 > **注释**：FaustBot Cloud 这一项尚不可用，参见 [FaustBot Cloud 仓库](https://github.com/liwusen/FaustBot_Cloud)
+
+## 高级：重计算子进程（Processor）回收
+
+FaustBot 把 VAD、OCR 这类重计算放在独立子进程中运行，空闲时自动回收以释放内存/显存。
+
+| 配置项 | 默认值 | 说明 |
+| ---- | -------- | ------------------------------------------ |
+| `PROCESSOR_PRUNE_INTERVAL` | `30` | 后台回收检查间隔（秒）。设为 `0` 表示禁用后台自动回收 |
+| `PROCESSOR_IDLE_TIMEOUT` | `300` | 空闲超过该秒数且无人引用时回收子进程 |
+
+> 提示：正在被语音识别等功能使用的子进程不会被回收；回收只发生在引用计数归零且请求队列为空的空闲时刻。

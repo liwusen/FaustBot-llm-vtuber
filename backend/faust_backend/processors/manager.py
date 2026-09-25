@@ -70,6 +70,17 @@ class _InvokeJob:
         self.future = future
 
 
+@dataclass
+class PruneReport:
+    """一次 prune 的结果。"""
+
+    timeout: float
+    items: list[dict[str, Any]] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"timeout": self.timeout, "items": [dict(item) for item in self.items]}
+
+
 class ProcessorLease:
     """一次引用。``requirer`` 持有，支持 ``async with``。"""
 
@@ -891,6 +902,73 @@ class ProcessorManager:
     def status(self) -> list[dict[str, Any]]:
         """全部已注册 Processor 的状态快照。"""
         return [self.handle(entry.name).status() for entry in list_processors()]
+
+    async def prune(self, timeout: float = 37.0, whitelist: list[str] | None = None) -> PruneReport:
+        """回收长期空闲的 Processor（回溯式空闲判定）。
+
+        候选集：``whitelist`` 为 None 表示全部已注册 Processor；给定列表时只处理
+        列表内的名字，出现未注册名字抛 ``ProcessorNotFoundError``（不静默忽略）。
+        """
+        if whitelist is None:
+            names = [entry.name for entry in list_processors()]
+        else:
+            names = []
+            for raw in whitelist:
+                names.append(get_processor(str(raw)).name)   # 未注册 → ProcessorNotFoundError
+
+        report = PruneReport(timeout=float(timeout))
+        now = time.time()
+        for name in names:
+            handle = self.handle(name)
+            if handle.state == STATE_STOPPED:
+                report.items.append({"name": name, "action": "skipped", "reason": "already stopped"})
+                continue
+            if handle.refcount > 0:
+                report.items.append(
+                    {"name": name, "action": "skipped", "reason": f"referenced by {handle.holders}"}
+                )
+                continue
+            if handle.busy:
+                report.items.append({"name": name, "action": "skipped", "reason": "requests pending"})
+                continue
+            idle = (now - handle.idle_since) if handle.idle_since is not None else 0.0
+            if idle < report.timeout:
+                report.items.append(
+                    {"name": name, "action": "skipped", "reason": f"idle {idle:.1f}s < {report.timeout:.1f}s"}
+                )
+                continue
+            try:
+                await handle.stop(reason=f"prune: idle {idle:.1f}s >= {report.timeout:.1f}s")
+            except Exception as exc:  # noqa: BLE001 - 单个 Processor 停止失败不影响其它
+                report.items.append({"name": name, "action": "skipped", "reason": f"stop failed: {exc}"})
+                continue
+            report.items.append(
+                {"name": name, "action": "stopped", "reason": f"idle {idle:.1f}s >= {report.timeout:.1f}s"}
+            )
+        return report
+
+    async def prune_loop(self) -> None:
+        """后台回收循环（lifespan 启动；写法对齐 ``_plugin_heartbeat_loop``）。
+
+        每轮读一次配置，因此改配置无需重启后端：
+        ``PROCESSOR_PRUNE_INTERVAL`` 为 0 表示禁用（仍睡眠，等待配置热改）。
+        """
+        while True:
+            try:
+                interval = float(conf.PROCESSOR_PRUNE_INTERVAL or 0)
+                if interval <= 0:
+                    await asyncio.sleep(30.0)
+                    continue
+                await asyncio.sleep(interval)
+                report = await self.prune(timeout=float(conf.PROCESSOR_IDLE_TIMEOUT or 0))
+                stopped = [item["name"] for item in report.items if item["action"] == "stopped"]
+                if stopped:
+                    log.info("Processor 空闲回收: %s", stopped)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:  # noqa: BLE001 - 循环必须存活
+                log.error("Processor prune 循环错误: %s", exc)
+                await asyncio.sleep(1.0)
 
     async def stop(self, name: str) -> None:
         """管理用途：忽略引用计数强制停止（写日志说明）。"""
