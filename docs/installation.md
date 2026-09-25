@@ -10,7 +10,10 @@
 
 请到这个链接下载整合包
 
-[下载链接--faustbot.zip](https://github.com/liwusen/FaustBot-llm-vtuber/releases/latest)
+[下载链接-faust-xxxx.zip](https://github.com/liwusen/FaustBot-llm-vtuber/releases/latest)
+
+注意:请不要下载without-runtime版本
+
 
 建议解压到磁盘根目录,比如D:/
 
