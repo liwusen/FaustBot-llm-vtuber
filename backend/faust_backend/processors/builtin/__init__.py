@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .ocr import OcrProcessor
 from .vad import VadProcessor
 
-__all__ = ["VadProcessor"]
+__all__ = ["OcrProcessor", "VadProcessor"]

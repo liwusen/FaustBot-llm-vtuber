@@ -869,3 +869,91 @@ def test_vad_stop_drops_model_reference(tmp_path):
     processor._model = object()
     processor.stop(ctx)
     assert processor._model is None
+
+
+# ── Task 11: 内置 OCR Processor ─────────────────────────────
+
+
+def test_ocr_normalize_config_defaults_and_overrides():
+    from faust_backend.processors.builtin.ocr import DEFAULT_LANGS, normalize_config
+
+    assert normalize_config({}) == (DEFAULT_LANGS, False)
+    assert normalize_config({"langs": ["en"], "gpu": True}) == (["en"], True)
+    assert normalize_config({"langs": "ch_sim,en"}) == (["ch_sim", "en"], False)
+
+
+def test_ocr_fingerprint_tracks_langs():
+    from faust_backend.processors.builtin.ocr import OcrProcessor
+
+    processor = OcrProcessor()
+    assert processor.setup_fingerprint({"langs": ["en", "ch_sim"]}) == processor.setup_fingerprint(
+        {"langs": ["ch_sim", "en"]}
+    )
+    assert processor.setup_fingerprint({"langs": ["en"]}) != processor.setup_fingerprint(
+        {"langs": ["ch_sim", "en"]}
+    )
+
+
+def test_ocr_invoke_shapes_with_fake_reader(tmp_path):
+    import faust_backend.processors.builtin.ocr as ocr_module
+
+    class _FakeReader:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def readtext(self, image, detail=1):
+            self.calls.append((image.shape, detail))
+            if detail <= 0:
+                return ["Hello", "World"]
+            return [
+                ([[10, 10], [30, 10], [30, 30], [10, 30]], "Hello", 0.93),
+                ([[0, 0], [5, 0], [5, 5], [0, 5]], "noise", 0.11),
+            ]
+
+    ctx = ProcessorContext(name="OCR", data_dir=tmp_path, config={}, log_sink=lambda level, msg: None)
+    processor = ocr_module.OcrProcessor()
+    reader = _FakeReader()
+    processor._reader = reader
+
+    image = np.zeros((20, 40, 3), dtype=np.uint8)
+    items = processor.invoke(ctx, {"image": image, "detail": 1})
+    assert items == [
+        {"text": "Hello", "confidence": 0.93, "box": [[10.0, 10.0], [30.0, 10.0], [30.0, 30.0], [10.0, 30.0]]},
+        {"text": "noise", "confidence": 0.11, "box": [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [0.0, 5.0]]},
+    ]
+    assert reader.calls[0] == ((20, 40, 3), 1)
+
+    assert processor.invoke(ctx, {"image": image, "detail": 0}) == ["Hello", "World"]
+
+    rgba = np.zeros((20, 40, 4), dtype=np.uint8)
+    processor.invoke(ctx, {"image": rgba, "detail": 1})
+    assert reader.calls[-1][0] == (20, 40, 3)          # RGBA 被裁到 RGB
+
+    with pytest.raises(ValueError):
+        processor.invoke(ctx, {"image": np.zeros((20, 40), dtype=np.uint8)})
+
+    with pytest.raises(RuntimeError):
+        ocr_module.OcrProcessor().invoke(ctx, {"image": image})
+
+
+def test_ocr_stop_clears_reader_and_empties_cuda_cache(tmp_path, monkeypatch):
+    import faust_backend.processors.builtin.ocr as ocr_module
+
+    calls: list[str] = []
+
+    class _FakeTorch:
+        class cuda:
+            @staticmethod
+            def empty_cache() -> None:
+                calls.append("empty_cache")
+
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch)
+
+    ctx = ProcessorContext(name="OCR", data_dir=tmp_path, config={}, log_sink=lambda level, msg: None)
+    processor = ocr_module.OcrProcessor()
+    processor._reader = object()
+    processor._gpu = True
+    processor.stop(ctx)
+
+    assert processor._reader is None
+    assert calls == ["empty_cache"]
