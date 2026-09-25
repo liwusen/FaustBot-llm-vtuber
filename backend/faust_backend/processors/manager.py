@@ -849,6 +849,22 @@ class ProcessorManager:
         handle = self.handle(name)
         return ProcessorLease(handle.name, str(requirer), handle, config)
 
+    async def startRequire(
+        self, name: str, requirer: str, *, config: dict[str, Any] | None = None
+    ) -> ProcessorLease:
+        """立即 acquire 并返回已持有的 lease（等价于 ``await require(...).acquire()``）。"""
+        lease = self.require(name, requirer, config=config)
+        return await lease.acquire()
+
+    async def endRequire(self, name: str, requirer: str) -> None:
+        """释放该 requirer 最早的一个未释放 lease；无匹配抛 ``ProcessorLeaseError``。"""
+        handle = self.handle(name)
+        for lease in list(handle.leases):
+            if lease.requirer == str(requirer):
+                lease.release()
+                return
+        raise ProcessorLeaseError(f"{name} 没有属于 {requirer} 的未释放引用")
+
     def status(self) -> list[dict[str, Any]]:
         """全部已注册 Processor 的状态快照。"""
         return [self.handle(entry.name).status() for entry in list_processors()]

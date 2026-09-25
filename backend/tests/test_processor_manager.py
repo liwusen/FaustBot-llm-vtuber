@@ -400,3 +400,73 @@ async def test_shutdown_stops_all_workers(manager_factory):
     assert snapshot["state"] == "STOPPED"
     assert snapshot["pid"] is None
     assert not psutil.pid_exists(int(pid))
+
+
+# ── Task 6: 引用计数 ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_two_requirers_count_references(manager_factory):
+    manager = manager_factory()
+    first = await manager.startRequire("TEST_ECHO", requirer="chat")
+    second = await manager.startRequire("TEST_ECHO", requirer="chat")
+    third = await manager.startRequire("TEST_ECHO", requirer="ui")
+
+    handle = manager.handle("TEST_ECHO")
+    assert handle.refcount == 3
+    assert handle.holders == {"chat": 2, "ui": 1}
+    # startRequire 不等待就绪；三次调用复用同一次启动（同一个 _start_task）
+    start_task = handle._start_task
+    assert start_task is not None
+    await first.wait_until_ready(timeout=30)
+    assert handle.state == "ACTIVE"
+    assert handle._start_task is start_task
+
+    await manager.endRequire("TEST_ECHO", "chat")
+    await manager.endRequire("TEST_ECHO", "chat")
+    await manager.endRequire("TEST_ECHO", "ui")
+    assert handle.refcount == 0
+    assert handle.holders == {}
+    assert handle.idle_since is not None
+
+
+@pytest.mark.asyncio
+async def test_end_require_without_match_raises(manager_factory):
+    from faust_backend.processors.errors import ProcessorLeaseError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_ECHO", requirer="chat")
+    with pytest.raises(ProcessorLeaseError):
+        await manager.endRequire("TEST_ECHO", "nobody")
+    assert manager.handle("TEST_ECHO").refcount == 1
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_lease_lifecycle_errors(manager_factory):
+    from faust_backend.processors.errors import ProcessorLeaseError
+
+    manager = manager_factory()
+    lease = manager.require("TEST_ECHO", requirer="chat")
+    with pytest.raises(ProcessorLeaseError):
+        lease.release()                      # 未 acquire 就 release
+
+    await lease.acquire()
+    with pytest.raises(ProcessorLeaseError):
+        await lease.acquire()                # 重复 acquire
+    lease.release()
+    with pytest.raises(ProcessorLeaseError):
+        lease.release()                      # 重复 release
+    with pytest.raises(ProcessorLeaseError):
+        await lease.invoke({"n": 1})         # 已 release 的 lease 不能再用
+
+
+@pytest.mark.asyncio
+async def test_async_with_releases_reference(manager_factory):
+    manager = manager_factory()
+    async with manager.require("TEST_ECHO", requirer="vad_ws:1") as lease:
+        await lease.wait_until_ready(timeout=30)
+        assert manager.handle("TEST_ECHO").holders == {"vad_ws:1": 1}
+    handle = manager.handle("TEST_ECHO")
+    assert handle.refcount == 0
+    assert handle.state == "ACTIVE"          # 引用归零不自动停，交给 prune
