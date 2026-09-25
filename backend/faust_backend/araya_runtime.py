@@ -40,6 +40,8 @@ class ArayaRuntime:
         self._run_lock: asyncio.Lock | None = None
         self._last_main_activity_ts = time.time()
         self._target_agent_name = self._resolve_target_agent_name()
+        # 本轮 run 的目标 Agent 快照（run 期间不变，工具的记忆库绑定取自它）
+        self._run_target_agent: str | None = None
         self.paths = self._build_paths()
         self._chat_model: ChatOpenAI | None = None
         self._agent: Any = None
@@ -61,9 +63,35 @@ class ArayaRuntime:
             return "faust"
         return current
 
+    def _run_in_progress(self) -> bool:
+        return bool(self._run_lock is not None and self._run_lock.locked())
+
     def refresh_target_agent(self) -> str:
+        """重解析维护目标 Agent；run 进行中保持本轮快照，不中途改目标。
+
+        前端每次请求都会带 `refresh=True` 调到这里，若运行中改写
+        `_target_agent_name`，本轮的工具绑定、prompt 与日志就会指向不同 Agent。
+        """
+        if self._run_in_progress():
+            return self.run_target_agent
         self._target_agent_name = self._resolve_target_agent_name()
         return self._target_agent_name
+
+    @property
+    def run_target_agent(self) -> str:
+        """本轮 run 的目标 Agent（无 run 时即当前维护目标）。
+
+        以 `_run_lock` 是否持锁判断「run 进行中」：run 被提前关闭（SSE 断连 →
+        `aclose()`）时锁同样释放，快照随之失效，不会把旧目标粘住。
+        """
+        if self._run_in_progress():
+            return self._run_target_agent or self._target_agent_name
+        return self._target_agent_name
+
+    @staticmethod
+    def maintenance_watermark(state: dict[str, Any]) -> float:
+        """changed-nodes 的窗口起点：上次成功维护的结束时间（无则 0）。"""
+        return float(state.get("last_maintenance_ts") or 0.0)
 
     def mark_main_agent_activity(self) -> float:
         now = time.time()
@@ -102,6 +130,7 @@ class ArayaRuntime:
                 "idle_minutes": float(conf.ARAYA_IDLE_MINUTES or 30),
                 "last_main_activity_ts": self._last_main_activity_ts,
                 "last_trigger_ts": 0.0,
+                "last_maintenance_ts": 0.0,
                 "last_run_status": "idle",
                 "last_error": "",
                 "target_agent": self._target_agent_name,
@@ -117,6 +146,9 @@ class ArayaRuntime:
         data.setdefault("idle_minutes", float(conf.ARAYA_IDLE_MINUTES or 30))
         data.setdefault("last_main_activity_ts", self._last_main_activity_ts)
         data.setdefault("last_trigger_ts", 0.0)
+        # 老 state 没有维护水印：用上次触发时间兜底，否则升级后第一轮会把全库
+        # 当成增量（1300+ 节点）灌进上下文。
+        data.setdefault("last_maintenance_ts", float(data.get("last_trigger_ts") or 0.0))
         data.setdefault("last_run_status", "idle")
         data.setdefault("last_error", "")
         data.setdefault("target_agent", self._target_agent_name)
@@ -226,23 +258,34 @@ class ArayaRuntime:
         while not (self._stop_event and self._stop_event.is_set()):
             try:
                 await asyncio.sleep(5)
-                if not self.should_trigger():
-                    continue
-                # 已有 run 正在执行时不重复触发（避免 5 秒轮询叠起多个并发 run）
-                if self._run_lock is not None and self._run_lock.locked():
-                    continue
-                log.info("Araya loop decided to trigger a run based on idle time")
-                # 抢占 last_trigger_ts：立即标记"已触发"，防止下次轮询(5秒后)再次命中
-                state = self._load_state()
-                state["last_trigger_ts"] = time.time()
-                self._save_state(state)
-                asyncio.create_task(self.run_once_async(reason="idle"))
+                await self._trigger_idle_run()
             except Exception as exc:
                 log.error("_loop 异常: %s", exc)
                 state = self._load_state()
                 state["last_run_status"] = "error"
                 state["last_error"] = str(exc)
                 self._save_state(state)
+
+    async def _trigger_idle_run(self) -> float | None:
+        """按空闲策略触发一轮维护，返回本轮窗口起点（未触发则 None）。
+
+        窗口起点必须在抢占 `last_trigger_ts` 之前取：抢占会把 last_trigger_ts 写成
+        "现在"，而它同时被 prompt 当作 changed-nodes 的 since_ts（旧实现因此每轮
+        窗口恒为 0 秒、changed-nodes 永远返回空）。
+        """
+        if not self.should_trigger():
+            return None
+        # 已有 run 正在执行时不重复触发（避免 5 秒轮询叠起多个并发 run）
+        if self._run_lock is not None and self._run_lock.locked():
+            return None
+        log.info("Araya loop decided to trigger a run based on idle time")
+        state = self._load_state()
+        window_start_ts = self.maintenance_watermark(state)
+        # 抢占 last_trigger_ts：立即标记"已触发"，防止下次轮询(5秒后)再次命中
+        state["last_trigger_ts"] = time.time()
+        self._save_state(state)
+        asyncio.create_task(self.run_once_async(reason="idle", since_ts=window_start_ts))
+        return window_start_ts
 
     def should_trigger(self) -> bool:
         if not bool(conf.ARAYA_ENABLED):
@@ -270,19 +313,26 @@ class ArayaRuntime:
 
         def _m():
             from faust_backend.memory import get_memory
-            return get_memory()
+            # 必须按本轮维护目标取库：全局 `get_memory()` 跟随前端激活 Agent，
+            # 运行中切换激活 Agent 会让维护读写落到别的 Agent 的记忆库
+            # （09-22 事故：faust 一轮维护把索引/日志/5 个实体写进了 ishmael 库）。
+            return get_memory(self.run_target_agent)
 
         @tool
         def arayaGetTimeTool() -> dict:
-            """获取当前时间戳和 ISO 格式的 UTC 时间字符串,以及上次触发的时间戳和 ISO 格式的 UTC 时间字符串。"""
+            """获取当前时间、上次触发时间，以及 changed-nodes 的窗口起点（上次成功维护结束时间）。"""
             state = self._load_state()
             last_trigger_ts = float(state.get("last_trigger_ts") or 0.0)
-            log.info("arayaGetTimeTool called, last_trigger_ts=%s", last_trigger_ts)
+            window_start_ts = self.maintenance_watermark(state)
+            log.info("arayaGetTimeTool called, last_trigger_ts=%s window_start=%s",
+                     last_trigger_ts, window_start_ts)
             return {
                 "time": time.time(),
                 "time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "last_trigger_ts": last_trigger_ts,
-                "last_trigger_time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_trigger_ts))
+                "last_trigger_time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_trigger_ts)),
+                "window_start_ts": window_start_ts,
+                "window_start_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(window_start_ts)),
             }
 
         # ── tree / file tools ──
@@ -369,14 +419,38 @@ class ArayaRuntime:
                 return {"success": False, "error": str(e)}
 
         @tool
-        async def arayaChangedNodesTool(since_ts: float, scope: str = "", tags: list[str] | None = None) -> list[dict]:
-            """获取自某个时间戳以来发生变更的记忆库节点。"""
-            log.info("arayaChangedNodesTool called since_ts=%s scope=%s tags=%s", since_ts, scope, tags or [])
+        async def arayaChangedNodesTool(since_ts: float | None = None, scope: str = "",
+                                        tags: list[str] | None = None,
+                                        include_entities: bool = False,
+                                        limit: int = 300) -> dict:
+            """获取自窗口起点以来被写入过的记忆节点，按更新时间倒序。
+
+            since_ts 省略时用运行时窗口起点（上次成功维护结束时间），正常巡检直接省略。
+            limit 为返回条数上限；truncated 为真说明还有更早的变更未返回。
+            include_entities=True 时一并列出变更的实体节点（默认只看文件/目录）。
+            """
+            state = self._load_state()
+            window_start = (float(since_ts) if since_ts is not None
+                            else self.maintenance_watermark(state))
+            log.info("arayaChangedNodesTool called since_ts=%s（生效窗口起点 %s）scope=%s tags=%s",
+                     since_ts, window_start, scope, tags or [])
             try:
-                return await _m().get_changed_nodes(since_ts, scope=scope, tags=tags or [])
+                # 多取一条用来精确判断是否被截断
+                items = await _m().get_changed_nodes(window_start, scope=scope, tags=tags or [],
+                                                     include_entities=include_entities,
+                                                     limit=int(limit) + 1)
             except Exception as e:
                 log.error("Error in arayaChangedNodesTool: %s", e)
-                return []
+                return {"since_ts": window_start, "count": 0, "truncated": False,
+                        "items": [], "error": str(e)}
+            return {
+                "since_ts": window_start,
+                "since_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(window_start)),
+                "now": time.time(),
+                "count": min(len(items), int(limit)),
+                "truncated": len(items) > int(limit),
+                "items": items[:int(limit)],
+            }
 
         # ── graph / entity tools ──
 
@@ -401,7 +475,10 @@ class ArayaRuntime:
 
         @tool
         def arayaGetNeighborsTool(entity_id: str, depth: int = 1) -> list[dict]:
-            """获取知识图谱中某个实体指定跳数内的邻居节点。"""
+            """获取知识图谱中某个实体 depth 跳内的邻居节点（含每条边的类型与方向）。
+
+            entity_id 必须是实体 ID（ent_…），不是名字：先用 arayaSearchEntityTool 取 ID。
+            """
             try:
                 return _m().get_neighbors(entity_id, depth=int(depth))
             except Exception as e:
@@ -510,6 +587,7 @@ class ArayaRuntime:
                 meta = ret.get("meta", {}) or {}
                 tags = meta.get("tags", []) or []
             except FileNotFoundError:
+                log.info("arayaFileEditTool OUTPUT 文件不存在: %s", path)
                 return f"文件不存在: {path}"
             from faust_backend.tools._patch_utils import replace_exact
             if old_str == "":
@@ -572,15 +650,14 @@ class ArayaRuntime:
             arayaSetScorePatchTool,
             arayaChangedNodesTool,
             arayaSearchEntityTool,
-        #    arayaListEntitiesTool,
+            arayaListEntitiesTool,
             arayaGetNeighborsTool,
             arayaAddEntityTool,
-        #    arayaDeleteEntityTool,
+            arayaDeleteEntityTool,
             arayaMergeEntTool,
             arayaAddRelationTool,
-        #    arayaRemoveRelationTool,
-        #    arayaListRelationsTool,
-        #    arayaAttachmentWriteTool,
+            arayaRemoveRelationTool,
+            arayaListRelationsTool,
             arayaAttachmentReadTool,
             arayaFileEditTool,
         ]
@@ -631,13 +708,13 @@ class ArayaRuntime:
         if run_lock is not None and run_lock.locked():
             return {"accepted": False, "reason": str(reason or "manual"), "status": "already_running", "target_agent": self.refresh_target_agent(), "last_trigger_ts": float(state.get("last_trigger_ts") or 0.0)}
         log.info("Triggering Araya async run with reason: %s", reason)
-        asyncio.create_task(self.run_once_async(reason))
+        asyncio.create_task(self.run_once_async(reason, since_ts=self.maintenance_watermark(state)))
         return {"accepted": True, "reason": str(reason or "manual"), "status": "queued", "target_agent": self.refresh_target_agent(), "queued_at": time.time()}
 
-    async def run_once_async(self, reason: str = "manual") -> dict[str, Any]:
+    async def run_once_async(self, reason: str = "manual", since_ts: float | None = None) -> dict[str, Any]:
         """Legacy non-streaming run. Prefer stream_once_async for SSE."""
         result = None
-        async for event in self.stream_once_async(reason):
+        async for event in self.stream_once_async(reason, since_ts=since_ts):
             if event.get("event") == "done":
                 result = json.loads(event.get("data", "{}"))
             elif event.get("event") == "error":
@@ -645,8 +722,8 @@ class ArayaRuntime:
                 result = {"status": "error", "error": data.get("error", "unknown")}
         return result or {"status": "error", "error": "no result"}
 
-    def run_once(self, reason: str = "manual") -> dict[str, Any]:
-        return asyncio.run(self.run_once_async(reason))
+    def run_once(self, reason: str = "manual", since_ts: float | None = None) -> dict[str, Any]:
+        return asyncio.run(self.run_once_async(reason, since_ts=since_ts))
 
     def _is_ai_message_chunk(self, message_chunk) -> bool:
         msg_type = str(getattr(message_chunk, "type", "")).strip().lower()
@@ -676,11 +753,13 @@ class ArayaRuntime:
             return "".join(parts)
         return str(content)
 
-    async def stream_once_async(self, reason: str = "manual"):
+    async def stream_once_async(self, reason: str = "manual", since_ts: float | None = None):
         """Async generator yielding SSE events during agent execution.
 
         Each yield: {"event": "step|done|error", "data": "<json_string>"}
         Call this directly from the SSE endpoint — no create_task.
+
+        `since_ts` 是 changed-nodes 的窗口起点；省略时取上次成功维护的结束时间。
         """
         if self._run_lock is None:
             self._run_lock = asyncio.Lock()
@@ -690,28 +769,34 @@ class ArayaRuntime:
             return
 
         async with self._run_lock:
-            self.refresh_target_agent()
+            # 目标 Agent 在本轮开始时快照：run 期间即使用户切换激活 Agent，
+            # 工具的记忆库绑定、prompt、日志都保持同一目标（`run_target_agent`）。
+            target_agent = self._resolve_target_agent_name()
+            self._target_agent_name = target_agent
+            self._run_target_agent = target_agent
             started_at = time.time()
             state = self._load_state()
-            previous_trigger_ts = float(state.get("last_trigger_ts") or 0.0)
+            window_start_ts = (float(since_ts) if since_ts is not None
+                               else self.maintenance_watermark(state))
             prompt = self._load_prompt()
 
             result_payload: dict[str, Any] = {
                 "reason": str(reason or "manual"),
                 "started_at": started_at,
                 "started_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
-                "target_agent": self._target_agent_name,
-                "since_ts": previous_trigger_ts,
+                "target_agent": target_agent,
+                "since_ts": window_start_ts,
                 "status": "running",
                 "error": "",
                 "response": "",
             }
             instruction = (
                 f"{prompt}\n\n"
-                f"当前维护目标 Agent: {self._target_agent_name}\n"
+                f"当前维护目标 Agent: {target_agent}\n"
                 f"本次触发原因: {reason}\n"
-                f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次触发以来的变更节点。\n"
-                f"changed-nodes 的 since_ts 使用 {previous_trigger_ts}。\n"
+                f"请先读取 records/ 和 diary/ 下与最近变更相关的内容，再检查自上次维护以来的变更节点。\n"
+                f"changed-nodes 的窗口起点（since_ts）是 {window_start_ts}；"
+                f"省略 since_ts 时工具会自动使用该窗口起点，无需自己换算。\n"
                 f"必要时请维护 /auto_index.md，并对 knowledge graph 中的实体和关系进行整合/修剪。\n"
                 f"调用工具时，必须严格使用工具参数的原生 JSON 结构，不要把 JSON 对象再编码成字符串。"
                 f"每个修改过的文件只需要完整处理一次，处理完成后绝对不要重复处理。\n"
@@ -719,7 +804,7 @@ class ArayaRuntime:
             trace_payload: dict[str, Any] = {
                 "conversation_id": f"araya-{int(started_at * 1000)}",
                 "reason": str(reason or "manual"),
-                "target_agent": self._target_agent_name,
+                "target_agent": target_agent,
                 "started_at": started_at,
                 "started_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at)),
                 "status": "running",
@@ -731,7 +816,7 @@ class ArayaRuntime:
             in_flight_calls: dict[str, dict[str, Any]] = {}
 
 
-            yield {"event": "step", "data": json.dumps({"type": "start", "reason": reason, "target_agent": self._target_agent_name})}
+            yield {"event": "step", "data": json.dumps({"type": "start", "reason": reason, "target_agent": target_agent})}
 
             full_response = ""
             run_error = ""
@@ -838,20 +923,24 @@ class ArayaRuntime:
             trace_payload["duration_seconds"] = round(finished_at - started_at, 3)
 
             state["last_trigger_ts"] = finished_at
+            # 只有成功的轮次才推进 changed-nodes 水印：失败的轮次（模型/工具异常、
+            # 0.4s 就崩）什么都没维护，若推进水印会把这段窗口永久跳过。
+            if result_payload["status"] == "ok":
+                state["last_maintenance_ts"] = finished_at
             state["last_run_status"] = result_payload["status"]
-            state["target_agent"] = self._target_agent_name
+            state["target_agent"] = target_agent
             self._save_state(state)
             self._write_run_log(result_payload)
             self._write_last_trace(trace_payload)
 
             if run_error:
-                yield {"event": "error", "data": json.dumps({"error": run_error, "duration": result_payload["duration_seconds"], "target_agent": self._target_agent_name})}
+                yield {"event": "error", "data": json.dumps({"error": run_error, "duration": result_payload["duration_seconds"], "target_agent": target_agent})}
             else:
                 yield {"event": "done", "data": json.dumps({
                     "status": "ok",
                     "response": full_response,
                     "duration": result_payload["duration_seconds"],
-                    "target_agent": self._target_agent_name,
+                    "target_agent": target_agent,
                     "reason": str(reason or "manual"),
                 })}
 

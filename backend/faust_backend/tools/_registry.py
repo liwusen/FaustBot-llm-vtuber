@@ -29,10 +29,14 @@ ARAYA_ALLOWED_TOOL_NAMES = {
     "arayaSetScorePatchTool",
     "arayaChangedNodesTool",
     "arayaSearchEntityTool",
+    "arayaListEntitiesTool",
     "arayaGetNeighborsTool",
     "arayaAddEntityTool",
+    "arayaDeleteEntityTool",
     "arayaMergeEntTool",
     "arayaAddRelationTool",
+    "arayaRemoveRelationTool",
+    "arayaListRelationsTool",
     "arayaAttachmentReadTool",
 }
 

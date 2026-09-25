@@ -119,6 +119,13 @@ class FrontendBridge:
     def set_motion(self, motion: dict) -> None:
         self._push("SET_MOTION", motion)
 
+    def avatar_command(self, command: str, payload: dict | None = None) -> None:
+        """表演指令（AVATAR_EMOTION / AVATAR_EXPRESSION / AVATAR_MOTION / AVATAR_FACS / AVATAR_CLEAR）。
+
+        与 SET_MOTION / VRM_* 共用 /faust/command 通道，前端 app.js 的 handleFaustCommand 分发。
+        """
+        self._push(str(command), payload)
+
     def trigger_vrm_gesture(self, gesture_name: str, duration: float | None = None, auto_reset: bool | None = None) -> None:
         parts = [str(gesture_name)]
         if duration is not None:

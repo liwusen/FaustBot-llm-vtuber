@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from langchain.tools import tool
 
@@ -7,118 +6,13 @@ from faust_backend.tools._registry import register
 import faust_backend.config_loader as conf
 import faust_backend.backend2front as backend2frontend
 import faust_backend.vrm_pose_manager as vrm_pose_manager
-from faust_backend.logger import get_logger
-
-log = get_logger("faust.tools.animation")
 
 VRM_EXPRESSIONS = ["neutral", "happy", "angry", "sad", "relaxed", "surprised"]
-
-
-def _resolve_live2d_model_path() -> Path:
-    cfg = conf.config or {}
-    model_rel = str(cfg.get("LIVE2D_MODEL_PATH", "2D/hiyori_pro_zh/hiyori_pro_t11.model3.json") or "").strip()
-    model_path = Path(model_rel)
-    if model_path.is_absolute():
-        return model_path
-    frontend_root = Path(conf.PROJECT_ROOT).parent / "frontend"
-    live2d_root = Path(conf.LIVE2D_MODEL_ROOT)
-    candidates = [
-        live2d_root / model_rel.replace("2D/", "", 1),
-        frontend_root / model_rel,
-        frontend_root / "models" / model_rel,
-        Path(conf.CONFIG_ROOT) / model_rel,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
-
-
-def _read_model_motion_names(model_path: Path) -> list[str]:
-    if not model_path.exists() or not model_path.is_file():
-        return []
-    try:
-        data = json.loads(model_path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    motions = (((data or {}).get("FileReferences") or {}).get("Motions") or {})
-    if not isinstance(motions, dict):
-        return []
-    return sorted([str(k) for k in motions.keys() if str(k).strip()])
-
-
-def _read_model_expression_names(model_path: Path) -> list[str]:
-    if not model_path.exists() or not model_path.is_file():
-        return []
-    try:
-        data = json.loads(model_path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    expressions = (((data or {}).get("FileReferences") or {}).get("Expressions") or [])
-    if not isinstance(expressions, list):
-        return []
-    return sorted(
-        [
-            str(item.get("Name") or "").strip()
-            for item in expressions
-            if isinstance(item, dict) and str(item.get("Name") or "").strip()
-        ]
-    )
 
 
 def _get_model_type() -> str:
     cfg = conf.config or {}
     return str(cfg.get("MODEL_TYPE", "live2d") or "live2d").strip().lower()
-
-
-@register
-@tool
-async def listAvailableMotionsTool() -> str:
-    """
-    Description:
-        获取当前模型可用的 Motion / Expression 名称列表。
-        Live2D 模式列表来源于 model3.json（Motions 与 Expressions）；
-        VRM 模式返回标准表情预设。
-        触发方式：在正常输出文本中包含 <{MotionName}> 触发动作；
-        包含 <{EXPRESSION:ExpressionName}> 触发表情（Expression）。
-    Args:
-        None
-    Returns:
-        str(json): 包含 model_type、model_path、motion_count、motions、
-                   expressions、expression_tokens（EXPRESSION:XXXX 形式）。
-    """
-    try:
-        model_type = _get_model_type()
-        if model_type == "vrm":
-            payload = {
-                "status": "ok",
-                "model_type": "vrm",
-                "motion_count": len(VRM_EXPRESSIONS),
-                "expressions": VRM_EXPRESSIONS,
-                "expression_tokens": [f"EXPRESSION:{name}" for name in VRM_EXPRESSIONS],
-                "note": "VRM standard expression presets. Trigger one by including <{ExpressionName}> or <{EXPRESSION:ExpressionName}> in the assistant output.",
-            }
-            log.info("VRM expressions: %s", VRM_EXPRESSIONS)
-            return json.dumps(payload, ensure_ascii=False)
-        model_path = _resolve_live2d_model_path()
-        motions = _read_model_motion_names(model_path)
-        expressions = _read_model_expression_names(model_path)
-        payload = {
-            "status": "ok",
-            "model_type": "live2d",
-            "model_path": str(model_path),
-            "motion_count": len(motions),
-            "motions": motions,
-            "expressions": expressions,
-            "expression_tokens": [f"EXPRESSION:{name}" for name in expressions],
-            "note": "包含 <{MotionName}> 触发动作；包含 <{EXPRESSION:ExpressionName}> 触发表情。",
-        }
-        log.info("model=%s count=%d expressions=%d", model_path, len(motions), len(expressions))
-        return json.dumps(payload, ensure_ascii=False)
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
-
-
 
 
 @register

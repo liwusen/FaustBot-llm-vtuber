@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
 import math
 import shutil
@@ -9,6 +10,8 @@ import threading
 import time
 import uuid
 from collections import deque
+from functools import wraps
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -185,6 +188,31 @@ def _chunk_text(text: str) -> list[str]:
     return chunks
 
 
+def _mutating(method):
+    """串行化所有会改 `_graph` / `nodes` / `edges` 的写入（可重入叶子锁）。
+
+    nx 图不是线程安全的，而同一轮里模型会并发发出多个写工具调用
+    （曾出现两个 `entity_merge` 并发 → FOREIGN KEY constraint failed：
+    一方算好的改指边引用了另一方已删除的节点）。`_mutation_lock` 只在同步
+    区段内持有、从不跨越 await，故锁序恒为 `_write_lock`（异步写锁）→
+    `_mutation_lock`，不成环。被装饰的协程方法体内不得出现 await。
+    """
+    if inspect.iscoroutinefunction(method):
+        @wraps(method)
+        async def _async_locked(self, *args, **kwargs):
+            with self._mutation_lock:
+                return await method(self, *args, **kwargs)
+
+        return _async_locked
+
+    @wraps(method)
+    def _sync_locked(self, *args, **kwargs):
+        with self._mutation_lock:
+            return method(self, *args, **kwargs)
+
+    return _sync_locked
+
+
 class GraphStore:
     def __init__(self, agent_name: str | None = None):
         self.agent_name = str(agent_name or conf.AGENT_NAME)
@@ -202,6 +230,8 @@ class GraphStore:
         self._openai_client: AsyncOpenAI | None = None
         self._embed_lock = asyncio.Lock()
         self._write_lock = _CrossLoopLock()
+        # 保护所有 nx/SQL 写入的叶子锁，见 `_mutating`
+        self._mutation_lock = threading.RLock()
         self._bm25_dirty: bool = True
         self._bm25_index: BM25Okapi | None = None
         self._bm25_corpus: list[list[str]] | None = None
@@ -321,6 +351,7 @@ class GraphStore:
         " ON CONFLICT(id) DO NOTHING"
     )
 
+    @_mutating
     def _add_node(self, nid: str, **attrs) -> None:
         """新节点：**先写 SQL 行、再改 nx**（设计不变量 2）。
 
@@ -333,12 +364,14 @@ class GraphStore:
             conn.execute(self._NODE_UPSERT, self._node_row(nid, dict(attrs)))
         self._graph.add_node(nid, **attrs)
 
+    @_mutating
     def _db_delete_node(self, nid: str) -> None:
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM nodes WHERE id=?", (nid,))
         if self._graph.has_node(nid):
             self._graph.remove_node(nid)
 
+    @_mutating
     def _set_node_attr(self, nid: str, **kwargs) -> None:
         if not self._graph.has_node(nid):
             return
@@ -364,6 +397,7 @@ class GraphStore:
                 conn.execute("UPDATE nodes SET data=? WHERE id=?",
                              (json.dumps(data, ensure_ascii=False), nid))
 
+    @_mutating
     def _add_edge(self, src: str, tgt: str, etype: str = "relates_to") -> str:
         key = str(uuid.uuid4().hex)
         self._graph.add_edge(src, tgt, key=key, type=etype)
@@ -374,6 +408,7 @@ class GraphStore:
             )
         return key
 
+    @_mutating
     def _remove_edge(self, src: str, tgt: str) -> None:
         if self._graph.has_node(src) and self._graph.has_node(tgt) and self._graph.has_edge(src, tgt):
             for key in list(self._graph[src][tgt].keys()):
@@ -411,12 +446,14 @@ class GraphStore:
             parent_id = nid
         return parent_id
 
+    @_mutating
     def _link_parent(self, child_id: str, parent_id: str) -> None:
         """建立路径树父子关系（唯一真源 = nodes.parent_id），并修正 nx 中的父边。"""
         with self.db.transaction() as conn:
             conn.execute("UPDATE nodes SET parent_id=? WHERE id=?", (parent_id, child_id))
         self._reset_nx_parent_edge(child_id, parent_id)
 
+    @_mutating
     def _reset_nx_parent_edge(self, child_id: str, parent_id: str) -> None:
         """nx 视图里只保留一条指向 parent_id 的 has_child 边。"""
         if not self._graph.has_node(child_id):
@@ -483,6 +520,7 @@ class GraphStore:
             ),
         )
 
+    @_mutating
     def _relabel_nx(self, old_path: str, new_path: str) -> None:
         mapping = {}
         for nid in list(self._graph.nodes):
@@ -1158,6 +1196,7 @@ class GraphStore:
 
     # ── tags / score_patch ──
 
+    @_mutating
     async def set_tags(self, path: str, tags: list[str], managed_by: str | None = None) -> dict:
         norm = _normalize_path(path)
         log.info("set_tags path=%s tags=%s", norm, tags)
@@ -1169,14 +1208,14 @@ class GraphStore:
             conn.execute("DELETE FROM tags WHERE node_id=?", (nid,))
             conn.executemany("INSERT OR IGNORE INTO tags(node_id, tag) VALUES (?, ?)",
                              [(nid, t) for t in clean])
+            # 纯元数据写入不刷 `updated_at`：否则维护 Agent 自己每轮打的标签都会把
+            # 这些文件重新算进下一次 changed-nodes，真增量被自己的写操作淹没。
             if managed_by is not None:
-                conn.execute("UPDATE nodes SET managed_by=?, updated_at=? WHERE id=?",
-                             (str(managed_by), _now_epoch(), nid))
-            else:
-                conn.execute("UPDATE nodes SET updated_at=? WHERE id=?", (_now_epoch(), nid))
+                conn.execute("UPDATE nodes SET managed_by=? WHERE id=?", (str(managed_by), nid))
         self._set_node_attr(nid, tags=clean)
         return {"path": norm, "meta": self._get_meta(norm)}
 
+    @_mutating
     async def set_score_patch(self, path: str, score_patch: float) -> dict:
         norm = _normalize_path(path)
         log.info("set_score_patch path=%s score_patch=%s", norm, score_patch)
@@ -1187,9 +1226,10 @@ class GraphStore:
             raise ValueError(f"score_patch 超出范围 [{MIN_SCORE_PATCH}, {MAX_SCORE_PATCH}]")
         nid = _path_id(norm)
         with self.db.transaction() as conn:
+            # 同 set_tags：权重是元数据，不刷 `updated_at`，避免污染 changed-nodes。
             conn.execute(
-                "UPDATE nodes SET score_patch=?, score_patch_updated_at=?, updated_at=? WHERE id=?",
-                (patch, _now_epoch(), _now_epoch(), nid),
+                "UPDATE nodes SET score_patch=?, score_patch_updated_at=? WHERE id=?",
+                (patch, _now_epoch(), nid),
             )
         self._set_node_attr(nid, score_patch=patch)
         return {"path": norm, "meta": self._get_meta(norm)}
@@ -1498,6 +1538,7 @@ class GraphStore:
 
     # ── entity / relation operations ──
 
+    @_mutating
     def entity_add(self, name: str, entity_type: str = "custom",
                    description: str = "",
                    properties: dict | None = None, kb_refs: list[str] | None = None,
@@ -1515,7 +1556,8 @@ class GraphStore:
         self._add_node(eid, type="entity", entity_type=entity_type,
                        name=name, description=desc,
                        properties=dict(properties or {}),
-                       kb_refs=all_refs, created_at=_utc_iso())
+                       kb_refs=all_refs, created_at=_utc_iso(),
+                       updated_at=_utc_iso())
         if name_embedding:
             vdb = self._ensure_entity_vdb()
             vdb.upsert([{
@@ -1527,6 +1569,7 @@ class GraphStore:
                  name, entity_type, eid[:16], len(desc), len(all_refs))
         return eid
 
+    @_mutating
     def entity_delete(self, entity_id: str) -> bool:
         if not self._has_node(entity_id):
             return False
@@ -1540,6 +1583,7 @@ class GraphStore:
         log.info("entity_delete eid=%s", entity_id[:16])
         return True
 
+    @_mutating
     def entity_merge(self, keep_id: str, absorb_id: str) -> dict:
         """把 absorb 实体并入 keep 实体，随后删除 absorb。
 
@@ -1677,13 +1721,19 @@ class GraphStore:
         log.info("entity_iter count=%d", len(results))
         return results
 
+    @_mutating
     def relation_add(self, source_id: str, target_id: str,
                      rel_type: str = "relates_to") -> str:
+        # 直接插边会撞外键，只抛 "FOREIGN KEY constraint failed"，调用方看不出该修什么
+        for nid in (str(source_id or ""), str(target_id or "")):
+            if not self._has_node(nid):
+                raise FileNotFoundError(f"节点不存在: {nid}")
         key = self._add_edge(source_id, target_id, rel_type)
         log.info("relation_add src=%s tgt=%s type=%s key=%s",
                  source_id[:16], target_id[:16], rel_type, key[:8])
         return key
 
+    @_mutating
     def relation_remove(self, source_id: str, target_id: str) -> None:
         self._remove_edge(source_id, target_id)
         log.info("relation_remove src=%s tgt=%s", source_id[:16], target_id[:16])
@@ -1699,43 +1749,57 @@ class GraphStore:
         return results
 
     def get_neighbors(self, entity_id: str, depth: int = 1) -> list[dict]:
+        """返回 entity_id 的 depth 跳邻居（附每条边的类型与方向）。
+
+        回归：旧实现只在「展开」节点时把节点记入 `seen`，最后一层发散出的 frontier
+        从不并入，于是 depth=1（工具默认值）恒返回 []，depth=d 实际只覆盖 1..d-1 层。
+        """
         if not self._has_node(entity_id):
             log.warning("get_neighbors not_found eid=%s", entity_id[:16])
             return []
         seen: set[str] = set()
+        relations: dict[str, set[tuple[str, str]]] = {}
         current: set[str] = {entity_id}
-        for _ in range(depth):
+        for _ in range(max(0, int(depth))):
             nxt: set[str] = set()
             for nid in current:
-                if nid in seen:
-                    continue
-                seen.add(nid)
-                for neighbor in self._graph.neighbors(nid):
-                    if neighbor not in seen:
-                        nxt.add(neighbor)
-                for predecessor in self._graph.predecessors(nid):
-                    if predecessor not in seen:
-                        nxt.add(predecessor)
+                incident = chain(
+                    ((tgt, "out", edata) for _s, tgt, _k, edata in
+                     self._graph.out_edges(nid, data=True, keys=True)),
+                    ((src, "in", edata) for src, _t, _k, edata in
+                     self._graph.in_edges(nid, data=True, keys=True)),
+                )
+                for other, direction, edata in incident:
+                    if other == entity_id or other in seen:
+                        continue
+                    etype = str((edata or {}).get("type") or "relates_to")
+                    relations.setdefault(other, set()).add((direction, etype))
+                    nxt.add(other)
+            seen |= nxt
             current = nxt
             if not current:
                 break
-        seen.discard(entity_id)
         results = []
-        for nid in seen:
+        for nid in sorted(seen, key=lambda x: (_id_to_path(x) if _is_path_id(x) else x)):
             ndata = self._graph.nodes[nid]
             ntype = ndata.get("type", "unknown")
+            item: dict[str, Any] = {
+                "id": nid, "name": ndata.get("name", ""),
+                "entity_type": ndata.get("entity_type", ntype) if ntype == "entity" else ntype,
+                "relations": [
+                    {"type": etype, "direction": direction}
+                    for direction, etype in sorted(relations.get(nid, ()))
+                ],
+            }
             if ntype == "entity":
-                results.append({
-                    "id": nid, "name": ndata.get("name", ""),
-                    "entity_type": ndata.get("entity_type", "custom"),
-                    "description": ndata.get("description", ""),
-                    "path_ref": None,
-                })
+                item["description"] = ndata.get("description", "")
+                item["path_ref"] = None
             elif ntype in ("file", "dir"):
-                results.append({
-                    "id": nid, "name": ndata.get("name", ""),
-                    "entity_type": ntype, "path_ref": _id_to_path(nid),
-                })
+                item["path_ref"] = _id_to_path(nid)
+            else:
+                continue
+            results.append(item)
+        log.info("get_neighbors eid=%s depth=%d hits=%d", entity_id[:16], depth, len(results))
         return results
 
     # ── semantic entity dedup ──
@@ -1794,7 +1858,8 @@ class GraphStore:
             else:
                 seen[p] = item
 
-        # 2-hop expansion for matched paths
+        # 2-hop expansion for matched paths（图谱通道：经实体/来源边把相关文件补进来）
+        required_tags = {t.casefold() for t in (tags or [])}
         extra: dict[str, dict] = {}
         for p in list(seen.keys()):
             nid = _path_id(p)
@@ -1802,18 +1867,30 @@ class GraphStore:
                 nb = self.get_neighbors(nid, depth=2)
                 for n in nb:
                     pref = n.get("path_ref")
-                    if pref and pref not in seen and pref not in extra:
-                        meta = self._get_meta(pref)
-                        patch = float(meta.get("score_patch", 0.0))
-                        extra[pref] = {
-                            "path": pref,
-                            "raw_score": 0,
-                            "score_patch": patch,
-                            "score": patch,
-                            "tags": meta.get("tags", []),
-                            "snippet": "",
-                            "_source": "2hop",
-                        }
+                    # 只补文件：邻居里必然含父/祖父目录（has_child 链），目录没有内容
+                    if not pref or n.get("entity_type") != "file":
+                        continue
+                    # 邻居可能落在 scope 之外（父目录链、跨目录的来源文件），
+                    # 必须与主检索同一套过滤，否则带 scope 的搜索会漏出别的目录
+                    if scope_prefix and not (pref.startswith(scope_prefix)
+                                             or pref == scope_prefix.rstrip("/")):
+                        continue
+                    if pref in seen or pref in extra:
+                        continue
+                    meta = self._get_meta(pref)
+                    if required_tags and not required_tags.issubset(
+                            {str(t).casefold() for t in meta.get("tags", [])}):
+                        continue
+                    patch = float(meta.get("score_patch", 0.0))
+                    extra[pref] = {
+                        "path": pref,
+                        "raw_score": 0,
+                        "score_patch": patch,
+                        "score": patch,
+                        "tags": meta.get("tags", []),
+                        "snippet": "",
+                        "_source": "2hop",
+                    }
 
         seen.update(extra)
         merged_list = list(seen.values())
@@ -2167,34 +2244,55 @@ class GraphStore:
     # ── changed nodes ──
 
     async def get_changed_nodes(self, since_ts: float, scope: str | None = None,
-                                tags: list[str] | None = None) -> list[dict]:
+                                tags: list[str] | None = None,
+                                include_entities: bool = False,
+                                limit: int | None = None) -> list[dict]:
+        """自 since_ts 起被写入过的节点（文件/目录，可选实体）。
+
+        注意 `updated_at` 会被内容写入与元数据写入（标签/权重）共同刷新，所以结果里
+        可能包含只改过标签的节点。`limit` 按 `updated_at` 倒序保留最新的若干条。
+        """
         scope_prefix = _normalize_path(scope or "").strip("/")
         scope_prefix = f"/{scope_prefix}/" if scope_prefix else ""
         required_tags = {t.casefold() for t in (tags or [])}
+        node_types = ("file", "dir", "entity") if include_entities else ("file", "dir")
+        placeholders = ", ".join("?" for _ in node_types)
         rows = self.db.all(
-            "SELECT n.path AS path, n.updated_at AS updated_at, n.score_patch AS score_patch,"
+            "SELECT n.id AS id, n.type AS type, n.path AS path, n.name AS name,"
+            " n.updated_at AS updated_at, n.score_patch AS score_patch,"
             " (SELECT group_concat(t.tag, ',') FROM tags t WHERE t.node_id = n.id) AS tag_csv"
-            " FROM nodes n WHERE n.type IN ('file', 'dir') AND n.updated_at IS NOT NULL"
+            f" FROM nodes n WHERE n.type IN ({placeholders}) AND n.updated_at IS NOT NULL"
             " AND n.updated_at >= ? ORDER BY n.updated_at DESC",
-            (float(since_ts),),
+            (*node_types, float(since_ts)),
         )
         results = []
         for row in rows:
+            ntype = str(row["type"] or "")
             node_path = str(row["path"] or "")
-            if not node_path:
-                continue
-            if scope_prefix and not node_path.startswith(scope_prefix):
-                continue
+            if ntype in ("file", "dir"):
+                if not node_path:
+                    continue
+                if scope_prefix and not node_path.startswith(scope_prefix):
+                    continue
             ntags = [t for t in str(row["tag_csv"] or "").split(",") if t]
             if required_tags and not required_tags.issubset({t.casefold() for t in ntags}):
                 continue
-            results.append({
-                "path": node_path,
+            item = {
                 "updated_at": epoch_to_iso(row["updated_at"]),
                 "tags": ntags,
                 "score_patch": float(row["score_patch"] or 0.0),
-            })
-        log.info("get_changed_nodes since=%s scope=%s hits=%d", since_ts, scope or "/", len(results))
+            }
+            if ntype == "entity":
+                item["id"] = str(row["id"])
+                item["name"] = str(row["name"] or "")
+                item["type"] = "entity"
+            else:
+                item["path"] = node_path
+            results.append(item)
+        if limit is not None and int(limit) > 0:
+            results = results[:int(limit)]
+        log.info("get_changed_nodes since=%s scope=%s entities=%s hits=%d",
+                 since_ts, scope or "/", include_entities, len(results))
         return results
 
     # ── tasks ──

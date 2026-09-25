@@ -824,6 +824,14 @@ class Plugin(FaustPlugin):
                 return {"status": "error", "detail": "invalid value"}
             self.store.set_emotion(key, value)
             return {"status": "ok", **self.get_state_payload()}
+        if action == "apply_tags":
+            tags = (payload or {}).get("tags") or []
+            if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+                return {"status": "error", "detail": "tags must be list[str]"}
+            if self.store is None:
+                return {"status": "error", "detail": "store not ready"}
+            self.store.apply_signed_emotion_tag_list(tags)
+            return {"status": "ok", **self.get_state_payload()}
         return {"status": "error", "detail": f"unknown action: {action}"}
 
     @hookimpl

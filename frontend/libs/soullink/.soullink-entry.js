@@ -1,6 +1,7 @@
 // esbuild 入口：组装 libs/soullink 模块，挂载 window.Soullink
 // 产物 libs/soullink.bundle.js（iife），在 app.js 之前加载
 import { createSoullinkLayer } from './runtime.js';
+import { createAvatarPerformance } from './performance.js';
 import { mapEmotionToIntent, EMOTION_BRIDGE } from './bridge.js';
 import { createAudioLevelAnalyzer } from './audio-level.js';
 import { fetchProfileViaIpc, validateProfileObject, deriveFallbackProfile, withStandardFallbackMappings } from './profile.js';
@@ -9,6 +10,7 @@ import { emotionVADPresets } from '@soullink-emotion/engine';
 
 window.Soullink = {
   createLayer: createSoullinkLayer,
+  createAvatarPerformance,
   mapEmotionToIntent,
   createAudioLevelAnalyzer,
   fetchProfileViaIpc,

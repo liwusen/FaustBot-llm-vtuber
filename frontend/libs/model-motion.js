@@ -1,21 +1,40 @@
 // 模型动作/表情模块 — 触发 motion/expression 与解析 <{...}> 动作 token
-// 用法: const motion = initModelMotion({ getModel, getModelType, getVrmScene, getAvailableMotions, getAvailableExpressions });
-
-export function initModelMotion({ getModel, getModelType, getVrmScene, getAvailableMotions, getAvailableExpressions }) {
+// 用法: const motion = initModelMotion({ getModelType, getVrmScene, getAvailableMotions, getAvailableExpressions, requestNative });
+//
+// 原生触发不再直连 currentModel：统一经注入的 requestNative 落到 libs/soullink/performance.js，
+// 与工具调用共用同一个覆盖槽（agent 覆盖 > 交互脉冲 > 引擎），token 无 hold_seconds 时用 TOKEN_HOLD_MS。
+export function initModelMotion({ getModelType, getVrmScene, getAvailableMotions, getAvailableExpressions, requestNative }) {
   // 触发冷却：同一 model:name / model:expr:name 在 100ms 内只触发一次
   const motionTriggerCooldownMs = 100;
   const recentMotionTriggers = new Map();
+  // token 没有 hold_seconds：给一个够长但不至于压住引擎的保持时长
+  const TOKEN_HOLD_MS = 4000;
 
-  function playMotionByName(name){
-    const currentModel = getModel();
-    if (!currentModel || !name) return false;
-    try{
-      currentModel.motion(name);
-      return true;
-    }catch(e){
-      console.warn('播放 motion 失败', name, e);
+  function requestNativeOrDirect(request) {
+    if (typeof requestNative !== 'function') return false;
+    try {
+      const result = requestNative(request);
+      if (result && typeof result === 'object') return !!result.ok;
+      return !!result;
+    } catch (e) {
+      console.warn('原生动画触发失败', request, e);
       return false;
     }
+  }
+
+  function playMotionByName(name){
+    const motionName = String(name || '').trim();
+    if (!motionName) return false;
+    if (getModelType() === 'images') {
+      // 图片模型没有动作组，但同名情绪图组是它的等价表达（与 triggerModelMotion 的 images 分支一致）
+      return requestNativeOrDirect({ expression: motionName, motion: null, source: 'token', holdMs: TOKEN_HOLD_MS });
+    }
+    return requestNativeOrDirect({
+      expression: null,
+      motion: { group: motionName, index: 0, priority: 'force' },
+      source: 'token',
+      holdMs: TOKEN_HOLD_MS,
+    });
   }
 
   function playRandomMotion(){
@@ -26,7 +45,6 @@ export function initModelMotion({ getModel, getModelType, getVrmScene, getAvaila
   }
 
   function triggerModelMotion(name){
-    const currentModel = getModel();
     const modelType = getModelType();
     const vrmScene = getVrmScene();
     const availableMotions = getAvailableMotions();
@@ -47,12 +65,10 @@ export function initModelMotion({ getModel, getModelType, getVrmScene, getAvaila
       if (expressions.includes(motionName)) {
         triggered = !!vrmScene.setExpression(motionName);
       }
-    } else if (modelType === 'images' && currentModel && currentModel._faustImageModel) {
-      triggered = !!currentModel._faustImageModel.setEmotion(motionName);
-    } else {
-      if (availableMotions.includes(motionName)) {
-        triggered = playMotionByName(motionName);
-      }
+    } else if (modelType === 'images') {
+      triggered = requestNativeOrDirect({ expression: motionName, motion: null, source: 'token', holdMs: TOKEN_HOLD_MS });
+    } else if (availableMotions.includes(motionName)) {
+      triggered = playMotionByName(motionName);
     }
     if (triggered) {
       recentMotionTriggers.set(cooldownKey, now);
@@ -62,7 +78,6 @@ export function initModelMotion({ getModel, getModelType, getVrmScene, getAvaila
 
   // 触发 Live2D Expression / VRM Expression（带冷却，与 motion 共用触发频率控制）
   function triggerModelExpression(name){
-    const currentModel = getModel();
     const modelType = getModelType();
     const vrmScene = getVrmScene();
     const availableExpressions = getAvailableExpressions();
@@ -79,16 +94,8 @@ export function initModelMotion({ getModel, getModelType, getVrmScene, getAvaila
       if (expressions.includes(exprName)) {
         triggered = !!vrmScene.setExpression(exprName);
       }
-    } else if (modelType === 'live2d' && currentModel) {
-      if (availableExpressions.includes(exprName) && typeof currentModel.expression === 'function') {
-        try {
-          const result = currentModel.expression(exprName);
-          if (result && typeof result.catch === 'function') result.catch(() => {});
-          triggered = true;
-        } catch (e) {
-          console.warn('播放 expression 失败', exprName, e);
-        }
-      }
+    } else if (modelType === 'live2d' && availableExpressions.includes(exprName)) {
+      triggered = requestNativeOrDirect({ expression: exprName, motion: null, source: 'token', holdMs: TOKEN_HOLD_MS });
     }
     if (triggered) {
       recentMotionTriggers.set(cooldownKey, now);

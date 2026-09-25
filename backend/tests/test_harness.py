@@ -1102,12 +1102,19 @@ class TestExecuteTool:
 
 
 class TestAnimationTools:
-    def test_trigger_motion_tool_not_exposed_to_agent(self):
+    def test_motion_listing_tool_moved_to_avatar_plugin(self):
         from faust_backend.tools._registry import get_tools_for_agent
 
         tool_names = {getattr(tool, "name", getattr(tool, "__name__", "")) for tool in get_tools_for_agent("faust")}
         assert "triggerMotionTool" not in tool_names
-        assert "listAvailableMotionsTool" in tool_names
+        # 模型动作/表情枚举已迁到 avatar-performance 插件（前端加载模型后上报真实能力，
+        # 见 docs/superpowers/specs/2026-09-24-avatar-interaction-design.md），不再读磁盘 model3.json。
+        # 插件工具经 PluginManager.compose_tools 合入 agent 工具表，不在本注册表内；
+        # listAvatarCapabilities 的存在性由 tests/test_avatar_performance.py 覆盖。
+        assert "listAvailableMotionsTool" not in tool_names
+        # VRM 工具保持原样（本次非目标：不迁移、不删除）
+        assert "listVRMPosesTool" in tool_names
+        assert "triggerVRMPoseTool" in tool_names
 
 
 # ============================================================

@@ -1,0 +1,11 @@
+{
+  "id": "avatar-performance",
+  "name": "Avatar Performance",
+  "version": "1.0.0",
+  "description": "Live2D/图片模型的表演控制与交互反馈：情绪、原生表情/动作、FACS 参数、用户交互分级上报。",
+  "author": "allenlee（FaustBot）",
+  "enabled": true,
+  "entry": "impl.py",
+  "priority": 310,
+  "faustbot.internal.mark.builtin": true
+}

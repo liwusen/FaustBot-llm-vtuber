@@ -30,7 +30,7 @@ def test_agent_md_keeps_core_rules_and_points_to_skills():
     agent = (AGENT_TEMPLATE / "AGENT.md").read_text(encoding="utf-8")
     task = (AGENT_TEMPLATE / "TASK.md").read_text(encoding="utf-8")
     # 行为核心规则保留在 AGENT.md（工具详解已移入 TASK.md）
-    for rule in ("不要在输出中使用 Markdown", "function call", "listAvailableMotionsTool",
+    for rule in ("不要在输出中使用 Markdown", "function call", "listAvatarCapabilities",
                  "skill.d", "memory://user"):
         assert rule in agent
     # 核心工具速查在 TASK.md

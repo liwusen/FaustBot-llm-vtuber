@@ -106,7 +106,7 @@ def test_araya_trigger_run_is_non_blocking(monkeypatch, tmp_path):
 
     runtime = araya_runtime.ArayaRuntime()
 
-    async def fake_run_once_async(reason: str = "manual"):
+    async def fake_run_once_async(reason: str = "manual", since_ts: float | None = None):
         return {"status": "ok", "reason": reason}
 
     monkeypatch.setattr(runtime, "run_once_async", fake_run_once_async)
@@ -198,7 +198,7 @@ def test_araya_attachment_read_keeps_image_bytes_out_of_text(
                 "content_base64": image_b64,
             }
 
-    monkeypatch.setattr(memory_pkg, "get_memory", lambda: FakeMemory())
+    monkeypatch.setattr(memory_pkg, "get_memory", lambda agent_name=None, **_: FakeMemory())
 
     tools = wrap_tools(araya_runtime.ArayaRuntime()._build_tools())
     tool = next(t for t in tools if t.name == "arayaAttachmentReadTool")
@@ -209,3 +209,152 @@ def test_araya_attachment_read_keeps_image_bytes_out_of_text(
     assert "base64" not in result
     assert "artifact://" in result
     assert len(result) < 1000
+
+def _araya_runtime_with_fake_llm(monkeypatch, tmp_path, stream_events):
+    """构造只替换 LLM/Agent 的 ArayaRuntime（工具集留空，不触网）。"""
+    _prepare_araya_prompt(tmp_path)
+    monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "faust")
+    monkeypatch.setattr(araya_runtime.conf, "ARAYA_ENABLED", True)
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.model_name = kwargs.get("model")
+
+    class FakeAgent:
+        async def astream_events(self, payload, config=None, version=None):
+            for event in stream_events(payload):
+                yield event
+
+    import faust_backend.provider as provider_mod
+
+    async def _fake_build_main_chat_model(providers, intensity=None):
+        return FakeChatOpenAI(model="fake-model")
+
+    monkeypatch.setattr(provider_mod, "build_main_chat_model", _fake_build_main_chat_model)
+    monkeypatch.setattr(araya_runtime, "create_agent", lambda **kwargs: FakeAgent())
+    monkeypatch.setattr(araya_runtime.ArayaRuntime, "_build_tools", lambda self: [])
+    return araya_runtime.ArayaRuntime()
+
+
+def _ok_events(_payload):
+    class FakeAIMessageChunk:
+        type = "ai"
+        content = "maintained"
+
+    yield {"event": "on_chat_model_stream", "data": {"chunk": FakeAIMessageChunk()}}
+
+
+def _boom_events(_payload):
+    raise RuntimeError("模型炸了")
+    yield  # pragma: no cover —— 仅为让本函数成为生成器
+
+
+def test_araya_idle_trigger_hands_maintenance_window(monkeypatch, tmp_path):
+    """回归：idle 触发的窗口起点是上次成功维护的结束时间，不是抢占写入的“现在”。
+
+    旧实现把防重复触发的 last_trigger_ts 直接当窗口起点，而抢占写入发生在 run 读取
+    之前，于是每轮 changed-nodes 的窗口恒为 0 秒、永远返回空。
+    """
+    import asyncio
+
+    _prepare_araya_prompt(tmp_path)
+    monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "faust")
+    monkeypatch.setattr(araya_runtime.conf, "ARAYA_ENABLED", True)
+    monkeypatch.setattr(araya_runtime.conf, "ARAYA_IDLE_MINUTES", 1)
+
+    runtime = araya_runtime.ArayaRuntime()
+    state = runtime._load_state()
+    state.update({
+        "last_main_activity_ts": time.time() - 3600,
+        "last_trigger_ts": 0.0,
+        "last_maintenance_ts": 1234.5,
+        "idle_minutes": 1,
+    })
+    runtime._save_state(state)
+
+    runs: list[tuple[str, float | None]] = []
+
+    async def _fake_run(reason: str = "manual", since_ts: float | None = None) -> dict:
+        runs.append((reason, since_ts))
+        return {}
+
+    monkeypatch.setattr(runtime, "run_once_async", _fake_run)
+
+    async def _drive() -> float | None:
+        runtime._run_lock = asyncio.Lock()
+        window = await runtime._trigger_idle_run()
+        await asyncio.sleep(0)  # 让 create_task 的 run 跑起来
+        return window
+
+    assert asyncio.run(_drive()) == 1234.5
+    assert runs == [("idle", 1234.5)]
+    # 抢占仍然生效：last_trigger_ts 已推进，同一空闲窗口不会被重复触发
+    assert runtime.should_trigger() is False
+
+
+def test_araya_watermark_advances_only_on_success(monkeypatch, tmp_path):
+    """回归：失败的轮次不得推进 changed-nodes 水印（否则窗口被永久跳过）。"""
+    ok = _araya_runtime_with_fake_llm(monkeypatch, tmp_path, _ok_events)
+    state = ok._load_state()
+    state["last_maintenance_ts"] = 111.0
+    ok._save_state(state)
+
+    result = ok.run_once(reason="manual-test", since_ts=111.0)
+
+    assert result["status"] == "ok"
+    assert ok._load_state()["last_maintenance_ts"] > 111.0
+    assert ok.get_status()["last_log"]["since_ts"] == 111.0
+
+
+def test_araya_failed_run_keeps_watermark(monkeypatch, tmp_path):
+    bad = _araya_runtime_with_fake_llm(monkeypatch, tmp_path, _boom_events)
+    state = bad._load_state()
+    state["last_maintenance_ts"] = 222.0
+    bad._save_state(state)
+
+    result = bad.run_once(reason="manual-test", since_ts=222.0)
+
+    assert result["status"] == "error"
+    assert bad._load_state()["last_maintenance_ts"] == 222.0
+
+
+def test_araya_target_agent_snapshot_holds_during_run(monkeypatch, tmp_path):
+    """回归（09-22 换库事故）：run 期间切换激活 Agent，维护目标不得跟着漂移。"""
+    import asyncio
+
+    _prepare_araya_prompt(tmp_path)
+    monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "faust")
+
+    runtime = araya_runtime.ArayaRuntime()
+    assert runtime.run_target_agent == "faust"
+
+    async def _drive() -> tuple[str, str]:
+        runtime._run_lock = asyncio.Lock()
+        async with runtime._run_lock:
+            runtime._run_target_agent = "faust"
+            monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "ishmael")  # 运行中用户切库
+            return runtime.refresh_target_agent(), runtime.run_target_agent
+
+    assert asyncio.run(_drive()) == ("faust", "faust")
+    # 运行结束后才跟随新的激活 Agent
+    assert runtime.refresh_target_agent() == "ishmael"
+
+
+def test_araya_state_migration_seeds_watermark_from_last_trigger(monkeypatch, tmp_path):
+    """老 state 没有维护水印：必须用上次触发时间兜底，否则升级后首轮把全库当增量。"""
+    _prepare_araya_prompt(tmp_path)
+    monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "faust")
+
+    runtime = araya_runtime.ArayaRuntime()
+    runtime.paths.state_file.write_text(
+        json.dumps({"last_trigger_ts": 999.5, "last_main_activity_ts": 999.5}),
+        encoding="utf-8",
+    )
+
+    state = runtime._load_state()
+    assert state["last_maintenance_ts"] == 999.5
+    assert runtime.maintenance_watermark(state) == 999.5

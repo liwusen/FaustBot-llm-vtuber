@@ -78,6 +78,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   let textChatSending = false;
   let availableMotions = [];
   let availableExpressions = [];
+  // 表演覆盖层（agent 指令 / 交互脉冲 / 引擎 三级仲裁，见 libs/soullink/performance.js）
+  let avatarPerformance = null;
   let hoverModel = false;
   let hoverQuickController = false;
   let interactionLocked = false;
@@ -875,13 +877,160 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     bgAudio = null;
   }
 
+  // 真正"调模型"的地方：performance.js 的原生动画落地入口。
+  // Live2D 有 soullink 注入时走 inject.js 的 applyNativeAnimation（唯一落地 + token 去重），
+  // 图片模型 / 注入缺失 / 交互反应才直连模型。
+  // 注意 pixi-live2d-display 的 motion() 第三参是数字优先级，而 inject.js 的 directive 用字符串。
+  const MOTION_PRIORITY = { none: 0, idle: 1, normal: 2, force: 3 };
+  function dispatchNativeRequest(req){
+    const request = req || {};
+    if (modelType === 'images') {
+      if (!currentModel || !currentModel._faustImageModel) return false;
+      if (request.tap) return !!currentModel._faustImageModel.triggerTap();
+      if (request.expression) return !!currentModel._faustImageModel.setEmotion(request.expression);
+      return false;
+    }
+    if (!currentModel) return false;
+    if (request.motion && request.motion.group && typeof currentModel.motion === 'function') {
+      try{
+        const priority = MOTION_PRIORITY[String(request.motion.priority || 'normal')];
+        const result = currentModel.motion(request.motion.group, request.motion.index || 0, priority === undefined ? MOTION_PRIORITY.normal : priority);
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+        return true;
+      }catch(e){
+        console.warn('[avatar] motion 下发失败', request.motion, e);
+        return false;
+      }
+    }
+    if (request.expression && typeof currentModel.expression === 'function') {
+      try{
+        const result = currentModel.expression(request.expression);
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+        return true;
+      }catch(e){
+        console.warn('[avatar] expression 下发失败', request.expression, e);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  // 指针交互载荷：t（毫秒墙钟）、dx/dy（相对上一次事件）、hitArea（命中区名，惰性求值）、
+  // position（归一化）。hitArea 只在交互真正判定出来时才需要，pointermove 每帧都算 hitTest 是白费。
+  const pointerTracker = { lastX: 0, lastY: 0, hasLast: false };
+  function resolveHitArea(e, targetModel){
+    const global = (e && e.data && e.data.global) ? e.data.global : { x: 0, y: 0 };
+    // hitTest 入参为世界坐标、返回命中区名数组；未声明 HitAreas 的模型恒为空
+    if (targetModel && typeof targetModel.hitTest === 'function'){
+      try{
+        const hits = targetModel.hitTest(global.x, global.y);
+        if (Array.isArray(hits) && hits.length) return String(hits[0] || 'unknown');
+      }catch(err){ /* 忽略：保持 unknown */ }
+    }
+    return 'unknown';
+  }
+
+  function pointerPayload(e, targetModel){
+    const global = (e && e.data && e.data.global) ? e.data.global : { x: 0, y: 0 };
+    const dx = pointerTracker.hasLast ? global.x - pointerTracker.lastX : 0;
+    const dy = pointerTracker.hasLast ? global.y - pointerTracker.lastY : 0;
+    pointerTracker.lastX = global.x;
+    pointerTracker.lastY = global.y;
+    pointerTracker.hasLast = true;
+    const width = (app && app.renderer && app.renderer.width) || 1;
+    const height = (app && app.renderer && app.renderer.height) || 1;
+    return {
+      t: Date.now(),
+      dx,
+      dy,
+      hitArea: () => resolveHitArea(e, targetModel),
+      position: { x: global.x / width, y: global.y / height },
+    };
+  }
+
+  // 重度交互 → 离散情绪触发（引擎会产出对应的原生表情/动作）
+  const INTERACTION_INTENT_EMOTIONS = { multi_tap: 'surprised', long_press: 'confused', stroke: 'shy' };
+
+  // 交互上报：重度且 agent 正在输出时先打断再上报（本地反应已在 onPointer 内完成）
+  async function reportAvatarInteraction(result){
+    const payload = result && result.payload;
+    if (!payload) return;
+    if (result.tier === 'heavy') {
+      const emotion = INTERACTION_INTENT_EMOTIONS[payload.kind];
+      if (emotion) {
+        soullinkTriggerIntent({ emotion, intensity: 0.7, contextTags: ['avatar_interaction'] }, 'avatar_interaction');
+      }
+    }
+    if (result.tier === 'heavy' && agentIsProcessing) {
+      try { await interruptAgentAndWait(); } catch (e) { /* 忽略 */ }
+    }
+    if (!window.faustAppUI || typeof window.faustAppUI.communicate !== 'function') return;
+    try{
+      const response = await window.faustAppUI.communicate('avatar-performance', { action: 'interaction', interaction: payload });
+      if (response && response.status === 'error') console.warn('[avatar] 交互上报被拒绝:', response.detail);
+    }catch(e){
+      // 后端未就绪 / 插件未加载：本地反应已发生，不上抛
+      console.warn('[avatar] 交互上报失败', e);
+    }
+  }
+
+  function reportAvatarPointer(kind, e, targetModel){
+    if (!avatarPerformance) return;
+    const result = avatarPerformance.onPointer(kind, pointerPayload(e, targetModel));
+    if (result) reportAvatarInteraction(result);
+  }
+
+  // 模型加载成功后创建表演层（覆盖槽归零，绑定当前模型/表演层）
+  function setupAvatarPerformance(){
+    if (!window.Soullink || typeof window.Soullink.createAvatarPerformance !== 'function') {
+      console.warn('[avatar] soullink bundle 未提供 createAvatarPerformance，表演指令不可用');
+      avatarPerformance = null;
+      return;
+    }
+    avatarPerformance = window.Soullink.createAvatarPerformance({
+      getModelType: () => modelType,
+      getLayer: () => soullinkLayer,
+      getInjection: () => soullinkInjection,
+      getAvailableMotions: () => availableMotions,
+      getAvailableExpressions: () => availableExpressions,
+      getModelPath: () => (modelPathInput ? String(modelPathInput.value || '') : ''),
+      getProfileSource: () => soullinkProfileSource,
+      requestNativeImpl: dispatchNativeRequest
+    });
+  }
+
+  // 能力上报：后端据此缓存"当前模型真实可用能力"（唯一事实源）
+  function reportAvatarCapabilities(){
+    if (!avatarPerformance) return;
+    if (!window.faustAppUI || typeof window.faustAppUI.communicate !== 'function') return;
+    try{
+      Promise.resolve(
+        window.faustAppUI.communicate('avatar-performance', { action: 'report_capabilities', capabilities: avatarPerformance.getCapabilities() })
+      ).then((response) => {
+        if (response && response.status === 'error') console.warn('[avatar] 能力上报被拒绝:', response.detail);
+      }).catch((e) => {
+        // 后端未就绪 / 插件未加载：工具届时会明确报"前端尚未上报"
+        console.warn('[avatar] 能力上报失败', e);
+      });
+    }catch(e){
+      console.warn('[avatar] 能力上报失败', e);
+    }
+  }
+
+  function teardownAvatarPerformance(){
+    if (!avatarPerformance) return;
+    try { avatarPerformance.clearAll(); } catch (e) { /* 忽略 */ }
+    avatarPerformance = null;
+  }
+
   // 模型动作/表情触发 + <{...}> token 解析（见 libs/model-motion.js）
+  // requestNative 让 token 与工具调用共用 performance.js 的覆盖槽；表演层未就绪时直连模型兜底
   const motion = initModelMotion({
-    getModel: () => currentModel,
     getModelType: () => modelType,
     getVrmScene: () => vrmScene,
     getAvailableMotions: () => availableMotions,
-    getAvailableExpressions: () => availableExpressions
+    getAvailableExpressions: () => availableExpressions,
+    requestNative: (req) => (avatarPerformance ? avatarPerformance.requestNative(req) : dispatchNativeRequest(req))
   });
 
   // 鼠标头部跟踪（见 libs/mouse-tracking.js）
@@ -1005,15 +1154,16 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   let soullinkProfileSource = 'none'; // generated | cached | fallback
   let soullinkTickRaf = 0;
   let lastSoullinkTick = 0;
-  let lastSoullinkEmotion = '';
-  let lastSoullinkIntensity = -1;
+  let lastSoullinkIntent = null;      // 最近一次轮询到的主导情绪 → engine intent（供离散触发复用）
   let lastSoullinkProactiveId = null;
   let soullinkInitialized = false;
   let soullinkTickErrors = 0;
   let soullinkTickLogCount = 0;
-  // 情绪触发节流：engine 每次 triggerIntent 都会 deferBlink（推迟眨眼约 3~6 秒）并重置表情时间线，
-  // 若触发过于频繁（<6s），眨眼会被无限推迟、表情永远在"起"阶段 → 表现为"没有生命力/眼神不变"。
-  const SOULLINK_INTENT_COOLDOWN_MS = 10000;
+  // 离散情绪触发节流：engine 每次 triggerIntent 都会 deferBlink（推迟眨眼约 3~6 秒）并重置表情
+  // 时间线，触发过密会让眨眼被无限推迟、表情永远停在"起"阶段 → 表现为"没有生命力/眼神不变"。
+  // 连续漂移（applyVADTarget）不走这里、不节流；本冷却只服务于离散路径：
+  // 用户消息 / 回复开始 / 工具失败 / 重度交互。
+  const SOULLINK_INTENT_COOLDOWN_MS = 4000;
   let lastSoullinkIntentAt = 0;
   let lastSoullinkState = '';
 
@@ -1106,12 +1256,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   }
 
   function teardownSoullink(){
+    // 先释放 agent / 交互对模型的覆盖，再拆注入与表演层
+    if (avatarPerformance) { try { avatarPerformance.clearAll(); } catch (e) { /* 忽略 */ } }
     if (soullinkInjection) { try { soullinkInjection.detach(); } catch (e) {} soullinkInjection = null; }
     if (soullinkLayer) { try { soullinkLayer.destroy(); } catch (e) {} soullinkLayer = null; }
     soullinkAudioAnalyzer = null;
     soullinkProfileSource = 'none';
-    lastSoullinkEmotion = '';
-    lastSoullinkIntensity = -1;
+    lastSoullinkIntent = null;
     lastSoullinkProactiveId = null;
   }
 
@@ -1121,7 +1272,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       window.dispatchEvent(new CustomEvent('soullink-proactive', { detail: event }));
       if (soullinkLayer && window.Soullink) {
         const intent = window.Soullink.mapEmotionToIntent('curiosity', Math.max(4, (event.intensity || 0.5) * 8));
-        soullinkLayer.triggerIntent(intent, soullinkNow());
+        soullinkTriggerIntent(intent, 'proactive');
       }
     } catch (e) { /* 忽略 */ }
   }
@@ -1154,7 +1305,12 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     lastSoullinkTick = nowSeconds;
     try {
       const snapshot = soullinkLayer.update(nowSeconds, dt);
-      soullinkInjection.applyNativeAnimation(snapshot.nativeAnimation || null);
+      // 覆盖层 TTL 释放（不新增定时器，复用本 rAF 循环）
+      if (avatarPerformance) avatarPerformance.tick(nowSeconds);
+      // 原生动画的唯一落地：agent 覆盖 > 交互脉冲 > 引擎
+      const engineNative = snapshot.nativeAnimation || null;
+      const nativeDirective = avatarPerformance ? avatarPerformance.resolveNativeAnimation(engineNative) : engineNative;
+      soullinkInjection.applyNativeAnimation(nativeDirective);
       // 调试日志：state 变化时打印一次
       if (snapshot.state !== lastSoullinkState) {
         lastSoullinkState = snapshot.state;
@@ -1198,22 +1354,70 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       const top = Array.isArray(payload && payload.top_emotions) ? payload.top_emotions : [];
       const dominant = top[0] || null;
       if (!dominant || !soullinkLayer) return;
-      const intent = window.Soullink.mapEmotionToIntent(dominant.key, dominant.value);
-      const now = Date.now();
-      const emotionChanged = intent.emotion !== lastSoullinkEmotion;
-      const intensityJump = Math.abs(intent.intensity - lastSoullinkIntensity) > 0.2;
-      const cooldownLeft = SOULLINK_INTENT_COOLDOWN_MS - (now - lastSoullinkIntentAt);
-      if ((emotionChanged || intensityJump) && cooldownLeft <= 0) {
-        lastSoullinkEmotion = intent.emotion;
-        lastSoullinkIntensity = intent.intensity;
-        lastSoullinkIntentAt = now;
-        console.info('[soullink:emotion] dominant=' + dominant.key + '=' + Number(dominant.value).toFixed(1) + ' → intent ' + intent.emotion + ' @' + intent.intensity.toFixed(2), { emotionChanged, intensityJump });
-        soullinkLayer.triggerIntent(intent, soullinkNow());
-      } else if (emotionChanged || intensityJump) {
-        console.info('[soullink:emotion] 跳过触发（冷却剩余 ' + (cooldownLeft / 1000).toFixed(1) + 's）: intent ' + intent.emotion + ' @' + intent.intensity.toFixed(2));
+      // 离散路径的 intent 缓存（用户消息 / 回复开始等时刻复用）
+      lastSoullinkIntent = window.Soullink.mapEmotionToIntent(dominant.key, dominant.value);
+      // 连续漂移：每轮把主导情绪折算成 VAD 目标，不节流。
+      // applyVADTarget 只走 emotionState.blendTo，不 deferBlink、不重置表情时间线、不打断 idle。
+      if (avatarPerformance) {
+        const drift = avatarPerformance.applyEmotionDrift(dominant.key, dominant.value);
+        if (drift && drift.ok) {
+          console.info('[soullink:emotion] 连续漂移 dominant=' + dominant.key + '=' + Number(dominant.value).toFixed(1) + ' → ' + drift.emotion + ' @' + Number(drift.intensity).toFixed(2));
+        }
       }
     } catch (e) {
       // 插件未安装或后端未就绪时静默
+    }
+  }
+
+  function soullinkIntentCooldownLeft(){
+    return SOULLINK_INTENT_COOLDOWN_MS - (Date.now() - lastSoullinkIntentAt);
+  }
+
+  // 离散情绪触发（engine 会产出情绪对应的原生表情/动作）：统一在这里做冷却
+  function soullinkTriggerIntent(intent, tag){
+    if (!soullinkLayer || !intent) return false;
+    const cooldownLeft = soullinkIntentCooldownLeft();
+    if (cooldownLeft > 0) {
+      console.info('[soullink:emotion] 跳过离散触发（' + tag + '，冷却剩余 ' + (cooldownLeft / 1000).toFixed(1) + 's）');
+      return false;
+    }
+    lastSoullinkIntentAt = Date.now();
+    try{
+      soullinkLayer.triggerIntent(intent, soullinkNow());
+      console.info('[soullink:emotion] 离散触发 ' + tag + ' → ' + intent.emotion + ' @' + Number(intent.intensity).toFixed(2));
+      return true;
+    }catch(e){
+      return false;
+    }
+  }
+
+  // 用户消息：用引擎自带的消息分类器（classify + triggerIntent），同样受冷却约束
+  function soullinkSendUserMessage(text){
+    const runtime = soullinkLayer && soullinkLayer.runtime;
+    if (!runtime || typeof runtime.sendMessage !== 'function') return false;
+    const cooldownLeft = soullinkIntentCooldownLeft();
+    if (cooldownLeft > 0) {
+      console.info('[soullink:emotion] 跳过用户消息分类（冷却剩余 ' + (cooldownLeft / 1000).toFixed(1) + 's）');
+      return false;
+    }
+    lastSoullinkIntentAt = Date.now();
+    try{
+      runtime.sendMessage(String(text || ''), soullinkNow());
+      return true;
+    }catch(e){
+      return false;
+    }
+  }
+
+  // 工具失败判定：本项目工具统一返回 {"status":"error",...}；只解析 JSON，避免正文里出现同名字样被误判
+  function isToolFailureOutput(output){
+    const text = String(output || '').trim();
+    if (!text.startsWith('{')) return false;
+    try{
+      const parsed = JSON.parse(text);
+      return !!parsed && typeof parsed === 'object' && String(parsed.status || '').toLowerCase() === 'error';
+    }catch(e){
+      return false;
     }
   }
 
@@ -1360,6 +1564,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     });
     window.addEventListener('faust-tts-start', () => {
       if (soullinkLayer) { try { soullinkLayer.setVoicePlaybackActive(true); } catch (e) {} }
+      // 回复开始：离散触发，让引擎产出与当前情绪对应的原生表情/动作
+      if (lastSoullinkIntent) soullinkTriggerIntent(lastSoullinkIntent, 'reply_start');
     });
   }
 
@@ -1813,6 +2019,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         } else {
           motion.playMotionByName(arg);
         }
+      } else if (cmd === 'AVATAR_EMOTION' || cmd === 'AVATAR_EXPRESSION' || cmd === 'AVATAR_MOTION' || cmd === 'AVATAR_FACS' || cmd === 'AVATAR_CLEAR'){
+        // 表演指令：agent 工具 → FrontendBridge._push → 此处分发（见 libs/soullink/performance.js）
+        if (!avatarPerformance) { console.warn('[avatar] 表演层未就绪，忽略命令:', cmd, arg); return; }
+        let payload = null;
+        try{ payload = arg ? JSON.parse(arg) : {}; }catch(e){ console.warn('Invalid ' + cmd + ' payload', e, arg); return; }
+        const result = avatarPerformance.applyCommand(cmd, payload);
+        if (!result || !result.ok) console.warn('[avatar] ' + cmd + ' 执行失败:', (result && result.detail) || '未知原因', payload);
       } else if (cmd === 'LOAD_MODEL' || cmd === 'SET_MODEL_PATH'){
         if (!arg) return;
         if (modelPathInput) modelPathInput.value = arg;
@@ -2216,6 +2429,10 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       }
       target.output = String(msg.output || '');
       target.done = true;
+      // 工具失败：本项目工具统一用 {"status":"error",...} 表示失败（只认 JSON，避免正文误判）
+      if (isToolFailureOutput(target.output)) {
+        soullinkTriggerIntent({ emotion: 'concerned', intensity: 0.5, contextTags: ['tool_failure'] }, 'tool_failure');
+      }
       bubble.showResultBubble('ai', req.entries);
       return;
     }
@@ -2378,6 +2595,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
 
   async function sendToChat(text){
     if (!text) return;
+    // 用户消息：离散情绪触发（引擎自带分类器），受 SOULLINK_INTENT_COOLDOWN_MS 约束
+    soullinkSendUserMessage(text);
     if (pluginChatHold) {
       heldChatQueue.push(text);
       if (textChatStatus) textChatStatus.textContent = '演唱中，消息已排队';
@@ -3030,6 +3249,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     if (openVRMConfigBtn) openVRMConfigBtn.style.display = 'none';
     if (app && app.view) app.view.style.display = '';
     modelType = 'live2d';
+    // 渲染器切换即旧模型退场：释放表演覆盖，等待下一个模型重建
+    teardownAvatarPerformance();
   }
 
   function normalizeImageModelConfig(rawConfig){
@@ -3105,6 +3326,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   function showModelLoadFallback(){
     try {
       if (modelType !== 'live2d') switchToLive2DRenderer();
+      // 兜底方块不是真模型：清掉表演覆盖，工具会明确报"前端尚未上报能力"
+      teardownAvatarPerformance();
       if (!window.PIXI || !app || !app.renderer) return;
       if (currentModel && currentModel.parent) app.stage.removeChild(currentModel);
       const sprite = new PIXI.Sprite(createMissingModelTexture());
@@ -3185,7 +3408,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     availableMotions = resolvedConfig.emotions.map((item) => item.name);
     availableExpressions = [];
     currentLipSyncParamIds = [];
-    let pointerDownTime = 0;
     sprite.anchor.set(0.5, 1.0);
     sprite.x = app.renderer.width - 200;
     sprite.y = app.renderer.height - 20;
@@ -3244,7 +3466,6 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     };
 
     sprite.on('pointerdown', (e) => {
-      pointerDownTime = Date.now();
       if (clickThroughController) clickThroughController.forceInteractive();
       setInteractionLock(true);
       dragging = true;
@@ -3252,27 +3473,24 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       const pos = e.data.global;
       dragOffset.x = pos.x - sprite.x;
       dragOffset.y = pos.y - sprite.y;
-      sprite._faustImageModel.triggerTap();
+      reportAvatarPointer('down', e, sprite);
     });
-    sprite.on('pointerup', () => {
-      if (Date.now() - pointerDownTime < 300 && !dragging) {
-        sprite._faustImageModel.triggerTap();
-      }
+    sprite.on('pointerup', (e) => {
+      reportAvatarPointer('up', e, sprite);
       dragging = false;
       sprite.cursor = 'grab';
       setInteractionLock(false);
       persistModelPositionToBackend();
     });
-    sprite.on('pointerupoutside', () => {
-      if (Date.now() - pointerDownTime < 300 && !dragging) {
-        sprite._faustImageModel.triggerTap();
-      }
+    sprite.on('pointerupoutside', (e) => {
+      reportAvatarPointer('upoutside', e, sprite);
       dragging = false;
       sprite.cursor = 'grab';
       setInteractionLock(false);
       persistModelPositionToBackend();
     });
     sprite.on('pointermove', (e) => {
+      reportAvatarPointer('move', e, sprite);
       if (!dragging) return;
       const pos = e.data.global;
       let rawX = pos.x - dragOffset.x;
@@ -3284,6 +3502,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       updateQuickControllerPosition();
       markLayoutDirty('model');
     });
+    sprite.on('pointerover', (e) => { reportAvatarPointer('hover', e, sprite); });
 
     app.stage.addChild(sprite);
     clearOverlay();
@@ -3296,6 +3515,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     updateTextChatBarPosition();
     refreshQuickControllerVisibility();
     if (modelPathInput) modelPathInput.value = '__faust_images__';
+    // 表演层 + 能力上报（图片模型：情绪图组名即它的"表情"）
+    setupAvatarPerformance();
+    reportAvatarCapabilities();
   }
 
   async function loadModel(path){
@@ -3369,7 +3591,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       model.interactive = true;
       model.cursor = 'grab';
 
-      // 基本拖拽
+      // 基本拖拽 + 交互采集（分级回传见 libs/soullink/performance.js）
       model.on('pointerdown', (e) => {
         if (clickThroughController) clickThroughController.forceInteractive();
         setInteractionLock(true);
@@ -3378,20 +3600,24 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         const pos = e.data.global;
         dragOffset.x = pos.x - model.x;
         dragOffset.y = pos.y - model.y;
+        reportAvatarPointer('down', e, model);
       });
-      model.on('pointerup', () => {
+      model.on('pointerup', (e) => {
+        reportAvatarPointer('up', e, model);
         dragging = false;
         model.cursor = 'grab';
         setInteractionLock(false);
         persistModelPositionToBackend();
       });
-      model.on('pointerupoutside', () => {
+      model.on('pointerupoutside', (e) => {
+        reportAvatarPointer('upoutside', e, model);
         dragging = false;
         model.cursor = 'grab';
         setInteractionLock(false);
         persistModelPositionToBackend();
       });
       model.on('pointermove', (e) => {
+        reportAvatarPointer('move', e, model);
         if (!dragging) return;
         const pos = e.data.global;
         let rawX = pos.x - dragOffset.x;
@@ -3403,15 +3629,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         updateQuickControllerPosition();
         markLayoutDirty('model');
       });
-
-      // 官方示例支持的 hit 事件（例如点击 body 区域触发动作）
-      try{
-        model.on && model.on('hit', (hitAreas) => {
-          try{
-            model.motion('tap_body');
-          }catch(e){}
-        });
-      }catch(e){ /* ignore if event not supported */ }
+      model.on('pointerover', (e) => { reportAvatarPointer('hover', e, model); });
 
       app.stage.addChild(model);
       clearOverlay();
@@ -3426,8 +3644,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       model._faustLive2D = { mouthValue: 0 };
       // 鼠标跟踪监听（幂等注册；autoFocus 已在 from 里关闭）
       mouseTracking.init();
-      // soullink 表演层（异步初始化，不阻塞模型展示）
-      setupSoullinkForModel(model, path);
+      // 表演覆盖层（先建，指针分级立即可用）
+      setupAvatarPerformance();
+      // soullink 表演层（异步初始化，不阻塞模型展示）；能力上报等它就绪（facs_keys 依赖 profile）
+      setupSoullinkForModel(model, path).finally(() => {
+        if (currentModel !== model) return;  // 竞态保护：模型已切换
+        reportAvatarCapabilities();
+      });
 
       updateTextChatBarPosition();
       refreshQuickControllerVisibility();

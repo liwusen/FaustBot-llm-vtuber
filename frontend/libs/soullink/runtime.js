@@ -57,6 +57,15 @@ export function createSoullinkLayer({ profile, personality, motionStyle, audioLe
       runtime.setLipSyncEnabled(enabled);
     },
 
+    // manual 层（agent / 交互脉冲的 FACS 覆盖，见 libs/soullink/performance.js）
+    setManualFACS(facs) {
+      runtime.setManualFACS(facs);
+    },
+
+    clearManualFACS() {
+      runtime.clearManualFACS();
+    },
+
     setIdleEnabled(enabled) {
       runtime.setIdleEnabled(enabled);
     },

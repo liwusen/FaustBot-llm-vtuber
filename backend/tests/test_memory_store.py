@@ -1107,3 +1107,69 @@ def test_record_entity_has_child_lives_in_edges_not_parent_id(memory_store):
     gs2 = store.GraphStore("test_agent")
     assert [e["id"] for e in gs2.get_entity_children(result["path"])] == [eid]
     gs2.close()
+
+
+def test_get_neighbors_depth_one_returns_direct_neighbors(memory_store):
+    """回归：get_neighbors 曾丢掉最后一层 frontier，depth=1（工具默认值）恒返回 []。"""
+    a = memory_store.entity_add("甲", "concept")
+    b = memory_store.entity_add("乙", "concept")
+    c = memory_store.entity_add("丙", "concept")
+    memory_store.relation_add(a, b, "relates_to")
+    memory_store.relation_add(b, c, "relates_to")
+
+    assert memory_store.get_neighbors(a, depth=1) == [{
+        "id": b, "name": "乙", "entity_type": "concept", "description": "",
+        "relations": [{"type": "relates_to", "direction": "out"}], "path_ref": None,
+    }]
+    assert sorted(n["id"] for n in memory_store.get_neighbors(a, depth=2)) == sorted([b, c])
+
+
+def test_get_neighbors_reports_edge_direction(memory_store):
+    """邻居必须带边方向：维护 Agent 靠 in/out 判断该改哪一端的关系。"""
+    a = memory_store.entity_add("甲", "concept")
+    b = memory_store.entity_add("乙", "concept")
+    memory_store.relation_add(b, a, "part_of")
+
+    (neighbor,) = memory_store.get_neighbors(a, depth=1)
+    assert neighbor["id"] == b
+    assert neighbor["relations"] == [{"type": "part_of", "direction": "in"}]
+
+
+def test_get_changed_nodes_limits_and_keeps_entities_opt_in(memory_store):
+    """实体默认不列出（自动抽取会刷屏），limit 按更新时间倒序截断。"""
+
+    async def _run():
+        await memory_store.file_write("/notes/a.md", "甲")
+        await memory_store.file_write("/notes/b.md", "乙")
+        eid = memory_store.entity_add("甲概念", "concept")
+        return (
+            await memory_store.get_changed_nodes(0.0, scope="/notes"),
+            await memory_store.get_changed_nodes(0.0, scope="/notes", limit=1),
+            await memory_store.get_changed_nodes(0.0, include_entities=True),
+            eid,
+        )
+
+    default, limited, with_entities, eid = asyncio.run(_run())
+    assert sorted(item["path"] for item in default) == ["/notes/a.md", "/notes/b.md"]
+    assert all("id" not in item for item in default)
+    assert len(limited) == 1
+    assert any(item.get("id") == eid for item in with_entities)
+
+
+def test_get_memory_keeps_one_store_per_agent(tmp_path, monkeypatch):
+    """回归：维护目标 Agent 必须能取到自己的库实例，不能复用激活 Agent 的库。"""
+    import faust_backend.memory as memory_pkg
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "AGENT_NAME", "faust")
+    monkeypatch.setattr(memory_pkg, "_STORES", {})
+
+    active = memory_pkg.get_memory()
+    target = memory_pkg.get_memory("ishmael")
+    try:
+        assert (active.agent_name, target.agent_name) == ("faust", "ishmael")
+        assert active is not target
+        assert memory_pkg.get_memory("faust") is active
+    finally:
+        active.close()
+        target.close()

@@ -210,9 +210,16 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 ## 模型动作触发
 
-先用 `listAvailableMotionsTool()` 查看可用名称，然后在你的正常输出中包含 `<{Motion_Name}>`(需要包含花括号)。比如<{Idle}>。这个 token 会触发动作，但不会显示给用户。
+先用 `listAvatarCapabilities()` 查看当前模型真正可用的名称（情绪 / 原生表情 / 原生动作组 / FACS 键；事实源是前端加载模型后的上报，不是磁盘上的 model3.json）。
 
-如果需要让模型做表情（Expression，如惊讶/开心等情绪脸），在输出中包含 `<{EXPRESSION:ExpressionName}>`，例如 `<{EXPRESSION:f01}>`。可用表情名由 `listAvailableMotionsTool()` 返回的 `expressions` / `expression_tokens` 字段提供（形如 `EXPRESSION:XXXX`）。表情与动作互不影响，可同时使用。
+两种表达方式并存，触发时机不同：
+
+- **工具**（`setAvatarEmotion` / `setAvatarExpression` / `playAvatarMotion` / `setAvatarParameters` / `clearAvatarPerformance`）：调用即生效，**早于该轮文本**。想“现在立刻”改情绪、换表情、定参数、限时保持时用它。
+- **文本 token**：在你的正常输出中包含 `<{Motion_Name}>`(需要包含花括号)，比如<{Idle}>。这个 token 会在**它所属的那句话被 TTS 播到时**触发动作，因此适合让动作穿插在语音中间。token 不会显示给用户。
+
+如果需要让模型做表情（Expression，如惊讶/开心等情绪脸），在输出中包含 `<{EXPRESSION:ExpressionName}>`，例如 `<{EXPRESSION:f01}>`。可用表情名由 `listAvatarCapabilities()` 返回的 `expressions` 字段提供。表情与动作互不影响，可同时使用。
+
+工具与 token 同属 agent 表演层，共用同一个原生覆盖槽：后写覆盖前写，`hold_seconds` 到期后自动交还 soullink 引擎。用户的点击/拖动/长按会分级回传：轻度交互下一轮可见（消息里出现“（刚才用户与你互动：…）”），重度交互会打断并触发你立即回应。
 
 ## VRM 动作预设
 
@@ -227,6 +234,6 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 1. 读取记忆user/,diary/下的最新5条内容;user/下的全部内容;notes/下的你感兴趣的内容
 2. 检查触发器列表,确认`HEARTBEAT`符合上述要求
 3. 读取faustbot:// 虚拟文件系统的目录结构,了解其功能
-4. 使用`listAvailableMotionsTool()`/`listVRMPosesTool()`获取模型信息
+4. 使用`listAvatarCapabilities()`/`listVRMPosesTool()`获取模型信息
 5. 检查Agile状态(`agileOperate(action="list")`)
    读取`memory://user/need/`下的Agile模块编写记录(如有)

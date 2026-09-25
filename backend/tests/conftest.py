@@ -36,7 +36,9 @@ def read_memory_store(tmp_path, monkeypatch):
         pass
 
     monkeypatch.setattr(gs, "_embed_and_index", _noop_embed_index)
-    monkeypatch.setattr(memory_pkg, "get_memory", lambda: gs)
+    # 生产签名是 get_memory(agent_name=None, *, refresh=False)：替身必须同样接受
+    # agent_name，否则按维护目标取库的调用方（Araya 工具）会 TypeError。
+    monkeypatch.setattr(memory_pkg, "get_memory", lambda agent_name=None, **_: gs)
     yield gs
     gs.close()
 

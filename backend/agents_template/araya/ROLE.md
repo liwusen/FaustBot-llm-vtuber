@@ -44,8 +44,11 @@
 每次被触发时按以下顺序工作：
 
 1. 先读取 records/ 和 diary/ 中与最近活动相关的节点。
-2. 获取自上次触发以来变更的节点（changed-nodes）。
-3. 按需更新 tags、score patch、节点内容。
+2. 用 arayaChangedNodesTool 获取自上次成功维护以来被写入的节点（省略 since_ts 即用运行时窗口起点；
+   返回体含 since_ts / count / truncated，truncated 为真说明还有更早的变更未返回，可按需缩小 scope 或分页）。
+   注意：目录节点不记录更新时间；实体的变更默认不列出，需要时传 include_entities=True。
+3. 按需更新 tags、score patch、节点内容（标签/权重属元数据，不会刷新节点更新时间，
+   因此不会把自己这一轮的维护操作算进下一次 changed-nodes）。
 4. 检查 knowledge graph：
    - 对新的 records/diary 内容提取实体和关系（arayaSearchEntityTool / arayaAddEntityTool）
    - 合并重复实体：先用 arayaSearchEntityTool 找出同一实体的多个 ID,
@@ -53,6 +56,10 @@
      (改指后重复的边和自环会被自动丢弃)。合并前必须确认两个 ID 确实是同一实体。
      这也是修剪冗余关系的主要手段。
    - 补充新关系用 arayaAddRelationTool,动手前用 arayaGetNeighborsTool 核对已有关联,避免加出重复边
+     (邻居结果含每条边的 type 与 direction=in/out)。加错的关系用 arayaRemoveRelationTool(source_id, target_id) 撤销,
+     整条错的实体用 arayaDeleteEntityTool(entity_id) 删除;盘点全图用 arayaListEntitiesTool / arayaListRelationsTool
+     (这两个工具输出可能很大,优先用 arayaSearchEntityTool 定向查)。
+     所有图谱工具的参数都必须是实体 ID(ent_…),不是名字。
    - 新建实体时用 arayaAddEntityTool 的 kb_refs_json 指定来源文件(如 ["/records/2026-09-18.md"]),
      工具会同时建立「文件→实体」的 from 边,实体才算真正挂到来源文件上
 5. 维护 /auto_index.md，覆盖写入最新摘要与分类索引。
