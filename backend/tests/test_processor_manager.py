@@ -104,3 +104,41 @@ def test_error_info_from_exception_keeps_type_and_traceback():
     assert info.type == "ValueError"
     assert info.message == "坏输入"
     assert "ValueError: 坏输入" in info.traceback
+
+
+# ── Task 3: 注册表 ──────────────────────────────────────────
+
+
+def test_registry_rejects_incomplete_and_duplicate_processors():
+    from faust_backend.processors.base import Processor
+    from faust_backend.processors.errors import ProcessorError, ProcessorNotFoundError
+    from faust_backend.processors import registry
+
+    class Incomplete(Processor):
+        NAME = "TEST_INCOMPLETE_REG"
+
+    with pytest.raises(ProcessorError):
+        registry.register_processor(Incomplete, owner="test_tmp_registry")
+
+    class Ok(Processor):
+        NAME = "TEST_OK_REG"
+
+        def start(self, ctx):
+            pass
+
+        def invoke(self, ctx, data):
+            return data
+
+    name = registry.register_processor(Ok, owner="test_tmp_registry", loader="/tmp/fake_plugin.py")
+    assert name == "TEST_OK_REG"
+    entry = registry.get_processor(name)
+    assert entry.owner == "test_tmp_registry"
+    assert entry.loader == "/tmp/fake_plugin.py"
+    assert entry.cls is Ok
+
+    with pytest.raises(ProcessorError):
+        registry.register_processor(Ok, owner="test_tmp_registry", loader="/tmp/fake_plugin.py")
+
+    assert registry.unregister_owner("test_tmp_registry") == [name]
+    with pytest.raises(ProcessorNotFoundError):
+        registry.get_processor(name)
