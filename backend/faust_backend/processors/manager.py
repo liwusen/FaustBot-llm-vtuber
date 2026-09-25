@@ -33,6 +33,7 @@ from .errors import (
     ProcessorTimeoutError,
 )
 from .registry import RegisteredProcessor, get_processor, list_processors
+from . import builtin as _builtin  # noqa: F401 - import 副作用：注册内置 Processor（VAD/OCR）
 
 log = get_logger("faust.processor")
 

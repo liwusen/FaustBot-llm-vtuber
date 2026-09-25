@@ -796,3 +796,76 @@ async def test_prune_loop_reads_config_and_recycles(manager_factory, monkeypatch
     finally:
         task.cancel()
         await task           # prune_loop 自己吞掉 CancelledError 后正常返回（对齐 _plugin_heartbeat_loop 写法）
+
+
+# ── Task 9: 内置 VAD Processor ──────────────────────────────
+
+
+def test_vad_processor_contract():
+    from faust_backend.processors.builtin.vad import (
+        SAMPLE_RATE,
+        VAD_THRESHOLD,
+        WINDOW_SIZE,
+        VadProcessor,
+    )
+
+    assert (SAMPLE_RATE, WINDOW_SIZE, VAD_THRESHOLD) == (16000, 512, 0.5)
+    assert VadProcessor.NAME == "VAD"
+    assert Path(VadProcessor.DATA_DIR).parts[-4:] == ("backend", "asr-hub", "model", "torch_hub")
+    assert VadProcessor.SETUP_TIMEOUT == 900.0
+    assert VadProcessor().setup_fingerprint({"unused": 1}) == VadProcessor.SETUP_VERSION
+
+
+def test_vad_invoke_maps_probability_to_speech_flag(tmp_path):
+    import faust_backend.processors.builtin.vad as vad_module
+
+    class _FakeTensor:
+        def __init__(self, value: float) -> None:
+            self._value = value
+
+        def item(self) -> float:
+            return self._value
+
+    class _FakeModel:
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def __call__(self, tensor, sample_rate):
+            assert sample_rate == 16000
+            return _FakeTensor(self.value)
+
+    class _FakeTorch:
+        @staticmethod
+        def from_numpy(array):
+            return array
+
+        @staticmethod
+        def no_grad():
+            import contextlib
+
+            return contextlib.nullcontext()
+
+    ctx = ProcessorContext(name="VAD", data_dir=tmp_path, config={}, log_sink=lambda level, msg: None)
+
+    loud = vad_module.VadProcessor()
+    loud._torch = _FakeTorch
+    loud._model = _FakeModel(0.91)
+    assert loud.invoke(ctx, {"audio": [0.0] * 512}) == {"probability": 0.91, "is_speech": True}
+
+    quiet = vad_module.VadProcessor()
+    quiet._torch = _FakeTorch
+    quiet._model = _FakeModel(0.2)
+    assert quiet.invoke(ctx, {"audio": [0.0] * 512}) == {"probability": 0.2, "is_speech": False}
+
+    with pytest.raises(ValueError):
+        loud.invoke(ctx, {"audio": [0.0] * 256})
+
+
+def test_vad_stop_drops_model_reference(tmp_path):
+    import faust_backend.processors.builtin.vad as vad_module
+
+    ctx = ProcessorContext(name="VAD", data_dir=tmp_path, config={}, log_sink=lambda level, msg: None)
+    processor = vad_module.VadProcessor()
+    processor._model = object()
+    processor.stop(ctx)
+    assert processor._model is None
