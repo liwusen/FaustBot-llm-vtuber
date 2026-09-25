@@ -189,6 +189,13 @@ class ProcessorHandle:
     def pid_alive(self) -> bool:
         return bool(self.pid) and psutil.pid_exists(int(self.pid))
 
+    @property
+    def busy(self) -> bool:
+        """是否有在途或排队的 invoke（prune 空闲判定用）。"""
+        if self._pending:
+            return True
+        return self._queue is not None and not self._queue.empty()
+
     def status(self) -> dict[str, Any]:
         """状态快照（admin 接口与排查用）。"""
         now = time.time()
@@ -679,11 +686,27 @@ class ProcessorHandle:
     # ── 引用计数 ──────────────────────────────────────────
 
     async def acquire_lease(self, lease: ProcessorLease) -> None:
-        """登记一次引用并（必要时）触发启动。"""
+        """登记一次引用并（必要时）触发启动。
+
+        config 规则（规格 §10）：ACTIVE 且无人引用时 config 变化 → 先停再按新
+        config 重启；仍有其它引用时 config 不一致 → 明确报错，不偷偷重启。
+        """
+        if self.state == STATE_STOPPING and self._stop_task is not None and not self._stop_task.done():
+            await asyncio.shield(self._stop_task)   # 等上一轮停止收尾，避免启动/停止交叉
+        desired = dict(lease.config)
+        if desired and desired != self.config:
+            if self.state == STATE_ACTIVE and self.refcount == 0:
+                await self.stop(reason="config 变更，按新配置重启")
+            elif self.state in (STATE_ACTIVE, STATE_SETTING_UP, STATE_STARTING):
+                raise ProcessorConfigMismatchError(
+                    f"{self.name} 正在使用 config={self.config}（holders={self.holders}），"
+                    f"无法切换到 {desired}"
+                )
+            self.config = desired
+        elif not self.config and desired:
+            self.config = desired
         self.leases.append(lease)
         self.idle_since = None
-        if not self.config and lease.config:
-            self.config = dict(lease.config)
         self.ensure_started()
 
     def release_lease(self, lease: ProcessorLease) -> None:

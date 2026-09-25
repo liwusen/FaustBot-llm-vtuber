@@ -470,3 +470,244 @@ async def test_async_with_releases_reference(manager_factory):
     handle = manager.handle("TEST_ECHO")
     assert handle.refcount == 0
     assert handle.state == "ACTIVE"          # 引用归零不自动停，交给 prune
+
+
+# ── Task 7: 崩溃 / 超时 / 取消 / config ─────────────────────
+
+
+class BoomProcessor(Processor):
+    NAME = "TEST_BOOM"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def start(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def invoke(self, ctx: ProcessorContext, data):
+        if data == "boom":
+            raise ValueError("输入不合法")
+        return {"ok": data}
+
+
+class CrashProcessor(Processor):
+    NAME = "TEST_CRASH"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def start(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def invoke(self, ctx: ProcessorContext, data):
+        if data == "die":
+            import os
+
+            os._exit(7)
+        return {"ok": data}
+
+
+class SlowProcessor(Processor):
+    NAME = "TEST_SLOW"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+    INVOKE_TIMEOUT = 0.5
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def start(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def invoke(self, ctx: ProcessorContext, data):
+        import time
+
+        seq = int(data.get("seq", 0))
+        with (ctx.data_dir / "seq.txt").open("a", encoding="utf-8") as fh:
+            fh.write(f"start {seq}\n")
+        time.sleep(float(data.get("sleep", 0.05)))
+        with (ctx.data_dir / "seq.txt").open("a", encoding="utf-8") as fh:
+            fh.write(f"end {seq}\n")
+        return {"seq": seq}
+
+
+class SlowPeerProcessor(SlowProcessor):
+    """与 TEST_SLOW 同类但独立进程；用于验证跨 Processor 并行。"""
+
+    NAME = "TEST_SLOW_PEER"
+
+
+class ConfigEchoProcessor(Processor):
+    NAME = "TEST_CONFIG_ECHO"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def start(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def invoke(self, ctx: ProcessorContext, data):
+        return {"config": dict(ctx.config)}
+
+
+register_processor(BoomProcessor, owner="test")
+register_processor(CrashProcessor, owner="test")
+register_processor(SlowProcessor, owner="test")
+register_processor(SlowPeerProcessor, owner="test")
+register_processor(ConfigEchoProcessor, owner="test")
+
+
+@pytest.fixture(autouse=True)
+def _test_data_dirs(tmp_path, monkeypatch):
+    for cls in (BoomProcessor, CrashProcessor, SlowProcessor, SlowPeerProcessor, ConfigEchoProcessor):
+        monkeypatch.setattr(cls, "DATA_DIR", str(tmp_path / "data" / cls.NAME), raising=False)
+
+
+@pytest.mark.asyncio
+async def test_invoke_error_keeps_worker_alive(manager_factory):
+    from faust_backend.processors.errors import ProcessorInvokeError
+
+    manager = manager_factory()
+    async with manager.require("TEST_BOOM", requirer="t1") as lease:
+        await lease.wait_until_ready(timeout=30)
+        with pytest.raises(ProcessorInvokeError) as excinfo:
+            await lease.invoke("boom")
+        assert excinfo.value.error_type == "ValueError"
+        assert "输入不合法" in excinfo.value.traceback_text
+        assert manager.handle("TEST_BOOM").state == "ACTIVE"
+        assert await lease.invoke("fine") == {"ok": "fine"}
+
+
+@pytest.mark.asyncio
+async def test_worker_crash_fails_inflight_and_pending_then_restart_works(manager_factory):
+    from faust_backend.processors.errors import ProcessorCrashedError, ProcessorNotReadyError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_CRASH", requirer="t1")
+    await lease.wait_until_ready(timeout=30)
+
+    inflight = asyncio.create_task(lease.invoke("die"))
+    await asyncio.sleep(0.2)
+    queued = asyncio.create_task(lease.invoke("later"))
+
+    with pytest.raises(ProcessorCrashedError):
+        await inflight
+    with pytest.raises((ProcessorCrashedError, ProcessorNotReadyError)):
+        await queued
+
+    handle = manager.handle("TEST_CRASH")
+    assert handle.state == "STOPPED"
+    assert "7" in (handle.last_error or "")
+    await asyncio.sleep(0.2)
+    assert handle.pid_alive is False
+
+    await manager.endRequire("TEST_CRASH", "t1")
+    lease = await manager.startRequire("TEST_CRASH", requirer="t1")   # 崩溃后需重新 require 才重启
+    await lease.wait_until_ready(timeout=30)
+    assert await lease.invoke("hello") == {"ok": "hello"}
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_invoke_timeout_recycles_worker(manager_factory):
+    from faust_backend.processors.errors import ProcessorTimeoutError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_SLOW", requirer="t1")
+    await lease.wait_until_ready(timeout=30)
+
+    with pytest.raises(ProcessorTimeoutError):
+        await lease.invoke({"seq": 1, "sleep": 5.0})
+
+    handle = manager.handle("TEST_SLOW")
+    assert handle.state == "STOPPED"
+    assert "invoke 超时" in (handle.last_error or "")
+    await asyncio.sleep(0.2)
+    assert handle.pid_alive is False
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_invoke_is_fifo_and_serial(manager_factory):
+    manager = manager_factory()
+    async with manager.require("TEST_SLOW", requirer="t1") as lease:
+        await lease.wait_until_ready(timeout=30)
+        results = await asyncio.gather(*(lease.invoke({"seq": i}) for i in range(1, 6)))
+        assert [item["seq"] for item in results] == [1, 2, 3, 4, 5]
+
+        lines = (Path(SlowProcessor.DATA_DIR) / "seq.txt").read_text(encoding="utf-8").split()
+        seq_events = list(zip(lines[0::2], lines[1::2]))
+        assert seq_events == [("start", "1"), ("end", "1"), ("start", "2"), ("end", "2"),
+                              ("start", "3"), ("end", "3"), ("start", "4"), ("end", "4"),
+                              ("start", "5"), ("end", "5")]
+
+
+@pytest.mark.asyncio
+async def test_different_processors_run_in_parallel(manager_factory):
+    manager = manager_factory()
+    async with manager.require("TEST_SLOW", requirer="t1") as left:
+        async with manager.require("TEST_SLOW_PEER", requirer="t1") as right:
+            await asyncio.gather(left.wait_until_ready(timeout=30), right.wait_until_ready(timeout=30))
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            await asyncio.gather(
+                left.invoke({"seq": 1, "sleep": 0.6}, timeout=5.0),
+                right.invoke({"seq": 1, "sleep": 0.6}, timeout=5.0),
+            )
+            elapsed = loop.time() - started
+            assert elapsed < 1.1, f"两个 Processor 应当并行，实际耗时 {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_invoke_is_counted(manager_factory):
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_SLOW", requirer="t1")
+    await lease.wait_until_ready(timeout=30)
+
+    task = asyncio.create_task(lease.invoke({"seq": 1, "sleep": 1.0}))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    handle = manager.handle("TEST_SLOW")
+    assert handle.invokes_cancelled == 1
+    assert handle.state == "ACTIVE"          # 取消不杀 worker
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_config_mismatch_raises_when_referenced(manager_factory):
+    from faust_backend.processors.errors import ProcessorConfigMismatchError
+
+    manager = manager_factory()
+    first = await manager.startRequire("TEST_CONFIG_ECHO", requirer="chat", config={"langs": ["en"]})
+    await first.wait_until_ready(timeout=30)
+    assert await first.invoke({}) == {"config": {"langs": ["en"]}}
+
+    with pytest.raises(ProcessorConfigMismatchError):
+        await manager.startRequire("TEST_CONFIG_ECHO", requirer="other", config={"langs": ["ch_sim"]})
+
+    assert manager.handle("TEST_CONFIG_ECHO").state == "ACTIVE"
+    first.release()
+
+
+@pytest.mark.asyncio
+async def test_config_change_restarts_when_unreferenced(manager_factory):
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_CONFIG_ECHO", requirer="chat", config={"langs": ["en"]})
+    await lease.wait_until_ready(timeout=30)
+    first_pid = manager.handle("TEST_CONFIG_ECHO").pid
+    lease.release()
+
+    lease = await manager.startRequire("TEST_CONFIG_ECHO", requirer="chat", config={"langs": ["ch_sim", "en"]})
+    await lease.wait_until_ready(timeout=30)
+    assert await lease.invoke({}) == {"config": {"langs": ["ch_sim", "en"]}}
+    assert manager.handle("TEST_CONFIG_ECHO").pid != first_pid
+    lease.release()
