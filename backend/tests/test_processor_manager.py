@@ -142,3 +142,65 @@ def test_registry_rejects_incomplete_and_duplicate_processors():
     assert registry.unregister_owner("test_tmp_registry") == [name]
     with pytest.raises(ProcessorNotFoundError):
         registry.get_processor(name)
+
+
+# ── Task 4: 基类与 Context ──────────────────────────────────
+
+
+def test_resolve_data_dir_default_and_override(tmp_path, monkeypatch):
+    import faust_backend.config_loader as conf
+    from faust_backend.processors.base import resolve_data_dir
+
+    monkeypatch.setattr(conf, "DATA_ROOT", str(tmp_path / "data"))
+    assert resolve_data_dir("DEMO", None) == (tmp_path / "data" / "processors" / "DEMO")
+    assert resolve_data_dir("DEMO", str(tmp_path / "legacy")) == (tmp_path / "legacy")
+
+
+def test_setup_marker_roundtrip_and_broken_file(tmp_path):
+    from faust_backend.processors.base import read_setup_marker, write_setup_marker
+
+    assert read_setup_marker(tmp_path) == {}
+    write_setup_marker(tmp_path, "1:ch_sim|en")
+    marker = read_setup_marker(tmp_path)
+    assert marker["fingerprint"] == "1:ch_sim|en"
+    assert marker["completed_at"]
+
+    (tmp_path / "setup.json").write_text("{ 不是 json", encoding="utf-8")
+    assert read_setup_marker(tmp_path) == {}
+
+
+def test_context_log_stringifies_and_uppercases_level(tmp_path):
+    from faust_backend.processors.base import ProcessorContext
+
+    seen: list[tuple[str, str]] = []
+    ctx = ProcessorContext(
+        name="DEMO",
+        data_dir=tmp_path,
+        config={"a": 1},
+        log_sink=lambda level, message: seen.append((level, message)),
+    )
+    ctx.log(123)
+    ctx.log("boom", level="warning")
+    assert seen == [("INFO", "123"), ("WARNING", "boom")]
+    assert ctx.config == {"a": 1}
+
+
+def test_processor_defaults_and_fingerprint():
+    from faust_backend.processors.base import Processor
+
+    class Demo(Processor):
+        NAME = "TEST_DEFAULTS"
+        SETUP_VERSION = "7"
+
+        def start(self, ctx):
+            pass
+
+        def invoke(self, ctx, data):
+            return data
+
+    demo = Demo()
+    assert demo.setup_fingerprint({"any": "config"}) == "7"
+    assert Demo.INVOKE_TIMEOUT is None
+    assert Demo.LOG_BUFFER == 500
+    assert Demo.DATA_DIR is None
+    assert Processor.start is Demo.start or Demo.start is not Processor.start

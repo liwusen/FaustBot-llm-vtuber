@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from .base import Processor, ProcessorContext
 from .errors import (
     ProcessorConfigMismatchError,
     ProcessorCrashedError,
@@ -20,6 +21,7 @@ from .errors import (
     ProcessorStartError,
     ProcessorTimeoutError,
 )
+from .registry import processor, register_processor
 
 __all__ = [
     "Processor",
