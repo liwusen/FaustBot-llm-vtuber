@@ -51,3 +51,56 @@ def test_exception_hierarchy_and_payloads():
     invoke_error = errors.ProcessorInvokeError("调用失败", error_type="ValueError", traceback_text="Traceback ...")
     assert invoke_error.error_type == "ValueError"
     assert invoke_error.traceback_text == "Traceback ..."
+
+
+# ── Task 2: 帧协议 ──────────────────────────────────────────
+
+
+def test_frame_roundtrip_over_tcp():
+    from faust_backend.processors import protocol as proto
+
+    async def _roundtrip() -> object:
+        received: list[object] = []
+        done = asyncio.Event()
+
+        async def _handler(reader, writer):
+            received.append(await proto.recv_frame(reader))
+            writer.close()
+            done.set()
+
+        server = await asyncio.start_server(_handler, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        await proto.send_frame(writer, proto.InvokeOp(req_id=7, data={"audio": b"\x00\x01", "n": 3}))
+        await asyncio.wait_for(done.wait(), 5)
+        writer.close()
+        server.close()
+        await server.wait_closed()
+        return received[0]
+
+    got = asyncio.run(_roundtrip())
+    assert isinstance(got, proto.InvokeOp)
+    assert got.req_id == 7
+    assert got.data == {"audio": b"\x00\x01", "n": 3}
+
+
+def test_frame_size_limit_is_enforced(monkeypatch):
+    from faust_backend.processors import protocol as proto
+    from faust_backend.processors.errors import ProcessorFrameError
+
+    monkeypatch.setattr(proto, "MAX_FRAME_BYTES", 16)
+    with pytest.raises(ProcessorFrameError):
+        proto.pack_frame(b"x" * 64)
+
+
+def test_error_info_from_exception_keeps_type_and_traceback():
+    from faust_backend.processors.protocol import ErrorInfo
+
+    try:
+        raise ValueError("坏输入")
+    except ValueError as exc:
+        info = ErrorInfo.from_exception(exc)
+
+    assert info.type == "ValueError"
+    assert info.message == "坏输入"
+    assert "ValueError: 坏输入" in info.traceback
