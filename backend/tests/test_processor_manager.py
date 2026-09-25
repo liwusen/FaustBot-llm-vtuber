@@ -204,3 +204,199 @@ def test_processor_defaults_and_fingerprint():
     assert Demo.LOG_BUFFER == 500
     assert Demo.DATA_DIR is None
     assert Processor.start is Demo.start or Demo.start is not Processor.start
+
+# ── Task 5: worker + manager 最小闭环 ───────────────────────
+
+from faust_backend.processors.base import Processor, ProcessorContext  # noqa: E402
+from faust_backend.processors.registry import register_processor  # noqa: E402
+
+
+class EchoProcessor(Processor):
+    """最小可用 Processor：setup 留痕、invoke 回显。"""
+
+    NAME = "TEST_ECHO"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+    STOP_TIMEOUT = 5.0
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        with (ctx.data_dir / "setup_runs.txt").open("a", encoding="utf-8") as fh:
+            fh.write("setup\n")
+
+    def start(self, ctx: ProcessorContext) -> None:
+        ctx.log("echo 已 start")
+        print("[echo] stdout 也能被采集")
+
+    def invoke(self, ctx: ProcessorContext, data):
+        with (ctx.data_dir / "invokes.txt").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(data, ensure_ascii=False) + "\n")
+        return {"echo": data}
+
+    def stop(self, ctx: ProcessorContext) -> None:
+        ctx.log("echo 已 stop")
+
+
+class FailSetupProcessor(Processor):
+    NAME = "TEST_FAIL_SETUP"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        raise ValueError("模型下载失败")
+
+    def start(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def invoke(self, ctx: ProcessorContext, data):
+        return data
+
+
+class FailStartProcessor(Processor):
+    NAME = "TEST_FAIL_START"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        pass
+
+    def start(self, ctx: ProcessorContext) -> None:
+        raise RuntimeError("权重文件损坏")
+
+    def invoke(self, ctx: ProcessorContext, data):
+        return data
+
+
+register_processor(EchoProcessor, owner="test")
+register_processor(FailSetupProcessor, owner="test")
+register_processor(FailStartProcessor, owner="test")
+
+
+@pytest_asyncio.fixture
+async def manager_factory(tmp_path, monkeypatch):
+    """每个测试独立的 ProcessorManager；退出时统一 shutdown。"""
+    from faust_backend.processors.manager import ProcessorManager
+
+    monkeypatch.setattr(
+        EchoProcessor, "DATA_DIR", str(tmp_path / "data" / "TEST_ECHO"), raising=False
+    )
+    monkeypatch.setattr(
+        FailSetupProcessor, "DATA_DIR", str(tmp_path / "data" / "TEST_FAIL_SETUP"), raising=False
+    )
+    monkeypatch.setattr(
+        FailStartProcessor, "DATA_DIR", str(tmp_path / "data" / "TEST_FAIL_START"), raising=False
+    )
+    managers: list[ProcessorManager] = []
+
+    def _make() -> ProcessorManager:
+        manager = ProcessorManager()
+        managers.append(manager)
+        return manager
+
+    yield _make
+    for manager in managers:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_start_reaches_active_and_reports_status(manager_factory):
+    manager = manager_factory()
+    lease = await manager.require("TEST_ECHO", requirer="t1").acquire()
+    await lease.wait_until_ready(timeout=30)
+
+    snapshot = manager.handle("TEST_ECHO").status()
+    assert snapshot["state"] == "ACTIVE"
+    assert snapshot["owner"] == "test"
+    assert snapshot["refcount"] == 1
+    assert snapshot["holders"] == {"t1": 1}
+    assert snapshot["pid"] and snapshot["pid_alive"] is True
+    assert snapshot["setup_done"] is True
+    assert snapshot["uptime_seconds"] is not None
+
+    logs = await lease.get_log()
+    assert any("echo 已 start" in item["message"] for item in logs)
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_setup_runs_once_then_marker_skips_it(manager_factory):
+    manager = manager_factory()
+    lease = await manager.require("TEST_ECHO", requirer="t1").acquire()
+    await lease.wait_until_ready(timeout=30)
+    lease.release()
+    await manager.stop("TEST_ECHO")
+
+    lease = await manager.require("TEST_ECHO", requirer="t1").acquire()
+    await lease.wait_until_ready(timeout=30)
+
+    setup_runs = (Path(EchoProcessor.DATA_DIR) / "setup_runs.txt").read_text(encoding="utf-8")
+    assert setup_runs.count("setup") == 1
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_setup_failure_surfaces_start_error_and_logs(manager_factory):
+    from faust_backend.processors.errors import ProcessorStartError
+
+    manager = manager_factory()
+    lease = await manager.require("TEST_FAIL_SETUP", requirer="t1").acquire()
+    with pytest.raises(ProcessorStartError) as excinfo:
+        await lease.wait_until_ready(timeout=30)
+
+    assert "模型下载失败" in str(excinfo.value)
+    handle = manager.handle("TEST_FAIL_SETUP")
+    assert handle.state == "STOPPED"
+    assert "模型下载失败" in (handle.last_error or "")
+    logs = await handle.get_log(level="ERROR")
+    assert any("ValueError" in item["message"] for item in logs)
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_start_failure_surfaces_start_error(manager_factory):
+    from faust_backend.processors.errors import ProcessorStartError
+
+    manager = manager_factory()
+    lease = await manager.require("TEST_FAIL_START", requirer="t1").acquire()
+    with pytest.raises(ProcessorStartError):
+        await lease.wait_until_ready(timeout=30)
+    assert manager.handle("TEST_FAIL_START").state == "STOPPED"
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_invoke_roundtrip_and_stdout_capture(manager_factory):
+    manager = manager_factory()
+    async with manager.require("TEST_ECHO", requirer="t1") as lease:
+        await lease.wait_until_ready(timeout=30)
+        assert await lease.invoke({"n": 1}) == {"echo": {"n": 1}}
+        logs = await lease.get_log()
+        assert any(item["source"] == "stdout" and "stdout 也能被采集" in item["message"] for item in logs)
+        assert any(item["message"] == "echo 已 start" for item in logs)
+
+
+@pytest.mark.asyncio
+async def test_invoke_requires_active_state(manager_factory):
+    from faust_backend.processors.errors import ProcessorNotReadyError
+
+    manager = manager_factory()
+    lease = await manager.require("TEST_ECHO", requirer="t1").acquire()
+    await lease.wait_until_ready(timeout=30)
+    await manager.stop("TEST_ECHO")
+    with pytest.raises(ProcessorNotReadyError):
+        await lease.invoke({"n": 1})
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_all_workers(manager_factory):
+    manager = manager_factory()
+    lease = await manager.require("TEST_ECHO", requirer="t1").acquire()
+    await lease.wait_until_ready(timeout=30)
+    pid = manager.handle("TEST_ECHO").pid
+
+    await manager.shutdown()
+
+    snapshot = manager.handle("TEST_ECHO").status()
+    assert snapshot["state"] == "STOPPED"
+    assert snapshot["pid"] is None
+    assert not psutil.pid_exists(int(pid))
