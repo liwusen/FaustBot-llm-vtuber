@@ -34,7 +34,7 @@ _t.end("faustbot_backend1")
 
 _t.begin("faustbot_backend2")
 import faust_backend.minecraft_client as minecraft_client
-import faust_backend.vad_runtime as vad_runtime
+from faust_backend.processors import get_processor_manager
 import faust_backend.speech_runtime as speech_runtime
 import faust_backend.nimble as nimble
 from faust_backend.plugin_system import PluginManager
@@ -679,11 +679,6 @@ async def lifespan(app: FastAPI):
         state.agent = None
         state.set_runtime_state(ready=False, status="waiting_for_config", error=str(e))
         log.warning("启动运行时降级: %s", e)
-    try:
-        await vad_runtime.vad_runtime.startup()
-        log.info("VAD 运行时已加载到 CPU")
-    except Exception as e:
-        log.warning("启动 VAD 初始化失败: %s", e)
     log.info("触发器看门狗线程正在启动...")
     trigger_manager.start_trigger_watchdog_thread()
     try:
@@ -697,6 +692,8 @@ async def lifespan(app: FastAPI):
 
     if state.plugin_heartbeat_task is None:
         state.plugin_heartbeat_task = asyncio.create_task(_plugin_heartbeat_loop())
+    if state.processor_prune_task is None:
+        state.processor_prune_task = asyncio.create_task(get_processor_manager().prune_loop())
     live_api.set_rebuild_callback(
         lambda: rebuild_runtime(reset_dialog=False, no_initial_chat=True)
     )
@@ -729,10 +726,17 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
         state.plugin_heartbeat_task = None
+    if state.processor_prune_task is not None:
+        state.processor_prune_task.cancel()
+        try:
+            await state.processor_prune_task
+        except Exception:
+            pass
+        state.processor_prune_task = None
+    await get_processor_manager().shutdown()
     await araya_runtime.get_araya_runtime(refresh=True).shutdown()
     await mcp_manager.stop_all()
     trigger_manager.exitflag = True
-    await vad_runtime.vad_runtime.shutdown()
     for service in service_manager.get_service_keys():
         try:
             log.info("正在停止服务: %s", service)

@@ -57,7 +57,7 @@ faust/
 
 5. **语音管道** (`speech/`)
    
-   - VAD: 语音活动检测 (`vad_runtime.py`)
+   - VAD: 语音活动检测（`processors/builtin/vad.py`，跑在受管子进程内）
    - ASR: 语音识别 (`speech/asr/`)
    - TTS: 语音合成 (`speech/tts/`)
    - 支持本地/云端模式

@@ -76,6 +76,7 @@ PROMPT = ""
 # ── 系统组件 ──
 forward_queue = asyncio.Queue()
 plugin_heartbeat_task = None
+processor_prune_task = None
 uvicorn_server: Server | None = None
 plugin_manager: "PluginManager | None" = None  # set by lifecycle
 subagent_manager: SubagentManager | None = None
