@@ -687,9 +687,14 @@ class ProcessorHandle:
                 self.last_invoke_seconds = loop.time() - started
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - 失败已经在 future 上抛给调用方
+            except Exception as exc:  # noqa: BLE001
                 self.invokes_failed += 1
-                log.debug("Processor %s invoke #%d 失败: %s", self.name, job.req_id, exc)
+                if not job.future.done():
+                    # 下发失败时 future 上还没有异常，必须补上，否则调用方永远等下去
+                    job.future.set_exception(exc)
+                    log.error("Processor %s invoke #%d 下发失败: %s", self.name, job.req_id, exc)
+                else:
+                    log.debug("Processor %s invoke #%d 失败: %s", self.name, job.req_id, exc)
             finally:
                 self._pending.pop(job.req_id, None)
                 if self.refcount == 0 and queue.empty() and self.state == STATE_ACTIVE:
@@ -708,9 +713,10 @@ class ProcessorHandle:
             await asyncio.shield(self._stop_task)   # 等上一轮停止收尾，避免启动/停止交叉
         desired = dict(lease.config)
         if desired and desired != self.config:
-            if self.state == STATE_ACTIVE and self.refcount == 0:
-                await self.stop(reason="config 变更，按新配置重启")
-            elif self.state in (STATE_ACTIVE, STATE_SETTING_UP, STATE_STARTING):
+            if self.refcount == 0 and self.state in (STATE_ACTIVE, STATE_STOPPED):
+                if self.state == STATE_ACTIVE:
+                    await self.stop(reason="config 变更，按新配置重启")
+            elif self.refcount > 0 or self.state in (STATE_SETTING_UP, STATE_STARTING, STATE_STOPPING):
                 raise ProcessorConfigMismatchError(
                     f"{self.name} 正在使用 config={self.config}（holders={self.holders}），"
                     f"无法切换到 {desired}"
@@ -790,11 +796,25 @@ class ProcessorHandle:
         await self._teardown()
 
     def _fail_pending(self, exc: ProcessorError) -> None:
+        """让在途**与仍在队列里**的请求都失败。
+
+        pump 从 ``queue.get()`` 到登记进 ``_pending`` 之间不让出控制权，因此队列里的
+        job 要么在这里失败、要么由 pump 处理，不会被两头都漏掉。
+        """
         pending = list(self._pending.items())
         self._pending.clear()
         for _req_id, future in pending:
             if not future.done():
                 future.set_exception(exc)
+        queue = self._queue
+        if queue is not None:
+            while True:
+                try:
+                    job = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if not job.future.done():
+                    job.future.set_exception(exc)
 
     async def _teardown(self) -> None:
         """取消后台任务、关通道、清空运行时字段；保留 last_error（供诊断）。"""

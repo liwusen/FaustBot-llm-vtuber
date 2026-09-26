@@ -957,3 +957,82 @@ def test_ocr_stop_clears_reader_and_empties_cuda_cache(tmp_path, monkeypatch):
 
     assert processor._reader is None
     assert calls == ["empty_cache"]
+
+
+# ── Review 修复回归：下发失败 / 队列遗留 / config 冲突 ──────
+
+
+@pytest.mark.asyncio
+async def test_stop_fails_jobs_queued_behind_inflight(manager_factory):
+    """停止时必须同时了结在途与仍在队列里的请求，否则后者永远等不到 future。"""
+    from faust_backend.processors.errors import ProcessorCrashedError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_SLOW", requirer="t1")
+    await lease.wait_until_ready(timeout=30)
+
+    # sleep 必须远大于停止宽限期（KILL_GRACE_SECONDS），否则 worker 会在停止过程中
+    # 先把在途请求的结果回上来，pump 就会正常地接着处理队首请求——那不是本测试的场景。
+    inflight = asyncio.create_task(lease.invoke({"seq": 1, "sleep": 30.0}, timeout=60))
+    await asyncio.sleep(0.3)                  # 等它真的进到 worker 里
+    queued = asyncio.create_task(lease.invoke({"seq": 2, "sleep": 0.05}, timeout=60))
+    await asyncio.sleep(0.1)
+
+    await asyncio.wait_for(manager.stop("TEST_SLOW"), 15)
+
+    with pytest.raises(ProcessorCrashedError):
+        await asyncio.wait_for(queued, 15)
+    with pytest.raises(ProcessorCrashedError):
+        await asyncio.wait_for(inflight, 15)
+    assert manager.handle("TEST_SLOW").state == "STOPPED"
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_send_failure_resolves_caller(manager_factory, monkeypatch, caplog):
+    """下发失败（控制通道已关）必须把异常抛给调用方，而不是让它永远等一个没人写的 future。"""
+    import logging
+
+    from faust_backend.processors.errors import ProcessorCrashedError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_ECHO", requirer="t1")
+    await lease.wait_until_ready(timeout=30)
+    handle = manager.handle("TEST_ECHO")
+
+    async def _raise(*_args, **_kwargs):
+        raise ProcessorCrashedError("模拟下发失败")
+
+    monkeypatch.setattr(handle, "_send", _raise)
+
+    with caplog.at_level(logging.ERROR, logger="faust.processor"):
+        with pytest.raises(ProcessorCrashedError):
+            await asyncio.wait_for(lease.invoke({"n": 1}), 15)
+
+    assert handle.invokes_failed == 1
+    assert any(
+        record.levelno == logging.ERROR and "下发失败" in record.getMessage()
+        for record in caplog.records
+    )
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_config_mismatch_raises_while_referenced_even_if_stopped(manager_factory):
+    """worker 已停但仍被引用时换 config 必须报错，不能静默改掉 handle.config。"""
+    from faust_backend.processors.errors import ProcessorConfigMismatchError
+
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_CONFIG_ECHO", requirer="chat", config={"langs": ["en"]})
+    await lease.wait_until_ready(timeout=30)
+    await manager.stop("TEST_CONFIG_ECHO")    # 强制停止：lease 仍被持有（模拟持有者崩溃后余留的引用）
+
+    handle = manager.handle("TEST_CONFIG_ECHO")
+    assert handle.state == "STOPPED"
+    assert handle.refcount == 1
+
+    with pytest.raises(ProcessorConfigMismatchError):
+        await manager.startRequire("TEST_CONFIG_ECHO", requirer="other", config={"langs": ["ch_sim"]})
+
+    assert handle.config == {"langs": ["en"]}
+    lease.release()
