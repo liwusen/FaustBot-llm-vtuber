@@ -577,6 +577,17 @@ class PluginManager:
                     tools_res = []
                 tools = self._normalize_tool_specs(manifest.plugin_id, tools_res)
 
+                if hasattr(plugin, "register_middlewares"):
+                    mw_res = plugin.register_middlewares(ctx)
+                    if inspect.isawaitable(mw_res):
+                        mw_res = await mw_res
+                else:
+                    mw_res = []
+                middlewares = self._normalize_middleware_specs(mw_res)
+
+                # Processor 注册放在最后一步可能失败的语句之后：注册完成后只剩一条不会抛异常
+                # 的 dict 赋值，因此插件加载失败时不会留下「名字已被占用、插件却没加载」的残留注册
+                # （否则该名字永远无法再被注册，插件也永远加载不了）。
                 if hasattr(plugin, "register_processors"):
                     processors_res = plugin.register_processors(ctx)
                     if inspect.isawaitable(processors_res):
@@ -586,14 +597,6 @@ class PluginManager:
                     )
                     if registered_processors:
                         log.info("插件 %s 注册 Processor: %s", manifest.plugin_id, registered_processors)
-
-                if hasattr(plugin, "register_middlewares"):
-                    mw_res = plugin.register_middlewares(ctx)
-                    if inspect.isawaitable(mw_res):
-                        mw_res = await mw_res
-                else:
-                    mw_res = []
-                middlewares = self._normalize_middleware_specs(mw_res)
 
                 self._plugins[manifest.plugin_id] = {
                     "manifest": manifest,
@@ -605,13 +608,6 @@ class PluginManager:
             except Exception as e:
                 log.error("加载插件失败 %s: %s", manifest.plugin_id, e)
                 errors.append({"plugin": manifest.plugin_id, "error": str(e)})
-                # 注册可能发生在失败点之前：回滚，否则名字被永久占住，插件再也加载不了
-                try:
-                    rolled_back = await get_processor_manager().unregister_owner(manifest.plugin_id)
-                    if rolled_back:
-                        log.warning("插件 %s 加载失败，已回滚 Processor 注册: %s", manifest.plugin_id, rolled_back)
-                except Exception as rollback_exc:  # noqa: BLE001 - 回滚失败不得掩盖原始错误
-                    log.error("回滚插件 %s 的 Processor 注册失败: %s", manifest.plugin_id, rollback_exc)
 
         # ── Load schedules from pluggy plugins ──
         self._load_schedules()

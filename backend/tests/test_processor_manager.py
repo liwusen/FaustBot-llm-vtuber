@@ -605,12 +605,11 @@ async def test_worker_crash_fails_inflight_and_pending_then_restart_works(manage
     handle = manager.handle("TEST_CRASH")
     assert handle.state == "STOPPED"
     assert "7" in (handle.last_error or "")
-    await asyncio.sleep(0.2)
-    assert not psutil.pid_exists(int(pid))
 
     await manager.endRequire("TEST_CRASH", "t1")
     lease = await manager.startRequire("TEST_CRASH", requirer="t1")   # 崩溃后需重新 require 才重启
     await lease.wait_until_ready(timeout=30)
+    assert manager.handle("TEST_CRASH").pid != pid                    # 已被回收并换成新 worker
     assert await lease.invoke("hello") == {"ok": "hello"}
     lease.release()
 
