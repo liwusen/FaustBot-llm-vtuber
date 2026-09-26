@@ -114,3 +114,5 @@ FaustBot 把 VAD、OCR 这类重计算放在独立子进程中运行，空闲时
 | `PROCESSOR_IDLE_TIMEOUT` | `300` | 空闲超过该秒数且无人引用时回收子进程 |
 
 > 提示：正在被语音识别等功能使用的子进程不会被回收；回收只发生在引用计数归零且请求队列为空的空闲时刻。
+
+Processor 的工作方式、调用 API 与「写一个新 Processor」的完整说明见 [Processor 机制（子进程计算任务）](processor.md)。
