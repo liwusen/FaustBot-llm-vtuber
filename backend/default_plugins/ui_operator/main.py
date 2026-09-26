@@ -13,11 +13,10 @@ except Exception:
     def tool(func):
         return func
 
-from faust_backend.plugin_system import PluginContext, PluginManifest, ToolSpec
+from faust_backend.plugin_system import PluginContext, PluginManifest, ToolSpec, hookimpl
+from faust_backend.processors import get_processor_manager
 
 
-_OCR_READER = None
-_OCR_READER_LOCK = threading.Lock()
 _LAST_OCR_ITEMS: list[dict[str, Any]] = []
 _LAST_OCR_LOCK = threading.Lock()
 
@@ -60,17 +59,6 @@ def _safe_int(v: Any, default: int) -> int:
         return int(v)
     except Exception:
         return default
-
-
-def _load_ocr_reader(langs: list[str], gpu: bool):
-    global _OCR_READER
-    with _OCR_READER_LOCK:
-        if _OCR_READER is not None:
-            return _OCR_READER
-        import easyocr  # lazy import，避免未安装时阻塞插件加载
-
-        _OCR_READER = easyocr.Reader(langs, gpu=gpu)
-        return _OCR_READER
 
 
 def _norm_to_pixel(x: float, y: float) -> tuple[int, int]:
@@ -197,7 +185,7 @@ class Plugin:
             return _clamp01(_safe_float(x, 0.0)), _clamp01(_safe_float(y, 0.0))
 
         @tool
-        def screenOCRTool(lang_list_json: str = "") -> str:
+        async def screenOCRTool(lang_list_json: str = "") -> str:
             """
             Description:
                 对当前屏幕进行 OCR 识别，返回文本及归一化坐标。
@@ -214,31 +202,31 @@ class Plugin:
                 use_gpu = bool(self._get_config_sync("OCR_GPU", False))
                 min_conf = _safe_float(self._get_config_sync("OCR_MIN_CONF", 0.3), 0.3)
 
-                reader = _load_ocr_reader(langs=langs, gpu=use_gpu)
-                screenshot = pyautogui.screenshot()
-                screenshot_array = np.array(screenshot)
-                raw_results = reader.readtext(screenshot_array)
+                # 截图留在主进程（需要屏幕上下文），识别交给 OCR 子进程
+                screenshot_array = np.array(pyautogui.screenshot())
+
+                manager = get_processor_manager()
+                async with manager.require(
+                    "OCR", requirer="ui_operator", config={"langs": langs, "gpu": use_gpu}
+                ) as lease:
+                    await lease.wait_until_ready()
+                    raw_items = await lease.invoke({"image": screenshot_array, "detail": 1})
 
                 out_items: list[dict[str, Any]] = []
-                seq = 1
-                for item in raw_results:
-                    if not isinstance(item, (list, tuple)) or len(item) < 3:
-                        continue
-                    box, text, conf = item[0], item[1], item[2]
-                    confidence = _safe_float(conf, 0.0)
+                for item in raw_items:
+                    confidence = _safe_float(item.get("confidence"), 0.0)
                     if confidence < min_conf:
                         continue
-                    center = _extract_center_norm_from_box(box)
+                    center = _extract_center_norm_from_box(item.get("box"))
                     if center is None:
                         continue
                     out_items.append(
                         {
-                            "id": seq,
-                            "text": str(text),
+                            "id": len(out_items) + 1,
+                            "text": str(item.get("text", "")),
                             "pos": [round(center[0], 6), round(center[1], 6)],
                         }
                     )
-                    seq += 1
 
                 _set_last_ocr_items(out_items)
                 return json.dumps({"res": out_items}, ensure_ascii=False)
