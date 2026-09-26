@@ -4,6 +4,8 @@ Processor 是 FaustBot 里承载**重计算**的受管子进程：VAD、OCR 这�
 
 代码位置：`backend/faust_backend/processors/`。
 
+> 这是为了引入更多LLM推理等计算类功能的提前准备
+
 ## 目录
 
 - [它解决什么问题](#它解决什么问题)
@@ -24,12 +26,12 @@ Processor 是 FaustBot 里承载**重计算**的受管子进程：VAD、OCR 这�
 
 ## 它解决什么问题
 
-| 痛点 | Processor 的做法 |
-| --- | --- |
+| 痛点                                        | Processor 的做法                                                                                                         |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | 主进程被 torch / easyocr 常驻占用数百 MB~数 GB 内存与显存 | VAD/OCR 的 torch / easyocr 只在 worker 钩子内 `import`，主进程导入链不加载它们（`import torch` / `import easyocr` 在 `sys.modules` 里都查不到） |
-| 模型加载很慢，但只在偶尔用到 | worker 常驻复用（一个名字 = 一个子进程），模型只加载一次 |
-| 长时间没人用却一直占着内存 | 引用计数归零且空闲超过阈值后 `prune` 回收 worker |
-| 依赖缺失导致整个后端起不来 | setup/start 失败只让该 Processor 不可用，错误沿 `ProcessorStartError` 明确抛出并落到日志 |
+| 模型加载很慢，但只在偶尔用到                            | worker 常驻复用（一个名字 = 一个子进程），模型只加载一次                                                                                     |
+| 长时间没人用却一直占着内存                             | 引用计数归零且空闲超过阈值后 `prune` 回收 worker                                                                                      |
+| 依赖缺失导致整个后端起不来                             | setup/start 失败只让该 Processor 不可用，错误沿 `ProcessorStartError` 明确抛出并落到日志                                                   |
 
 设计要点：
 
@@ -81,17 +83,17 @@ sequenceDiagram
 
 帧类型（`processors/protocol.py`，单帧上限 `MAX_FRAME_BYTES` = 256 MiB）：
 
-| 方向 | 帧 | 说明 |
-| --- | --- | --- |
-| 父 → 子 | `StartOp(run_setup, config, data_dir)` | 请求启动；`data_dir` 由**父进程**解析后下发 |
-| 父 → 子 | `InvokeOp(req_id, data)` | 一次计算（`req_id` 父进程单调递增） |
-| 父 → 子 | `StopOp()` | 优雅停止 |
-| 子 → 父 | `Hello(token, pid, name)` | 握手首帧，token/名字必须匹配 |
-| 子 → 父 | `Phase(phase)` | `setting_up` / `starting` |
-| 子 → 父 | `Started(setup_ran, fingerprint)` | 已进入 ACTIVE |
-| 子 → 父 | `StartFailed(error)` | setup/start 失败，worker 即将退出 |
-| 子 → 父 | `Result(req_id, ok, value, error)` | `InvokeOp` 应答 |
-| 子 → 父 | `LogMsg(ts, level, message, source)` | `ctx.log` 产生的日志（`source="ctx"`） |
+| 方向    | 帧                                      | 说明                              |
+| ----- | -------------------------------------- | ------------------------------- |
+| 父 → 子 | `StartOp(run_setup, config, data_dir)` | 请求启动；`data_dir` 由**父进程**解析后下发   |
+| 父 → 子 | `InvokeOp(req_id, data)`               | 一次计算（`req_id` 父进程单调递增）          |
+| 父 → 子 | `StopOp()`                             | 优雅停止                            |
+| 子 → 父 | `Hello(token, pid, name)`              | 握手首帧，token/名字必须匹配               |
+| 子 → 父 | `Phase(phase)`                         | `setting_up` / `starting`       |
+| 子 → 父 | `Started(setup_ran, fingerprint)`      | 已进入 ACTIVE                      |
+| 子 → 父 | `StartFailed(error)`                   | setup/start 失败，worker 即将退出      |
+| 子 → 父 | `Result(req_id, ok, value, error)`     | `InvokeOp` 应答                   |
+| 子 → 父 | `LogMsg(ts, level, message, source)`   | `ctx.log` 产生的日志（`source="ctx"`） |
 
 worker 的自我保护与退出码：父进程 PID 每 3s 探测一次，父进程消失则 `os._exit(3)`；初始化失败退出码 2，控制帧解码失败退出码 4，正常退出 0。
 
@@ -111,13 +113,13 @@ stateDiagram-v2
     STOPPING --> STOPPED: 退出完成
 ```
 
-| 状态 | 含义 | `state` 取值 |
-| --- | --- | --- |
-| 未启动 | 无 worker 进程 | `STOPPED` |
-| 一次性初始化 | 正在跑 `setup()`（下载/校验模型） | `SETTING_UP` |
-| 进程内初始化 | 正在跑 `start()`（加载模型进内存） | `STARTING` |
-| 可调用 | 可 `invoke()` | `ACTIVE` |
-| 停止中 | 已发 `StopOp`，等待退出（超时后 terminate → kill） | `STOPPING` |
+| 状态     | 含义                                     | `state` 取值   |
+| ------ | -------------------------------------- | ------------ |
+| 未启动    | 无 worker 进程                            | `STOPPED`    |
+| 一次性初始化 | 正在跑 `setup()`（下载/校验模型）                 | `SETTING_UP` |
+| 进程内初始化 | 正在跑 `start()`（加载模型进内存）                 | `STARTING`   |
+| 可调用    | 可 `invoke()`                           | `ACTIVE`     |
+| 停止中    | 已发 `StopOp`，等待退出（超时后 terminate → kill） | `STOPPING`   |
 
 `phase` 字段同时记录 worker 最近上报的 `setting_up` / `starting`，用于区分「正在 setup」还是「正在 start」。
 
@@ -148,62 +150,62 @@ await manager.endRequire("VAD", "my_feature")   # 释放该 requirer 最早的�
 
 ### `ProcessorManager`
 
-| 方法 | 说明 |
-| --- | --- |
-| `handle(name)` | 取该 Processor 的状态对象 `ProcessorHandle`（按需创建）；名字未注册抛 `ProcessorNotFoundError` |
-| `require(name, requirer, *, config=None)` | 返回**尚未获取**的 `ProcessorLease`；本身不启动进程、不计数——`acquire()` 或 `async with` 进入时才引用 +1 |
-| `await startRequire(name, requirer, *, config=None)` | 立即 acquire 并返回已持有的 lease（等价 `await require(...).acquire()`） |
-| `await endRequire(name, requirer)` | 释放该 `requirer` **最早**的一个未释放 lease；无匹配抛 `ProcessorLeaseError` |
-| `status()` | 所有已注册 Processor 的状态快照列表 |
-| `await prune(timeout=37.0, whitelist=None)` | 回收空闲 Processor，返回 `PruneReport` |
-| `await prune_loop()` | 后台回收循环（由后端 lifespan 启动；`PROCESSOR_PRUNE_INTERVAL=0` 时禁用但继续等待配置热改） |
-| `await stop(name)` | **忽略引用计数**强制停止（写日志说明还有哪些持有者），管理用途 |
-| `await shutdown()` | 后端关闭时调用：忽略引用计数停止全部 Processor 并等待回收 |
+| 方法                                                   | 说明                                                                             |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `handle(name)`                                       | 取该 Processor 的状态对象 `ProcessorHandle`（按需创建）；名字未注册抛 `ProcessorNotFoundError`     |
+| `require(name, requirer, *, config=None)`            | 返回**尚未获取**的 `ProcessorLease`；本身不启动进程、不计数——`acquire()` 或 `async with` 进入时才引用 +1 |
+| `await startRequire(name, requirer, *, config=None)` | 立即 acquire 并返回已持有的 lease（等价 `await require(...).acquire()`）                    |
+| `await endRequire(name, requirer)`                   | 释放该 `requirer` **最早**的一个未释放 lease；无匹配抛 `ProcessorLeaseError`                   |
+| `status()`                                           | 所有已注册 Processor 的状态快照列表                                                        |
+| `await prune(timeout=37.0, whitelist=None)`          | 回收空闲 Processor，返回 `PruneReport`                                                |
+| `await prune_loop()`                                 | 后台回收循环（由后端 lifespan 启动；`PROCESSOR_PRUNE_INTERVAL=0` 时禁用但继续等待配置热改）              |
+| `await stop(name)`                                   | **忽略引用计数**强制停止（写日志说明还有哪些持有者），管理用途                                              |
+| `await shutdown()`                                   | 后端关闭时调用：忽略引用计数停止全部 Processor 并等待回收                                             |
 
 `requirer` 是「谁在用」的标识，建议带上下文，例如 `vad_ws:1234`、`ui_operator`、`chat`；它只用于日志、`holders` 统计与 `prune` 判定。
 
 ### `ProcessorLease`
 
-| 成员 | 说明 |
-| --- | --- |
-| `await acquire()` | 登记引用并触发启动；重复 acquire / 已 release 后复用抛 `ProcessorLeaseError` |
-| `release()` | 释放引用；未 acquire 就 release、重复 release 抛 `ProcessorLeaseError` |
-| `async with` | `__aenter__` = `acquire()`，`__aexit__` = `release()` |
-| `await wait_until_ready(timeout=None)` | 等 ACTIVE；启动失败/崩溃抛 `ProcessorStartError`，超时抛 `ProcessorTimeoutError` |
-| `await invoke(data, *, timeout=None)` | 一次计算调用（同 Processor 内 FIFO 串行）；`timeout` 缺省用类的 `INVOKE_TIMEOUT`（`None` = 不限时） |
-| `await get_log(level=None, limit=None)` | 读该 Processor 的日志缓冲（最新在前；`level` 表示最低等级） |
+| 成员                                      | 说明                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------- |
+| `await acquire()`                       | 登记引用并触发启动；重复 acquire / 已 release 后复用抛 `ProcessorLeaseError`                  |
+| `release()`                             | 释放引用；未 acquire 就 release、重复 release 抛 `ProcessorLeaseError`                  |
+| `async with`                            | `__aenter__` = `acquire()`，`__aexit__` = `release()`                         |
+| `await wait_until_ready(timeout=None)`  | 等 ACTIVE；启动失败/崩溃抛 `ProcessorStartError`，超时抛 `ProcessorTimeoutError`          |
+| `await invoke(data, *, timeout=None)`   | 一次计算调用（同 Processor 内 FIFO 串行）；`timeout` 缺省用类的 `INVOKE_TIMEOUT`（`None` = 不限时） |
+| `await get_log(level=None, limit=None)` | 读该 Processor 的日志缓冲（最新在前；`level` 表示最低等级）                                      |
 
 ### `ProcessorHandle`
 
-| 成员 | 说明 |
-| --- | --- |
-| `state` / `phase` | 状态机取值 / worker 上报阶段 |
-| `pid` / `pid_alive` | worker PID / 进程是否存活 |
-| `refcount` / `holders` | 未释放引用总数 / 按 `requirer` 分类计数 |
-| `busy` | 是否有在途或排队的 `invoke`（`prune` 用） |
-| `last_error` | 最近一次失败原因（会**追加**而非覆盖，例如 `invoke 超时（0.7s）；worker exited with code 1`） |
-| `config` / `fingerprint` | 当前生效 config / setup 指纹 |
-| `invokes_total` / `invokes_failed` / `invokes_cancelled` / `last_invoke_seconds` | 调用统计 |
-| `status()` | 状态快照字典（见下表） |
-| `await get_log(level=None, limit=None)` | 读日志缓冲 |
-| `await stop(reason="manual")` | 停止 worker（等 `StopOp` → terminate → kill） |
+| 成员                                                                               | 说明                                                                   |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `state` / `phase`                                                                | 状态机取值 / worker 上报阶段                                                  |
+| `pid` / `pid_alive`                                                              | worker PID / 进程是否存活                                                  |
+| `refcount` / `holders`                                                           | 未释放引用总数 / 按 `requirer` 分类计数                                          |
+| `busy`                                                                           | 是否有在途或排队的 `invoke`（`prune` 用）                                        |
+| `last_error`                                                                     | 最近一次失败原因（会**追加**而非覆盖，例如 `invoke 超时（0.7s）；worker exited with code 1`） |
+| `config` / `fingerprint`                                                         | 当前生效 config / setup 指纹                                               |
+| `invokes_total` / `invokes_failed` / `invokes_cancelled` / `last_invoke_seconds` | 调用统计                                                                 |
+| `status()`                                                                       | 状态快照字典（见下表）                                                          |
+| `await get_log(level=None, limit=None)`                                          | 读日志缓冲                                                                |
+| `await stop(reason="manual")`                                                    | 停止 worker（等 `StopOp` → terminate → kill）                             |
 
 `status()` 返回字段：`name`、`owner`、`state`、`phase`、`pid`、`pid_alive`、`last_error`、`refcount`、`holders`、`queue_depth`、`idle_seconds`、`uptime_seconds`、`setup_done`、`fingerprint`、`config`、`invokes_total`、`invokes_failed`、`invokes_cancelled`、`last_invoke_seconds`。
 
 ### 异常层级（`processors/errors.py`）
 
-| 异常 | 触发时机 |
-| --- | --- |
-| `ProcessorError` | 基类 |
-| `ProcessorNotFoundError` | 名字未在注册表中登记 |
-| `ProcessorStartError` | setup/start 失败、父进程握手失败，或等待就绪期间 worker 崩溃（带 `last_error`、`logs`） |
-| `ProcessorNotReadyError` | 非 ACTIVE 状态下调用 `invoke` |
-| `ProcessorTimeoutError` | setup/start/stop/invoke 超时（带 `phase`） |
-| `ProcessorCrashedError` | worker 意外退出导致在途/排队请求失败（带 `exit_code`） |
-| `ProcessorConfigMismatchError` | 仍有其它引用时，新请求的 config 与当前不一致 |
-| `ProcessorInvokeError` | `invoke` 在子进程内抛错（带 `error_type`、`traceback_text`） |
-| `ProcessorLeaseError` | lease 重复 acquire/release、未持有就使用、`endRequire` 无匹配 |
-| `ProcessorFrameError` | 控制通道帧超限或编解码失败 |
+| 异常                             | 触发时机                                                            |
+| ------------------------------ | --------------------------------------------------------------- |
+| `ProcessorError`               | 基类                                                              |
+| `ProcessorNotFoundError`       | 名字未在注册表中登记                                                      |
+| `ProcessorStartError`          | setup/start 失败、父进程握手失败，或等待就绪期间 worker 崩溃（带 `last_error`、`logs`） |
+| `ProcessorNotReadyError`       | 非 ACTIVE 状态下调用 `invoke`                                         |
+| `ProcessorTimeoutError`        | setup/start/stop/invoke 超时（带 `phase`）                           |
+| `ProcessorCrashedError`        | worker 意外退出导致在途/排队请求失败（带 `exit_code`）                           |
+| `ProcessorConfigMismatchError` | 仍有其它引用时，新请求的 config 与当前不一致                                      |
+| `ProcessorInvokeError`         | `invoke` 在子进程内抛错（带 `error_type`、`traceback_text`）               |
+| `ProcessorLeaseError`          | lease 重复 acquire/release、未持有就使用、`endRequire` 无匹配                |
+| `ProcessorFrameError`          | 控制通道帧超限或编解码失败                                                   |
 
 ## 调用语义与并发
 
@@ -287,34 +289,34 @@ class MyTextProcessor(Processor):
 
 类属性参考：
 
-| 属性 | 默认 | 说明 |
-| --- | --- | --- |
-| `NAME` | `""` | 全局唯一名字（注册时校验） |
-| `DATA_DIR` | `None` | ProcessorData 目录覆盖值；`None` = `<DATA_ROOT>/processors/<NAME>` |
-| `SETUP_VERSION` | `"1"` | 参与 setup 指纹；改它等于强制重跑 setup |
-| `SETUP_TIMEOUT` | `1800.0` | `setup()` 允许耗时（父进程计时） |
-| `START_TIMEOUT` | `300.0` | `start()` 允许耗时 |
-| `STOP_TIMEOUT` | `15.0` | 发送 `StopOp` 后等待退出的上限（之后 terminate → kill） |
-| `INVOKE_TIMEOUT` | `None` | 单次 `invoke()` 上限；`None` = 不限时 |
-| `LOG_BUFFER` | `500` | 父进程保留的日志条数 |
+| 属性               | 默认       | 说明                                                           |
+| ---------------- | -------- | ------------------------------------------------------------ |
+| `NAME`           | `""`     | 全局唯一名字（注册时校验）                                                |
+| `DATA_DIR`       | `None`   | ProcessorData 目录覆盖值；`None` = `<DATA_ROOT>/processors/<NAME>` |
+| `SETUP_VERSION`  | `"1"`    | 参与 setup 指纹；改它等于强制重跑 setup                                   |
+| `SETUP_TIMEOUT`  | `1800.0` | `setup()` 允许耗时（父进程计时）                                        |
+| `START_TIMEOUT`  | `300.0`  | `start()` 允许耗时                                               |
+| `STOP_TIMEOUT`   | `15.0`   | 发送 `StopOp` 后等待退出的上限（之后 terminate → kill）                    |
+| `INVOKE_TIMEOUT` | `None`   | 单次 `invoke()` 上限；`None` = 不限时                                |
+| `LOG_BUFFER`     | `500`    | 父进程保留的日志条数                                                   |
 
 方法：
 
-| 方法 | 必填 | 说明 |
-| --- | --- | --- |
-| `setup(ctx)` | 否 | 一次性初始化；跑完写 `setup.json` 指纹 |
-| `start(ctx)` | **是** | 每次进程启动都执行；注册时会检查是否实现 |
-| `invoke(ctx, data)` | **是** | 一次计算；父进程 FIFO 串行调用 |
-| `stop(ctx)` | 否 | 释放资源；失败只记日志、不阻断退出 |
-| `setup_fingerprint(config)` | 否 | 默认返回 `SETUP_VERSION`；**config 会影响模型文件时必须覆写**（如按语言列表） |
+| 方法                          | 必填    | 说明                                                   |
+| --------------------------- | ----- | ---------------------------------------------------- |
+| `setup(ctx)`                | 否     | 一次性初始化；跑完写 `setup.json` 指纹                           |
+| `start(ctx)`                | **是** | 每次进程启动都执行；注册时会检查是否实现                                 |
+| `invoke(ctx, data)`         | **是** | 一次计算；父进程 FIFO 串行调用                                   |
+| `stop(ctx)`                 | 否     | 释放资源；失败只记日志、不阻断退出                                    |
+| `setup_fingerprint(config)` | 否     | 默认返回 `SETUP_VERSION`；**config 会影响模型文件时必须覆写**（如按语言列表） |
 
 `ProcessorContext`：
 
-| 成员 | 说明 |
-| --- | --- |
-| `name` / `data_dir` / `config` | Processor 名 / 数据目录（`Path`）/ 本次启动下发的 config 快照 |
-| `log(message, level="INFO")` | 上报日志（非字符串用 `str()` 化，`level` 会转大写）；进入统一日志树与父进程缓冲 |
-| `read_marker()` / `write_marker(fingerprint)` | 读/写 setup marker |
+| 成员                                            | 说明                                               |
+| --------------------------------------------- | ------------------------------------------------ |
+| `name` / `data_dir` / `config`                | Processor 名 / 数据目录（`Path`）/ 本次启动下发的 config 快照    |
+| `log(message, level="INFO")`                  | 上报日志（非字符串用 `str()` 化，`level` 会转大写）；进入统一日志树与父进程缓冲 |
+| `read_marker()` / `write_marker(fingerprint)` | 读/写 setup marker                                 |
 
 编写约束（务必遵守）：
 
@@ -342,10 +344,10 @@ class MyTextProcessor(Processor):
 
 ## 内置 Processor
 
-| 名字 | 用途 | 依赖 | 输入 → 输出 | 超时（setup/start/stop/invoke） | 数据/模型目录 |
-| --- | --- | --- | --- | --- | --- |
-| `VAD` | 语音活动检测（silero-vad，16 kHz / 512 采样/帧） | torch | `{"audio": float32[512]}` → `{"probability": float, "is_speech": bool}` | 900 / 120 / 15 / 10 s | `backend/asr-hub/model/torch_hub`（与迁移前的 torch hub 布局一致） |
-| `OCR` | 截图文字识别（easyocr） | easyocr + torch | `{"image": uint8[H,W,3\|4], "detail": 0\|1}` → `detail=1` 时 `[{"text", "confidence", "box"}]`，`detail=0` 时 `[str]` | 1800 / 300 / 20 / 120 s | 模型 `~/.faustbot/models/easyocr`，marker `~/.faustbot/data/processors/OCR` |
+| 名字    | 用途                                   | 依赖              | 输入 → 输出                                                                                                            | 超时（setup/start/stop/invoke） | 数据/模型目录                                                                  |
+| ----- | ------------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------- | ------------------------------------------------------------------------ |
+| `VAD` | 语音活动检测（silero-vad，16 kHz / 512 采样/帧） | torch           | `{"audio": float32[512]}` → `{"probability": float, "is_speech": bool}`                                            | 900 / 120 / 15 / 10 s       | `backend/asr-hub/model/torch_hub`（与迁移前的 torch hub 布局一致）                  |
+| `OCR` | 截图文字识别（easyocr）                      | easyocr + torch | `{"image": uint8[H,W,3\|4], "detail": 0\|1}` → `detail=1` 时 `[{"text", "confidence", "box"}]`，`detail=0` 时 `[str]` | 1800 / 300 / 20 / 120 s     | 模型 `~/.faustbot/models/easyocr`，marker `~/.faustbot/data/processors/OCR` |
 
 VAD 常量（`processors/builtin/vad.py`）：`SAMPLE_RATE = 16000`、`WINDOW_SIZE = 512`、`VAD_THRESHOLD = 0.5`；`is_speech` 即 `probability > VAD_THRESHOLD`。
 
@@ -404,23 +406,23 @@ async with get_processor_manager().require("MY_PLUGIN_ECHO", requirer="my_plugin
 
 常见失败形态：
 
-| 现象 | 含义 | 处理 |
-| --- | --- | --- |
-| `ProcessorStartError: ... 握手超时/校验失败` + 子进程输出 | worker 起不来或连不回来（异常信息里会带上子进程已有输出） | 看 `logs` 字段里的 stderr |
-| `ProcessorStartError: ... ValueError: ...` | `setup`/`start` 抛错（例如依赖缺失、模型文件损坏） | `last_error` 与 ERROR 日志里含完整 traceback |
-| `ProcessorTimeoutError: ... invoke 超时（Ns）` | 单次调用超过 `INVOKE_TIMEOUT`，worker 已被回收 | 调大 `INVOKE_TIMEOUT` 或排查模型性能 |
-| `ProcessorCrashedError: ... worker exited with code N` | 子进程崩溃（`os._exit(7)` / OOM / 被强杀） | 退出码与崩溃前日志一并记录在 `last_error` |
-| `ProcessorNotReadyError` | 在非 ACTIVE 时调用 `invoke`（被回收、崩溃、正在启动） | 重新 `require` 并 `wait_until_ready()` |
-| `ProcessorConfigMismatchError` | 有其它引用时请求了不同 config | 统一双方 config，或等引用归零后再切换 |
+| 现象                                                     | 含义                                  | 处理                                    |
+| ------------------------------------------------------ | ----------------------------------- | ------------------------------------- |
+| `ProcessorStartError: ... 握手超时/校验失败` + 子进程输出           | worker 起不来或连不回来（异常信息里会带上子进程已有输出）    | 看 `logs` 字段里的 stderr                  |
+| `ProcessorStartError: ... ValueError: ...`             | `setup`/`start` 抛错（例如依赖缺失、模型文件损坏）   | `last_error` 与 ERROR 日志里含完整 traceback |
+| `ProcessorTimeoutError: ... invoke 超时（Ns）`             | 单次调用超过 `INVOKE_TIMEOUT`，worker 已被回收 | 调大 `INVOKE_TIMEOUT` 或排查模型性能           |
+| `ProcessorCrashedError: ... worker exited with code N` | 子进程崩溃（`os._exit(7)` / OOM / 被强杀）    | 退出码与崩溃前日志一并记录在 `last_error`           |
+| `ProcessorNotReadyError`                               | 在非 ACTIVE 时调用 `invoke`（被回收、崩溃、正在启动） | 重新 `require` 并 `wait_until_ready()`   |
+| `ProcessorConfigMismatchError`                         | 有其它引用时请求了不同 config                  | 统一双方 config，或等引用归零后再切换                |
 
 ## 管理接口（Admin API）
 
-| 方法 | 端点 | 说明 |
-| --- | --- | --- |
-| GET | `/faust/admin/processors` | 全部 Processor 状态；`?include_log=true` 附带最近 50 条日志 |
-| GET | `/faust/admin/processors/{name}` | 单个 Processor 状态 + 日志尾巴（`?include_log=false` 可关）；未注册返回 404 |
-| POST | `/faust/admin/processors/{name}/stop` | **强制停止**（忽略引用计数，日志会写明持有者）；未注册返回 404 |
-| POST | `/faust/admin/processors/prune` | 回收空闲 Processor；`?timeout=` 缺省取 `PROCESSOR_IDLE_TIMEOUT`，`?whitelist=` 逗号分隔名字 |
+| 方法   | 端点                                    | 说明                                                                           |
+| ---- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| GET  | `/faust/admin/processors`             | 全部 Processor 状态；`?include_log=true` 附带最近 50 条日志                              |
+| GET  | `/faust/admin/processors/{name}`      | 单个 Processor 状态 + 日志尾巴（`?include_log=false` 可关）；未注册返回 404                    |
+| POST | `/faust/admin/processors/{name}/stop` | **强制停止**（忽略引用计数，日志会写明持有者）；未注册返回 404                                          |
+| POST | `/faust/admin/processors/prune`       | 回收空闲 Processor；`?timeout=` 缺省取 `PROCESSOR_IDLE_TIMEOUT`，`?whitelist=` 逗号分隔名字 |
 
 ```bash
 # 看全部状态
@@ -440,10 +442,10 @@ curl -X POST http://127.0.0.1:13900/faust/admin/processors/VAD/stop
 
 ## 配置项
 
-| 配置项 | 默认 | 说明 |
-| --- | --- | --- |
-| `PROCESSOR_PRUNE_INTERVAL` | `30` | 后台回收检查间隔（秒）。`0` = 禁用后台自动回收（仍可手动调 admin 接口） |
-| `PROCESSOR_IDLE_TIMEOUT` | `300` | 空闲超过该秒数且无人引用时回收 worker |
+| 配置项                        | 默认    | 说明                                         |
+| -------------------------- | ----- | ------------------------------------------ |
+| `PROCESSOR_PRUNE_INTERVAL` | `30`  | 后台回收检查间隔（秒）。`0` = 禁用后台自动回收（仍可手动调 admin 接口） |
+| `PROCESSOR_IDLE_TIMEOUT`   | `300` | 空闲超过该秒数且无人引用时回收 worker                     |
 
 ```json
 {

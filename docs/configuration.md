@@ -48,9 +48,13 @@ Configer 左侧边栏按功能分为 13 个模块，每个模块对应一组相�
 
 所有 Provider 与模型的选择修改都**不会单独保存**，修改完成后点击窗口顶部的 **保存** 按钮统一生效。服务商凭证（API Key）会保存在本地配置文件中，不会随公共配置上传。
 
-### 高级：思考模式
+### 重要:思考模式
 
-Provider 可配置思考模式（thinking），部分服务商（如 DeepSeek）的模型支持思考（reasoning）。将思考模式设为"无"可关闭思考，加快响应速度。
+Provider 可配置思考模式（thinking），部分服务商（如 DeepSeek）的模型支持思考（reasoning）。
+
+对于FaustBot,**非常不建议**关闭思考,因为FaustBot的Harness机制**非常复杂**,涉及大量代码编写任务和复杂理解任务,关闭思考会导致**包括感知系统的规则引擎,自我进化**等功能效果变差
+
+如果你认为思考影响了你的交互体验,可以在前端进入UI布局模式后,右键对话显示框,关闭对思维链的显示
 
 ### 常见服务商填写示例
 
@@ -93,6 +97,7 @@ Embedding 模型同样有 Embedding 模型、Embedding 接口地址与 Embedding
 | Whisper（默认） | 使用 OpenAI Whisper 进行本地语音识别，可配置模型大小、语言与初始提示词，对中文识别友好 | [Whisper 配置指南](whisper.md) |
 | FunASR | 使用 FunASR 进行本地语音识别，需要占用 >3G 的内存，可选使用 GPU 推理，准确性好 | [FunASR 配置指南](funasr.md) |
 | OpenAI  | 使用 OpenAI API 进行语音识别，不建议使用 | 无 |
+| Mimo ASR | 使用小米MiMo进行ASR,推荐,准确度高,目前官方定价0.5元每小时| 无 |
 
 ### 可用的语音生成模式
 
@@ -101,11 +106,10 @@ Embedding 模型同样有 Embedding 模型、Embedding 接口地址与 Embedding
 | gpt-sovits    | 使用经典的 GPT-SoVITS 进行本地语音生成，**支持克隆声音**，但**必须要显存 >4G 的显卡** | [gpt-sovits TTS 配置指南](tts.md) |
 | OpenAI   | 使用 OpenAI API 进行语音生成，不建议使用 | 无 |
 | Edge-tts | 使用 Microsoft Edge API 进行语音生成，无需任何配置，默认选项 | 无（默认） |
-
+| Mimo TTS | 使用小米MiMo进行TTS,官方定价暂时是免费(需要去xiaomi mimo平台注册)| 无 |
 > **注释**：FaustBot Cloud 这一项尚不可用，参见 [FaustBot Cloud 仓库](https://github.com/liwusen/FaustBot_Cloud)
 
 ## 高级：重计算子进程（Processor）回收
-
 FaustBot 把 VAD、OCR 这类重计算放在独立子进程中运行，空闲时自动回收以释放内存/显存。
 
 | 配置项 | 默认值 | 说明 |
@@ -114,5 +118,3 @@ FaustBot 把 VAD、OCR 这类重计算放在独立子进程中运行，空闲时
 | `PROCESSOR_IDLE_TIMEOUT` | `300` | 空闲超过该秒数且无人引用时回收子进程 |
 
 > 提示：正在被语音识别等功能使用的子进程不会被回收；回收只发生在引用计数归零且请求队列为空的空闲时刻。
-
-Processor 的工作方式、调用 API 与「写一个新 Processor」的完整说明见 [Processor 机制（子进程计算任务）](processor.md)。
