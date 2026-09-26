@@ -5219,7 +5219,20 @@ git commit -m "chore: Processor 机制真机验证完成"
 - `/faust/audio/vad/status`：旧字段 `is_loaded`/`is_running`/`active_connections`/`sample_rate`/`window_size`/`threshold`/`unavailable_reason` 全部保留，新增 `state`/`last_error`/`pid`/`refcount`。
 - 重依赖：导入 `faust_backend.routes.audio` + `faust_backend.runtime.lifecycle` 后 `sys.modules` 中**没有** `torch` / `easyocr`，`faust_backend.vad_runtime` 未加载。
 - 优雅关闭（Ctrl-C，此时 VAD 仍被引用 refcount=1）：`停止 Processor VAD（原因: backend shutdown）` → `worker exited with code 0` → `全部 Processor 已回收`；关闭后 worker 进程 0 个。
-- 全量测试：`.runtime/python.exe -m pytest backend/tests -q` → **701 passed**（3 个既有 warning 与本计划无关）。
+- 全量测试：`.runtime/python.exe -m pytest backend/tests -q` → **703 passed**（基线 644 + 新增 59；3 个既有 warning 与本计划无关）。终审修复（3e8c1c6 / 7b0bfcd）后再次全量通过。
+
+### 终审（全分支 review）与修复
+
+独立终审覆盖 `a9da272..HEAD`（17 个提交，非文档变更 4072 插入 / 207 删除），发现 2 个 Important + 2 个 Minor；修复提交 3e8c1c6、7b0bfcd，复审确认全部 RESOLVED。
+
+| 编号 | 缺陷 | 修复 | 前置失败证据 |
+| --- | --- | --- | --- |
+| 1 (Important) | VAD 自愈分支重启失败时未释放新 lease → `refcount` 永远 ≥1、worker 再也不会被 prune 回收、`/faust/audio/vad/status` 报假的 `active_connections` | `routes/audio.py` 自愈失败分支补 `lease.release()` | 新测试 `test_vad_ws_releases_new_lease_when_self_heal_fails` 修复前 FAILED（新 lease 未释放） |
+| 2 (Important) | 插件在注册完 Processor 之后加载失败（如 `register_middlewares` 抛错）时无回滚 → 名字被永久占用，该插件再也无法加载，直到重启后端 | 把 Processor 注册移到加载 `try` 的最后一步（其后只剩一条不会抛异常的 dict 赋值），从根上消除「已注册但插件未加载」窗口；先前的 owner 粒度回滚代码随之下线 | 新测试 `test_plugin_load_failure_rolls_back_registered_processors` 修复前 FAILED（注册残留 + 二次 reload 报名字冲突） |
+| 3 (Minor) | `assert handle.pid_alive is False` 与 `_teardown()` 清空 `pid` 的顺序耦合 → 恒真，kill 路径回归抓不到 | 先取 `pid` 再断言 `not psutil.pid_exists(int(pid))`（超时回收用例）；崩溃用例本身由子进程 `os._exit` 自杀，改为校验重启后 `pid` 已更换 | 注入 kill 路径回归（不 terminate + 不关通道、子进程真实存活）时新断言 FAILED，旧断言 2 passed |
+| 4 (Minor) | 并行用例 `sleep=0.6` + `assert elapsed < 1.1` 余量仅 ~0.4s，负载下可能误报 | `sleep=1.5` + `assert elapsed < 2.5`（串行 ≥3.0s，仍具区分度） | 参数调整，无需反证 |
+
+复审另提 2 个 P3：其一（owner 粒度回滚会误伤重复 `plugin_id` 目录下已成功加载的插件）已由「注册移到最后一步」一并消除；其二属既有问题（`FaustPlugin` 加载失败时 pluggy 注册与 `_faust_plugins` 记录不回收，非本次改动引入），不在本计划范围，记录待后续处理。
 
 ### 未执行 / 待裁定
 
