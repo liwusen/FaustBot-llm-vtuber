@@ -126,6 +126,14 @@ class FrontendBridge:
         """
         self._push(str(command), payload)
 
+    def request_avatar_capabilities(self) -> None:
+        """要求前端重新上报当前模型的表演能力（前端收到后走 communicate report_capabilities）。
+
+        能力缓存只有前端"模型加载成功"这一时机会写入，后端重启、插件重载、前端重连都会
+        让缓存落空。此时由 avatar-performance 插件下发本命令补齐，不必等下一次模型加载。
+        """
+        self._push("REQUEST_AVATAR_CAPABILITIES")
+
     def trigger_vrm_gesture(self, gesture_name: str, duration: float | None = None, auto_reset: bool | None = None) -> None:
         parts = [str(gesture_name)]
         if duration is not None:

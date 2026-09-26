@@ -2019,6 +2019,11 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         } else {
           motion.playMotionByName(arg);
         }
+      } else if (cmd === 'REQUEST_AVATAR_CAPABILITIES'){
+        // 后端能力缓存缺失/过期（后端重启、插件重载、长会话）时由 avatar-performance 插件下发：
+        // 立即把当前模型能力重报回去，工具下一轮即可正常使用。
+        if (!avatarPerformance) console.warn('[avatar] 收到能力上报请求，但表演层未就绪（模型未加载？）');
+        reportAvatarCapabilities();
       } else if (cmd === 'AVATAR_EMOTION' || cmd === 'AVATAR_EXPRESSION' || cmd === 'AVATAR_MOTION' || cmd === 'AVATAR_FACS' || cmd === 'AVATAR_CLEAR'){
         // 表演指令：agent 工具 → FrontendBridge._push → 此处分发（见 libs/soullink/performance.js）
         if (!avatarPerformance) { console.warn('[avatar] 表演层未就绪，忽略命令:', cmd, arg); return; }

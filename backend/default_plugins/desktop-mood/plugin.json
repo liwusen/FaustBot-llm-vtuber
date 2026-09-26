@@ -1,8 +1,8 @@
 {
   "id": "desktop-mood",
-  "name": "Desktop Mood",
-  "version": "1.1.1",
-  "description": "FaustBot 情景插件",
+  "name": "FaustBot 感知引擎",
+  "version": "1.1.2",
+  "description": "FaustBot 感知引擎",
   "author": "FaustBot",
   "enabled": true,
   "entry": "impl.py",

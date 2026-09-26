@@ -19,6 +19,16 @@ def test_bridge_reload_settings_pushes_command():
     assert asyncio.run(_collect()) == "RELOAD_FRONTEND_SETTING"
 
 
+def test_bridge_request_avatar_capabilities_pushes_command():
+    bridge = FrontendBridge()
+
+    async def _collect():
+        bridge.request_avatar_capabilities()
+        return await asyncio.wait_for(bridge.queue.get(), timeout=1)
+
+    assert asyncio.run(_collect()) == "REQUEST_AVATAR_CAPABILITIES"
+
+
 def test_push_reload_if_ui_changed_on_ui_key(monkeypatch):
     import faust_backend.admin_runtime as admin_runtime
     import faust_backend.backend2front as b2f

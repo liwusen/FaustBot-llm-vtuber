@@ -93,6 +93,10 @@ def frontendAvatarCommand(command: str, payload: dict | None = None) -> None:
     _bridge.avatar_command(command, payload)
 
 
+def frontendRequestAvatarCapabilities() -> None:
+    _bridge.request_avatar_capabilities()
+
+
 def frontendTriggerVRMGesture(gesture_name: str, duration: float | None = None, auto_reset: bool | None = None) -> None:
     _bridge.trigger_vrm_gesture(gesture_name, duration, auto_reset)
 

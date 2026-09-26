@@ -110,9 +110,9 @@
     refresh().catch(function(){ container.innerHTML = '<article class="card full-span"><h3 class="card-title">Desktop Mood</h3><p class="card-help">桌面插件状态读取失败</p></article>'; });
   }
 
-  api.addPage({ id: 'desktop-mood', label: '情绪化桌面', desc: '桌面采集、规则与 mood 控制', plugin: 'desktop-mood', render: render });
+  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '数据采集/规则设定', plugin: 'desktop-mood', render: render });
   api.addCard('plugins', {
-    title: 'Desktop Mood',
+    title: '感知引擎',
     priority: 17,
     plugin: 'desktop-mood',
     render: function(container){

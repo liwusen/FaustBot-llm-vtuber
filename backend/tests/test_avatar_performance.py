@@ -94,6 +94,7 @@ def _reset_state():
     def clear():
         impl._capabilities = {}
         impl._capabilities_at = 0.0
+        impl._capabilities_requested_at = 0.0
         impl._interactions.clear()
         impl._last_note_at = 0.0
 
@@ -111,6 +112,18 @@ def pushed(monkeypatch):
         calls.append((command, payload))
 
     monkeypatch.setattr(impl.backend2frontend, "frontendAvatarCommand", fake)
+    return calls
+
+
+@pytest.fixture
+def requested(monkeypatch):
+    """捕获"请前端重新上报模型能力"的命令（缓存不可用时的自愈产出）。"""
+    calls: list[str] = []
+
+    def fake():
+        calls.append("REQUEST_AVATAR_CAPABILITIES")
+
+    monkeypatch.setattr(impl.backend2frontend, "frontendRequestAvatarCapabilities", fake)
     return calls
 
 
@@ -182,7 +195,7 @@ async def test_get_state_exposes_capabilities_and_interactions(clock):
 
 
 @pytest.mark.asyncio
-async def test_tools_require_capabilities_report(pushed):
+async def test_tools_require_capabilities_report(pushed, requested):
     for coro in (
         impl.listAvatarCapabilities.ainvoke({}),
         impl.setAvatarEmotion.ainvoke({"emotion": "happy"}),
@@ -192,14 +205,35 @@ async def test_tools_require_capabilities_report(pushed):
     ):
         assert "前端尚未上报模型能力" in await coro
     assert pushed == []
+    # 五个工具都在同一个节流窗内，只发一次补报请求
+    assert requested == ["REQUEST_AVATAR_CAPABILITIES"]
 
 
 @pytest.mark.asyncio
-async def test_stale_capabilities_are_rejected(clock, pushed):
+async def test_capability_request_throttled_until_window_elapses(clock, requested):
+    await impl.listAvatarCapabilities.ainvoke({})
+    await impl.setAvatarEmotion.ainvoke({"emotion": "happy"})
+    assert requested == ["REQUEST_AVATAR_CAPABILITIES"]
+    clock.advance(impl.CAPABILITY_REQUEST_MIN_INTERVAL_SECONDS + 0.1)
+    await impl.listAvatarCapabilities.ainvoke({})
+    assert requested == ["REQUEST_AVATAR_CAPABILITIES", "REQUEST_AVATAR_CAPABILITIES"]
+
+
+@pytest.mark.asyncio
+async def test_fresh_capabilities_do_not_request_report(clock, pushed, requested):
+    await _report()
+    await impl.setAvatarEmotion.ainvoke({"emotion": "happy"})
+    assert requested == []
+    assert pushed == [("AVATAR_EMOTION", {"emotion": "happy", "intensity": 0.6})]
+
+
+@pytest.mark.asyncio
+async def test_stale_capabilities_are_rejected(clock, pushed, requested):
     await _report()
     clock.advance(137.4)
     result = await impl.setAvatarEmotion.ainvoke({"emotion": "happy"})
     assert "前端已 137 秒未上报能力" in result
+    assert requested == ["REQUEST_AVATAR_CAPABILITIES"]
     assert pushed == []
 
 

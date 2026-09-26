@@ -7,6 +7,8 @@
    微调情绪；重度额外入队触发器（走 chat.py 的前台流式推送，agent 立即回应）。
 3. 能力上报 —— 模型加载成功后 `communicate(action="report_capabilities")` → 本插件缓存，
    作为"当前模型真实可用能力"的唯一事实源（后端读磁盘 model3.json 与前端加载态不一致）。
+   缓存缺失或过期时，工具会顺手下发 `REQUEST_AVATAR_CAPABILITIES` 命令要求前端重新上报
+   （同一节流窗内只发一次），因此后端重启/插件重载后不必等下一次模型加载。
 
 注意：能力缓存是进程内模块级状态。后端重启或插件重载（任何插件配置变更都会
 `reload(force=True)`）后需要等前端下一次上报——模型加载时会上报一次。
@@ -54,6 +56,7 @@ INTERACTION_KINDS = tuple(INTERACTION_NUDGES)
 INTERACTION_TIERS = ("light", "heavy")
 
 CAPABILITY_STALE_SECONDS = 120.0   # 超过此秒数未收到上报 → 工具报"前端未就绪"
+CAPABILITY_REQUEST_MIN_INTERVAL_SECONDS = 5.0  # 缓存不可用时，最快隔多久再请求前端上报一次
 INTERACTION_NOTE_TTL_SECONDS = 120.0  # 超过此秒数的交互不再写进下一轮消息备注
 INTERACTION_BUFFER_MAX = 50
 HOLD_SECONDS_DEFAULT = 3.0
@@ -66,6 +69,7 @@ CLEAR_SCOPES = ("all", "facs", "native")
 # 能力缓存（模块级，进程内）
 _capabilities: dict[str, Any] = {}
 _capabilities_at: float = 0.0
+_capabilities_requested_at: float = 0.0
 _interactions: collections.deque = collections.deque(maxlen=INTERACTION_BUFFER_MAX)
 _last_note_at: float = 0.0
 
@@ -123,13 +127,29 @@ def _err(message: str, **extra: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _request_capabilities() -> None:
+    """请求前端重新上报能力；同一节流窗内只发一次（每个 Avatar 工具调用都会走到这里）。"""
+    global _capabilities_requested_at
+    now = _now()
+    if now - _capabilities_requested_at < CAPABILITY_REQUEST_MIN_INTERVAL_SECONDS:
+        return
+    _capabilities_requested_at = now
+    backend2frontend.frontendRequestAvatarCapabilities()
+
+
 def _capabilities_error() -> str | None:
-    """能力缓存不可用时的错误文案；可用返回 None。"""
+    """能力缓存不可用时的错误文案；可用返回 None。
+
+    缓存在前端加载模型时上报一次，后端重启/插件重载/前端重连都会让它落空或过期，工具自己
+    等不回来——因此这里顺带下发 REQUEST_AVATAR_CAPABILITIES 让前端立刻补报。
+    """
     if not _capabilities:
-        return "前端尚未上报模型能力（模型可能未加载完成）"
+        _request_capabilities()
+        return "前端尚未上报模型能力（模型可能未加载完成），已请求前端重新上报，请稍后重试"
     age = _now() - _capabilities_at
     if age > CAPABILITY_STALE_SECONDS:
-        return f"前端已 {age:.0f} 秒未上报能力（连接断开？）"
+        _request_capabilities()
+        return f"前端已 {age:.0f} 秒未上报能力（连接断开？），已请求前端重新上报，请稍后重试"
     return None
 
 
@@ -415,7 +435,8 @@ def _prompt_suffix() -> str:
         )
     else:
         lines.append(
-            "当前尚未收到前端的能力上报（模型未加载完成？）：此时这些工具会明确报错，先 listAvatarCapabilities() 确认。"
+            "当前尚未收到前端的能力上报（模型未加载完成？）：这些工具会明确报错，并自动请求前端"
+            "重新上报；稍等片刻重试即可（也可先 listAvatarCapabilities() 确认）。"
         )
     return "\n".join(lines)
 
