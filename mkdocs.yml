@@ -24,6 +24,7 @@ nav:
     - 开发者环境: devinstall.md
     - 插件开发指南: create-plugin-guide.md
     - 插件 API Reference: plugin-api-reference.md
+    - Processor 机制: processor.md
   - 语音配置:
     - GPT-Sovits: tts.md
     - FunASR: funasr.md
