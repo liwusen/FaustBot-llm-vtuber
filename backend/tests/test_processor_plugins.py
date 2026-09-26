@@ -58,6 +58,33 @@ class Plugin(FaustPlugin):
         return [BrokenProcessor]
 '''
 
+# 旧式插件形态（非 FaustPlugin 子类），避免 pluggy 注册的额外影响：
+# register_processors 成功登记后再让 register_middlewares 抛错，模拟“注册之后才失败”。
+BAD_MIDDLEWARE_PLUGIN_MAIN = _PLUGIN_COMMON + '''
+
+class BadMiddlewareProcessor(Processor):
+    NAME = "TMP_BADMW_ECHO"
+    SETUP_TIMEOUT = 20.0
+    START_TIMEOUT = 20.0
+
+    def setup(self, ctx):
+        pass
+
+    def start(self, ctx):
+        pass
+
+    def invoke(self, ctx, data):
+        return data
+
+
+class Plugin:
+    def register_processors(self, ctx):
+        return [BadMiddlewareProcessor]
+
+    def register_middlewares(self, ctx):
+        raise RuntimeError("middleware 注册失败")
+'''
+
 PLUGIN_JSON = {"id": "tmp_processor_plugin", "name": "Tmp", "entry": "main.py", "enabled": True}
 
 
@@ -120,6 +147,31 @@ async def test_broken_plugin_processor_marks_plugin_load_failed(tmp_path):
 
     assert [item["plugin"] for item in summary["errors"]] == ["tmp_broken_plugin"]
     assert "Processor" in summary["errors"][0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_plugin_load_failure_rolls_back_registered_processors(tmp_path):
+    """Processor 注册后插件才加载失败：必须回滚，否则名字被永久占住。"""
+    from faust_backend.plugin_system import PluginManager
+    from faust_backend.processors.errors import ProcessorNotFoundError
+    from faust_backend.processors.registry import get_processor
+
+    plugins_dir = tmp_path / "plugins"
+    _write_plugin(plugins_dir, "tmp_badmw_plugin", BAD_MIDDLEWARE_PLUGIN_MAIN)
+
+    manager = PluginManager(plugins_dir=plugins_dir, state_file=str(tmp_path / "state.json"))
+    summary = await manager.reload(force=True)
+
+    assert [item["plugin"] for item in summary["errors"]] == ["tmp_badmw_plugin"]
+    assert "middleware 注册失败" in summary["errors"][0]["error"]
+    with pytest.raises(ProcessorNotFoundError):
+        get_processor("TMP_BADMW_ECHO")          # 加载失败 ⇒ 注册已回滚
+
+    # 再 reload：注册没回滚的话这里会因名字冲突而提前失败
+    second = await manager.reload(force=True)
+    assert [item["plugin"] for item in second["errors"]] == ["tmp_badmw_plugin"]
+    assert "名字冲突" not in second["errors"][0]["error"]
+    assert "middleware 注册失败" in second["errors"][0]["error"]
 
 
 @pytest.mark.asyncio

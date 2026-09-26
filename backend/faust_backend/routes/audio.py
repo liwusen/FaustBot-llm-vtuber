@@ -119,6 +119,8 @@ async def speech_vad_ws(websocket: WebSocket):
                     last_error_text = str(e)
                     retry_after = loop.time() + VAD_DEGRADED_BACKOFF_SECONDS
                     log.error("VAD 不可用: %s", e)
+                    if lease is not None:
+                        lease.release()
                     lease = None
                     await websocket.send_text(
                         json.dumps({"is_speech": False, "probability": 0.0, "error": last_error_text}, ensure_ascii=False)

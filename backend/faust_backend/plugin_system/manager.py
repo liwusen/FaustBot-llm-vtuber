@@ -605,6 +605,13 @@ class PluginManager:
             except Exception as e:
                 log.error("加载插件失败 %s: %s", manifest.plugin_id, e)
                 errors.append({"plugin": manifest.plugin_id, "error": str(e)})
+                # 注册可能发生在失败点之前：回滚，否则名字被永久占住，插件再也加载不了
+                try:
+                    rolled_back = await get_processor_manager().unregister_owner(manifest.plugin_id)
+                    if rolled_back:
+                        log.warning("插件 %s 加载失败，已回滚 Processor 注册: %s", manifest.plugin_id, rolled_back)
+                except Exception as rollback_exc:  # noqa: BLE001 - 回滚失败不得掩盖原始错误
+                    log.error("回滚插件 %s 的 Processor 注册失败: %s", manifest.plugin_id, rollback_exc)
 
         # ── Load schedules from pluggy plugins ──
         self._load_schedules()

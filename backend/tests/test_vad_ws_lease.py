@@ -185,6 +185,47 @@ async def test_vad_ws_self_heals_after_worker_crash(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_vad_ws_releases_new_lease_when_self_heal_fails(monkeypatch):
+    """自愈时新 lease 起不来：新 lease 也必须释放，否则引用计数永久残留。"""
+    from faust_backend.processors.errors import ProcessorStartError
+
+    import faust_backend.routes.audio as audio_routes
+
+    handle = _FakeHandle(state="ACTIVE")
+
+    class _NeverReadyLease(_FakeLease):
+        async def wait_until_ready(self, timeout=None) -> None:
+            raise ProcessorStartError("VAD worker 起不来", last_error="boom")
+
+    leases: list[_FakeLease] = []
+
+    def _factory() -> _FakeLease:
+        if not leases:
+            lease: _FakeLease = _FakeLease(handle, [{"probability": 0.4, "is_speech": False}])
+        else:
+            lease = _NeverReadyLease(handle, [])
+        leases.append(lease)
+        return lease
+
+    manager = _FakeManager(_factory)
+    monkeypatch.setattr(audio_routes, "get_processor_manager", lambda: manager)
+
+    class _CrashAfterFirstFrameWs(_FakeWebSocket):
+        async def receive_bytes(self) -> bytes:
+            if self._frames and len(self._frames) == 1:
+                handle.state = "STOPPED"
+            return await super().receive_bytes()
+
+    ws = _CrashAfterFirstFrameWs([_frame(), _frame()])
+    await audio_routes.speech_vad_ws(ws)
+
+    assert manager.start_calls == 2                 # 崩溃后重新 require
+    assert leases[0].released is True               # 旧 lease 已释放
+    assert leases[1].released is True               # 新 lease 起不来也必须释放（否则 refcount 永久 >= 1）
+    assert "VAD worker 起不来" in (ws.sent[-1].get("error") or "")
+
+
+@pytest.mark.asyncio
 async def test_vad_ws_releases_lease_on_disconnect(monkeypatch):
     import faust_backend.routes.audio as audio_routes
 

@@ -591,6 +591,7 @@ async def test_worker_crash_fails_inflight_and_pending_then_restart_works(manage
     manager = manager_factory()
     lease = await manager.startRequire("TEST_CRASH", requirer="t1")
     await lease.wait_until_ready(timeout=30)
+    pid = manager.handle("TEST_CRASH").pid
 
     inflight = asyncio.create_task(lease.invoke("die"))
     await asyncio.sleep(0.2)
@@ -605,7 +606,7 @@ async def test_worker_crash_fails_inflight_and_pending_then_restart_works(manage
     assert handle.state == "STOPPED"
     assert "7" in (handle.last_error or "")
     await asyncio.sleep(0.2)
-    assert handle.pid_alive is False
+    assert not psutil.pid_exists(int(pid))
 
     await manager.endRequire("TEST_CRASH", "t1")
     lease = await manager.startRequire("TEST_CRASH", requirer="t1")   # 崩溃后需重新 require 才重启
@@ -621,6 +622,7 @@ async def test_invoke_timeout_recycles_worker(manager_factory):
     manager = manager_factory()
     lease = await manager.startRequire("TEST_SLOW", requirer="t1")
     await lease.wait_until_ready(timeout=30)
+    pid = manager.handle("TEST_SLOW").pid
 
     with pytest.raises(ProcessorTimeoutError):
         await lease.invoke({"seq": 1, "sleep": 5.0})
@@ -629,7 +631,7 @@ async def test_invoke_timeout_recycles_worker(manager_factory):
     assert handle.state == "STOPPED"
     assert "invoke 超时" in (handle.last_error or "")
     await asyncio.sleep(0.2)
-    assert handle.pid_alive is False
+    assert not psutil.pid_exists(int(pid))
     lease.release()
 
 
@@ -657,11 +659,11 @@ async def test_different_processors_run_in_parallel(manager_factory):
             loop = asyncio.get_running_loop()
             started = loop.time()
             await asyncio.gather(
-                left.invoke({"seq": 1, "sleep": 0.6}, timeout=5.0),
-                right.invoke({"seq": 1, "sleep": 0.6}, timeout=5.0),
+                left.invoke({"seq": 1, "sleep": 1.5}, timeout=5.0),
+                right.invoke({"seq": 1, "sleep": 1.5}, timeout=5.0),
             )
             elapsed = loop.time() - started
-            assert elapsed < 1.1, f"两个 Processor 应当并行，实际耗时 {elapsed:.2f}s"
+            assert elapsed < 2.5, f"两个 Processor 应当并行，实际耗时 {elapsed:.2f}s"
 
 
 @pytest.mark.asyncio
