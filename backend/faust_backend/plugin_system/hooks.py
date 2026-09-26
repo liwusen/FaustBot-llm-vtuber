@@ -65,6 +65,10 @@ class CoreHooks:
         """Return list of ToolSpec or callable tools."""
 
     @hookspec
+    def register_processors(self, ctx: Any) -> list:
+        """Return list of Processor subclasses to register with ProcessorManager."""
+
+    @hookspec
     def register_middlewares(self, ctx: Any) -> list:
         """Return list of MiddlewareSpec or middleware objects."""
 

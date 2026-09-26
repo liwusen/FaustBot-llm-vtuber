@@ -350,6 +350,55 @@ def register_tools(self, ctx: PluginContext) -> list:
     ]
 ```
 
+#### `register_processors(ctx: PluginContext) -> list`
+
+注册重计算 Processor（受管子进程）。返回 `Processor` 子类列表，框架为每个类分配名字（类的 `NAME`）并登记到 `ProcessorManager`；插件在运行时通过 `ProcessorManager.require("名字", ...)` 使用它们（详见本节末尾的调用示例）。
+
+```python
+from faust_backend.processors import Processor, ProcessorContext
+
+
+class MyTextProcessor(Processor):
+    NAME = "MY_TEXT"                  # 全局唯一，与内置/其它插件重名会加载失败
+    DATA_DIR = None                   # None = ~/.yours/data/processors/MY_TEXT
+    SETUP_TIMEOUT = 300.0
+    START_TIMEOUT = 120.0
+    INVOKE_TIMEOUT = 60.0
+    LOG_BUFFER = 500
+
+    def setup(self, ctx: ProcessorContext) -> None:
+        """一次性初始化（可选）：下载/校验模型。有 marker 时会被跳过。"""
+
+    def start(self, ctx: ProcessorContext) -> None:
+        """每次子进程启动时执行（必填）：把模型加载进内存。"""
+
+    def invoke(self, ctx: ProcessorContext, data):
+        """一次计算（必填）。入参与返回值都要能被 pickle。"""
+
+
+@hookimpl
+def register_processors(self, ctx: PluginContext) -> list:
+    return [MyTextProcessor]
+```
+
+运行期调用：
+
+```python
+from faust_backend.processors import get_processor_manager
+
+manager = get_processor_manager()
+async with manager.require("MY_TEXT", requirer="my_plugin", config={"langs": ["en"]}) as lease:
+    await lease.wait_until_ready()
+    result = await lease.invoke({"text": "hello"})
+```
+
+约束：
+
+- Processor 只能依赖 `ctx.config`（`require(..., config=...)` 下发的快照）与 `ctx.data_dir`；**不能**使用 `PluginContext` 或插件加载器注入的运行时状态。
+- 插件入口模块必须能在独立子进程中导入（自包含），重依赖（torch / easyocr 等）在 `setup`/`start` 内 import。
+- 同一个名字全局唯一：与内置 Processor 或其它插件冲突会导致该插件加载失败（错误出现在 reload 结果的 `errors` 里）。
+- 插件被卸载/热重载时，框架会停止并摘除该插件名下的全部 Processor。
+
 #### `register_middlewares(ctx: PluginContext) -> list`
 
 注册 Agent 中间件。

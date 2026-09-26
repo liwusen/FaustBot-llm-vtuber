@@ -110,3 +110,8 @@ def unregister_owner(owner: str) -> list[str]:
     for name in removed:
         _REGISTRY.pop(name, None)
     return sorted(removed)
+
+
+def unregister(name: str) -> bool:
+    """摘除单个注册记录，返回是否存在（回滚用）。"""
+    return _REGISTRY.pop(str(name), None) is not None

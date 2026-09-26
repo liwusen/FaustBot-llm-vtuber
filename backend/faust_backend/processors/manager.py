@@ -32,7 +32,8 @@ from .errors import (
     ProcessorStartError,
     ProcessorTimeoutError,
 )
-from .registry import RegisteredProcessor, get_processor, list_processors
+from .registry import RegisteredProcessor, get_processor, list_processors, register_processor, unregister
+from .registry import unregister_owner as registry_unregister_owner
 from . import builtin as _builtin  # noqa: F401 - import 副作用：注册内置 Processor（VAD/OCR）
 
 log = get_logger("faust.processor")
@@ -970,6 +971,35 @@ class ProcessorManager:
             except Exception as exc:  # noqa: BLE001 - 循环必须存活
                 log.error("Processor prune 循环错误: %s", exc)
                 await asyncio.sleep(1.0)
+
+    def register_plugin_processors(self, owner: str, classes: list[type[Processor]]) -> list[str]:
+        """登记插件提供的 Processor 类。
+
+        原子语义：任一失败则把本次已登记的记录全部回滚，再抛 ``ProcessorError``
+        （插件加载失败由 PluginManager 记到 reload 结果的 ``errors`` 里）。
+        """
+        registered: list[str] = []
+        try:
+            for cls in classes:
+                registered.append(register_processor(cls, owner=str(owner)))
+        except ProcessorError:
+            for name in registered:
+                unregister(name)
+            raise
+        return registered
+
+    async def unregister_owner(self, owner: str) -> list[str]:
+        """停止并摘除该 owner 名下的全部 Processor（忽略引用计数，写日志说明）。"""
+        names = registry_unregister_owner(str(owner))
+        for name in names:
+            handle = self._handles.pop(name, None)
+            if handle is None:
+                continue
+            try:
+                await handle.stop(reason=f"owner {owner} 已卸载")
+            except Exception as exc:  # noqa: BLE001 - 单个停止失败不阻断其余
+                log.error("卸载 Processor %s 失败: %s", name, exc)
+        return names
 
     async def stop(self, name: str) -> None:
         """管理用途：忽略引用计数强制停止（写日志说明）。"""

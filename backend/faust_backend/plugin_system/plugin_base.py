@@ -67,6 +67,10 @@ class FaustPlugin:
         return []
 
     @hookimpl
+    def register_processors(self, ctx: PluginContext) -> list:
+        return []
+
+    @hookimpl
     def register_middlewares(self, ctx: PluginContext) -> list:
         return []
 

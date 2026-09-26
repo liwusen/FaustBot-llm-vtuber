@@ -15,6 +15,7 @@ from typing import Any
 import pluggy
 
 import faust_backend.trigger_manager as trigger_manager
+from faust_backend.processors import get_processor_manager
 from faust_backend.tools.vfs import get_faustbot_vfs
 
 from .hooks import CoreHooks, hookimpl
@@ -509,6 +510,12 @@ class PluginManager:
                     plugin.on_unload(ctx) # type: ignore
             except Exception:
                 pass
+            try:
+                removed = await get_processor_manager().unregister_owner(plugin_id)
+                if removed:
+                    log.info("插件 %s 的 Processor 已卸载: %s", plugin_id, removed)
+            except Exception as exc:  # noqa: BLE001 - 卸载失败不得中断 reload
+                log.error("卸载插件 %s 的 Processor 失败: %s", plugin_id, exc)
 
         self._plugins = {}
         self._faust_plugins = {}
@@ -569,6 +576,16 @@ class PluginManager:
                 else:
                     tools_res = []
                 tools = self._normalize_tool_specs(manifest.plugin_id, tools_res)
+
+                if hasattr(plugin, "register_processors"):
+                    processors_res = plugin.register_processors(ctx)
+                    if inspect.isawaitable(processors_res):
+                        processors_res = await processors_res
+                    registered_processors = get_processor_manager().register_plugin_processors(
+                        manifest.plugin_id, list(processors_res or [])
+                    )
+                    if registered_processors:
+                        log.info("插件 %s 注册 Processor: %s", manifest.plugin_id, registered_processors)
 
                 if hasattr(plugin, "register_middlewares"):
                     mw_res = plugin.register_middlewares(ctx)
