@@ -1036,3 +1036,33 @@ async def test_config_mismatch_raises_while_referenced_even_if_stopped(manager_f
 
     assert handle.config == {"langs": ["en"]}
     lease.release()
+
+
+@pytest.mark.asyncio
+async def test_wait_until_ready_wakes_when_start_task_finishes(manager_factory):
+    """启动任务结束本身也必须唤醒等待者。
+
+    真机复现（OCR setup 失败）：最后一次 ``_notify()`` 可能早于启动任务结束，
+    此时等待者会停在「启动中」的事件上，且 ``_start_task.done()`` 永远不再被通知，
+    于是 ``wait_until_ready(timeout=None)`` 永久挂住（VAD/OCR 的调用方就是这么用的）。
+    """
+    from faust_backend.processors.errors import ProcessorStartError
+    from faust_backend.processors.manager import STATE_SETTING_UP
+
+    manager = manager_factory()
+    handle = manager.handle("TEST_FAIL_SETUP")
+
+    async def _failing_start() -> None:
+        await asyncio.sleep(0.2)
+        raise ProcessorStartError("模拟启动失败")
+
+    handle._set_state(STATE_SETTING_UP)
+    handle._start_task = asyncio.create_task(_failing_start())
+    handle._start_task.add_done_callback(handle._on_start_done)
+
+    waiter = asyncio.create_task(handle.wait_until_ready())
+    await asyncio.sleep(0.05)
+    assert not waiter.done()          # 停在「启动中」的事件上
+
+    with pytest.raises(ProcessorStartError):
+        await asyncio.wait_for(waiter, 10)

@@ -284,11 +284,14 @@ class ProcessorHandle:
         self._start_task.add_done_callback(self._on_start_done)
 
     def _on_start_done(self, task: asyncio.Task) -> None:
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            log.error("Processor %s 启动失败: %s", self.name, exc)
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                log.error("Processor %s 启动失败: %s", self.name, exc)
+        # 启动任务结束本身也必须唤醒等待者：最后一次 _notify() 可能早于任务结束
+        # （例如启动失败的收尾路径），此时 wait_until_ready() 会停在「启动中」的
+        # 事件上永久挂住。取消也要通知，否则等待者同样醒不来。
+        self._notify()
 
     async def wait_until_ready(self, timeout: float | None = None) -> None:
         """等 ACTIVE。启动失败/崩溃 → ``ProcessorStartError``；超时 → ``ProcessorTimeoutError``。"""
