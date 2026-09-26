@@ -30,6 +30,12 @@
   border: 1px solid var(--md-default-fg-color--lightest);
 }
 
+/* Mermaid diagrams (pymdownx.superfences fence_div_format) */
+.mermaid {
+  text-align: center;
+  overflow-x: auto;
+}
+
 /* Navigation styling */
 .md-nav__link {
   font-size: 0.9rem;

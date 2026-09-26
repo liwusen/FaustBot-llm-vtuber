@@ -107,10 +107,6 @@ faust/
    
    当你确实无法使用异步时,(MUST)向用户报告,等待用户指示
    
-   使用With/async with:
-   
-   对于Lock和文件的Open,应该使用(异步)上下文管理器
-   
    脏数据策略:
    
    保证这个项目的所有内部数据文件都只会被这个项目的程序读写,你无需过多考虑**运行时磁盘数据被其他程序修改**的脏数据
@@ -129,9 +125,9 @@ faust/
 
 3. 当你修改了这个项目的依赖时，请修改 ` requirements.txt `
 
-4. 当你修改了AI Agent的能力时，请务必编写 Faust 角色的 PROMPT (修改agents/faust/xxxxx.md)，介绍这些能力，并且告诉它使用条件
+4. 当你修改了AI Agent的能力时，请务必修改 Faust 角色的 PROMPT (修改agents/faust/xxxxx.md)，介绍这些能力，并且告诉它使用条件
 
-5. 在编写文档时,不要用ASCII Art的形式画图,而是使用Memarid这样的工具
+5. 不要用ASCII Art的形式画图,而是使用Memarid
 
 6. 无论进行何种修改,都需要确保单元测试通过
 

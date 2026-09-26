@@ -31,10 +31,20 @@ nav:
 
 markdown_extensions:
   - tables
-  - fenced_code
+  # superfences 取代 fenced_code，并提供 mermaid 自定义围栏
+  # 必须用 fence_div_format：mermaid 读取元素 innerHTML，fence_code_format 的 <code> 包裹会导致解析失败
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
   - codehilite
   - toc:
       permalink: true
 
 extra_css:
   - assets/custom.css
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@11.9.0/dist/mermaid.min.js
+  - assets/mermaid-init.js
