@@ -16,6 +16,46 @@
 
 中价感知源（进程扫描、USB、网络、外设电量、显卡、编码活动）按 30～300 秒采样，廉价源 10 秒，不会为了"实时"把 CPU 吃满。
 
+## 数据分层（`faustbot://desktop-mood/`）
+
+感知结果按域分层暴露在一个只读数据根下，按需读取即可，不必一次把全部上下文塞给 AI：
+
+| 路径 | 内容 |
+|---|---|
+| `faustbot://desktop-mood/overview.md` | 总览：每个源一行，最省 token 的入口 |
+| `faustbot://desktop-mood/refresh` | `write` 一次立即重新采集（节点本身没有内容） |
+| `faustbot://desktop-mood/system/system.{json,md}` | 负载 / 电量 / 空闲 / 节日 / 显卡 / 进程增减 / 显示器与电源 |
+| `faustbot://desktop-mood/window/window.{json,md}` | 前台进程 / 窗口标题 / 窗口几何 / 应用停留 / 未保存 / 画面动态 / 编码活动 / 桌面新文件 |
+| `faustbot://desktop-mood/input/input.{json,md}` | 鼠标 / 手柄 / USB / 外设电量 |
+| `faustbot://desktop-mood/media/media.{json,md}` | 媒体播放 / 音频设备与麦克风 |
+| `faustbot://desktop-mood/network/network.{json,md}` | 网络与 SSID |
+| `faustbot://desktop-mood/weather/weather.{json,md}` | 天气 / 环境光 |
+| `faustbot://desktop-mood/narrative/narrative.{json,md}` | 事件时间线 / 场景摘要 / 离开期间 / 活动强度 / 注意力 / 今日节律 |
+| `faustbot://desktop-mood/narrative/rhythm.md` | 7 天节律档案（清醒 / 专注 / 游戏 / 离开次数） |
+| `faustbot://desktop-mood/external/external.{json,md}` | 外部上报 / 日历 / 锁屏 / 显示器数 / 最近互动 |
+| `faustbot://desktop-mood/privacy/privacy.{json,md}` | 剪贴板类型（正文从不进上下文） |
+
+读法：先读 `overview.md`（最省 token），需要细节读该组的 `.md`（同一数据的可读行式渲染），要精确值读同名 `.json`。
+
+`.json` 节点的形状如下：`state` 为 `ok` 时 `fields` 才是本轮真实采到的值；源被关闭时 `state` 是 `off`，
+采集失败时 `state` 直接写原因（此时 `fields` 为空）。根级 `age_sec` 是距最近一轮采集的秒数，
+每个源还带自己的 `cadence_sec`（采样间隔）：
+
+```json
+{
+  "generated_at": "2026-09-27 21:30:05",
+  "age_sec": 3,
+  "group": "weather",
+  "group_label": "天气与环境",
+  "sources": {
+    "weather": {"label": "天气（联网）", "state": "ok", "cadence_sec": 60, "fields": {"weather": {"text": "多云", "temperature_c": 21}}},
+    "ambient_light": {"label": "环境光", "state": "该设备无环境光传感器", "cadence_sec": 30, "fields": {}}
+  }
+}
+```
+
+规则编辑节点与插件说明仍在 `faustbot://plugins/desktop-mood/{rules.json,rules.md,reload}` 与 `faustbot://plugins/desktop-mood.md`。
+
 ## 它能做什么
 
 根据环境，Faust 可能会：
@@ -23,7 +63,7 @@
 - 你长时间没动 → 打个哈欠动作，或轻声搭话；回到电脑前 → 主动问候，并汇报"你不在的时候发生了什么"（编译跑完、下载完成、接了设备）；
 - 你连着写了 90 分钟 → 提醒你起来动一动；窗口切得特别碎 → 问问你是不是卡住了；
 - CPU / 内存 / 显卡过热 → 提醒你；电量过低 → 弹一张便签提示充电；
-- 深夜还在用 → 关心你早点休息；连续几天熬夜 → 从节律档案里读出来跟你说；
+- 深夜还在用 → 关心你早点休息；连续几天熬夜 → 从 7 天节律档案（`faustbot://desktop-mood/narrative/rhythm.md`）里读出来跟你说；
 - 你在用某个软件、在放音乐 → 说点应景的话；
 - 检测到你在开会（麦克风被占用 / 会议软件在前台）→ **闭嘴不打扰**；
 - 规则可以直接切换 Faust 的表情（感知 → 情绪闭环）。
@@ -35,6 +75,30 @@
 全屏（游戏/视频）、麦克风占用、会议软件在前台、屏幕已锁、或你按下了**静音阀**时，说话/便签/表情类动作默认不发。面板上能一键静音 30 分钟 / 1 小时 / 解除；规则也可以用 `action.bypass_disturb` 强行放行，或用 `condition.when_not_disturbed` 只在安静时触发。
 
 触发频率完全由你自己掌握：每条规则的 `cooldown_sec`、全局冷却、以及规则开关。**引擎不会猜测你的满意度、也不会自动改冷却**——觉得吵就关掉那条规则、把它的冷却调大，或者按静音阀。
+
+## 随行附加（attach）
+
+除了说话 / 便签 / 表情 / 动作，规则还可以用 `attach` 动作：命中时**不说话、不弹窗、不打断**，只把文本暂存进附加队列（默认存活 1800 秒，队列上限 20 条），等合适的时机随用户消息一起送达。
+
+```json
+{
+  "id": "battery_attach",
+  "label": "低电量随行提醒",
+  "enabled": true,
+  "cooldown_sec": 1800,
+  "kind": "attach",
+  "condition": {"type": "battery_under", "value": 20},
+  "action": {"attach": "电量只剩 {battery}%，记得插电"}
+}
+```
+
+`action.attach` 也可以写成对象：`{"text": "…", "ttl_sec": 1800, "priority": 50}`。
+
+- **送达时机**：只在**下一条用户消息**或**前台触发器**上附加；**后台触发器不附加**。附加内容是队列文本 + 这段时间里"变化过的桌面信息"。
+- **总量受控**：追加部分硬上限 100 字（含 `[桌面] ` 前缀与 ` · ` 分隔符），最多 6 行；只放相对上次附加发生变化的内容，最近 20 条不重复。
+- **不是打扰**：因此**不受免打扰闸门与静音阀拦截**，无需 `bypass_disturb`。
+- **启发式自动附加**：引擎自己也会挑"AI 可能需要的"变化附加（时间线事件优先，剩余预算按字段权重补）；规则 `attach` 命中时会再跑一次同一启发式，把这条文本并进同一份摘要。
+- **面板可见**：`get_perception` 返回 `perception.attach`（`enabled` / `auto` / `budget` / `queued` / `last_text` / `last_at` / `sent_total` / `last_error`）。
 
 ## 面板
 

@@ -1,16 +1,52 @@
 # 桌面心情规则引擎（Desktop Mood Rules）
 
-本技能指导你编辑 **desktop-mood 插件的情景规则**：规则让 Faust 在桌面环境满足条件时自动动作（做动作/说话/弹便签/唤醒自己）。当用户说“我打游戏时提醒我喝水”“深夜别老提醒我”“关掉那个 CPU 报警规则”时使用本技能。
+本技能指导你编辑 **desktop-mood 插件的情景规则**：规则让 Faust 在桌面环境满足条件时自动动作（做动作/说话/弹便签/唤醒自己/把提醒暂存进随行附加队列）。当用户说“我打游戏时提醒我喝水”“深夜别老提醒我”“关掉那个 CPU 报警规则”“电量低了别打断我，等我说话时顺带提一句”时使用本技能。
 
-## 三个 VFS 节点
+## VFS 节点
+
+规则编辑固定这三节点：
 
 | 节点 | 类型 | 作用 |
 |---|---|---|
 | `faustbot://plugins/desktop-mood/rules.json` | 草稿（可写） | 当前规则草稿。`write`/`edit` **只改草稿，不生效、不落盘** |
 | `faustbot://plugins/desktop-mood/reload` | 提交（读/写皆可） | **`read` 一次**即提交草稿；`write` 效果相同，写入内容被忽略 |
 | `faustbot://plugins/desktop-mood/rules.md` | 指南（只读） | 本工作流摘要 + 当前生效规则清单 |
-| `faustbot://plugins/desktop-context.json` | 快照（只读） | 实时桌面环境（窗口/进程/全屏、应用停留、鼠标、负载电量、显示器/麦克风/网络/手柄/USB、媒体、天气、事件时间线、场景摘要、免打扰状态），写规则前先读它确认信号是否存在 |
-| `faustbot://plugins/desktop-mood/rhythm.md` | 档案（只读） | 最近 7 天的节律（清醒/专注/游戏/离开次数），用于"作息"类关心 |
+
+写规则前确认信号是否存在，感知数据按域分层挂在 `faustbot://desktop-mood/` 下：
+
+| 节点 | 作用 |
+|---|---|
+| `faustbot://desktop-mood/overview.md` | **总览：每源一行，最省 token，先读它** |
+| `faustbot://desktop-mood/system/system.{md,json}` | 负载/电量/空闲/节日/显卡/进程增减/显示器与电源 |
+| `faustbot://desktop-mood/window/window.{md,json}` | 前台进程/窗口标题/窗口几何/应用停留/未保存/画面动态/编码活动/桌面新文件 |
+| `faustbot://desktop-mood/input/input.{md,json}` | 鼠标/手柄/USB/外设电量 |
+| `faustbot://desktop-mood/media/media.{md,json}` | 媒体播放/音频设备与麦克风 |
+| `faustbot://desktop-mood/network/network.{md,json}` | 网络与 SSID |
+| `faustbot://desktop-mood/weather/weather.{md,json}` | 天气/环境光 |
+| `faustbot://desktop-mood/narrative/narrative.{md,json}` | 事件时间线/场景摘要/离开期间/活动强度/注意力/今日节律 |
+| `faustbot://desktop-mood/narrative/rhythm.md` | 档案（只读）：最近 7 天节律（清醒/专注/游戏/离开次数），用于"作息"类关心 |
+| `faustbot://desktop-mood/external/external.{md,json}` | 外部上报/日历/锁屏/显示器数/最近互动 |
+| `faustbot://desktop-mood/privacy/privacy.{md,json}` | 剪贴板类型（正文从不进上下文） |
+| `faustbot://desktop-mood/refresh` | `write` 一次立即重新采集（只读节点无内容） |
+
+读法：`overview.md` 最省 token → 需要细节读对应组的 `xxx.md`（可读行式渲染）→ 要精确值读 `xxx.json`。
+`xxx.json` 的形状：
+
+```json
+{
+  "generated_at": "2026-09-27 21:30:05",
+  "age_sec": 3,
+  "group": "weather",
+  "group_label": "天气与环境",
+  "sources": {
+    "weather": {"label": "天气（联网）", "state": "ok", "cadence_sec": 60, "fields": {"weather": {"text": "多云", "temperature_c": 21}}},
+    "ambient_light": {"label": "环境光", "state": "该设备无环境光传感器", "cadence_sec": 30, "fields": {}}
+  }
+}
+```
+
+`state` 为 `ok` 时 `fields` 才是本轮真实采到的值；`off` 表示源被关闭；其它值是不可用原因，此时 `fields` 为空，
+不要把缺失的字段当成"值为空/为假"。
 
 ```mermaid
 flowchart LR
@@ -61,7 +97,7 @@ flowchart LR
 | `label` | | 展示名，前端面板可见 |
 | `enabled` | | 默认 `true`；`false` 时规则保留但不触发（停用规则首选这种做法） |
 | `cooldown_sec` | | 该规则两次触发的最小间隔，默认 `1800`。**这是控制触发频率的主要手段** |
-| `kind` | ✅ | `motion` / `speech` / `nimble` / `event-trigger` / `emotion` |
+| `kind` | ✅ | `motion` / `speech` / `nimble` / `event-trigger` / `emotion` / `attach` |
 | `condition` | ✅ | 触发条件，见下表 |
 | `action` | ✅ | 动作，随 `kind` 变化 |
 
@@ -108,23 +144,63 @@ flowchart LR
 | `nimble` | `note`（必填）、`title` | 弹出便签窗口 |
 | `event-trigger` | `event_name`、`summary` | 创建一个 event 触发器唤醒你自己（payload 含当时的 context 与 rule） |
 | `emotion` | `emotion`（必填）、`intensity`（0~1，默认 0.6） | 切桌宠情绪（驱动表演层，如 `happy`/`sad`/`angry`/`surprised`；可用名以当前模型能力为准） |
+| `attach` | `attach`（必填，字符串或对象，见下节） | **不说话、不打断**：把文本暂存进附加队列，之后随用户消息/前台触发器附加出去 |
 
 打断型动作（`speech` / `nimble` / `emotion`）在免打扰时默认不发；确需强行放行就给 action 加 `"bypass_disturb": true`。
+`attach` 不属于打断型，天然不受免打扰闸门/静音阀拦截，不需要（也不该）加 `bypass_disturb`。
 
 `speech` / `note` / `summary` 支持模板占位：`{hour}`、`{battery}`、`{idle}`、`{app}`、`{window}`、`{media}`、`{attention}`、`{rhythm_awake_minutes}`。
+
+## `attach` 动作：随行附加（不说话、不打断）
+
+`attach` 适合"想提一句、但此刻不该开口"的场合：命中时**不说话、不弹窗、不打断**，把文本暂存进附加队列，等用户下次开口时顺带送到。
+
+```json
+{
+  "id": "battery_attach",
+  "label": "低电量随行提醒",
+  "enabled": true,
+  "cooldown_sec": 1800,
+  "kind": "attach",
+  "condition": {"type": "battery_under", "value": 20},
+  "action": {"attach": "电量只剩 {battery}%，记得插电"}
+}
+```
+
+`action.attach` 也支持对象形式，用于指定存活时间与优先级：
+
+```json
+{"attach": {"text": "电量只剩 {battery}%，记得插电", "ttl_sec": 1800, "priority": 50}}
+```
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `text` | 必填 | 要附加的文本，支持与 `speech` 相同的模板占位 |
+| `ttl_sec` | 1800 | 暂存多久；超时未附加即丢弃 |
+| `priority` | 50 | 队列（上限 20 条）满时决定谁留下，越大越优先 |
+
+语义（必须知道，否则会写错预期）：
+
+- **暂存不打扰**：命中当下不发声、不弹窗，只是入队。
+- **送达时机**：只在**下一条用户消息**或**前台触发器**上附加；**后台触发器不附加**。
+- **附加内容**：队列文本 + 这段时间里"变化过的桌面信息"一起追加到那条消息末尾。
+- **硬上限 100 字**：含 `[桌面] ` 前缀与 ` · ` 分隔符，最多 6 行；只放相对上次附加**发生变化**的内容，最近 20 条不重复。
+- **不受免打扰闸门/静音阀拦截**：它不是打扰，是随用户消息附带的摘要。
+- **启发式自动附加**：引擎会自己挑"AI 可能需要的"变化（时间线事件优先，剩余预算按字段权重补）；规则 `attach` 命中时会再跑一次同一启发式，把这条文本并进同一份摘要。
+- **面板可见**：`get_perception` 返回的 `perception.attach` = `{"enabled": bool, "auto": bool, "budget": 100, "queued": int, "last_text": str|null, "last_at": int|null, "sent_total": int, "last_error": str|null}`。
 
 ## 引擎行为（写规则时要考虑的）
 
 - 心跳（heartbeat）里按数组顺序遍历规则，**只执行第一条**命中且冷却已过的规则，然后本轮结束。
 - 除每条规则的 `cooldown_sec` 外，还有全局冷却 `GLOBAL_COOLDOWN_SEC`（默认 180 秒）限制任意规则触发频率。
 - 规则数组顺序 = 优先级，把更重要的规则放前面。
-- **感知分级**：context 里的字段来自桌面感知源，用户可在设置面板「感知引擎」页按 green（本机元数据）/ yellow（文本与联网）/ red（屏幕内容）分级开关，也能单独关某个源。
-  被关闭的源字段不会出现在 `desktop-context.json`，`perception.disabled_sources` 会列出它们；**依赖这些字段的条件永远不会命中**（例如黄色级关掉后 `window_contains`、`smtc_playing` 失效）。
-  写规则前先 `read("faustbot://plugins/desktop-context.json")` 确认目标字段真的存在；字段缺失时应提示用户去打开对应分级，而不是反复重写规则。
+- **感知分级**：字段来自桌面感知源，用户可在设置面板「感知引擎」页按 green（本机元数据）/ yellow（文本与联网）/ red（屏幕内容）分级开关，也能单独关某个源。
+  被关闭的源不会出现在 `faustbot://desktop-mood/` 各组节点里，对应的 `status` 会如实写明原因，`perception.disabled_sources` 会列出它们；**依赖这些字段的条件永远不会命中**（例如黄色级关掉后 `window_contains`、`smtc_playing` 失效）。
+  写规则前先 `read("faustbot://desktop-mood/overview.md")`，需要确认精确字段时再读对应组的 `.json`（如 `faustbot://desktop-mood/window/window.json`）；字段缺失时应提示用户去打开对应分级，而不是反复重写规则。
 
 ## 示例
 
-用户打游戏时提醒喝水（窗口进程名可从 desktop-context.json 的 `window_process` 观察）：
+用户打游戏时提醒喝水（窗口进程名可从 `faustbot://desktop-mood/window/window.json` 的 `window_process` 观察）：
 
 ```json
 {
@@ -197,6 +273,20 @@ flowchart LR
   "kind": "event-trigger",
   "condition": {"type": "return_active"},
   "action": {"event_name": "desktop_mood_away", "summary": "用户刚回来，离开期间事件见 context.away_digest，可据此关心。"}
+}
+```
+
+低电量时别打断用户，等他下次开口再顺带提醒（`attach` 对象形式指定 TTL 与优先级；注意这里不会触发任何说话动作）：
+
+```json
+{
+  "id": "battery_attach",
+  "label": "低电量随行提醒",
+  "enabled": true,
+  "cooldown_sec": 1800,
+  "kind": "attach",
+  "condition": {"type": "battery_under", "value": 20},
+  "action": {"attach": {"text": "电量只剩 {battery}%，记得插电", "ttl_sec": 1800, "priority": 50}}
 }
 ```
 

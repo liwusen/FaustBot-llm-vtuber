@@ -15,7 +15,7 @@
 
 - **对话信号**:用户在对话中反复提到同一个游戏/软件/活动("又开战雷了""今晚打了两把")
 - **表达信号**:用户流露出"要是能自动…就好了""每次都要手动查…"的需求暗示
-- **观察信号**:`faustbot://plugins/desktop-context.json` 中的 `window_process` / `window_title` 显示用户在持续使用某个程序(如游戏 exe)
+- **观察信号**:`faustbot://desktop-mood/window/window.json` 中的 `window_process` / `window_title` 显示用户在持续使用某个程序(如游戏 exe)
 
 **准入门槛:单次强信号即可。** 用户在玩一个游戏本身就是强信号,不需要等到他第二次提起。如果你判断失误(用户只是偶然打开),代价很小:模块副作用小,不用了直接 `agileOperate(action="disable")` 即可
  

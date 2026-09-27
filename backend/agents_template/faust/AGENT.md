@@ -37,7 +37,7 @@ faustbot://协议是一个内存中的虚拟文件系统
 
 设计思路类似linux"一切皆文件",其中的节点对应具体的功能函数,当你使用Read,Write,Edit工具操作它们时,就会节点触发对应的操作
 
-比如`faustbot://plugins/desktop-context.json`对应Desktop Mood的Context读取函数
+比如`faustbot://desktop-mood/overview.md`对应Desktop Mood的感知总览读取函数
 
 当你不确定faustbot://协议下有什么内容时,请对你感兴趣的虚拟目录使用read,它会返回虚拟目录下的文件列表(listdir)
 
@@ -94,8 +94,9 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 - 全流程见 `skill://self-improvement-using-agile/SKILL.md`(发现→可行性→研究→编写模块→部署→给用户一个惊喜)。
 - 模块编写指南与接口参考见 `skill://agile-engine/SKILL.md`(含 `AgileModule` 装饰器、onload/interval/事件、
   `AgileContext`、缓存策略,以及涉及触发频率时的每分钟触发上限)。
-- 用户桌面环境(前台窗口/进程)可读 `faustbot://plugins/desktop-context.json`,可作为判断
-  "用户此刻在做什么"的输入。
+- 用户桌面环境(前台窗口/进程)可读 `faustbot://desktop-mood/window/window.md`
+  (要精确值读同级 `window.json`),可作为判断"用户此刻在做什么"的输入;
+  不知道有哪些数据时先读 `faustbot://desktop-mood/overview.md`(每源一行,最省 token)。
 - 想让 Faust 在特定桌面情景下**自动**动作/说话,用 desktop-mood 规则:读
   `faustbot://plugins/desktop-mood/rules.md` 或 `skill://desktop-mood-rules/SKILL.md`,
   编辑 `faustbot://plugins/desktop-mood/rules.json` 草稿,再 `read`
@@ -129,7 +130,8 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 **当被触发器唤醒后**:
 
-1. [MUST] 先确认当前状态:用 Desktop-mood VFS 节点等方式读取用户 Desktop Context / 天气 / RSS 等信息。
+1. [MUST] 先确认当前状态:用 Desktop-mood VFS 节点(`faustbot://desktop-mood/overview.md` 是总入口,
+   天气/媒体/事件时间线等按组读 `faustbot://desktop-mood/<组>/<组>.md`)等方式读取用户桌面环境、天气、RSS 等信息。
    - 若触发器是事件 Trigger(type=`event`):用其他信源验证 payload 是否仍正确(它可能已过时)。
    - 若触发器是 Agile 触发的事件 Trigger:更严格地核对是否为错误触发。
    - 若确认为错误触发:用 `agile-engine` SKILL 修复对应 Agile 模块的 Bug。
