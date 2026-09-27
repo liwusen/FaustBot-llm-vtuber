@@ -240,7 +240,6 @@ async def test_full_registry_collects_and_reports(tmp_path):
     assert 'rhythm_today' in context and 'calendar' in context
     report = (await plugin.communicate_handler({'action': 'get_perception'}, plugin.ctx))['perception']
     assert len(report['sources']) == len(plugin.registry.sources) >= 25
-    assert report['quality'] == []
     assert {'green', 'yellow', 'red'} == {tier['id'] for tier in report['tiers']}
     cadences = {source['cadence'] for source in report['sources']}
     assert 300 in cadences and 30 in cadences
@@ -275,13 +274,23 @@ async def _plugin(tmp_path):
 
 
 def _speech_rule(rule_id='always_speech'):
+    """条件挂在必然存在的 manual_mood 上：不依赖真实窗口/麦克风状态，测试只考验闸门本身。"""
     return {'id': rule_id, 'label': '总是说话', 'enabled': True, 'cooldown_sec': 60, 'kind': 'speech',
-            'condition': {'type': 'idle_over', 'seconds': 0}, 'action': {'speech': '在的。'}}
+            'condition': {'type': 'field_eq', 'field': 'manual_mood', 'value': 'auto'},
+            'action': {'speech': '在的。'}}
+
+
+async def _gated_plugin(tmp_path):
+    """关掉会随环境波动、影响免打扰判断的感知源（全屏/麦克风），让 disturbed 只由静音阀决定。"""
+    pm, plugin = await _plugin(tmp_path)
+    pm.set_plugin_config_values('desktop-mood', {
+        'ENABLE_AUDIO_DEVICES': False, 'ENABLE_WINDOW_GEOMETRY': False, 'ENABLE_EXTERNAL_REPORT': False})
+    return pm, plugin
 
 
 @pytest.mark.asyncio
 async def test_quiet_valve_and_disturb_gate_silence_speech(tmp_path, monkeypatch):
-    _pm, plugin = await _plugin(tmp_path)
+    _pm, plugin = await _gated_plugin(tmp_path)
     plugin.store.set_rules([_speech_rule()])
     said: list[str] = []
     monkeypatch.setattr(sys.modules['faust_plugin_desktop-mood'].backend2frontend, 'FrontEndSay',
@@ -298,7 +307,7 @@ async def test_quiet_valve_and_disturb_gate_silence_speech(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_bypass_disturb_action_still_fires(tmp_path, monkeypatch):
-    _pm, plugin = await _plugin(tmp_path)
+    _pm, plugin = await _gated_plugin(tmp_path)
     rule = _speech_rule('bypass')
     rule['action'] = {'speech': '要紧事。', 'bypass_disturb': True}
     plugin.store.set_rules([rule])
@@ -308,27 +317,6 @@ async def test_bypass_disturb_action_still_fires(tmp_path, monkeypatch):
     plugin.store.set_quiet_until(int(time.time()) + 300)
     await plugin.heartbeat(plugin.ctx)
     assert said == ['要紧事。']
-
-
-@pytest.mark.asyncio
-async def test_adaptive_cooldown_grows_when_ignored(tmp_path):
-    _pm, plugin = await _plugin(tmp_path)
-    rule = _speech_rule('adaptive')
-    base = plugin._effective_cooldown(rule)
-    now = int(time.time())
-    assert plugin.store.close_feedback(now) is None  # 没有待结算的触发
-
-    plugin.store.record_rule_fire('adaptive', now)
-    assert plugin.store.close_feedback(now + 5) is None  # 观察窗内先不结算
-    # 观察窗内用户有输入 → 视为被理会，冷却不变
-    plugin.store.note_activity(now + 5)
-    assert plugin.store.close_feedback(now + 40) == {'rule_id': 'adaptive', 'followed': True, 'streak': 0}
-    assert plugin._effective_cooldown(rule) == base
-    # 连续两次被无视 → 冷却翻倍
-    for _ in range(2):
-        plugin.store.record_rule_fire('adaptive', now)
-        assert plugin.store.close_feedback(now + 40)['followed'] is False
-    assert plugin._effective_cooldown(rule) == base * 4
 
 
 # ── 窗口/设备纯函数 ──────────────────────────────────────────

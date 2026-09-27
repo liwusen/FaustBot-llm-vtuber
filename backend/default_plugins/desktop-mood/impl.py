@@ -286,8 +286,6 @@ async def _read_smtc_now() -> dict[str, Any] | None:
         return None
 
 
-RULE_FEEDBACK_WINDOW_SEC = 30
-ADAPTIVE_COOLDOWN_MAX_MULTIPLIER = 8
 # 免打扰闸门：这些进程在前台/占用麦克风时，规则里的 speech/nimble 默认不放行
 MEETING_PROCESS_HINTS = {
     'zoom.exe', 'teams.exe', 'ms-teams.exe', 'webexmta.exe', 'dingtalk.exe',
@@ -390,57 +388,10 @@ class DesktopMoodStore:
             self._state['quiet_until'] = int(ts)
             self.save()
 
-    # ── 打扰质量自适应：记录触发后用户是否有反应 ──
-    def rule_quality(self, rule_id: str) -> dict[str, Any]:
-        quality = (self._state.get('rule_quality') or {}).get(rule_id)
-        return dict(quality) if isinstance(quality, dict) else {'fired': 0, 'followed': 0, 'ignored': 0, 'streak': 0}
-
-    def record_rule_fire(self, rule_id: str, ts: int) -> None:
-        """记账一次触发，并挂起待观察的反馈（30 秒内用户是否有输入）。"""
-        with self._lock:
-            quality = self._state.setdefault('rule_quality', {}).setdefault(
-                rule_id, {'fired': 0, 'followed': 0, 'ignored': 0, 'streak': 0})
-            quality['fired'] = int(quality.get('fired') or 0) + 1
-            self._state['pending_feedback'] = {'rule_id': rule_id, 'at': int(ts)}
-
-    def close_feedback(self, at: int) -> dict[str, Any] | None:
-        """结算上一次触发：观察窗内用户动过键鼠 → followed，否则 ignored（连续 ignored 会拉长冷却）。"""
-        with self._lock:
-            pending = self._state.get('pending_feedback')
-            if not isinstance(pending, dict):
-                return None
-            rule_id = str(pending.get('rule_id') or '')
-            fired_at = int(pending.get('at') or 0)
-            if at - fired_at < RULE_FEEDBACK_WINDOW_SEC:
-                return None
-            quality = self._state.setdefault('rule_quality', {}).setdefault(
-                rule_id, {'fired': 0, 'followed': 0, 'ignored': 0, 'streak': 0})
-            marks = [float(item) for item in (self._state.get('activity_marks') or [])]
-            followed = any(mark >= fired_at for mark in marks)
-            # 消费掉观察窗内的痕迹，避免影响下一次结算
-            self._state['activity_marks'] = [mark for mark in marks if mark < fired_at]
-            if followed:
-                quality['followed'] = int(quality.get('followed') or 0) + 1
-                quality['streak'] = 0
-            else:
-                quality['ignored'] = int(quality.get('ignored') or 0) + 1
-                quality['streak'] = int(quality.get('streak') or 0) + 1
-            self._state['pending_feedback'] = None
-            self.save()
-            return {'rule_id': rule_id, 'followed': followed, 'streak': quality['streak']}
-
-    def note_activity(self, ts: int) -> None:
-        """记录"用户刚有输入"（idle 变小）用于反馈结算，只保留最近 5 分钟。"""
-        with self._lock:
-            marks = [float(item) for item in (self._state.get('activity_marks') or []) if ts - item <= 300]
-            marks.append(float(ts))
-            self._state['activity_marks'] = marks[-60:]
-
     def set_last_idle_state(self, state: str) -> None:
         with self._lock:
             self._state['last_idle_state'] = state
             self.save()
-
 
     def can_fire(self, rule_id: str, cooldown_sec: int, global_cooldown_sec: int) -> bool:
         with self._lock:
@@ -483,9 +434,8 @@ class Plugin(FaustPlugin):
         # 红色级剪贴板：序号变化才读一次判类型，正文不留存
         self._clipboard_seq: int | None = None
         self._clipboard_info: dict[str, Any] | None = None
-        # 规则引擎：for_seconds 的持续计时、上一轮空闲值（判断用户是否刚有输入）
+        # 规则引擎：for_seconds 的持续计时
         self._condition_since: dict[str, float] = {}
-        self._last_idle_value: int | None = None
 
     async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
@@ -609,7 +559,7 @@ class Plugin(FaustPlugin):
             '动作 kind: motion / speech / nimble / event-trigger / emotion（emotion 直接改桌宠表情，如',
             '  {"kind":"emotion","action":{"emotion":"happy","intensity":0.7}}）。',
             '免打扰闸门: 全屏、麦克风占用、会议软件前台、锁屏、用户静音阀时，speech/nimble/emotion 默认不发；',
-            '  需要强行放行就加 action.bypass_disturb=true。规则连续被无视会自动拉长冷却（面板「规则质量」可见）。',
+            '  需要强行放行就加 action.bypass_disturb=true。调度上只受 rule.cooldown_sec 与 GLOBAL_COOLDOWN_SEC 限制。',
             '',
             '详细 schema、条件类型、动作类型与示例见 skill://desktop-mood-rules/SKILL.md。',
             '磁盘文件 ~/.faustbot/desktop-mood.rules.json 由提交动作写入，不要直接改它。',
@@ -938,7 +888,7 @@ class Plugin(FaustPlugin):
         return info
 
     async def perception_report(self) -> dict[str, Any]:
-        """面板数据视图：分级/源的开关状态 + 各源最近一次采集到的字段值 + 时间线/质量/闸门。"""
+        """面板数据视图：分级/源的开关状态 + 各源最近采集到的字段值 + 时间线/免打扰状态。"""
         tiers, sources = await self._perception_flags()
         snapshot = self.store.snapshot() if self.store is not None else {}
         observed = snapshot.get('snapshot') or {}
@@ -962,23 +912,6 @@ class Plugin(FaustPlugin):
                     for field in self.registry.fields_of(source)
                 ],
             })
-        quality = []
-        for rule in snapshot.get('rules', []) or []:
-            rule_id = str(rule.get('id') or '')
-            stats = self.store.rule_quality(rule_id) if self.store is not None else {}
-            quality.append({
-                'id': rule_id,
-                'label': rule.get('label') or rule_id,
-                'summary': dm_conditions.describe(rule.get('condition') or {}),
-                'kind': rule.get('kind'),
-                'enabled': bool(rule.get('enabled', True)),
-                'cooldown_sec': int(rule.get('cooldown_sec') or 1800),
-                'effective_cooldown_sec': self._effective_cooldown(rule),
-                'fired': int(stats.get('fired') or 0),
-                'followed': int(stats.get('followed') or 0),
-                'ignored': int(stats.get('ignored') or 0),
-                'ignore_streak': int(stats.get('streak') or 0),
-            })
         return {
             'updated_at': int(snapshot.get('snapshot_at') or 0),
             'tiers': [
@@ -996,16 +929,7 @@ class Plugin(FaustPlugin):
             'disturbed': bool(observed.get('disturbed')),
             'disturb_reasons': observed.get('disturb_reasons') or [],
             'quiet_until': int(snapshot.get('quiet_until') or 0),
-            'quality': quality,
         }
-
-    def _effective_cooldown(self, rule: dict[str, Any]) -> int:
-        """连续被无视的规则自动拉长冷却（最多 8 倍）。"""
-        base = int(rule.get('cooldown_sec') or 1800)
-        if self.store is None:
-            return base
-        streak = int(self.store.rule_quality(str(rule.get('id') or '')).get('streak') or 0)
-        return base * min(ADAPTIVE_COOLDOWN_MAX_MULTIPLIER, max(1, 2 ** min(streak, 3)))
 
     async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         action = str((payload or {}).get('action') or '').strip().lower()
@@ -1021,7 +945,11 @@ class Plugin(FaustPlugin):
         if action == 'get_perception':
             return {"status": "ok", "perception": await self.perception_report()}
         if action == 'get_rules':
-            items = self.store.snapshot().get('rules', []) if self.store is not None else []
+            items = []
+            for rule in (self.store.snapshot().get('rules', []) if self.store is not None else []):
+                if not isinstance(rule, dict):
+                    continue
+                items.append({**rule, 'summary': dm_conditions.describe(rule.get('condition') or {})})
             return {"status": "ok", "items": items}
         if action == 'report':
             accepted, detail = dm_external.ingest(payload or {}, self.store)
@@ -1239,14 +1167,6 @@ class Plugin(FaustPlugin):
             next_idle_state = 'idle' if int(idle_seconds) >= 600 else 'active'
             if next_idle_state != last_idle_state:
                 self.store.set_last_idle_state(next_idle_state)
-            # 用户刚有输入 → 记一笔，用于"触发后有没有被理会"的反馈结算
-            if self._last_idle_value is not None and int(idle_seconds) + 2 < self._last_idle_value:
-                self.store.note_activity(_now())
-        self._last_idle_value = None if idle_seconds is None else int(idle_seconds)
-        feedback = self.store.close_feedback(_now())
-        if feedback is not None:
-            log.info('desktop-mood 触发反馈: %s followed=%s streak=%s',
-                     feedback['rule_id'], feedback['followed'], feedback['streak'])
 
         edges = {'idle_prev': last_idle_state, 'idle_next': next_idle_state,
                  'smtc_playing': self._smtc_rising_edge}
@@ -1256,7 +1176,7 @@ class Plugin(FaustPlugin):
             if not bool(rule.get('enabled', True)):
                 continue
             rule_id = str(rule.get('id') or '')
-            if not self.store.can_fire(rule_id, self._effective_cooldown(rule), global_cooldown):
+            if not self.store.can_fire(rule_id, int(rule.get('cooldown_sec') or 1800), global_cooldown):
                 continue
             if not self._match_rule(rule, context, edges):
                 continue
@@ -1266,7 +1186,6 @@ class Plugin(FaustPlugin):
                 continue
             await self._execute_rule(rule, context)
             self.store.touch_rule_fire(rule_id)
-            self.store.record_rule_fire(rule_id, _now())
             break
 
     async def _write_rhythm_node(self, context: dict[str, Any]) -> None:

@@ -1,7 +1,7 @@
 {
   "id": "desktop-mood",
   "name": "FaustBot 感知引擎",
-  "version": "1.1.2",
+  "version": "2.0.0",
   "description": "FaustBot 感知引擎",
   "author": "FaustBot",
   "enabled": true,

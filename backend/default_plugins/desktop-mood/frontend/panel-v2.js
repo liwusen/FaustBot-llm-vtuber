@@ -141,24 +141,19 @@
       + '</div>';
   }
 
-  function renderQuality(perception){
-    const rows = (perception.quality || []).map(function(item){
-      const rate = item.fired ? Math.round((item.followed / item.fired) * 100) + '%' : '-';
+  function renderRules(items){
+    const rows = items.map(function(item){
       return '<tr>'
         + '<td><input type="checkbox" data-rule-id="' + esc(item.id) + '" ' + (item.enabled ? 'checked' : '') + ' /></td>'
-        + '<td>' + esc(item.label) + '<div class="card-help">' + esc(item.summary) + '</div></td>'
-        + '<td>' + esc(item.kind) + '</td>'
-        + '<td>' + Math.round(item.effective_cooldown_sec / 60) + ' 分' + (item.effective_cooldown_sec !== item.cooldown_sec ? '（自适应）' : '') + '</td>'
-        + '<td>' + item.fired + '</td>'
-        + '<td>' + item.followed + '</td>'
-        + '<td>' + item.ignored + '</td>'
-        + '<td>' + rate + '</td>'
+        + '<td>' + esc(item.label || item.id) + '<div class="card-help">' + esc(item.summary || '') + '</div></td>'
+        + '<td>' + esc(item.kind || '-') + '</td>'
+        + '<td>' + Math.round(Number(item.cooldown_sec || 0) / 60) + ' 分</td>'
         + '</tr>';
-    }).join('') || '<tr><td colspan="8">暂无规则</td></tr>';
-    return '<table class="simple-table"><thead><tr><th>启用</th><th>规则</th><th>类型</th><th>冷却</th><th>触发</th><th>有回应</th><th>被无视</th><th>回应率</th></tr></thead><tbody>'
+    }).join('') || '<tr><td colspan="4">暂无规则</td></tr>';
+    return '<table class="simple-table"><thead><tr><th>启用</th><th>规则</th><th>类型</th><th>冷却</th></tr></thead><tbody>'
       + rows + '</tbody></table>'
       + '<div class="toolbar"><button id="desktop-rule-save" class="btn btn-secondary">保存规则开关</button>'
-      + '<span class="card-help">回应率 = 触发后 30 秒内用户有键鼠活动的比例；连续被无视的规则冷却会自动拉长。</span></div>';
+      + '<span class="card-help">引擎不会自动调整冷却：觉得某条太吵就关掉它、调高它的 cooldown_sec，或用上面的静音阀。</span></div>';
   }
 
   function render(container){
@@ -177,7 +172,7 @@
       + '<tbody id="desktop-perception-rows"></tbody></table>'
       + '</article>'
       + '<article class="card full-span"><h3 class="card-title">免打扰与静音阀</h3><div id="desktop-disturb-box">加载中...</div></article>'
-      + '<article class="card full-span"><h3 class="card-title">规则质量</h3><div id="desktop-quality-box">加载中...</div></article>'
+      + '<article class="card full-span"><h3 class="card-title">规则</h3><div id="desktop-rules-box">加载中...</div></article>'
       + '<article class="card full-span"><h3 class="card-title">其他配置</h3>'
       + '<div class="toolbar"><label>当前情绪 <select id="desktop-mood-select"><option value="auto">自动</option><option value="rainy">雨天</option><option value="warm">温暖</option><option value="dark">低沉</option></select></label>'
       + '<button id="desktop-mood-save" class="btn btn-secondary">保存情绪</button>'
@@ -211,12 +206,14 @@
       const results = await Promise.all([
         communicate({ action: 'get_perception' }),
         communicate({ action: 'get_state' }),
-        fetchJson('/faust/admin/plugins/desktop-mood/config')
+        fetchJson('/faust/admin/plugins/desktop-mood/config'),
+        communicate({ action: 'get_rules' })
       ]);
       const perception = results[0].perception || {};
       const state = results[1].state || {};
       const configValues = (((results[2] || {}).config || {}).values) || {};
-      latest = { perception: perception, state: state, config: configValues };
+      const rules = results[3].items || [];
+      latest = { perception: perception, state: state, config: configValues, rules: rules };
 
       if (!tierDirty) bindPerceptionPanel(perception);
       const rows = document.getElementById('desktop-perception-rows');
@@ -229,8 +226,8 @@
       if (rhythm) rhythm.innerHTML = renderRhythm(perception);
       const disturb = document.getElementById('desktop-disturb-box');
       if (disturb) disturb.innerHTML = renderDisturb(perception);
-      const quality = document.getElementById('desktop-quality-box');
-      if (quality) quality.innerHTML = renderQuality(perception);
+      const rulesBox = document.getElementById('desktop-rules-box');
+      if (rulesBox) rulesBox.innerHTML = renderRules(rules);
 
       const select = document.getElementById('desktop-mood-select');
       if (select) select.value = state.manual_mood || 'auto';
@@ -254,9 +251,11 @@
       };
       const saveRules = document.getElementById('desktop-rule-save');
       if (saveRules) saveRules.onclick = async function(){
-        const items = (perception.quality || []).map(function(item){
+        const items = rules.map(function(item){
           const box = container.querySelector('input[data-rule-id="' + item.id + '"]');
-          return Object.assign({}, item, { enabled: !!(box && box.checked) });
+          const next = Object.assign({}, item, { enabled: !!(box && box.checked) });
+          delete next.summary;
+          return next;
         });
         await communicate({ action: 'set_rules', items: items });
         refresh();
@@ -318,7 +317,7 @@
     }, 5000);
   }
 
-  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '感知分级、场景时间线与规则质量', plugin: 'desktop-mood', render: render });
+  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '感知分级、场景时间线与规则管理', plugin: 'desktop-mood', render: render });
   api.addCard('plugins', {
     title: '感知引擎',
     priority: 17,
