@@ -21,31 +21,48 @@ PERCEPTION_TIERS = (
      'note': '需要读取内容本身（如剪贴板正文判类型）；正文只在内存中判类型，不写入上下文'},
 )
 
-# 基础源：采集逻辑在 impl.py，这里只登记元数据（字段/tier/开关/采样间隔）
+# 数据域：VFS 视图（faustbot://desktop-mood/<group>/）与附加权重都按域组织
+GROUPS: tuple[dict[str, str], ...] = (
+    {'id': 'system', 'label': '系统与电源', 'note': '负载/电量/空闲/节日/显卡/进程增减/显示器与供电'},
+    {'id': 'window', 'label': '窗口与应用', 'note': '前台进程与标题、窗口几何、应用停留、未保存文档、编码活动、桌面文件'},
+    {'id': 'input', 'label': '输入设备', 'note': '鼠标节奏、手柄、USB、蓝牙外设电量'},
+    {'id': 'media', 'label': '媒体与音频', 'note': '媒体播放、音频输出设备、麦克风占用'},
+    {'id': 'network', 'label': '网络', 'note': '联网类型、是否计量、VPN、SSID'},
+    {'id': 'weather', 'label': '天气与环境', 'note': '天气（联网查询）、环境光'},
+    {'id': 'narrative', 'label': '叙事与节律', 'note': '事件时间线、场景摘要、离开期间、活动强度、注意力、今日节律'},
+    {'id': 'external', 'label': '外部上报', 'note': '前端与其它插件推送的信号、日历时段'},
+    {'id': 'privacy', 'label': '隐私内容', 'note': '剪贴板类型判定（正文从不写入上下文）'},
+)
+GROUP_IDS: tuple[str, ...] = tuple(group['id'] for group in GROUPS)
+GROUP_LABELS: dict[str, str] = {group['id']: group['label'] for group in GROUPS}
+
+# 基础源：采集逻辑在 impl.py，这里只登记元数据（字段/tier/开关/采样间隔/数据域/附加权重）
 BASE_SOURCES: tuple[dict[str, Any], ...] = (
     {'id': 'system_load', 'key': 'ENABLE_SYSTEM_LOAD', 'tier': 'green', 'default': True, 'cadence': 10,
-     'label': '系统负载', 'note': 'CPU / 内存 / 磁盘 IO / 磁盘余量',
+     'label': '系统负载', 'note': 'CPU / 内存 / 磁盘 IO / 磁盘余量', 'group': 'system', 'attach_weight': 35,
+     'attach_fields': ('cpu', 'memory'),
      'fields': ('cpu', 'memory', 'disk_io', 'disk_free')},
     {'id': 'battery', 'key': 'ENABLE_BATTERY_WATCH', 'tier': 'green', 'default': True, 'cadence': 10,
-     'label': '电池', 'note': '电量、充电状态与剩余续航',
+     'label': '电池', 'note': '电量、充电状态与剩余续航', 'group': 'system', 'attach_weight': 95,
      'fields': ('battery',)},
     {'id': 'window_process', 'key': 'ENABLE_WINDOW_PROCESS', 'tier': 'green', 'default': True, 'cadence': 10,
-     'label': '前台进程', 'note': '活动窗口所属进程名/路径（不含标题文本）',
+     'label': '前台进程', 'note': '活动窗口所属进程名/路径（不含标题文本）', 'group': 'window', 'attach_weight': 70,
      'fields': ('window_process',)},
     {'id': 'idle', 'key': 'ENABLE_IDLE_WATCH', 'tier': 'green', 'default': True, 'cadence': 10,
-     'label': '空闲时长', 'note': '键鼠多久没动，用于判断离开/回来',
+     'label': '空闲时长', 'note': '键鼠多久没动，用于判断离开/回来', 'group': 'system', 'attach_weight': 0,
      'fields': ('idle_seconds',)},
     {'id': 'holiday', 'key': 'ENABLE_HOLIDAY_EGG', 'tier': 'green', 'default': True, 'cadence': 600,
-     'label': '节日彩蛋', 'note': '节日名称（圣诞/万圣/春节），仅本地日期推算',
+     'label': '节日彩蛋', 'note': '节日名称（圣诞/万圣/春节），仅本地日期推算', 'group': 'system', 'attach_weight': 20,
      'fields': ('holiday',)},
     {'id': 'window_title', 'key': 'ENABLE_WINDOW_WATCH', 'tier': 'yellow', 'default': True, 'cadence': 10,
-     'label': '窗口标题', 'note': '活动窗口标题文本（文件名、网页标题等）',
+     'label': '窗口标题', 'note': '活动窗口标题文本（文件名、网页标题等）', 'group': 'window', 'attach_weight': 30,
      'fields': ('window_title',)},
     {'id': 'smtc', 'key': 'ENABLE_SMTC_WATCH', 'tier': 'yellow', 'default': True, 'cadence': 10,
-     'label': '媒体播放', 'note': '系统媒体播放状态、曲名/艺人、播放进度',
+     'label': '媒体播放', 'note': '系统媒体播放状态、曲名/艺人、播放进度', 'group': 'media', 'attach_weight': 50,
      'fields': ('smtc',)},
     {'id': 'clipboard', 'key': 'ENABLE_CLIPBOARD_WATCH', 'tier': 'red', 'default': False, 'cadence': 10,
      'label': '剪贴板类型', 'note': '仅在内容变化时读一次判定类型（代码/链接/报错/图片），正文不写入上下文',
+     'group': 'privacy', 'attach_weight': 0,
      'fields': ('clipboard',)},
 )
 
@@ -188,6 +205,20 @@ class Registry:
     def cadence_of(self, source: dict[str, Any]) -> int:
         return int(source.get('cadence') or 10)
 
+    def group_of(self, source: dict[str, Any]) -> str:
+        return str(source.get('group') or '')
+
+    def sources_of(self, group: str) -> tuple[dict[str, Any], ...]:
+        return tuple(source for source in self.sources if self.group_of(source) == group)
+
+    def attach_weight(self, source: dict[str, Any]) -> int:
+        return int(source.get('attach_weight') or 0)
+
+    def attach_fields_of(self, source: dict[str, Any]) -> tuple[str, ...]:
+        """参与"即时附加"的字段：默认全部，噪声大的源用 attach_fields 收窄。"""
+        declared = source.get('attach_fields')
+        return tuple(declared) if declared else self.fields_of(source)
+
     def format_field(self, field: str, observed: dict[str, Any]) -> str | None:
         """未采集（源关闭/字段缺失）返回 None，面板据此显示"未采集"。"""
         if field not in observed:
@@ -235,4 +266,11 @@ def build_registry(modules: Iterable[Any]) -> Registry:
     missing = [field_name for field_name in field_owner if field_name not in labels]
     if missing:
         raise ValueError(f'缺少字段中文名: {", ".join(sorted(missing))}')
+    for source in sources:
+        group = str(source.get('group') or '')
+        if group not in GROUP_LABELS:
+            raise ValueError(f'源 {source["id"]} 的数据域未知: {group or "（空）"}')
+        weight = source.get('attach_weight')
+        if not isinstance(weight, int) or isinstance(weight, bool) or not 0 <= weight <= 100:
+            raise ValueError(f'源 {source["id"]} 的 attach_weight 必须是 0-100 的整数，当前是 {weight!r}')
     return Registry(sources, labels, formatters)

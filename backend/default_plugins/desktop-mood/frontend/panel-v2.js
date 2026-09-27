@@ -6,6 +6,7 @@
   const TIER_HINTS = { green: '本机元数据', yellow: '文本与联网', red: '屏幕内容' };
   const ATTENTION_LABELS = { focused: '心流', fragmented: '碎片', chaotic: '狂乱', neutral: '一般' };
   const LEVEL_LABELS = { idle: '离开', calm: '平静', active: '活跃', intense: '激烈' };
+  const KIND_LABELS = { motion: '动作', speech: '说话', nimble: '便签', 'event-trigger': '事件', emotion: '表情', attach: '即时附加（不打扰）' };
 
   async function communicate(payload){
     return api.communicate('desktop-mood', payload || {});
@@ -42,6 +43,15 @@
   function tierBadge(tier, short){
     const label = short ? (TIER_LABELS[tier] || tier) : ((TIER_LABELS[tier] || tier) + (TIER_HINTS[tier] ? ' · ' + TIER_HINTS[tier] : ''));
     return '<span class="desktop-tier-badge desktop-tier-' + esc(tier) + '">' + esc(label) + '</span>';
+  }
+
+  function kindLabel(kind){
+    if (!kind) return '-';
+    return KIND_LABELS[kind] || kind;
+  }
+
+  function pad2(value){
+    return (value < 10 ? '0' : '') + value;
   }
 
   function renderTierGroups(perception){
@@ -146,20 +156,64 @@
       return '<tr>'
         + '<td><input type="checkbox" data-rule-id="' + esc(item.id) + '" ' + (item.enabled ? 'checked' : '') + ' /></td>'
         + '<td>' + esc(item.label || item.id) + '<div class="card-help">' + esc(item.summary || '') + '</div></td>'
-        + '<td>' + esc(item.kind || '-') + '</td>'
+        + '<td>' + esc(kindLabel(item.kind)) + '</td>'
         + '<td>' + Math.round(Number(item.cooldown_sec || 0) / 60) + ' 分</td>'
         + '</tr>';
     }).join('') || '<tr><td colspan="4">暂无规则</td></tr>';
     return '<table class="simple-table"><thead><tr><th>启用</th><th>规则</th><th>类型</th><th>冷却</th></tr></thead><tbody>'
       + rows + '</tbody></table>'
       + '<div class="toolbar"><button id="desktop-rule-save" class="btn btn-secondary">保存规则开关</button>'
-      + '<span class="card-help">引擎不会自动调整冷却：觉得某条太吵就关掉它、调高它的 cooldown_sec，或用上面的静音阀。</span></div>';
+      + '<span class="card-help">引擎不会自动调整冷却：觉得某条太吵就关掉它、调高它的 cooldown_sec，或用上面的静音阀。'
+      + '类型为「即时附加」的规则命中时不会说话、不弹窗、不打断：文本先入队，随后随你的下一条消息或前台触发器送达（后台触发器不附加），整段最多 100 字。</span></div>';
+  }
+
+  function renderAttach(attach){
+    const data = (attach && typeof attach === 'object') ? attach : null;
+    const unknown = '<span class="desktop-value-missing">未知</span>';
+    function metric(label, value){
+      return '<div class="desktop-metric"><span class="desktop-metric-label">' + esc(label) + '</span>'
+        + '<span class="desktop-metric-value">' + value + '</span></div>';
+    }
+    function flag(value, onText, offText){
+      if (data === null || value == null) return unknown;
+      return value
+        ? '<span class="desktop-status desktop-status-on">' + esc(onText) + '</span>'
+        : '<span class="desktop-status desktop-status-off">' + esc(offText) + '</span>';
+    }
+    function countText(value, unit){
+      if (data === null || value == null || isNaN(Number(value))) return unknown;
+      return esc(String(Math.max(0, Math.round(Number(value))))) + ' ' + esc(unit);
+    }
+    function clockText(ts){
+      if (data === null) return unknown;
+      const seconds = Number(ts);
+      if (!seconds || isNaN(seconds)) return '<span class="desktop-value-missing">尚未附加</span>';
+      const at = new Date(seconds * 1000);
+      if (isNaN(at.getTime())) return unknown;
+      return esc(pad2(at.getHours()) + ':' + pad2(at.getMinutes()));
+    }
+    const lastText = data === null
+      ? unknown
+      : (data.last_text ? esc(String(data.last_text)) : '<span class="desktop-value-missing">尚未附加过内容</span>');
+    const errorLine = (data && data.last_error)
+      ? '<p class="card-help desktop-attach-error"><span class="desktop-status desktop-status-off">附加异常</span> ' + esc(data.last_error) + '</p>'
+      : '';
+    return '<div class="desktop-metric-row">'
+      + metric('总开关', flag(data ? data.enabled : null, '已启用', '已关闭'))
+      + metric('启发式自动附加', flag(data ? data.auto : null, '已开启', '已关闭'))
+      + metric('附加预算', countText(data ? data.budget : null, '字'))
+      + metric('排队等待', countText(data ? data.queued : null, '条'))
+      + metric('累计附加', countText(data ? data.sent_total : null, '次'))
+      + metric('上次附加', clockText(data ? data.last_at : null))
+      + '</div>'
+      + '<p class="desktop-field-row"><span class="desktop-field-label">上次内容</span><span class="desktop-field-value">' + lastText + '</span></p>'
+      + errorLine;
   }
 
   function render(container){
     container.innerHTML = ''
       + '<article class="card full-span"><h3 class="card-title">感知引擎 · 桌宠能看什么</h3>'
-      + '<p class="card-help">三级隐私开关决定允许采集的范围；每个感知源还能单独关闭。被关闭的源不会写进 desktop-context.json，依赖它的规则不会触发。保存后下一个心跳周期（≤10 秒）生效。</p>'
+      + '<p class="card-help">三级隐私开关决定允许采集的范围；每个感知源还能单独关闭。被关闭的源不会写进 faustbot://desktop-mood/（总览见 overview.md），依赖它的规则不会触发。保存后下一个心跳周期（≤10 秒）生效。</p>'
       + '<div id="desktop-tier-list" class="desktop-tier-list">加载中...</div>'
       + '<div class="toolbar"><button id="desktop-perception-save" class="btn btn-primary">保存感知设置</button></div>'
       + '</article>'
@@ -173,6 +227,9 @@
       + '</article>'
       + '<article class="card full-span"><h3 class="card-title">免打扰与静音阀</h3><div id="desktop-disturb-box">加载中...</div></article>'
       + '<article class="card full-span"><h3 class="card-title">规则</h3><div id="desktop-rules-box">加载中...</div></article>'
+      + '<article class="card full-span"><h3 class="card-title">即时附加</h3><div id="desktop-attach-box">加载中...</div>'
+      + '<p class="card-help">附加随你的下一条消息或前台触发器出现，后台触发器不附加；只放相对上次附加发生变化的内容，整段硬上限 100 字、最多 6 行，且不受免打扰闸门或静音阀拦截。'
+      + '补充内容就在「规则」卡片里加一条 kind 为 attach 的规则。</p></article>'
       + '<article class="card full-span"><h3 class="card-title">其他配置</h3>'
       + '<div class="toolbar"><label>当前情绪 <select id="desktop-mood-select"><option value="auto">自动</option><option value="rainy">雨天</option><option value="warm">温暖</option><option value="dark">低沉</option></select></label>'
       + '<button id="desktop-mood-save" class="btn btn-secondary">保存情绪</button>'
@@ -184,6 +241,7 @@
 
     let latest = { perception: null, state: {}, config: {} };
     let tierDirty = false;
+    let rulesDirty = false;
 
     function bindPerceptionPanel(perception){
       const tierList = document.getElementById('desktop-tier-list');
@@ -199,6 +257,12 @@
       });
       Array.prototype.forEach.call(container.querySelectorAll('input[data-source-toggle]'), function(toggle){
         toggle.onchange = function(){ tierDirty = true; };
+      });
+    }
+
+    function bindRulesPanel(){
+      Array.prototype.forEach.call(container.querySelectorAll('input[data-rule-id]'), function(toggle){
+        toggle.onchange = function(){ rulesDirty = true; };
       });
     }
 
@@ -227,7 +291,12 @@
       const disturb = document.getElementById('desktop-disturb-box');
       if (disturb) disturb.innerHTML = renderDisturb(perception);
       const rulesBox = document.getElementById('desktop-rules-box');
-      if (rulesBox) rulesBox.innerHTML = renderRules(rules);
+      if (rulesBox && !rulesDirty) {
+        rulesBox.innerHTML = renderRules(rules);
+        bindRulesPanel();
+      }
+      const attachBox = document.getElementById('desktop-attach-box');
+      if (attachBox) attachBox.innerHTML = renderAttach(perception.attach);
 
       const select = document.getElementById('desktop-mood-select');
       if (select) select.value = state.manual_mood || 'auto';
@@ -258,6 +327,7 @@
           return next;
         });
         await communicate({ action: 'set_rules', items: items });
+        rulesDirty = false;
         refresh();
       };
       const savePerception = document.getElementById('desktop-perception-save');
@@ -317,7 +387,7 @@
     }, 5000);
   }
 
-  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '感知分级、场景时间线与规则管理', plugin: 'desktop-mood', render: render });
+  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '感知分级、场景时间线与规则管理（数据按域暴露在 faustbot://desktop-mood/）', plugin: 'desktop-mood', render: render });
   api.addCard('plugins', {
     title: '感知引擎',
     priority: 17,

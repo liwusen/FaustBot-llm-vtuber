@@ -80,9 +80,14 @@ async def test_desktop_context_and_vfs():
     assert 'window_process' in context
     vfs = await get_faustbot_vfs(refresh=True)
     await plugin.heartbeat(plugin.ctx)
-    payload = json.loads(await vfs.read_text('/plugins/desktop-context.json', default='{}')) # type: ignore
-    assert 'hour' in payload
+    overview = await vfs.read_text('/desktop-mood/overview.md', default='')
+    assert overview.startswith('# 桌面上下文总览')
+    payload = json.loads(await vfs.read_text('/desktop-mood/window/window.json', default='{}')) # type: ignore
+    assert payload['group'] == 'window'
+    assert 'window_process' in payload['sources']
     assert (await vfs.read_text('/plugins/desktop-mood.md', default='')).startswith('# Desktop Mood')
+    # 旧扁平快照节点已随数据域分层删除
+    assert not await vfs.exists('/plugins/desktop-context.json')
 
 
 @pytest.fixture
@@ -256,7 +261,10 @@ async def test_builtin_plugin_vfs_nodes_have_description(_isolate_home):
     vfs = await get_faustbot_vfs(refresh=True)
     expected = {
         '/plugins/desktop-mood.md': 'Desktop Mood',
-        '/plugins/desktop-context.json': '桌面上下文',
+        '/desktop-mood/overview.md': '桌面上下文总览',
+        '/desktop-mood/window/window.json': '精确值',
+        '/desktop-mood/window/window.md': '可读行',
+        '/desktop-mood/refresh': '立即重新采集',
         '/plugins/desktop-mood/rules.json': '草稿',
         '/plugins/desktop-mood/rules.md': '指南',
         '/plugins/desktop-mood/reload': '提交',
@@ -278,16 +286,16 @@ async def test_builtin_plugin_vfs_nodes_have_description(_isolate_home):
 
 
 @pytest.mark.asyncio
-async def test_desktop_mood_context_keeps_description_across_writes(_isolate_home):
-    """上下文节点持续重写，描述不被后续写入清空。"""
+async def test_desktop_mood_rhythm_node_keeps_description_across_writes(_isolate_home):
+    """节律档案每轮心跳重写，节点描述不被后续写入清空。"""
     pm = await _build_manager()
     plugin = await _desktop_mood_plugin(pm)
     vfs = await get_faustbot_vfs(refresh=True)
 
     await plugin.heartbeat(plugin.ctx)
-    node = await vfs.get_node('/plugins/desktop-context.json')
+    node = await vfs.get_node('/desktop-mood/narrative/rhythm.md')
     assert node is not None
-    assert '桌面上下文' in node.description
+    assert '节律' in node.description
 
 
 @pytest.mark.asyncio

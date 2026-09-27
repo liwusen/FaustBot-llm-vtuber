@@ -979,7 +979,8 @@ class PluginManager:
         layers.sort(key=_layer_order)
         return layers
 
-    async def apply_message_received(self, msg: str, history: list | None = None, ctx: Any = None) -> str:
+    async def apply_message_received(self, msg: str, history: list | None = None, ctx: Any = None,
+                                     origin: str = 'user') -> str:
         """把用户消息/触发器文本依次交给每个插件的 message_received（洋葱模型）。
 
         - 层序：(manifest.priority, plugin_id) 升序，数字小的在外层、先执行；
@@ -988,11 +989,13 @@ class PluginManager:
         - 返回 str：作为下一层的输入。
         - 返回 "__IGNORED__"：消息被拦截，立即返回并停止后续层。
         - 单层抛异常只告警并跳过该层，不打断整轮对话。
+        - origin 标明文本来源（'user' / 'trigger_foreground' / 'trigger_background'），
+          只传给声明了该参数的层；不声明就收不到，行为与以前一致。
         """
         text = msg
         hist = history if history is not None else []
         for impl in self._message_received_layers():
-            provided = {"msg": text, "history": hist, "ctx": ctx}
+            provided = {"msg": text, "history": hist, "ctx": ctx, "origin": origin}
             allowed = set(impl.argnames) | set(impl.kwargnames)
             try:
                 res = impl.function(**{k: v for k, v in provided.items() if k in allowed})

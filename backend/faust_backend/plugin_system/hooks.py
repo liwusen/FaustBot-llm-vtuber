@@ -83,12 +83,15 @@ class CoreHooks:
     # ── Messages ──
 
     @hookspec
-    def message_received(self, msg: Any, history: list, ctx: Any) -> str | None:
+    def message_received(self, msg: Any, history: list, ctx: Any, origin: str) -> str | None:
         """Intercept/modify incoming user message.
 
         洋葱模型逐层串联：所有实现按 (manifest.priority, plugin_id) 升序依次执行，
         每层拿到的是上一层处理后的文本。返回 None 表示不改动，返回字符串则作为
         下一层的输入；返回 "__IGNORED__" 会立即拦截并停止后续层。
+
+        origin 标明这条文本从哪进来：'user'（用户消息）、'trigger_foreground'（前台触发器）、
+        'trigger_background'（后台触发器/无前端连接时的降级执行）。实现可以只声明自己需要的参数。
         """
 
     @hookspec

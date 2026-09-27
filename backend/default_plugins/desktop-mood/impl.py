@@ -24,11 +24,13 @@ if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
 
 import dm_api  # noqa: E402
+import dm_attach  # noqa: E402
 import dm_conditions  # noqa: E402
 import dm_external  # noqa: E402
 import dm_sensors_a  # noqa: E402
 import dm_sources  # noqa: E402
 import dm_timeline  # noqa: E402
+import dm_vfs  # noqa: E402
 
 try:
     import dm_sensors_b  # noqa: E402
@@ -54,15 +56,25 @@ RULES_FILE = Path.home() / '.faustbot' / 'desktop-mood.rules.json'
 RULES_NODE_PATH = '/plugins/desktop-mood/rules.json'   # 草稿节点：AI 只改这里，改完不生效
 RULES_GUIDE_PATH = '/plugins/desktop-mood/rules.md'    # 指南节点：schema + 工作流（symbolic）
 RULES_RELOAD_PATH = '/plugins/desktop-mood/reload'     # 提交节点：read/write 都触发草稿生效
-CONTEXT_NODE_PATH = '/plugins/desktop-context.json'
-RHYTHM_NODE_PATH = '/plugins/desktop-mood/rhythm.md'   # 天级节律档案（agent 可读）
+RHYTHM_NODE_PATH = dm_vfs.RHYTHM_PATH                  # 天级节律档案（agent 可读）
+
+# ── 即时附加（attach）跨重启状态：都放在 store 的 kv 命名空间里 ──
+ATTACH_QUEUE_KV = 'attach.queue'
+ATTACH_PUSHED_KV = 'attach.pushed'
+ATTACH_RING_KV = 'attach.ring'
+ATTACH_LAST_KV = 'attach.last'
+ATTACH_ERROR_KV = 'attach.error'
+ATTACH_MAX_QUEUE = 20
+ATTACH_CONFIG_KEYS = ('ENABLE_ATTACH', 'ENABLE_AUTO_ATTACH', 'ATTACH_BUDGET')
+# 只有这两类入口允许随行附加：后台触发器/无前端连接时的降级执行不附加
+ATTACH_ORIGINS = ('user', 'trigger_foreground')
 
 # 感知模块按顺序执行：时间线在最后，才能看到本轮所有其它字段
 SENSOR_MODULES = (dm_sensors_a, dm_sensors_b, dm_external, dm_timeline)
 REGISTRY = dm_sources.build_registry(SENSOR_MODULES)
 
 CONDITION_TYPES = dm_conditions.CONDITION_TYPES
-ACTION_KINDS = ('motion', 'speech', 'nimble', 'event-trigger', 'emotion')
+ACTION_KINDS = ('motion', 'speech', 'nimble', 'event-trigger', 'emotion', 'attach')
 
 CLIPBOARD_CHANGE_DEBOUNCE_SEC = 15
 
@@ -446,6 +458,9 @@ class Plugin(FaustPlugin):
             {"key": "WEATHER_CITY", "type": "str", "label": "天气城市", "default": 'auto'},
             {"key": "CODE_WATCH_DIR", "type": "str", "label": "编码活动监视目录（git 仓库）", "default": ''},
             {"key": "EMOTION_FALLBACK", "type": "str", "label": "emotion 动作兜底情绪名", "default": 'neutral'},
+            {"key": "ENABLE_ATTACH", "type": "bool", "label": "即时附加（随用户消息附带桌面信息）", "default": True},
+            {"key": "ENABLE_AUTO_ATTACH", "type": "bool", "label": "即时附加：启发式自动挑选变化过的信息", "default": True},
+            {"key": "ATTACH_BUDGET", "type": "int", "label": "即时附加字数上限", "default": dm_attach.BUDGET_DEFAULT},
         ]
         for tier in dm_sources.PERCEPTION_TIERS:
             config_schema.append({
@@ -465,20 +480,27 @@ class Plugin(FaustPlugin):
         await ctx.vfs_write(
             "/plugins/desktop-mood.md",
             "# Desktop Mood\n\n"
-            "Desktop Mood 持续把桌面环境写入 faustbot://plugins/desktop-context.json，字段分三级感知：\n"
-            "green（本机元数据：负载/电量/窗口进程/全屏/应用停留/鼠标/进程增减/显卡/网络/显示器/麦克风/手柄/USB…）、\n"
-            "yellow（文本与联网：窗口标题/媒体曲名/未保存文档/桌面文件名/天气/外部订阅上报）、\n"
-            "red（屏幕内容：目前只有剪贴板类型判定，默认关闭）。\n"
-            "context 里的 perception 块标明当前开着的分级与被关闭的源；被关闭的源字段不会出现，依赖它的规则不会触发。\n"
-            "context 里还有叙事类字段：narrative（一句话场景摘要）、recent_events（最近场景变化）、\n"
-            "away_digest（用户离开期间发生的事）、attention/activity_level（心流/碎片、平静/激烈）、rhythm_today（今日节律）。\n"
-            "天级节律档案见 faustbot://plugins/desktop-mood/rhythm.md。\n"
-            "想根据用户环境主动提醒、播报、关心用户时，先读 desktop-context.json；判断「用户现在忙不忙」用 attention 与\n"
-            "context.disturbed（免打扰闸门：全屏/会议/锁屏/用户静音阀）。\n"
+            "Desktop Mood 持续把桌面环境按数据域写进 faustbot://desktop-mood/：每个域一份 <域>.json"
+            "（精确值/源状态/采样间隔）与一份 <域>.md（可读行），总览见 faustbot://desktop-mood/overview.md，"
+            "要最新数据就 read/write faustbot://desktop-mood/refresh。\n"
+            "域划分：system（负载/电量/空闲/节日/显卡/进程增减/显示器与供电）、window（前台进程与标题/窗口几何/应用停留/"
+            "未保存文档/编码活动/桌面新文件）、input（鼠标/手柄/USB/外设电量）、media（媒体播放/音频输出/麦克风）、"
+            "network（联网类型/SSID）、weather（天气/环境光）、narrative（时间线/场景摘要/离开期间/注意力/节律）、"
+            "external（外部上报/日历）、privacy（剪贴板类型）。\n"
+            "字段分三级感知：green（本机元数据）、yellow（文本与联网：窗口标题/曲名/文件名/天气）、"
+            "red（屏幕内容：目前只有剪贴板类型判定，默认关闭）。被关闭的源不会出现在任何视图里，"
+            "依赖它的规则也不会触发；读 overview.md 看得到「未启用」与「不可用：原因」。\n"
+            "narrative 域还有：narrative（一句话场景摘要）、recent_events（最近场景变化）、"
+            "away_digest（用户离开期间发生的事）、attention/activity_level（心流/碎片、平静/激烈）、rhythm_today"
+            "（今日节律，7 天档案见 faustbot://desktop-mood/narrative/rhythm.md）。\n"
+            "想根据用户环境主动提醒、播报、关心用户时，先读 faustbot://desktop-mood/overview.md；判断「用户现在忙不忙」用 "
+            "attention 与 context.disturbed（免打扰闸门：全屏/会议/锁屏/用户静音阀）。\n"
             "规则（自动触发动作）的编辑入口见 faustbot://plugins/desktop-mood/rules.md"
-            "，改规则必须走「编辑 rules.json 草稿 → 读/写 reload 节点提交」。\n",
-            description="Desktop Mood 插件说明：桌面上下文节点、感知分级与规则编辑入口",
+            "，改规则必须走「编辑 rules.json 草稿 → 读/写 reload 节点提交」。kind=attach 的规则不说话、不弹窗，"
+            "只把文本暂存进随行附加队列，等用户开口（或前台触发器）时一起送进模型，总长 ≤100 字且只放变化过的内容。\n",
+            description="Desktop Mood 插件说明：数据域视图、感知分级与规则编辑入口",
         )
+        await dm_vfs.install(ctx, self)
         await self._install_rule_nodes(ctx)
 
     async def _install_rule_nodes(self, ctx: PluginContext) -> None:
@@ -545,7 +567,11 @@ class Plugin(FaustPlugin):
             f'当前生效规则: {len(rules)} 条 ({", ".join(ids) if ids else "无"})',
             f'感知分级: {tiers or "未采集"}；被关闭的感知源: {disabled}',
             '  依赖被关闭字段的条件（如窗口标题、媒体、天气、剪贴板、麦克风、显示器）永远不会命中——',
-            '  写规则前先看 desktop-context.json 里字段是否真的存在，或让用户在面板「感知引擎」里打开对应分级。',
+            '  写规则前先读 faustbot://desktop-mood/overview.md（细则在 <域>/<域>.json）确认字段真的存在，',
+            '  或让用户在面板「感知引擎」里打开对应分级。',
+            '',
+            '感知数据域: faustbot://desktop-mood/<域>/<域>.{json,md}（域：system/window/input/media/network/',
+            '  weather/narrative/external/privacy）；总览 overview.md；read/write refresh 立即重采。',
             '',
             '可用字段（部分）: idle_seconds, cpu, memory, battery.percent, hour, window_title, window_process.name,',
             '  window_fullscreen, app_session.seconds, context_switches_5min, mouse.velocity_px_s, mouse.jitter,',
@@ -556,8 +582,13 @@ class Plugin(FaustPlugin):
             '通用条件: field_over / field_under / field_eq / field_contains / field_in / field_changed（field 支持',
             '  battery.percent、app_session.seconds 这类点号路径），可加 for_seconds（持续 N 秒才触发）、',
             '  probability（0~1）、when_not_disturbed（免打扰时不触发）。',
-            '动作 kind: motion / speech / nimble / event-trigger / emotion（emotion 直接改桌宠表情，如',
+            '动作 kind: motion / speech / nimble / event-trigger / emotion / attach（emotion 直接改桌宠表情，如',
             '  {"kind":"emotion","action":{"emotion":"happy","intensity":0.7}}）。',
+            'attach 动作: 命中时不说话、不弹窗、不打断，只把文本暂存进随行附加队列（TTL 默认 1800 秒，队列上限 20），',
+            '  在下一条用户消息或前台触发器上随行送达（后台触发器不附加）；总长 ≤100 字、最多 6 行、只放相对上次',
+            '  变化过的内容，最近 20 条不重复；不受免打扰闸门影响（它不是打扰）。文本支持 {battery} 等模板占位。',
+            '  例：{"kind":"attach","action":{"attach":{"text":"电量只剩 {battery}%，记得插电","ttl_sec":1800}}}。',
+            '  引擎还会启发式自动附加"AI 可能需要的"变化（事件优先、字段按 attach_weight 补），规则命中时一并跑。',
             '免打扰闸门: 全屏、麦克风占用、会议软件前台、锁屏、用户静音阀时，speech/nimble/emotion 默认不发；',
             '  需要强行放行就加 action.bypass_disturb=true。调度上只受 rule.cooldown_sec 与 GLOBAL_COOLDOWN_SEC 限制。',
             '',
@@ -602,6 +633,13 @@ class Plugin(FaustPlugin):
                 return None, f'{where} ({rule_id}): kind=emotion 需要 action.emotion（如 happy/sad/angry/surprised）'
             if kind == 'event-trigger' and not str(action.get('event_name') or '').strip():
                 return None, f'{where} ({rule_id}): kind=event-trigger 需要 action.event_name'
+            if kind == 'attach':
+                text = action.get('attach')
+                if isinstance(text, dict):
+                    text = text.get('text')
+                if not str(text or '').strip():
+                    return None, (f'{where} ({rule_id}): kind=attach 需要 action.attach，'
+                                  '可以是字符串，也可以是 {"text": "...", "ttl_sec": 1800, "priority": 50}')
         return list(data), None
 
     async def _commit_draft(self) -> str:
@@ -666,21 +704,165 @@ class Plugin(FaustPlugin):
     def register_prompt_suffix(self) -> list[str]:
         return [
             "\n[Desktop Mood 情景感知]\n"
-            "桌面环境实时快照在 faustbot://plugins/desktop-context.json，使用指南在 faustbot://plugins/desktop-mood.md。"
-            "在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
-            "快照里有：窗口/进程/全屏、应用停留与切换频率、鼠标节奏、未保存文档、进程增减、显卡、显示器与电源、"
+            "桌面环境按数据域暴露在 faustbot://desktop-mood/：总览 faustbot://desktop-mood/overview.md（每个源一行，最省 token），"
+            "细节读 <域>/<域>.md，精确值与源状态读 <域>/<域>.json；域有 system/window/input/media/network/weather/"
+            "narrative/external/privacy；要最新数据就 read/write faustbot://desktop-mood/refresh。"
+            "使用指南在 faustbot://plugins/desktop-mood.md。在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
+            "域里有：窗口/进程/全屏、应用停留与切换频率、鼠标节奏、未保存文档、进程增减、显卡、显示器与电源、"
             "麦克风占用、网络/SSID、耳机与手柄、USB 外设、媒体播放、天气、外部上报，以及叙事层 "
             "narrative（一句话场景摘要）、recent_events（最近变化）、away_digest（你不在时发生的事）、"
             "attention/activity_level（心流/碎片、平静/激烈）、rhythm_today（今日节律，档案见 "
-            "faustbot://plugins/desktop-mood/rhythm.md）。\n"
-            "判断「现在能不能打扰用户」看 context.disturbed 与 disturb_reasons（全屏/会议/锁屏/静音阀）；"
-            "被关闭的感知源字段不会出现（perception.disabled_sources 列出），不要臆测，也不要把规则建在它们上面。\n"
+            "faustbot://desktop-mood/narrative/rhythm.md）。\n"
+            "判断「现在能不能打扰用户」看 overview.md 里的免打扰行（全屏/会议/锁屏/静音阀）；被关闭的源标「未启用」、"
+            "采集失败的源标「不可用：原因」，不要臆测，也不要把规则建在它们上面。\n"
+            "用户消息末尾可能带一行 [桌面] 即时摘要（≤100 字，只含相对上次发生变化的内容，由 kind=attach 规则与"
+            "启发式自动附上）；它只是提示，需要细节时仍以 faustbot://desktop-mood/ 为准。\n"
             "当用户要求新增/修改/关闭桌面自动规则时：edit faustbot://plugins/desktop-mood/rules.json 草稿，"
             "再 read faustbot://plugins/desktop-mood/reload 提交生效；规则支持通用字段条件"
-            "（field_over/field_under/field_contains/field_changed + for_seconds/probability/when_not_disturbed）"
-            "与 emotion 动作；schema 与工作流见 skill://desktop-mood-rules/SKILL.md"
-            " 或 faustbot://plugins/desktop-mood/rules.md。\n"
+            "（field_over/field_under/field_contains/field_changed + for_seconds/probability/when_not_disturbed）、"
+            "emotion 动作，以及 attach 动作（不说话，只把文本暂存，随下一条用户消息或前台触发器送达）；"
+            "schema 与工作流见 skill://desktop-mood-rules/SKILL.md 或 faustbot://plugins/desktop-mood/rules.md。\n"
         ]
+
+    # ── 即时附加（attach）：规则暂存 → 随用户消息/前台触发器附带 ──
+    def _enqueue_attach(self, rule: dict[str, Any], context: dict[str, Any]) -> None:
+        """kind=attach 命中：只暂存文本，不发声、不弹窗、不打断。"""
+        if self.store is None:
+            return
+        raw = (rule.get('action') or {}).get('attach')
+        options = raw if isinstance(raw, dict) else {}
+        text = self._render_template(str((raw.get('text') if isinstance(raw, dict) else raw) or ''), context).strip()
+        if not text:
+            log.warning('desktop-mood 规则 %s 的 attach 文本为空，已忽略', rule.get('id'))
+            return
+        try:
+            ttl = max(30, int(options.get('ttl_sec') or 1800))
+        except (TypeError, ValueError):
+            ttl = 1800
+        try:
+            priority = max(0, min(100, int(options.get('priority') or dm_attach.RULE_PRIORITY_DEFAULT)))
+        except (TypeError, ValueError):
+            priority = dm_attach.RULE_PRIORITY_DEFAULT
+        now = _now()
+        stored = self.store.get_kv(ATTACH_QUEUE_KV, [])
+        queue = [item for item in stored if isinstance(item, dict)][-ATTACH_MAX_QUEUE:]
+        if len(queue) >= ATTACH_MAX_QUEUE:
+            dropped = queue.pop(0)
+            log.warning('desktop-mood 附加队列已满，丢弃最旧一条: %s', str(dropped.get('text'))[:40])
+        queue.append({'text': text, 'rule': str(rule.get('id') or ''), 'at': now,
+                      'expires_at': now + ttl, 'priority': priority})
+        self.store.set_kv(ATTACH_QUEUE_KV, queue)
+        log.info('desktop-mood attach 入队 %d 条: %s', len(queue), text[:60])
+
+    async def _compose_attach_block(self) -> str:
+        """规则暂存文本 + 启发式变化信息 → 预算内的附加块；没有可说的一次性返回空串。
+
+        预算与去重的实现全在 dm_attach（纯函数，可单测）；这里只管读写 store 与配置。
+        """
+        if self.store is None or self.ctx is None:
+            return ''
+        if not bool(await self.ctx.get_config('ENABLE_ATTACH', True)):
+            return ''
+        try:
+            budget = int(await self.ctx.get_config('ATTACH_BUDGET', dm_attach.BUDGET_DEFAULT) or dm_attach.BUDGET_DEFAULT)
+        except (TypeError, ValueError):
+            budget = dm_attach.BUDGET_DEFAULT
+        auto = bool(await self.ctx.get_config('ENABLE_AUTO_ATTACH', True))
+        now = _now()
+        observed = self.store.snapshot().get('snapshot') or {}
+        queue, expired = dm_attach.prune_queue(self.store.get_kv(ATTACH_QUEUE_KV, []), now)
+        if expired:
+            log.info('desktop-mood 附加队列丢弃 %d 条过期内容: %s', len(expired),
+                     '；'.join(str(item.get('text'))[:30] for item in expired))
+        ring_entries = self.store.get_kv(ATTACH_RING_KV, [])
+        ring_entries = ring_entries if isinstance(ring_entries, list) else []
+        ring = [str(entry.get('hash') or '') for entry in ring_entries if isinstance(entry, dict)]
+        pushed = self.store.get_kv(ATTACH_PUSHED_KV, {})
+        pushed = pushed if isinstance(pushed, dict) else {}
+        last = self.store.get_kv(ATTACH_LAST_KV, {})
+        last = last if isinstance(last, dict) else {}
+
+        candidates = list(dm_attach.rule_candidates(queue, ring))
+        if auto:
+            candidates += dm_attach.event_candidates(observed.get('recent_events') or [],
+                                                     int(last.get('at') or 0), ring)
+            _tiers, enabled_map = await self._perception_flags()
+            enabled_sources = [source for source in self.registry.sources if enabled_map.get(source['id'])]
+            candidates += dm_attach.field_candidates(self.registry, enabled_sources, observed, pushed, ring)
+
+        if not candidates:
+            self.store.set_kv(ATTACH_QUEUE_KV, queue)
+            return ''
+        block, chosen = dm_attach.compose(candidates, budget)
+        consumed_rules = {item.key for item in chosen if item.kind == 'rule'}
+        remaining = [item for item in queue
+                     if f"rule:{dm_attach.fingerprint(str(item.get('text') or '').strip())}" not in consumed_rules]
+        self.store.set_kv(ATTACH_QUEUE_KV, remaining)
+        if not block:
+            # 预算装不下任何一条（例如单条规则文本被截断后仍放不下）：队列保留，等下次
+            return ''
+        for item in chosen:
+            if item.kind == 'field':
+                pushed[item.key] = item.text
+        self.store.set_kv(ATTACH_PUSHED_KV, pushed)
+        self.store.set_kv(ATTACH_RING_KV, dm_attach.update_ring(ring_entries, [item.text for item in chosen], now))
+        self.store.set_kv(ATTACH_LAST_KV, {'at': now, 'text': block,
+                                           'sent_total': int(last.get('sent_total') or 0) + 1})
+        self.store.set_kv(ATTACH_ERROR_KV, None)
+        log.info('desktop-mood attach 送出 %d 条 / %d 字: %s', len(chosen), len(block), block)
+        return block
+
+    @hookimpl
+    async def message_received(self, msg: Any, history: list, ctx: Any, origin: str = 'user') -> str | None:
+        """把暂存的规则文本与"变化过的桌面信息"附到这条消息后面。
+
+        只对用户消息与前台触发器生效（后台触发器/无前端连接时的降级执行不附加）；
+        这里绝不分析 msg 的内容——附加内容只取决于桌面状态与上次附加的基线。
+        """
+        if str(origin or 'user') not in ATTACH_ORIGINS:
+            return None
+        try:
+            block = await self._compose_attach_block()
+        except Exception as exc:  # noqa: BLE001 附加失败不能拖垮这一轮对话，但必须留下痕迹
+            log.warning('desktop-mood 附加失败: %s', exc)
+            if self.store is not None:
+                self.store.set_kv(ATTACH_ERROR_KV, {'at': _now(), 'detail': str(exc)})
+            return None
+        if not block:
+            return None
+        return f'{msg}\n\n{block}'
+
+    def _attach_view(self) -> dict[str, Any]:
+        """面板/报告用的附加状态（不触发采集）。"""
+        snapshot = self.store.snapshot() if self.store is not None else {}
+        queue, expired = dm_attach.prune_queue(self.store.get_kv(ATTACH_QUEUE_KV, []) if self.store else [], _now())
+        last = self.store.get_kv(ATTACH_LAST_KV, {}) if self.store else {}
+        last = last if isinstance(last, dict) else {}
+        error = self.store.get_kv(ATTACH_ERROR_KV, None) if self.store else None
+        return {
+            'queued': len(queue),
+            'expired': len(expired),
+            'last_text': last.get('text'),
+            'last_at': int(last.get('at') or 0) or None,
+            'sent_total': int(last.get('sent_total') or 0),
+            'last_error': (error or {}).get('detail') if isinstance(error, dict) else None,
+            'snapshot_at': int(snapshot.get('snapshot_at') or 0) or None,
+        }
+
+    async def refresh_now(self) -> str:
+        """立即采集一次并写入快照（VFS refresh 节点与面板「立即采集」同一条通路）。"""
+        if self.store is None or self.ctx is None:
+            return '插件未加载，无法采集。'
+        context = await self.collect_context()
+        self.store.update_snapshot(context)
+        await self._write_rhythm_node(context)
+        _tiers, enabled_map = await self._perception_flags()
+        enabled = [source['id'] for source in self.registry.sources if enabled_map.get(source['id'])]
+        lines = [f'已启用源 {len(enabled)}/{len(self.registry.sources)} 个，本轮上下文 {len(context)} 个字段。']
+        unavailable = [f'{source_id}: {reason}' for source_id, reason in self._sensor_status.items() if reason]
+        if unavailable:
+            lines.append('不可用: ' + '；'.join(unavailable[:6]))
+        return '\n'.join(lines)
 
     async def _perception_flags(self) -> tuple[dict[str, bool], dict[str, bool]]:
         """返回 (分级开关, 感知源开关)；源开启 = 所属分级开启 且 该源开关开启。"""
@@ -900,6 +1082,7 @@ class Plugin(FaustPlugin):
                 'id': source['id'],
                 'key': source['key'],
                 'tier': source['tier'],
+                'group': self.registry.group_of(source),
                 'label': source['label'],
                 'note': source['note'],
                 'cadence': self.registry.cadence_of(source),
@@ -912,6 +1095,16 @@ class Plugin(FaustPlugin):
                     for field in self.registry.fields_of(source)
                 ],
             })
+        try:
+            attach_budget = int(await self.ctx.get_config('ATTACH_BUDGET', dm_attach.BUDGET_DEFAULT)) if self.ctx else dm_attach.BUDGET_DEFAULT
+        except (TypeError, ValueError):
+            attach_budget = dm_attach.BUDGET_DEFAULT
+        attach_payload = self._attach_view()
+        attach_payload.update({
+            'enabled': bool(await self.ctx.get_config('ENABLE_ATTACH', True)) if self.ctx else True,
+            'auto': bool(await self.ctx.get_config('ENABLE_AUTO_ATTACH', True)) if self.ctx else True,
+            'budget': attach_budget,
+        })
         return {
             'updated_at': int(snapshot.get('snapshot_at') or 0),
             'tiers': [
@@ -929,6 +1122,7 @@ class Plugin(FaustPlugin):
             'disturbed': bool(observed.get('disturbed')),
             'disturb_reasons': observed.get('disturb_reasons') or [],
             'quiet_until': int(snapshot.get('quiet_until') or 0),
+            'attach': attach_payload,
         }
 
     async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
@@ -1077,6 +1271,8 @@ class Plugin(FaustPlugin):
                 backend2frontend.frontendAvatarCommand(
                     'AVATAR_EMOTION', {'emotion': emotion, 'intensity': round(max(0.0, min(1.0, intensity)), 4)})
                 log.info('desktop-mood emotion action: %s (%.2f)', emotion, intensity)
+        elif kind == 'attach' and self.store is not None:
+            self._enqueue_attach(rule, context)
         elif kind == 'event-trigger' and self.ctx is not None:
             event_name = str(action.get('event_name') or 'desktop_mood_event')
             summary = self._render_template(str(action.get('summary') or '桌面情景触发。'), context)
@@ -1151,12 +1347,6 @@ class Plugin(FaustPlugin):
             self._smtc_rising_edge = playing_now and self._last_smtc_playing is False
             self._last_smtc_playing = playing_now
         self.store.update_snapshot(context)
-        await self.ctx.vfs_write(
-            CONTEXT_NODE_PATH,
-            json.dumps(context, ensure_ascii=False, indent=2),
-            description="当前桌面上下文：窗口/进程/全屏、应用停留、鼠标、负载电量、显示器/麦克风/网络、媒体、"
-                        "事件时间线、场景摘要、免打扰状态、感知分级状态",
-        )
         await self._write_rhythm_node(context)
         idle_seconds = context.get('idle_seconds')
         last_idle_state = self.store.get_last_idle_state()

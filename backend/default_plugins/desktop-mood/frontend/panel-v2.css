@@ -35,3 +35,4 @@
 .desktop-field-label { color:#6b7280; min-width:78px; }
 .desktop-field-value { word-break:break-all; }
 .desktop-value-missing { color:#9aa1aa; }
+.desktop-attach-error { color:#a32f28; }

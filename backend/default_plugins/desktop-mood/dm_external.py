@@ -20,12 +20,15 @@ from dm_api import SensorContext, SensorResult
 SOURCES = (
     {'id': 'external', 'key': 'ENABLE_EXTERNAL_REPORT', 'tier': 'green', 'default': True,
      'cadence': 10, 'label': '外部上报', 'note': '前端/其它插件推来的信号（锁屏、睡眠、显示器增减、宠物被点击、订阅更新等）',
+     'group': 'external', 'attach_weight': 35,
      'fields': ('external', 'locked', 'display_count', 'pet_interaction_at')},
     {'id': 'weather', 'key': 'ENABLE_WEATHER_WATCH', 'tier': 'yellow', 'default': True,
      'cadence': 60, 'label': '天气（联网）', 'note': '经 wttr.in 查询，会把城市/出口 IP 交给第三方',
+     'group': 'weather', 'attach_weight': 60,
      'fields': ('weather',)},
     {'id': 'calendar', 'key': 'ENABLE_CALENDAR', 'tier': 'green', 'default': True,
      'cadence': 60, 'label': '日历时段', 'note': '星期、是否周末、是否工作时间、上午/下午/深夜',
+     'group': 'external', 'attach_weight': 45,
      'fields': ('calendar',)},
 )
 

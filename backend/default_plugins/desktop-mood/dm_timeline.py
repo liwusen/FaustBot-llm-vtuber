@@ -17,12 +17,15 @@ from dm_api import SensorContext, SensorResult
 SOURCES = (
     {'id': 'timeline', 'key': 'ENABLE_TIMELINE', 'tier': 'green', 'default': True,
      'cadence': 10, 'label': '事件时间线', 'note': '场景变化事件流、一句话场景摘要、活动强度与注意力状态',
+     'group': 'narrative', 'attach_weight': 0,
      'fields': ('recent_events', 'narrative', 'activity_level', 'attention')},
     {'id': 'away_digest', 'key': 'ENABLE_AWAY_DIGEST', 'tier': 'green', 'default': True,
      'cadence': 10, 'label': '离开期间', 'note': '用户离开/锁屏时发生的事，回来时一次性汇报',
+     'group': 'narrative', 'attach_weight': 80,
      'fields': ('away_digest',)},
     {'id': 'rhythm', 'key': 'ENABLE_RHYTHM', 'tier': 'green', 'default': True,
      'cadence': 60, 'label': '今日节律', 'note': '今天的清醒时段、专注/游戏累计、离开次数（天级档案）',
+     'group': 'narrative', 'attach_weight': 0,
      'fields': ('rhythm_today',)},
 )
 

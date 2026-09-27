@@ -311,35 +311,38 @@ async def _run_trigger_stream_frontend(chat_ws, trigger_text: str) -> None:
     """前台触发器流式推送；失败时降级为后台执行。"""
     try:
         await chat_ws.send_text(json.dumps(_main_event_payload("start"), ensure_ascii=False))
-        await _run_agent_stream(chat_ws, trigger_text)
+        await _run_agent_stream(chat_ws, trigger_text, origin='trigger_foreground')
     except asyncio.CancelledError:
         raise
     except Exception as e:
         log.error("触发器流式推送失败，降级为后台执行: %s", e)
-        fallback_text = await _apply_plugin_message_hooks(trigger_text)
+        fallback_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
         if fallback_text == "__IGNORED__":
             log.info("触发器消息已被插件拦截，跳过降级执行")
             return
         await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": fallback_text}]})
 
 
-async def _apply_plugin_message_hooks(text: str) -> str:
+async def _apply_plugin_message_hooks(text: str, origin: str = 'user') -> str:
     """把用户消息/触发器文本按洋葱模型过一遍插件的 message_received。
 
     所有把文本送进 Agent 的入口都必须走这里，否则插件（记忆注入、情绪向量等）
     会在该路径上被静默绕过。返回值可能为 "__IGNORED__"（消息被插件拦截）。
+
+    origin 告诉插件这条文本是谁送进来的（'user' / 'trigger_foreground' / 'trigger_background'），
+    插件据此决定要不要把"随行附加"这类只对用户可见的东西挂上去。
     """
     pm = state.plugin_manager
     if pm is None:
         return text
-    return await pm.apply_message_received(text, history=[], ctx=None)
+    return await pm.apply_message_received(text, history=[], ctx=None, origin=origin)
 
 
-async def _run_agent_stream(websocket: WebSocket, text: str, agent=None) -> str:
+async def _run_agent_stream(websocket: WebSocket, text: str, agent=None, origin: str = 'user') -> str:
     reply = ""
     abort_evt = state.reset_abort_event()
     pm = state.plugin_manager
-    text = await _apply_plugin_message_hooks(text)
+    text = await _apply_plugin_message_hooks(text, origin)
     if text == "__IGNORED__":
         log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
         done_payload = _main_event_payload("done")
@@ -660,7 +663,7 @@ async def command_websocket(websocket: WebSocket):
                     batch_buffer = []
                     trigger_text = trigger_manager.format_batch_injection(items, first_ts)
                     log.info('批量触发器注入 %d 条: %s', len(items), trigger_text[:120])
-                    batch_text = await _apply_plugin_message_hooks(trigger_text)
+                    batch_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
                     if batch_text == "__IGNORED__":
                         log.info('批量触发器消息已被插件拦截，跳过本次注入')
                     else:
@@ -725,7 +728,7 @@ async def command_websocket(websocket: WebSocket):
                 if run_background or chat_ws is None:
                     # 后台触发器（或无前端连接时降级）：仅执行，不推送前端
                     # 前台流式路径在 _run_agent_stream 内部做插件处理，这里不能重复处理
-                    bg_text = await _apply_plugin_message_hooks(trigger_text)
+                    bg_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
                     if bg_text == "__IGNORED__":
                         log.info('触发器消息已被插件拦截，跳过后台执行: %s', trigger_text[:80])
                         continue
