@@ -162,10 +162,11 @@ async def test_desktop_mood_probability_gate(_isolate_home):
             condition["probability"] = probability
         return {"id": "p", "kind": "speech", "condition": condition, "action": {"speech": "hi"}}
 
-    assert plugin._match_rule(rule(0.0), context, 'active', 'active') is False
-    assert plugin._match_rule(rule(1.0), context, 'active', 'active') is True
-    assert plugin._match_rule(rule(), context, 'active', 'active') is True
-    assert plugin._match_rule(rule(0.5), {'window_title': 'Notepad'}, 'active', 'active') is False
+    edges = {'idle_prev': 'active', 'idle_next': 'active', 'smtc_playing': False}
+    assert plugin._match_rule(rule(0.0), context, edges) is False
+    assert plugin._match_rule(rule(1.0), context, edges) is True
+    assert plugin._match_rule(rule(), context, edges) is True
+    assert plugin._match_rule(rule(0.5), {'window_title': 'Notepad'}, edges) is False
 
 
 @pytest.mark.asyncio

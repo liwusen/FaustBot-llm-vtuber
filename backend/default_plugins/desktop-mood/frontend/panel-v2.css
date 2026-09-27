@@ -1,7 +1,37 @@
-.desktop-pre-v2 { margin:0; white-space:pre-wrap; font-family:inherit; color:#f6eed0; }
-.desktop-rules-v2 { display:grid; gap:10px; }
-.desktop-rule-row { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; }
+/* Desktop Mood 面板（亮色简约风，配合 Configer 主题） */
 .desktop-overlay-v2 { position:fixed; z-index:1400; pointer-events:auto; }
 .desktop-overlay-static { top:18px; right:18px; }
 .desktop-overlay-hidden { display:none; }
 .desktop-widget-v2 { display:inline-flex; gap:10px; align-items:center; padding:8px 12px; border-radius:12px; background:rgba(33,26,15,0.86); color:#fff4cf; border:1px solid rgba(255,255,255,0.1); }
+
+/* 感知分级开关 */
+.desktop-tier-list { display:grid; gap:14px; }
+.desktop-tier-group { border:1px solid var(--border, #e4e6eb); border-radius:12px; padding:12px 14px; background:var(--surface, #fff); }
+.desktop-tier-group.is-muted { opacity:.62; }
+.desktop-tier-head { display:flex; gap:8px; align-items:center; font-weight:600; cursor:pointer; }
+.desktop-tier-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; border:1px solid transparent; white-space:nowrap; }
+.desktop-tier-green { background:#e7f6ec; color:#1d7a44; border-color:#bfe3cd; }
+.desktop-tier-yellow { background:#fdf6e3; color:#8a6100; border-color:#f0dfae; }
+.desktop-tier-red { background:#fdecea; color:#a32f28; border-color:#f3c9c5; }
+.desktop-source-list { display:grid; gap:6px; margin-top:10px; }
+.desktop-source-row { display:grid; grid-template-columns:auto minmax(96px, max-content) 1fr; gap:8px; align-items:center; }
+.desktop-source-name { font-weight:500; }
+
+/* 场景摘要 / 事件时间线 / 节律指标 */
+.desktop-narrative { margin:0 0 8px; font-size:13px; line-height:1.6; }
+.desktop-event-list { margin:6px 0 0; padding-left:0; list-style:none; display:grid; gap:4px; font-size:13px; }
+.desktop-event-list li { display:flex; gap:8px; }
+.desktop-metric-row { display:flex; flex-wrap:wrap; gap:14px; }
+.desktop-metric { display:flex; flex-direction:column; gap:2px; min-width:96px; padding:8px 10px; border:1px solid var(--border, #e4e6eb); border-radius:10px; }
+.desktop-metric-label { color:#6b7280; font-size:12px; }
+.desktop-metric-value { font-size:15px; font-weight:600; }
+
+/* 数据采集视图 */
+.desktop-status { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; white-space:nowrap; }
+#desktop-perception-rows td:nth-child(2), #desktop-perception-rows td:nth-child(3), #desktop-perception-rows td:nth-child(4) { white-space:nowrap; }
+.desktop-status-on { background:#e7f6ec; color:#1d7a44; }
+.desktop-status-off { background:#f1f2f4; color:#6b7280; }
+.desktop-field-row { display:flex; gap:8px; }
+.desktop-field-label { color:#6b7280; min-width:78px; }
+.desktop-field-value { word-break:break-all; }
+.desktop-value-missing { color:#9aa1aa; }

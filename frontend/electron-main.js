@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, dialog, protocol, shell, screen, clipboard, Notification, powerMonitor } = require('electron');
 const path = require('path');
 const { uIOhook, UiohookKey } = require('uiohook-napi');
 const fs = require('fs');
@@ -366,6 +366,84 @@ function buildBackendUrl(apiPath, query) {
     }
   }
   return url.toString();
+}
+
+// ── 环境感知上报（desktop-mood 插件）──
+// 锁屏/唤醒、休眠/恢复、电源、显示器插拔等感知事件 fire-and-forget 上报后端；
+// 任何失败都只警告一次，绝不抛出、绝不打断主进程。
+const DESKTOP_MOOD_REPORT_URL = `${FAUST_BACKEND_BASE}/faust/plugins/desktop-mood/communicate`;
+const _perceptionWarned = new Set();
+
+function warnPerceptionOnce(key, err){
+  const signature = `${key}|${(err && (err.statusCode || err.code || err.message)) || err}`;
+  if (_perceptionWarned.has(signature)) return;
+  _perceptionWarned.add(signature);
+  console.warn('[perception] 上报失败（同类错误只提示一次）:', signature);
+}
+
+// 复用 config-http-request 所用的 requestJson（见下方 ipcMain.handle('config-http-request')）
+function reportPerception(fields, source = 'electron_main'){
+  try {
+    Promise.resolve(
+      requestJson('POST', DESKTOP_MOOD_REPORT_URL, { action: 'report', source, fields: fields || {} }, 5000)
+    ).catch((e) => { warnPerceptionOnce('desktop-mood', e); });
+  } catch (e) {
+    warnPerceptionOnce('desktop-mood', e);
+  }
+}
+
+function buildDisplaySnapshot(){
+  let list = [];
+  let primaryId = null;
+  try { list = screen.getAllDisplays() || []; } catch (e) { list = []; }
+  try { const primary = screen.getPrimaryDisplay(); primaryId = primary ? primary.id : null; } catch (e) { primaryId = null; }
+  const displays = [];
+  for (const d of list) {
+    if (!d) continue;
+    displays.push({
+      id: d.id,
+      width: (d.size && d.size.width) || 0,
+      height: (d.size && d.size.height) || 0,
+      primary: d.id === primaryId,
+    });
+  }
+  return { display_count: displays.length, displays };
+}
+
+function buildPerceptionSnapshot(){
+  const snapshot = buildDisplaySnapshot();
+  try { snapshot.ac_online = !powerMonitor.isOnBatteryPower(); } catch (e) { /* 电源状态不可用时省略 */ }
+  return snapshot;
+}
+
+function registerPerceptionReporting(){
+  const nowSec = () => Math.floor(Date.now() / 1000);
+
+  // 初始快照 + 每 60s 刷新（显示器布局 / 电源状态）
+  const pushSnapshot = () => reportPerception(buildPerceptionSnapshot());
+  pushSnapshot();
+  const snapshotTimer = setInterval(pushSnapshot, 60000);
+  if (snapshotTimer && typeof snapshotTimer.unref === 'function') snapshotTimer.unref();
+
+  try {
+    powerMonitor.on('lock-screen', () => reportPerception({ locked: true, locked_at: nowSec() }));
+    powerMonitor.on('unlock-screen', () => reportPerception({ locked: false, unlocked_at: nowSec() }));
+    powerMonitor.on('suspend', () => reportPerception({ suspend_at: nowSec() }));
+    powerMonitor.on('resume', () => reportPerception({ resume_at: nowSec() }));
+    powerMonitor.on('on-ac', () => reportPerception({ ac_online: true }));
+    powerMonitor.on('on-battery', () => reportPerception({ ac_online: false }));
+  } catch (e) {
+    console.warn('[perception] powerMonitor 事件注册失败（不影响启动）:', e && e.message ? e.message : e);
+  }
+
+  // 显示器插拔 → 上报显示器快照；分辨率变化由 createWindow 内原有的
+  // 'display-metrics-changed' 处理器一并上报（那里同时负责重新铺满桌宠）。
+  try {
+    screen.on('display-added', () => reportPerception(buildDisplaySnapshot()));
+    screen.on('display-removed', () => reportPerception(buildDisplaySnapshot()));
+  } catch (e) {
+    console.warn('[perception] screen 事件注册失败（不影响启动）:', e && e.message ? e.message : e);
+  }
 }
 
 function parseFaustDeepLink(rawUrl) {
@@ -757,6 +835,8 @@ function createWindow(){
       const nb = getPetBounds(screen.getPrimaryDisplay());
       schedulePetBoundsRepair(mainWindow, nb);
     }
+    // 感知上报：分辨率/缩放变化后的显示器快照（附加行为，不影响上面的铺满逻辑）
+    reportPerception(buildDisplaySnapshot());
   });
 
   // 持续置顶：失焦或被压时重申 screen-saver 级别，防全屏窗口下桌宠丢失置顶/焦点。
@@ -1418,6 +1498,7 @@ app.whenReady().then(async () => {
   }
 
   _backendReady = true;
+  registerPerceptionReporting();
   createWindow();
   createTray();
   registerGlobalShortcuts();

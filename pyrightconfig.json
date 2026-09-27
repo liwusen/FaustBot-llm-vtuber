@@ -18,7 +18,11 @@
   "executionEnvironments": [
     {
       "root": "backend/tests",
-      "extraPaths": ["backend", "backend/default_plugins/agile-engine"]
+      "extraPaths": ["backend", "backend/default_plugins/agile-engine", "backend/default_plugins/desktop-mood"]
+    },
+    {
+      "root": "backend/default_plugins/desktop-mood",
+      "extraPaths": ["backend", "backend/default_plugins/desktop-mood"]
     }
   ]
 }

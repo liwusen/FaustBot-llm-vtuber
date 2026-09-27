@@ -965,6 +965,12 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       try { await interruptAgentAndWait(); } catch (e) { /* 忽略 */ }
     }
     if (!window.faustAppUI || typeof window.faustAppUI.communicate !== 'function') return;
+    // 感知上报：宠物交互时间戳 → desktop-mood（fire-and-forget，插件缺失时静默忽略）
+    window.faustAppUI.communicate('desktop-mood', {
+      action: 'report',
+      source: 'faust_ui',
+      fields: { pet_interaction_at: Math.floor(Date.now() / 1000), interaction: payload },
+    }).catch(() => {});
     try{
       const response = await window.faustAppUI.communicate('avatar-performance', { action: 'interaction', interaction: payload });
       if (response && response.status === 'error') console.warn('[avatar] 交互上报被拒绝:', response.detail);
@@ -4133,6 +4139,16 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   // 保持 /faust/chat 连接，使后端触发器（Nimble / Public API / 定时任务等）
   // 唤醒 Agent 的回复能实时推送到前端显示与 TTS。
   ensureChatWsPersistent();
+
+  // ── 感知上报：桌宠窗口可见性 → desktop-mood（fire-and-forget，插件缺失时静默忽略）──
+  document.addEventListener('visibilitychange', () => {
+    if (!window.faustAppUI || typeof window.faustAppUI.communicate !== 'function') return;
+    window.faustAppUI.communicate('desktop-mood', {
+      action: 'report',
+      source: 'faust_ui',
+      fields: { window_visible: !document.hidden },
+    }).catch(() => {});
+  });
 
   checkUpdateOnStartup();
 

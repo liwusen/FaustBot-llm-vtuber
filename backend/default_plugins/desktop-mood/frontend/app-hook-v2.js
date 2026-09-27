@@ -62,7 +62,8 @@
       const weather = context.weather || {};
       weatherEl.textContent = weather.text ? (weather.text + ' ' + (weather.temperature_c || '') + 'C') : '天气未启用';
       const idle = Number(context.idle_seconds || 0);
-      idleEl.textContent = idle >= 600 ? '已离开' : idle >= 60 ? '短暂离开' : '活动中';
+      idleEl.textContent = context.locked === true ? '锁屏中'
+        : idle >= 600 ? '已离开' : idle >= 60 ? '短暂离开' : '活动中';
       overlay.setAttribute('data-mood', context.manual_mood || 'auto');
     } catch (error) {
       idleEl.textContent = '环境离线';

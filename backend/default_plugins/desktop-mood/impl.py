@@ -4,10 +4,10 @@ import asyncio
 import ctypes
 import json
 import random
+import re
+import sys
 import threading
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,25 @@ from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 
 from faust_backend.logger import get_logger
 log = get_logger("faust.plugins.desktop-mood")
+
+# 插件是以文件方式加载的（模块名 faust_plugin_desktop-mood），加载器不会把插件目录加进
+# sys.path；同仓库 agile-engine 也是这么自举的。不这样处理，同目录的 dm_* 模块 import 不到。
+_PLUGIN_DIR = Path(__file__).resolve().parent
+if str(_PLUGIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_DIR))
+
+import dm_api  # noqa: E402
+import dm_conditions  # noqa: E402
+import dm_external  # noqa: E402
+import dm_sensors_a  # noqa: E402
+import dm_sources  # noqa: E402
+import dm_timeline  # noqa: E402
+
+try:
+    import dm_sensors_b  # noqa: E402
+except Exception as exc:  # noqa: BLE001  模块级错误必须暴露，不能静默少一组感知
+    log.error("desktop-mood 感知模块 dm_sensors_b 加载失败: %s", exc)
+    raise
 
 try:
     import psutil
@@ -35,12 +54,18 @@ RULES_FILE = Path.home() / '.faustbot' / 'desktop-mood.rules.json'
 RULES_NODE_PATH = '/plugins/desktop-mood/rules.json'   # 草稿节点：AI 只改这里，改完不生效
 RULES_GUIDE_PATH = '/plugins/desktop-mood/rules.md'    # 指南节点：schema + 工作流（symbolic）
 RULES_RELOAD_PATH = '/plugins/desktop-mood/reload'     # 提交节点：read/write 都触发草稿生效
+CONTEXT_NODE_PATH = '/plugins/desktop-context.json'
+RHYTHM_NODE_PATH = '/plugins/desktop-mood/rhythm.md'   # 天级节律档案（agent 可读）
 
-CONDITION_TYPES = (
-    'idle_over', 'return_active', 'cpu_over', 'memory_over',
-    'battery_under', 'hour_range', 'window_contains', 'smtc_playing',
-)
-ACTION_KINDS = ('motion', 'speech', 'nimble', 'event-trigger')
+# 感知模块按顺序执行：时间线在最后，才能看到本轮所有其它字段
+SENSOR_MODULES = (dm_sensors_a, dm_sensors_b, dm_external, dm_timeline)
+REGISTRY = dm_sources.build_registry(SENSOR_MODULES)
+
+CONDITION_TYPES = dm_conditions.CONDITION_TYPES
+ACTION_KINDS = ('motion', 'speech', 'nimble', 'event-trigger', 'emotion')
+
+CLIPBOARD_CHANGE_DEBOUNCE_SEC = 15
+
 DEFAULT_RULES = [
     {"id": "idle_yawn", "label": "空闲打哈欠", "enabled": True, "cooldown_sec": 1800, "kind": "motion", "condition": {"type": "idle_over", "seconds": 600}, "action": {"motion": "yawn"}},
     {"id": "idle_voice", "label": "空闲提醒", "enabled": True, "cooldown_sec": 1800, "kind": "speech", "condition": {"type": "idle_over", "seconds": 600}, "action": {"speech": "你很久没说话了。"}},
@@ -123,6 +148,85 @@ def _foreground_window_process() -> dict[str, str] | None:
         return None
 
 
+CF_UNICODETEXT = 13
+CF_DIB = 8
+CF_HDROP = 15
+
+ERROR_MARKERS = ('traceback (most recent call last)', 'unhandled exception', '\n    at ')
+CODE_MARKERS = (
+    'def ', 'class ', 'import ', 'function ', 'const ', 'let ', 'return ',
+    '=>', '});', '#!/', 'public ', 'private ', '</div>',
+)
+
+
+def _clipboard_sequence() -> int | None:
+    """剪贴板序号：变了就说明内容变了。纯 ctypes，比读内容便宜得多。"""
+    try:
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:
+        return None
+
+
+def _clipboard_formats() -> set[int]:
+    """当前剪贴板有哪些格式（不读取内容，仅判断格式存在性）。"""
+    formats: set[int] = set()
+    try:
+        user32 = ctypes.windll.user32
+        for fmt in (CF_UNICODETEXT, CF_DIB, CF_HDROP):
+            if user32.IsClipboardFormatAvailable(fmt):
+                formats.add(fmt)
+    except Exception:
+        pass
+    return formats
+
+
+def classify_clipboard_text(text: str) -> str:
+    """把剪贴板文本判成类型。只返回类型标签，正文由调用方丢弃。"""
+    body = str(text or '').strip()
+    if not body:
+        return 'empty'
+    lowered = body.lower()
+    lines = [line for line in body.splitlines() if line.strip()]
+    if not lines:
+        return 'empty'
+    if len(lines) == 1 and ' ' not in body and lowered.startswith(('http://', 'https://', 'www.')):
+        return 'url'
+    if any(marker in lowered for marker in ERROR_MARKERS):
+        return 'error'
+    if re.search(r'(?m)^[A-Za-z_.]*(Error|Exception|Warning):', body):
+        return 'error'
+    hits = sum(1 for marker in CODE_MARKERS if marker in body)
+    if len(lines) > 1 and hits >= 2:
+        return 'code'
+    if body.endswith((';', '}', ');', '{')) and any(ch in body for ch in ('=', '(', '{')):
+        return 'code'
+    return 'text'
+
+
+async def _read_clipboard_text() -> str:
+    """读一次剪贴板文本（pyperclip 优先，否则 powershell），仅供判类型。"""
+    try:
+        import pyperclip  # type: ignore
+    except ImportError:
+        pyperclip = None  # type: ignore[assignment]
+    if pyperclip is not None:
+        try:
+            return str(await asyncio.to_thread(pyperclip.paste) or '')
+        except Exception:
+            log.warning("通过 pyperclip 读取剪贴板失败，回退 powershell")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            'powershell', '-NoProfile', '-Command', 'Get-Clipboard -Raw',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        return stdout.decode('utf-8', errors='ignore')
+    except Exception as exc:  # noqa: BLE001
+        log.warning("读取剪贴板失败: %s", exc)
+        return ''
+
+
 def _holiday_name() -> str | None:
     now = time.localtime()
     month_day = f'{now.tm_mon:02d}-{now.tm_mday:02d}'
@@ -182,6 +286,15 @@ async def _read_smtc_now() -> dict[str, Any] | None:
         return None
 
 
+RULE_FEEDBACK_WINDOW_SEC = 30
+ADAPTIVE_COOLDOWN_MAX_MULTIPLIER = 8
+# 免打扰闸门：这些进程在前台/占用麦克风时，规则里的 speech/nimble 默认不放行
+MEETING_PROCESS_HINTS = {
+    'zoom.exe', 'teams.exe', 'ms-teams.exe', 'webexmta.exe', 'dingtalk.exe',
+    'wemeetapp.exe', 'voov.exe', 'skype.exe', 'discord.exe',
+}
+
+
 class DesktopMoodStore:
     def __init__(self, data_dir: Path):
         self._lock = threading.RLock()
@@ -238,6 +351,7 @@ class DesktopMoodStore:
     def update_snapshot(self, snapshot: dict[str, Any]) -> None:
         with self._lock:
             self._state['snapshot'] = snapshot
+            self._state['snapshot_at'] = _now()
             self.save()
 
     def set_rules(self, rules: list[dict[str, Any]]) -> None:
@@ -252,6 +366,81 @@ class DesktopMoodStore:
             self._state['weather'] = weather
             self._state['weather_updated_at'] = _now()
             self.save()
+
+    # ── 通用 KV：给感知模块（时间线/外部上报）存放跨重启状态 ──
+    def get_kv(self, key: str, default: Any = None) -> Any:
+        with self._lock:
+            namespace = self._state.get('kv')
+            if not isinstance(namespace, dict) or key not in namespace:
+                return default
+            return json.loads(json.dumps(namespace[key], ensure_ascii=False))
+
+    def set_kv(self, key: str, value: Any) -> None:
+        with self._lock:
+            namespace = self._state.setdefault('kv', {})
+            namespace[key] = value
+            self.save()
+
+    # ── 静音阀：用户说"别吵"，所有规则停火 ──
+    def get_quiet_until(self) -> int:
+        return int(self._state.get('quiet_until') or 0)
+
+    def set_quiet_until(self, ts: int) -> None:
+        with self._lock:
+            self._state['quiet_until'] = int(ts)
+            self.save()
+
+    # ── 打扰质量自适应：记录触发后用户是否有反应 ──
+    def rule_quality(self, rule_id: str) -> dict[str, Any]:
+        quality = (self._state.get('rule_quality') or {}).get(rule_id)
+        return dict(quality) if isinstance(quality, dict) else {'fired': 0, 'followed': 0, 'ignored': 0, 'streak': 0}
+
+    def record_rule_fire(self, rule_id: str, ts: int) -> None:
+        """记账一次触发，并挂起待观察的反馈（30 秒内用户是否有输入）。"""
+        with self._lock:
+            quality = self._state.setdefault('rule_quality', {}).setdefault(
+                rule_id, {'fired': 0, 'followed': 0, 'ignored': 0, 'streak': 0})
+            quality['fired'] = int(quality.get('fired') or 0) + 1
+            self._state['pending_feedback'] = {'rule_id': rule_id, 'at': int(ts)}
+
+    def close_feedback(self, at: int) -> dict[str, Any] | None:
+        """结算上一次触发：观察窗内用户动过键鼠 → followed，否则 ignored（连续 ignored 会拉长冷却）。"""
+        with self._lock:
+            pending = self._state.get('pending_feedback')
+            if not isinstance(pending, dict):
+                return None
+            rule_id = str(pending.get('rule_id') or '')
+            fired_at = int(pending.get('at') or 0)
+            if at - fired_at < RULE_FEEDBACK_WINDOW_SEC:
+                return None
+            quality = self._state.setdefault('rule_quality', {}).setdefault(
+                rule_id, {'fired': 0, 'followed': 0, 'ignored': 0, 'streak': 0})
+            marks = [float(item) for item in (self._state.get('activity_marks') or [])]
+            followed = any(mark >= fired_at for mark in marks)
+            # 消费掉观察窗内的痕迹，避免影响下一次结算
+            self._state['activity_marks'] = [mark for mark in marks if mark < fired_at]
+            if followed:
+                quality['followed'] = int(quality.get('followed') or 0) + 1
+                quality['streak'] = 0
+            else:
+                quality['ignored'] = int(quality.get('ignored') or 0) + 1
+                quality['streak'] = int(quality.get('streak') or 0) + 1
+            self._state['pending_feedback'] = None
+            self.save()
+            return {'rule_id': rule_id, 'followed': followed, 'streak': quality['streak']}
+
+    def note_activity(self, ts: int) -> None:
+        """记录"用户刚有输入"（idle 变小）用于反馈结算，只保留最近 5 分钟。"""
+        with self._lock:
+            marks = [float(item) for item in (self._state.get('activity_marks') or []) if ts - item <= 300]
+            marks.append(float(ts))
+            self._state['activity_marks'] = marks[-60:]
+
+    def set_last_idle_state(self, state: str) -> None:
+        with self._lock:
+            self._state['last_idle_state'] = state
+            self.save()
+
 
     def can_fire(self, rule_id: str, cooldown_sec: int, global_cooldown_sec: int) -> bool:
         with self._lock:
@@ -270,59 +459,75 @@ class DesktopMoodStore:
     def get_last_idle_state(self) -> str:
         return str(self._state.get('last_idle_state') or 'active')
 
-    def set_last_idle_state(self, state: str) -> None:
-        with self._lock:
-            self._state['last_idle_state'] = state
-            self.save()
-
-
-def _fetch_weather(city: str) -> dict[str, Any] | None:
-    try:
-        query = urllib.parse.quote(city or '')
-        url = f'https://wttr.in/{query}?format=j1' if query and city != 'auto' else 'https://wttr.in/?format=j1'
-        with urllib.request.urlopen(url, timeout=8) as response:
-            payload = json.loads(response.read().decode('utf-8', errors='ignore'))
-        current = ((payload.get('current_condition') or [{}])[0]) if isinstance(payload, dict) else {}
-        return {
-            'text': ((current.get('weatherDesc') or [{}])[0].get('value') or '').strip(),
-            'temperature_c': current.get('temp_C'),
-        }
-    except Exception:
-        return None
-
 
 class Plugin(FaustPlugin):
     def __init__(self):
         self.ctx: PluginContext | None = None
         self.store: DesktopMoodStore | None = None
-        self._weather_refresh_started = False
+        self.registry = REGISTRY
         # SMTC 播放状态边沿检测：只在 非Playing -> Playing 时触发一次
         self._last_smtc_playing: bool | None = None
         self._smtc_rising_edge = False
         # 规则草稿是否有未提交改动
         self._draft_dirty = False
+        # 感知分级：最近一次采集时各级/各源是否开启（写入上下文与面板）
+        self._tier_flags: dict[str, bool] = {
+            tier['id']: bool(tier['default']) for tier in dm_sources.PERCEPTION_TIERS}
+        self._source_flags: dict[str, bool] = {
+            source['id']: bool(source['default']) for source in self.registry.sources}
+        # 感知模块运行态：上一轮字段、各源上次采样时间、模块私有 memory
+        self._last_fields: dict[str, Any] = {}
+        self._source_last_run: dict[str, float] = {}
+        self._sensor_memory: dict[str, Any] = {}
+        self._sensor_status: dict[str, str] = {}
+        # 红色级剪贴板：序号变化才读一次判类型，正文不留存
+        self._clipboard_seq: int | None = None
+        self._clipboard_info: dict[str, Any] | None = None
+        # 规则引擎：for_seconds 的持续计时、上一轮空闲值（判断用户是否刚有输入）
+        self._condition_since: dict[str, float] = {}
+        self._last_idle_value: int | None = None
 
     async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         data_dir = ctx.plugin_data_dir or (ctx.plugin_dir / 'data')
         self.store = DesktopMoodStore(data_dir)
-        await ctx.register_config([
+        config_schema = [
             {"key": "GLOBAL_COOLDOWN_SEC", "type": "int", "label": "全局冷却（秒）", "default": 180},
             {"key": "WEATHER_CITY", "type": "str", "label": "天气城市", "default": 'auto'},
-            {"key": "ENABLE_WINDOW_WATCH", "type": "bool", "label": "窗口监控开关", "default": True},
-            {"key": "ENABLE_IDLE_WATCH", "type": "bool", "label": "空闲检测开关", "default": True},
-            {"key": "ENABLE_HOLIDAY_EGG", "type": "bool", "label": "节日彩蛋开关", "default": True},
-            {"key": "ENABLE_SMTC_WATCH", "type": "bool", "label": "媒体监控开关", "default": True},
-        ])
+            {"key": "CODE_WATCH_DIR", "type": "str", "label": "编码活动监视目录（git 仓库）", "default": ''},
+            {"key": "EMOTION_FALLBACK", "type": "str", "label": "emotion 动作兜底情绪名", "default": 'neutral'},
+        ]
+        for tier in dm_sources.PERCEPTION_TIERS:
+            config_schema.append({
+                "key": dm_sources.TIER_CONFIG_KEY.format(tier['id'].upper()),
+                "type": "bool",
+                "label": f"感知分级：{tier['label']}",
+                "default": tier['default'],
+            })
+        for source in self.registry.sources:
+            config_schema.append({
+                "key": source['key'],
+                "type": "bool",
+                "label": f"感知源：{source['label']}（{source['tier']}）",
+                "default": source['default'],
+            })
+        await ctx.register_config(config_schema)
         await ctx.vfs_write(
             "/plugins/desktop-mood.md",
             "# Desktop Mood\n\n"
-            "Desktop Mood 会持续把桌面环境写入 faustbot://plugins/desktop-context.json。\n"
-            "其中 window_title / window_process 是当前活动窗口标题与所属进程（如游戏 exe），可用来感知用户在做什么。\n"
-            "当你想根据用户环境主动提醒、播报、关心用户时，请先读取这个上下文文件。\n"
+            "Desktop Mood 持续把桌面环境写入 faustbot://plugins/desktop-context.json，字段分三级感知：\n"
+            "green（本机元数据：负载/电量/窗口进程/全屏/应用停留/鼠标/进程增减/显卡/网络/显示器/麦克风/手柄/USB…）、\n"
+            "yellow（文本与联网：窗口标题/媒体曲名/未保存文档/桌面文件名/天气/外部订阅上报）、\n"
+            "red（屏幕内容：目前只有剪贴板类型判定，默认关闭）。\n"
+            "context 里的 perception 块标明当前开着的分级与被关闭的源；被关闭的源字段不会出现，依赖它的规则不会触发。\n"
+            "context 里还有叙事类字段：narrative（一句话场景摘要）、recent_events（最近场景变化）、\n"
+            "away_digest（用户离开期间发生的事）、attention/activity_level（心流/碎片、平静/激烈）、rhythm_today（今日节律）。\n"
+            "天级节律档案见 faustbot://plugins/desktop-mood/rhythm.md。\n"
+            "想根据用户环境主动提醒、播报、关心用户时，先读 desktop-context.json；判断「用户现在忙不忙」用 attention 与\n"
+            "context.disturbed（免打扰闸门：全屏/会议/锁屏/用户静音阀）。\n"
             "规则（自动触发动作）的编辑入口见 faustbot://plugins/desktop-mood/rules.md"
             "，改规则必须走「编辑 rules.json 草稿 → 读/写 reload 节点提交」。\n",
-            description="Desktop Mood 插件说明：桌面上下文节点与规则编辑入口",
+            description="Desktop Mood 插件说明：桌面上下文节点、感知分级与规则编辑入口",
         )
         await self._install_rule_nodes(ctx)
 
@@ -368,6 +573,9 @@ class Plugin(FaustPlugin):
         snapshot = self.store.snapshot() if self.store is not None else {}
         rules = snapshot.get('rules', []) or []
         ids = [str(rule.get('id') or '?') for rule in rules]
+        off = [sid for sid, on in (self._source_flags or {}).items() if not on]
+        disabled = ', '.join(off) if off else '无'
+        tiers = ', '.join(f"{tid}={'on' if on else 'off'}" for tid, on in (self._tier_flags or {}).items())
         return '\n'.join([
             '# Desktop Mood 规则编辑',
             '',
@@ -385,6 +593,23 @@ class Plugin(FaustPlugin):
             f'4. write("faustbot://{RULES_RELOAD_PATH.lstrip("/")}", "apply") 与 read 等价，写入内容被忽略。',
             '',
             f'当前生效规则: {len(rules)} 条 ({", ".join(ids) if ids else "无"})',
+            f'感知分级: {tiers or "未采集"}；被关闭的感知源: {disabled}',
+            '  依赖被关闭字段的条件（如窗口标题、媒体、天气、剪贴板、麦克风、显示器）永远不会命中——',
+            '  写规则前先看 desktop-context.json 里字段是否真的存在，或让用户在面板「感知引擎」里打开对应分级。',
+            '',
+            '可用字段（部分）: idle_seconds, cpu, memory, battery.percent, hour, window_title, window_process.name,',
+            '  window_fullscreen, app_session.seconds, context_switches_5min, mouse.velocity_px_s, mouse.jitter,',
+            '  unsaved_docs, window_dynamic, gpu.temp_c, process_events.started, desktop_new_files,',
+            '  display_status, mic.in_use, network.type, network.ssid, gamepad_connected, usb_devices.added,',
+            '  smtc.title, locked, display_count, weather.text, calendar.work_hours, external.<source>.<field>,',
+            '  narrative, recent_events, away_digest.items, attention, activity_level, rhythm_today.focus_minutes。',
+            '通用条件: field_over / field_under / field_eq / field_contains / field_in / field_changed（field 支持',
+            '  battery.percent、app_session.seconds 这类点号路径），可加 for_seconds（持续 N 秒才触发）、',
+            '  probability（0~1）、when_not_disturbed（免打扰时不触发）。',
+            '动作 kind: motion / speech / nimble / event-trigger / emotion（emotion 直接改桌宠表情，如',
+            '  {"kind":"emotion","action":{"emotion":"happy","intensity":0.7}}）。',
+            '免打扰闸门: 全屏、麦克风占用、会议软件前台、锁屏、用户静音阀时，speech/nimble/emotion 默认不发；',
+            '  需要强行放行就加 action.bypass_disturb=true。规则连续被无视会自动拉长冷却（面板「规则质量」可见）。',
             '',
             '详细 schema、条件类型、动作类型与示例见 skill://desktop-mood-rules/SKILL.md。',
             '磁盘文件 ~/.faustbot/desktop-mood.rules.json 由提交动作写入，不要直接改它。',
@@ -411,9 +636,9 @@ class Plugin(FaustPlugin):
             condition = rule.get('condition')
             if not isinstance(condition, dict):
                 return None, f'{where} ({rule_id}): 缺少 condition 对象'
-            ctype = condition.get('type')
-            if ctype not in CONDITION_TYPES:
-                return None, f'{where} ({rule_id}): condition.type 非法: {ctype!r}（支持: {", ".join(CONDITION_TYPES)}）'
+            condition_error = dm_conditions.validate(condition)
+            if condition_error is not None:
+                return None, f'{where} ({rule_id}): {condition_error}'
             action = rule.get('action')
             if not isinstance(action, dict):
                 return None, f'{where} ({rule_id}): 缺少 action 对象'
@@ -423,6 +648,10 @@ class Plugin(FaustPlugin):
                 return None, f'{where} ({rule_id}): kind=speech 需要 action.speech'
             if kind == 'nimble' and not str(action.get('note') or '').strip():
                 return None, f'{where} ({rule_id}): kind=nimble 需要 action.note'
+            if kind == 'emotion' and not str(action.get('emotion') or '').strip():
+                return None, f'{where} ({rule_id}): kind=emotion 需要 action.emotion（如 happy/sad/angry/surprised）'
+            if kind == 'event-trigger' and not str(action.get('event_name') or '').strip():
+                return None, f'{where} ({rule_id}): kind=event-trigger 需要 action.event_name'
         return list(data), None
 
     async def _commit_draft(self) -> str:
@@ -487,97 +716,340 @@ class Plugin(FaustPlugin):
     def register_prompt_suffix(self) -> list[str]:
         return [
             "\n[Desktop Mood 情景感知]\n"
-            "桌面环境实时快照在 faustbot://plugins/desktop-context.json( 包含天气,前台窗口标题/进程,播放的媒体 等有用信息)，使用指南在 faustbot://plugins/desktop-mood.md。"
+            "桌面环境实时快照在 faustbot://plugins/desktop-context.json，使用指南在 faustbot://plugins/desktop-mood.md。"
             "在用户主动发起对话时，你应该(SHOULD)读取这些内容。\n"
+            "快照里有：窗口/进程/全屏、应用停留与切换频率、鼠标节奏、未保存文档、进程增减、显卡、显示器与电源、"
+            "麦克风占用、网络/SSID、耳机与手柄、USB 外设、媒体播放、天气、外部上报，以及叙事层 "
+            "narrative（一句话场景摘要）、recent_events（最近变化）、away_digest（你不在时发生的事）、"
+            "attention/activity_level（心流/碎片、平静/激烈）、rhythm_today（今日节律，档案见 "
+            "faustbot://plugins/desktop-mood/rhythm.md）。\n"
+            "判断「现在能不能打扰用户」看 context.disturbed 与 disturb_reasons（全屏/会议/锁屏/静音阀）；"
+            "被关闭的感知源字段不会出现（perception.disabled_sources 列出），不要臆测，也不要把规则建在它们上面。\n"
             "当用户要求新增/修改/关闭桌面自动规则时：edit faustbot://plugins/desktop-mood/rules.json 草稿，"
-            "再 read faustbot://plugins/desktop-mood/reload 提交生效；规则 schema 与工作流见 "
-            "skill://desktop-mood-rules/SKILL.md 或 faustbot://plugins/desktop-mood/rules.md。\n"
+            "再 read faustbot://plugins/desktop-mood/reload 提交生效；规则支持通用字段条件"
+            "（field_over/field_under/field_contains/field_changed + for_seconds/probability/when_not_disturbed）"
+            "与 emotion 动作；schema 与工作流见 skill://desktop-mood-rules/SKILL.md"
+            " 或 faustbot://plugins/desktop-mood/rules.md。\n"
         ]
 
-    async def _maybe_refresh_weather(self) -> None:
-        if self.store is None or self.ctx is None:
-            return
-        state = self.store.snapshot()
-        if _now() - int(state.get('weather_updated_at') or 0) < 600:
-            return
-        city = str(await self.ctx.get_config('WEATHER_CITY', 'auto') or 'auto')
-        weather = _fetch_weather(city)
-        self.store.set_weather(weather)
+    async def _perception_flags(self) -> tuple[dict[str, bool], dict[str, bool]]:
+        """返回 (分级开关, 感知源开关)；源开启 = 所属分级开启 且 该源开关开启。"""
+        if self.ctx is None:
+            tiers = {tier['id']: bool(tier['default']) for tier in dm_sources.PERCEPTION_TIERS}
+            sources = {source['id']: bool(source['default']) for source in self.registry.sources}
+        else:
+            tiers = {}
+            for tier in dm_sources.PERCEPTION_TIERS:
+                tiers[tier['id']] = bool(await self.ctx.get_config(
+                    dm_sources.TIER_CONFIG_KEY.format(tier['id'].upper()), tier['default']))
+            sources = {}
+            for source in self.registry.sources:
+                own = bool(await self.ctx.get_config(source['key'], source['default']))
+                sources[source['id']] = own and tiers.get(source['tier'], False)
+        self._tier_flags = tiers
+        self._source_flags = sources
+        return tiers, sources
 
-    async def collect_context(self) -> dict[str, Any]:
-        if self.store is not None:
-            await self._maybe_refresh_weather()
-        cpu = None
-        memory = None
-        battery_percent = None
-        charging = None
-        disk_io = None
-        if psutil is not None:
+    def _due_sources(self, now: float) -> dict[str, bool]:
+        """按每个源的 cadence 判断本轮是否到采样时间。"""
+        due: dict[str, bool] = {}
+        for source in self.registry.sources:
+            last = float(self._source_last_run.get(source['id']) or 0.0)
+            if last and now - last < self.registry.cadence_of(source):
+                due[source['id']] = False
+                continue
+            due[source['id']] = True
+            self._source_last_run[source['id']] = now
+        return due
+
+    async def _collect_base(self, context: dict[str, Any], sources: dict[str, bool],
+                            due: dict[str, bool]) -> None:
+        """基础源（collector 留在本文件）：系统负载/电池/空闲/窗口/节日/媒体/剪贴板。"""
+        def add(source_id: str, field: str, value: Any) -> None:
+            if sources.get(source_id) and due.get(source_id, True):
+                context[field] = value
+
+        if sources.get('system_load') and psutil is not None and due.get('system_load', True):
             try:
-                cpu = float(psutil.cpu_percent(interval=None))
+                context['cpu'] = float(psutil.cpu_percent(interval=None))
             except Exception:
-                cpu = None
+                context['cpu'] = None
             try:
-                memory = float(psutil.virtual_memory().percent)
+                context['memory'] = float(psutil.virtual_memory().percent)
             except Exception:
-                memory = None
+                context['memory'] = None
+            try:
+                disk = psutil.disk_io_counters()
+                if disk is not None:
+                    context['disk_io'] = {'read_bytes': int(disk.read_bytes), 'write_bytes': int(disk.write_bytes)}
+            except Exception:
+                pass
+            try:
+                usage = psutil.disk_usage(str(Path.home().anchor or '/'))
+                context['disk_free'] = {'percent': float(usage.percent), 'free_bytes': int(usage.free)}
+            except Exception:
+                pass
+        if sources.get('battery') and psutil is not None and due.get('battery', True):
+            battery_percent = None
+            charging = None
+            minutes_left = None
             try:
                 battery = psutil.sensors_battery()
                 if battery is not None:
                     battery_percent = float(battery.percent)
                     charging = bool(battery.power_plugged)
+                    if battery.secsleft not in (psutil.POWER_TIME_UNKNOWN, psutil.POWER_TIME_UNLIMITED):
+                        minutes_left = max(0, int(battery.secsleft) // 60)
             except Exception:
                 pass
-            try:
-                disk = psutil.disk_io_counters()
-                if disk is not None:
-                    disk_io = {'read_bytes': int(disk.read_bytes), 'write_bytes': int(disk.write_bytes)}
-            except Exception:
-                pass
-        idle = _windows_idle_seconds() if self.ctx is None or bool(await self.ctx.get_config('ENABLE_IDLE_WATCH', True)) else None
-        window_title = ''
-        window_process = None
-        if self.ctx is None or bool(await self.ctx.get_config('ENABLE_WINDOW_WATCH', True)):
-            window_title = _foreground_window_title()
-            window_process = _foreground_window_process()
-        weather = self.store.snapshot().get('weather') if self.store is not None else None
-        holiday = _holiday_name() if self.ctx is not None and bool(await self.ctx.get_config('ENABLE_HOLIDAY_EGG', True)) else None
-        smtc = None
-        if self.ctx is not None and bool(await self.ctx.get_config('ENABLE_SMTC_WATCH', True)):
+            context['battery'] = {'percent': battery_percent, 'charging': charging, 'minutes_left': minutes_left}
+        if sources.get('idle') and due.get('idle', True):
+            context['idle_seconds'] = _windows_idle_seconds()
+        if sources.get('window_process') and due.get('window_process', True):
+            context['window_process'] = _foreground_window_process()
+        if sources.get('window_title') and due.get('window_title', True):
+            context['window_title'] = _foreground_window_title()
+        if sources.get('holiday') and due.get('holiday', True):
+            context['holiday'] = _holiday_name()
+        if sources.get('smtc') and due.get('smtc', True):
+            smtc = None
             try:
                 smtc = await _read_smtc_now()
             except Exception:
                 smtc = None
-        return {
-            'cpu': cpu,
-            'memory': memory,
-            'battery': {'percent': battery_percent, 'charging': charging},
-            'disk_io': disk_io,
-            'idle_seconds': idle,
-            'window_title': window_title,
-            'window_process': window_process,
-            'weather': weather,
+            context['smtc'] = smtc
+        if sources.get('clipboard') and due.get('clipboard', True):
+            try:
+                context['clipboard'] = await self._collect_clipboard()
+            except Exception as exc:  # noqa: BLE001
+                log.warning('剪贴板类型判定失败: %s', exc)
+                self._sensor_status['clipboard'] = f'判定失败: {exc}'
+        del add
+
+    async def collect_context(self) -> dict[str, Any]:
+        tiers, sources = await self._perception_flags()
+        now = time.time()
+        due = self._due_sources(now)
+        context: dict[str, Any] = {
             'hour': time.localtime().tm_hour,
             'manual_mood': self.store.snapshot().get('manual_mood') if self.store is not None else 'auto',
-            'holiday': holiday,
-            'smtc': smtc,
+            'perception': {
+                'tiers': dict(tiers),
+                'disabled_sources': [sid for sid, enabled in sources.items() if not enabled],
+            },
         }
+        status: dict[str, str] = {}
+        await self._collect_base(context, sources, due)
+
+        sctx = dm_api.SensorContext(
+            now=now,
+            observed=self._last_fields,
+            context=context,
+            memory=self._sensor_memory,
+            external=context.get('external') or {},
+            store=self.store,
+            enabled=lambda source_id: bool(sources.get(source_id)),
+            log=log,
+            get_config=self.ctx.get_config if self.ctx is not None else None,
+            due=lambda source_id: bool(due.get(source_id, True)) and bool(sources.get(source_id)),
+        )
+        for module in SENSOR_MODULES:
+            module_sources = [source for source in self.registry.sources
+                              if any(source['id'] == item['id'] for item in getattr(module, 'SOURCES', ()))]
+            if not any(sources.get(source['id']) and due.get(source['id'], True) for source in module_sources):
+                continue
+            try:
+                result = await module.collect(sctx)
+            except Exception as exc:  # noqa: BLE001  模块整体失败也要显式记录
+                log.warning('%s 采集失败: %s', module.__name__, exc)
+                for source in module_sources:
+                    status[source['id']] = f'模块采集失败: {exc}'
+                continue
+            for field_name, value in result.fields.items():
+                if self._field_source_enabled(field_name, sources, due):
+                    context[field_name] = value
+            status.update(result.status)
+
+        # cadence 未到或本轮未采的源：沿用上一轮的值，避免条件在两次采样之间抖动
+        for source in self.registry.sources:
+            if not sources.get(source['id']):
+                continue
+            for field_name in self.registry.fields_of(source):
+                if field_name not in context and field_name in self._last_fields:
+                    context[field_name] = self._last_fields[field_name]
+
+        # quiet_until 必须在算 disturbed 之前写入，否则静音阀当轮不生效
+        context['quiet_until'] = self.store.get_quiet_until() if self.store is not None else 0
+        context['disturb_reasons'] = self._disturb_reasons(context)
+        context['disturbed'] = bool(context['disturb_reasons'])
+        self._sensor_status = status
+        self._last_fields = {key: value for key, value in context.items()
+                             if not key.startswith('_') and key not in ('perception', 'disturb_reasons')}
+        return context
+
+    def _field_source_enabled(self, field_name: str, sources: dict[str, bool],
+                              due: dict[str, bool]) -> bool:
+        for source in self.registry.sources:
+            if field_name in self.registry.fields_of(source):
+                return bool(sources.get(source['id'])) and bool(due.get(source['id'], True))
+        return True
+
+    def _disturb_reasons(self, context: dict[str, Any]) -> list[str]:
+        reasons: list[str] = []
+        if context.get('window_fullscreen'):
+            reasons.append('全屏中')
+        if (context.get('mic') or {}).get('in_use'):
+            reasons.append('麦克风占用（会议/语音）')
+        if context.get('locked'):
+            reasons.append('屏幕已锁定')
+        process_name = str((context.get('window_process') or {}).get('name') or '').lower()
+        if process_name in MEETING_PROCESS_HINTS:
+            reasons.append(f'会议软件前台（{process_name}）')
+        quiet_until = int(context.get('quiet_until') or 0)
+        if quiet_until > _now():
+            reasons.append('用户开了静音阀')
+        return reasons
+
+    async def _collect_clipboard(self) -> dict[str, Any] | None:
+        """红色级：按剪贴板序号变化读一次判类型；正文用后即弃，不落任何存储。"""
+        seq = _clipboard_sequence()
+        if seq is None:
+            return self._clipboard_info
+        if seq == self._clipboard_seq and self._clipboard_info is not None:
+            return self._clipboard_info
+        if self._clipboard_info is not None and _now() - int(self._clipboard_info.get('changed_at') or 0) < CLIPBOARD_CHANGE_DEBOUNCE_SEC:
+            # 节流：不更新序号，等下一轮心跳再判，避免高频复制时反复起进程
+            return self._clipboard_info
+        formats = _clipboard_formats()
+        self._clipboard_seq = seq
+        info: dict[str, Any] = {'changed_at': _now()}
+        if CF_DIB in formats:
+            info['kind'] = 'image'
+        elif CF_HDROP in formats:
+            info['kind'] = 'files'
+        elif CF_UNICODETEXT in formats:
+            text = await _read_clipboard_text()  # 只此一次，用于判类型
+            info['kind'] = classify_clipboard_text(text)
+            info['length'] = len(text)
+            del text
+        else:
+            info['kind'] = 'empty'
+        self._clipboard_info = info
+        return info
+
+    async def perception_report(self) -> dict[str, Any]:
+        """面板数据视图：分级/源的开关状态 + 各源最近一次采集到的字段值 + 时间线/质量/闸门。"""
+        tiers, sources = await self._perception_flags()
+        snapshot = self.store.snapshot() if self.store is not None else {}
+        observed = snapshot.get('snapshot') or {}
+        sources_payload = []
+        for source in self.registry.sources:
+            own = bool(source['default']) if self.ctx is None else bool(
+                await self.ctx.get_config(source['key'], source['default']))
+            sources_payload.append({
+                'id': source['id'],
+                'key': source['key'],
+                'tier': source['tier'],
+                'label': source['label'],
+                'note': source['note'],
+                'cadence': self.registry.cadence_of(source),
+                'enabled': own,
+                'collecting': bool(sources.get(source['id'])),
+                'status': self._sensor_status.get(source['id']),
+                'fields': [
+                    {'field': field, 'label': self.registry.labels.get(field, field),
+                     'value': self.registry.format_field(field, observed)}
+                    for field in self.registry.fields_of(source)
+                ],
+            })
+        quality = []
+        for rule in snapshot.get('rules', []) or []:
+            rule_id = str(rule.get('id') or '')
+            stats = self.store.rule_quality(rule_id) if self.store is not None else {}
+            quality.append({
+                'id': rule_id,
+                'label': rule.get('label') or rule_id,
+                'summary': dm_conditions.describe(rule.get('condition') or {}),
+                'kind': rule.get('kind'),
+                'enabled': bool(rule.get('enabled', True)),
+                'cooldown_sec': int(rule.get('cooldown_sec') or 1800),
+                'effective_cooldown_sec': self._effective_cooldown(rule),
+                'fired': int(stats.get('fired') or 0),
+                'followed': int(stats.get('followed') or 0),
+                'ignored': int(stats.get('ignored') or 0),
+                'ignore_streak': int(stats.get('streak') or 0),
+            })
+        return {
+            'updated_at': int(snapshot.get('snapshot_at') or 0),
+            'tiers': [
+                {'id': tier['id'], 'label': tier['label'], 'note': tier['note'],
+                 'enabled': bool(tiers.get(tier['id']))}
+                for tier in dm_sources.PERCEPTION_TIERS
+            ],
+            'sources': sources_payload,
+            'narrative': observed.get('narrative'),
+            'recent_events': observed.get('recent_events') or [],
+            'away_digest': observed.get('away_digest'),
+            'rhythm_today': observed.get('rhythm_today'),
+            'attention': observed.get('attention'),
+            'activity_level': observed.get('activity_level'),
+            'disturbed': bool(observed.get('disturbed')),
+            'disturb_reasons': observed.get('disturb_reasons') or [],
+            'quiet_until': int(snapshot.get('quiet_until') or 0),
+            'quality': quality,
+        }
+
+    def _effective_cooldown(self, rule: dict[str, Any]) -> int:
+        """连续被无视的规则自动拉长冷却（最多 8 倍）。"""
+        base = int(rule.get('cooldown_sec') or 1800)
+        if self.store is None:
+            return base
+        streak = int(self.store.rule_quality(str(rule.get('id') or '')).get('streak') or 0)
+        return base * min(ADAPTIVE_COOLDOWN_MAX_MULTIPLIER, max(1, 2 ** min(streak, 3)))
 
     async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
         action = str((payload or {}).get('action') or '').strip().lower()
         if action == 'get_state':
             return {"status": "ok", "state": self.store.snapshot() if self.store is not None else {}}
         if action == 'get_context':
-            return {"status": "ok", "context": await self.collect_context()}
+            # 读上一次心跳的采集结果：面板/浮窗轮询不应该触发整轮感知采集
+            snapshot = self.store.snapshot() if self.store is not None else {}
+            context = snapshot.get('snapshot')
+            if not context:
+                context = await self.collect_context()
+            return {"status": "ok", "context": context}
+        if action == 'get_perception':
+            return {"status": "ok", "perception": await self.perception_report()}
         if action == 'get_rules':
             items = self.store.snapshot().get('rules', []) if self.store is not None else []
             return {"status": "ok", "items": items}
+        if action == 'report':
+            accepted, detail = dm_external.ingest(payload or {}, self.store)
+            if not accepted:
+                return {"status": "error", "detail": detail}
+            return {"status": "ok", "detail": detail}
+        if action == 'quiet':
+            if self.store is None:
+                return {"status": "error", "detail": 'plugin not loaded'}
+            seconds = (payload or {}).get('seconds')
+            if seconds is None:
+                until = 0
+            else:
+                try:
+                    until = _now() + max(0, int(float(seconds)))
+                except (TypeError, ValueError):
+                    return {"status": "error", "detail": 'seconds 必须是数字'}
+            self.store.set_quiet_until(until)
+            return {"status": "ok", "quiet_until": until}
         if action == 'set_rules':
             items = (payload or {}).get('items')
             if self.store is None:
                 return {"status": "error", "detail": 'plugin not loaded'}
             if not isinstance(items, list):
                 return {"status": "error", "detail": 'items must be a list'}
+            error = self._validate_rules(items)[1]
+            if error is not None:
+                return {"status": "error", "detail": error}
             self.store.set_rules(items)
             return {"status": "ok", "items": items}
         if action == 'set_mood':
@@ -590,7 +1062,22 @@ class Plugin(FaustPlugin):
 
     def _render_template(self, template: str, context: dict[str, Any]) -> str:
         battery = (context.get('battery') or {}).get('percent')
-        return str(template or '').format(hour=context.get('hour'), battery=int(battery) if battery is not None else '?')
+        session = context.get('app_session') or {}
+        smtc = context.get('smtc') or {}
+        fields = {
+            'hour': context.get('hour'),
+            'battery': int(battery) if battery is not None else '?',
+            'idle': int(context.get('idle_seconds') or 0),
+            'app': session.get('process') or (context.get('window_process') or {}).get('name') or '?',
+            'window': str(context.get('window_title') or '')[:40],
+            'media': smtc.get('title') or '',
+            'attention': context.get('attention') or '',
+            'rhythm_awake_minutes': (context.get('rhythm_today') or {}).get('awake_minutes') or 0,
+        }
+        try:
+            return str(template or '').format(**fields)
+        except (KeyError, IndexError, ValueError):
+            return str(template or '')
 
     def _show_nimble_note(self, title: str, note: str) -> None:
         import faust_backend.nimble as nimble
@@ -648,6 +1135,20 @@ class Plugin(FaustPlugin):
             title = str(action.get('title') or '桌面提醒')
             note = self._render_template(str(action.get('note') or ''), context)
             self._show_nimble_note(title, note)
+        elif kind == 'emotion':
+            # 感知 → 情绪闭环：直接驱动前端表演层（与 avatar-performance 的 setAvatarEmotion 同一条通路）
+            fallback = 'neutral'
+            if self.ctx is not None:
+                fallback = str(await self.ctx.get_config('EMOTION_FALLBACK', 'neutral') or 'neutral')
+            emotion = str(action.get('emotion') or fallback).strip()
+            if emotion:
+                try:
+                    intensity = float(action.get('intensity') or 0.6)
+                except (TypeError, ValueError):
+                    intensity = 0.6
+                backend2frontend.frontendAvatarCommand(
+                    'AVATAR_EMOTION', {'emotion': emotion, 'intensity': round(max(0.0, min(1.0, intensity)), 4)})
+                log.info('desktop-mood emotion action: %s (%.2f)', emotion, intensity)
         elif kind == 'event-trigger' and self.ctx is not None:
             event_name = str(action.get('event_name') or 'desktop_mood_event')
             summary = self._render_template(str(action.get('summary') or '桌面情景触发。'), context)
@@ -660,18 +1161,46 @@ class Plugin(FaustPlugin):
                     'recall_description': summary,
                     'lifespan': 7200,
                 })
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning('event-trigger 创建失败: %s', exc)
 
-    def _match_rule(self, rule: dict[str, Any], context: dict[str, Any], last_idle_state: str, next_idle_state: str) -> bool:
-        """条件匹配 + 可选 probability 概率门控。
+    def _suppressed_by_disturb(self, rule: dict[str, Any], context: dict[str, Any]) -> bool:
+        """免打扰闸门：全屏/会议/锁屏/静音阀时，打断型动作默认不发。
 
-        condition.probability（0~1）存在时，条件命中后还要过一次概率：
-        probability=0.2 表示命中后只有 20% 概率真正触发。缺省/非法值视为必然触发。
+        规则可用 action.bypass_disturb=true 强行放行，或用 condition.when_not_disturbed 只在安静时触发。
         """
-        if not self._match_condition(rule, context, last_idle_state, next_idle_state):
+        if not context.get('disturbed'):
             return False
-        probability = (rule.get('condition') or {}).get('probability')
+        if bool((rule.get('action') or {}).get('bypass_disturb')):
+            return False
+        return str(rule.get('kind') or '') in ('speech', 'nimble', 'emotion')
+
+    def _match_rule(self, rule: dict[str, Any], context: dict[str, Any], edges: dict[str, Any]) -> bool:
+        """条件匹配 + for_seconds 持续门控 + probability 概率门控。"""
+        condition = rule.get('condition') or {}
+        rule_id = str(rule.get('id') or '')
+        if condition.get('when_not_disturbed') and context.get('disturbed'):
+            return False
+        hit = dm_conditions.evaluate(condition, context, edges)
+        for_seconds = condition.get('for_seconds')
+        if for_seconds:
+            try:
+                window = max(0, int(float(for_seconds)))
+            except (TypeError, ValueError):
+                window = 0
+            if window > 0:
+                since = self._condition_since.get(rule_id)
+                if not hit:
+                    self._condition_since.pop(rule_id, None)
+                    return False
+                if since is None:
+                    self._condition_since[rule_id] = time.time()
+                    return False
+                return time.time() - since >= window
+        self._condition_since.pop(rule_id, None)
+        if not hit:
+            return False
+        probability = condition.get('probability')
         if probability is None:
             return True
         try:
@@ -680,67 +1209,96 @@ class Plugin(FaustPlugin):
             return True
         return random.random() < max(0.0, min(1.0, p))
 
-    def _match_condition(self, rule: dict[str, Any], context: dict[str, Any], last_idle_state: str, next_idle_state: str) -> bool:
-        condition = rule.get('condition') or {}
-        ctype = str(condition.get('type') or '')
-        if ctype == 'idle_over':
-            return int(context.get('idle_seconds') or 0) >= int(condition.get('seconds') or 0)
-        if ctype == 'return_active':
-            return last_idle_state == 'idle' and next_idle_state == 'active'
-        if ctype == 'cpu_over':
-            cpu = context.get('cpu')
-            return cpu is not None and float(cpu) >= float(condition.get('value') or 0)
-        if ctype == 'memory_over':
-            memory = context.get('memory')
-            return memory is not None and float(memory) >= float(condition.get('value') or 0)
-        if ctype == 'battery_under':
-            battery = (context.get('battery') or {}).get('percent')
-            charging = (context.get('battery') or {}).get('charging')
-            return battery is not None and float(battery) <= float(condition.get('value') or 0) and not bool(charging)
-        if ctype == 'hour_range':
-            hour = int(context.get('hour') or 0)
-            return int(condition.get('start') or 0) <= hour <= int(condition.get('end') or 23)
-        if ctype == 'window_contains':
-            return str(condition.get('value') or '').lower() in str(context.get('window_title') or '').lower()
-        if ctype == 'smtc_playing':
-            # 播放状态边沿：只在 非Playing -> Playing 时触发一次（由 heartbeat 计算 _smtc_rising_edge）
-            return self._smtc_rising_edge
-        return False
-
     async def heartbeat(self, ctx: PluginContext) -> None:
         if self.store is None or self.ctx is None:
             return
         context = await self.collect_context()
-        # SMTC 播放状态边沿检测：状态名判定（数字 status 无法判断播放），
-        # 只在 非Playing -> Playing 变化时置位一次，供 smtc_playing 规则使用
-        smtc = context.get('smtc') or {}
-        playing_now = str(smtc.get('status_name') or '').lower() == 'playing'
-        self._smtc_rising_edge = playing_now and self._last_smtc_playing is False
-        self._last_smtc_playing = playing_now
+        # SMTC 播放状态边沿检测只在心跳里做：collect_context 还会被面板查询调用，
+        # 若在那里消费边沿，轮询会把 smtc_playing 规则的触发机会吃掉。
+        if 'smtc' not in context:
+            self._smtc_rising_edge = False
+            self._last_smtc_playing = None
+        else:
+            playing_now = str((context.get('smtc') or {}).get('status_name') or '').lower() == 'playing'
+            self._smtc_rising_edge = playing_now and self._last_smtc_playing is False
+            self._last_smtc_playing = playing_now
         self.store.update_snapshot(context)
         await self.ctx.vfs_write(
-            '/plugins/desktop-context.json',
+            CONTEXT_NODE_PATH,
             json.dumps(context, ensure_ascii=False, indent=2),
-            description="当前桌面上下文：活动窗口/进程、空闲时长、CPU/内存/电量、天气、媒体播放",
+            description="当前桌面上下文：窗口/进程/全屏、应用停留、鼠标、负载电量、显示器/麦克风/网络、媒体、"
+                        "事件时间线、场景摘要、免打扰状态、感知分级状态",
         )
-        idle_seconds = int(context.get('idle_seconds') or 0)
+        await self._write_rhythm_node(context)
+        idle_seconds = context.get('idle_seconds')
         last_idle_state = self.store.get_last_idle_state()
-        next_idle_state = 'idle' if idle_seconds >= 600 else 'active'
-        self.store.set_last_idle_state(next_idle_state)
+        if idle_seconds is None:
+            # 空闲感知被关闭：保持上一次状态，别用 0 伪造"刚活动"
+            next_idle_state = last_idle_state
+        else:
+            next_idle_state = 'idle' if int(idle_seconds) >= 600 else 'active'
+            if next_idle_state != last_idle_state:
+                self.store.set_last_idle_state(next_idle_state)
+            # 用户刚有输入 → 记一笔，用于"触发后有没有被理会"的反馈结算
+            if self._last_idle_value is not None and int(idle_seconds) + 2 < self._last_idle_value:
+                self.store.note_activity(_now())
+        self._last_idle_value = None if idle_seconds is None else int(idle_seconds)
+        feedback = self.store.close_feedback(_now())
+        if feedback is not None:
+            log.info('desktop-mood 触发反馈: %s followed=%s streak=%s',
+                     feedback['rule_id'], feedback['followed'], feedback['streak'])
+
+        edges = {'idle_prev': last_idle_state, 'idle_next': next_idle_state,
+                 'smtc_playing': self._smtc_rising_edge}
         global_cooldown = int(await self.ctx.get_config('GLOBAL_COOLDOWN_SEC', 180) or 180)
         rules = self.store.snapshot().get('rules', [])
         for rule in rules:
             if not bool(rule.get('enabled', True)):
                 continue
             rule_id = str(rule.get('id') or '')
-            cooldown = int(rule.get('cooldown_sec') or 1800)
-            if not self.store.can_fire(rule_id, cooldown, global_cooldown):
+            if not self.store.can_fire(rule_id, self._effective_cooldown(rule), global_cooldown):
                 continue
-            if not self._match_rule(rule, context, last_idle_state, next_idle_state):
+            if not self._match_rule(rule, context, edges):
+                continue
+            if self._suppressed_by_disturb(rule, context):
+                log.info('desktop-mood 规则 %s 命中但被免打扰闸门拦住: %s',
+                         rule_id, '、'.join(context.get('disturb_reasons') or []))
                 continue
             await self._execute_rule(rule, context)
             self.store.touch_rule_fire(rule_id)
+            self.store.record_rule_fire(rule_id, _now())
             break
+
+    async def _write_rhythm_node(self, context: dict[str, Any]) -> None:
+        """把天级节律档案写成 agent 可读的 markdown（感知 → 记忆的通道）。"""
+        if self.ctx is None or self.store is None:
+            return
+        today = context.get('rhythm_today') or {}
+        archive = self.store.get_kv('timeline.rhythm', {})
+        if not isinstance(archive, dict) or not archive:
+            return
+        lines = ['# Desktop Mood 节律档案', '',
+                 '| 日期 | 清醒 | 首次活动 | 最后活动 | 专注 | 游戏 | 离开 | 窗口切换 |',
+                 '|---|---|---|---|---|---|---|---|']
+        for day in sorted(archive.keys())[-7:]:
+            entry = archive.get(day) or {}
+            lines.append('| {} | {} 分钟 | {} | {} | {} 分钟 | {} 分钟 | {} 次 | {} 次 |'.format(
+                day,
+                int(float(entry.get('awake_minutes') or 0)),
+                entry.get('awake_first') or '-',
+                entry.get('awake_last') or '-',
+                int(float(entry.get('focus_minutes') or 0)),
+                int(float(entry.get('game_minutes') or 0)),
+                int(entry.get('leaves') or 0),
+                int(entry.get('switches') or 0),
+            ))
+        if today:
+            lines += ['', f"今日注意力状态：{context.get('attention') or '未知'}；活动强度：{context.get('activity_level') or '未知'}。"]
+        try:
+            await self.ctx.vfs_write(RHYTHM_NODE_PATH, '\n'.join(lines) + '\n',
+                                     description="最近 7 天的节律档案（清醒/专注/游戏/离开次数）")
+        except Exception as exc:  # noqa: BLE001
+            log.warning('节律档案写入失败: %s', exc)
 
     def health_check(self) -> dict | None:
         snapshot = self.store.snapshot() if self.store else {}

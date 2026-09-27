@@ -9,7 +9,8 @@
 | `faustbot://plugins/desktop-mood/rules.json` | 草稿（可写） | 当前规则草稿。`write`/`edit` **只改草稿，不生效、不落盘** |
 | `faustbot://plugins/desktop-mood/reload` | 提交（读/写皆可） | **`read` 一次**即提交草稿；`write` 效果相同，写入内容被忽略 |
 | `faustbot://plugins/desktop-mood/rules.md` | 指南（只读） | 本工作流摘要 + 当前生效规则清单 |
-| `faustbot://plugins/desktop-context.json` | 快照（只读） | 实时桌面环境（窗口/进程/空闲/电量/媒体/天气），写规则前先读它确认信号是否存在 |
+| `faustbot://plugins/desktop-context.json` | 快照（只读） | 实时桌面环境（窗口/进程/全屏、应用停留、鼠标、负载电量、显示器/麦克风/网络/手柄/USB、媒体、天气、事件时间线、场景摘要、免打扰状态），写规则前先读它确认信号是否存在 |
+| `faustbot://plugins/desktop-mood/rhythm.md` | 档案（只读） | 最近 7 天的节律（清醒/专注/游戏/离开次数），用于"作息"类关心 |
 
 ```mermaid
 flowchart LR
@@ -60,11 +61,24 @@ flowchart LR
 | `label` | | 展示名，前端面板可见 |
 | `enabled` | | 默认 `true`；`false` 时规则保留但不触发（停用规则首选这种做法） |
 | `cooldown_sec` | | 该规则两次触发的最小间隔，默认 `1800`。**这是控制触发频率的主要手段** |
-| `kind` | ✅ | `motion` / `speech` / `nimble` / `event-trigger` |
+| `kind` | ✅ | `motion` / `speech` / `nimble` / `event-trigger` / `emotion` |
 | `condition` | ✅ | 触发条件，见下表 |
 | `action` | ✅ | 动作，随 `kind` 变化 |
 
 ### condition.type
+
+通用原语（`field` 支持点号路径，如 `battery.percent`、`app_session.seconds`、`rhythm_today.focus_minutes`）：
+
+| type | 参数 | 命中条件 |
+|---|---|---|
+| `field_over` | `field`, `value` | 字段值 ≥ value |
+| `field_under` | `field`, `value` | 字段值 ≤ value |
+| `field_eq` | `field`, `value` | 字段值等于 value（布尔/数字/字符串皆可） |
+| `field_contains` | `field`, `value` | 字段（字符串/数组/对象）里包含 value，大小写不敏感 |
+| `field_in` | `field`, `values` | 字段值 ∈ values 数组 |
+| `field_changed` | `field` | 字段值相对上一轮发生变化（边沿） |
+
+专用类型（保留兼容）：
 
 | type | 参数 | 命中条件 |
 |---|---|---|
@@ -77,7 +91,13 @@ flowchart LR
 | `window_contains` | `value` | 前台窗口标题包含 value（大小写不敏感） |
 | `smtc_playing` | — | 系统媒体**开始播放**的上升沿 |
 
-任意 condition 还可附加 `"probability": 0.2`：条件命中后再过一道概率（0~1），用于降低频繁环境的打扰。
+任意 condition 还可附加通用修饰：
+
+| 修饰 | 说明 |
+|---|---|
+| `probability` | 0~1，条件命中后再过一道概率（降低频繁环境的打扰） |
+| `for_seconds` | 条件需**连续满足** N 秒才触发（例：`field_over app_session.seconds 5400` + `for_seconds:60`） |
+| `when_not_disturbed` | 免打扰时（全屏/会议/锁屏/静音阀）不触发 |
 
 ### action（按 kind）
 
@@ -87,14 +107,20 @@ flowchart LR
 | `speech` | `speech`（必填） | 直接说这句话 |
 | `nimble` | `note`（必填）、`title` | 弹出便签窗口 |
 | `event-trigger` | `event_name`、`summary` | 创建一个 event 触发器唤醒你自己（payload 含当时的 context 与 rule） |
+| `emotion` | `emotion`（必填）、`intensity`（0~1，默认 0.6） | 切桌宠情绪（驱动表演层，如 `happy`/`sad`/`angry`/`surprised`；可用名以当前模型能力为准） |
 
-`speech` / `note` / `summary` 支持模板占位：`{hour}`（当前小时）、`{battery}`（电量百分比）。
+打断型动作（`speech` / `nimble` / `emotion`）在免打扰时默认不发；确需强行放行就给 action 加 `"bypass_disturb": true`。
+
+`speech` / `note` / `summary` 支持模板占位：`{hour}`、`{battery}`、`{idle}`、`{app}`、`{window}`、`{media}`、`{attention}`、`{rhythm_awake_minutes}`。
 
 ## 引擎行为（写规则时要考虑的）
 
 - 心跳（heartbeat）里按数组顺序遍历规则，**只执行第一条**命中且冷却已过的规则，然后本轮结束。
 - 除每条规则的 `cooldown_sec` 外，还有全局冷却 `GLOBAL_COOLDOWN_SEC`（默认 180 秒）限制任意规则触发频率。
 - 规则数组顺序 = 优先级，把更重要的规则放前面。
+- **感知分级**：context 里的字段来自桌面感知源，用户可在设置面板「感知引擎」页按 green（本机元数据）/ yellow（文本与联网）/ red（屏幕内容）分级开关，也能单独关某个源。
+  被关闭的源字段不会出现在 `desktop-context.json`，`perception.disabled_sources` 会列出它们；**依赖这些字段的条件永远不会命中**（例如黄色级关掉后 `window_contains`、`smtc_playing` 失效）。
+  写规则前先 `read("faustbot://plugins/desktop-context.json")` 确认目标字段真的存在；字段缺失时应提示用户去打开对应分级，而不是反复重写规则。
 
 ## 示例
 
@@ -116,6 +142,62 @@ flowchart LR
 
 ```json
 {"id": "night_owl", "label": "深夜活动提醒", "enabled": false, "cooldown_sec": 1800, "kind": "speech", "condition": {"type": "hour_range", "start": 2, "end": 5}, "action": {"speech": "凌晨 {hour} 点了，还不睡吗。"}}
+```
+
+连着写了 90 分钟就提醒休息（用 `for_seconds` 避免刚打开就触发；`when_not_disturbed` 保证不在全屏/会议里打断）：
+
+```json
+{
+  "id": "long_session_break",
+  "label": "久坐提醒",
+  "enabled": true,
+  "cooldown_sec": 3600,
+  "kind": "speech",
+  "condition": {"type": "field_over", "field": "app_session.seconds", "value": 5400, "for_seconds": 120, "when_not_disturbed": true},
+  "action": {"speech": "你已经连续在 {app} 上待了很久，起来动一动吧。"}
+}
+```
+
+心流时把表情调成专注开心（感知 → 情绪闭环，不打断用户）：
+
+```json
+{
+  "id": "focus_emotion",
+  "label": "心流表情",
+  "enabled": true,
+  "cooldown_sec": 1800,
+  "kind": "emotion",
+  "condition": {"type": "field_eq", "field": "attention", "value": "focused"},
+  "action": {"emotion": "happy", "intensity": 0.5}
+}
+```
+
+开麦发言时别插嘴（等会议结束再说，靠麦克风占用与免打扰闸门）：
+
+```json
+{
+  "id": "meeting_quiet",
+  "label": "会议中静音",
+  "enabled": true,
+  "cooldown_sec": 900,
+  "kind": "speech",
+  "condition": {"type": "field_eq", "field": "mic.in_use", "value": false, "for_seconds": 60, "when_not_disturbed": true},
+  "action": {"speech": "会开完了？辛苦了。"}
+}
+```
+
+回来了汇报"你不在时发生了什么"（`away_digest` 由引擎在用户回来时填充）：
+
+```json
+{
+  "id": "away_report",
+  "label": "离开归来汇报",
+  "enabled": true,
+  "cooldown_sec": 3600,
+  "kind": "event-trigger",
+  "condition": {"type": "return_active"},
+  "action": {"event_name": "desktop_mood_away", "summary": "用户刚回来，离开期间事件见 context.away_digest，可据此关心。"}
+}
 ```
 
 ## 红线
