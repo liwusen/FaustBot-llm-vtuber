@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import shutil
 import asyncio
 
 from langchain.tools import tool
@@ -30,6 +31,7 @@ async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "")
     **language="shell":**
     - Use for: listing directories, checking file existence, running installed
       programs, getting system info, git commands.
+    - Interpreter is picked in order: zsh, bash, sh, pwsh, powershell, cmd.
  ·
     - Security: commands are checked by the security module before execution.
       Dangerous operations (rm -rf, format, etc.) will be rejected.
@@ -122,11 +124,68 @@ async def _terminate_proc(proc) -> None:
         pass
 
 
+_SHELL_CANDIDATES = ("zsh", "bash", "sh", "pwsh", "powershell", "cmd")
+# cmd 用 /c，PowerShell 系列用 -NoProfile -Command，其余 POSIX Shell 用 -c
+_SHELL_FLAGS = {
+    "pwsh": ("-NoProfile", "-Command"),
+    "powershell": ("-NoProfile", "-Command"),
+    "cmd": ("/c",),
+}
+
+_shell_argv: tuple[str, ...] | None = None
+_shell_resolved = False
+_shell_lock = asyncio.Lock()
+
+
+async def _shell_works(argv: tuple[str, ...]) -> bool:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, "exit 0",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    try:
+        return await asyncio.wait_for(proc.wait(), timeout=10) == 0
+    except asyncio.TimeoutError:
+        await _terminate_proc(proc)
+        return False
+
+
+async def _resolve_shell_argv() -> tuple[str, ...] | None:
+    """按 zsh→bash→sh→pwsh→powershell→cmd 顺序返回首个可用 Shell 的调用前缀。
+
+    仅靠 shutil.which 不够：Windows 上 PATH 里的 bash/pwsh 可能是应用执行别名
+    （WindowsApps 下的转发桩），实际不可用；因此逐个探测能否真正执行。
+    """
+    global _shell_argv, _shell_resolved
+    async with _shell_lock:
+        if _shell_resolved:
+            return _shell_argv
+        for name in _SHELL_CANDIDATES:
+            exe = shutil.which(name)
+            if not exe:
+                continue
+            argv = (exe, *_SHELL_FLAGS.get(name, ("-c",)))
+            if not await _shell_works(argv):
+                log.warning("shell 探测失败，跳过该候选: %s", exe)
+                continue
+            log.info("shell 解释器: %s", exe)
+            _shell_argv = argv
+            break
+        _shell_resolved = True
+        return _shell_argv
+
+
 async def _run_shell_no_check(command: str, timeout: int, cwd: str) -> str:
     work_dir = _resolve_cwd(cwd)
+    argv = await _resolve_shell_argv()
+    if argv is None:
+        return "找不到命令解释器"
     try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
+        proc = await asyncio.create_subprocess_exec(
+            *argv, command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=work_dir,
