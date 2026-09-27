@@ -35,7 +35,7 @@ SOURCES = (
      'cadence': 30, 'label': 'USB 设备', 'note': 'USB 设备增减（手机/存储/外设）', 'group': 'input', 'attach_weight': 40,
      'fields': ('usb_devices',)},
     {'id': 'peripheral_battery', 'key': 'ENABLE_PERIPHERAL_BATTERY', 'tier': 'green', 'default': True,
-     'cadence': 300, 'label': '外设电量', 'note': '蓝牙外设电量（键盘/鼠标/耳机）',
+     'cadence': 300, 'label': '外设电量', 'note': '蓝牙外设电量（GATT 电池服务 0x180F；设备未连接时是最近一次上报的缓存值）',
      'group': 'input', 'attach_weight': 30, 'fields': ('peripherals',)},
 )
 
@@ -49,7 +49,8 @@ DISPLAY_STATUS_MAP = {0: 'unknown', 1: 'off', 2: 'on', 3: 'dimmed'}
 MIC_CONSENT_PATH = r'SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
 USB_INTERFACE_SELECTOR = 'System.Devices.InterfaceClassGuid:="{A5DCBF10-6530-11D2-901F-00C04FB951ED}"'
 WPD_SELECTOR = 'System.Devices.InterfaceClassGuid:="{6AC27878-A6FA-4155-BA85-F98F491D4F33}"'
-BLUETOOTH_SELECTOR = 'System.Devices.Aep.ProtocolId:="{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}"'
+BATTERY_LEVEL_UUID = '00002a19-0000-1000-8000-00805f9b34fb'   # GATT Battery Level characteristic
+BATTERY_PERCENT_MAX = 100
 HEADPHONE_HINTS = ('headphone', 'headset', 'earbud', 'earphone', 'airpod', 'buds', '耳机', '蓝牙',
                    'bluetooth', 'hands-free', 'wh-', 'wf-')
 FILETIME_EPOCH_1970 = 116444736000000000  # 1970-01-01 的 FILETIME 表示
@@ -310,30 +311,90 @@ async def _collect_usb(sctx: SensorContext) -> dict[str, Any]:
     return {'usb_devices': summary}
 
 
-async def _collect_peripheral_battery(sctx: SensorContext) -> tuple[dict[str, Any], str | None]:
-    from winsdk.windows.devices.enumeration import DeviceInformation
+def summarize_battery_readings(readings: list[tuple[str, int]],
+                               failures: list[tuple[str, str]]) -> tuple[dict[str, Any], str | None]:
+    """把 (设备名, 电量) 与 (设备名, 失败原因) 汇总成 peripherals 字段 + 状态说明（纯函数，便于单测）。
+
+    - 电量必须是 0–100：GATT 返回的是 uint8，超出范围的当成不是百分比，宁可报缺也不报假值；
+    - 同名设备只留一条（同一外设可能同时暴露多个电池服务条目）；
+    - 只要有一部分设备读不到，就在状态里点名，不静默当成"全部正常"。
+    """
     found: list[dict[str, Any]] = []
-    try:
-        devices = await DeviceInformation.find_all_async(
-            BLUETOOTH_SELECTOR, ['System.Devices.BatteryLife', 'System.Devices.Aep.DeviceAddress'])
-    except Exception as exc:  # noqa: BLE001
-        return {}, f'蓝牙设备枚举失败: {exc}'
-    for device in devices:
+    seen: set[str] = set()
+    for name, level in readings:
+        label = str(name or '').strip() or '未知设备'
         try:
-            properties = device.properties or {}
-            raw = properties.get('System.Devices.BatteryLife')
-        except Exception:
-            continue
-        if raw in (None, ''):
-            continue
-        try:
-            percent = int(raw) if not isinstance(raw, (bytes, bytearray)) else int(raw[0])
+            percent = int(level)
         except (TypeError, ValueError):
             continue
-        found.append({'name': str(device.name or '未知设备'), 'percent': max(0, min(100, percent))})
-    if not found:
-        return {}, '未从蓝牙设备读到最后一次上报的电量'
-    return {'peripherals': found}, None
+        if label in seen or not 0 <= percent <= BATTERY_PERCENT_MAX:
+            continue
+        seen.add(label)
+        found.append({'name': label, 'percent': percent})
+    found.sort(key=lambda item: item['name'])
+    detail = '、'.join(f'{str(name or "").strip() or "未知设备"}（{reason}）' for name, reason in failures[:4])
+    if found and failures:
+        return {'peripherals': found}, f'部分外设读不到电量: {detail}'
+    if found:
+        return {'peripherals': found}, None
+    if failures:
+        return {}, f'蓝牙外设电量读取失败: {detail}'
+    return {}, '未找到提供 GATT 电池服务的蓝牙外设（未配对，或该设备不上报电量）'
+
+
+async def _collect_peripheral_battery(sctx: SensorContext) -> tuple[dict[str, Any], str | None]:
+    """蓝牙外设电量：走 GATT 电池服务（service 0x180F / characteristic 0x2A19）。
+
+    实测（Windows 11 + winsdk）：
+    - 蓝牙 AEP 属性里没有电量（`System.Devices.BatteryLife` / `System.Devices.Battery.Level`
+      都不是合法属性键，请求它们会让 DeviceInformation.find_all_async 直接抛 0x80070490）；
+    - AEP 协议 selector（ProtocolId:{e0cbf06c…}/{BB7BB05E…}）在本机返回 0 个设备；
+    - 只有 GATT 电池服务能拿到电量，且设备未连接时返回的是上一次上报的缓存值。
+    所以这里按 0x180F 选择器枚举服务，逐设备读 0x2A19。
+    """
+    from winsdk.windows.devices.enumeration import DeviceInformation
+    from winsdk.windows.devices.bluetooth.genericattributeprofile import GattDeviceService, GattServiceUuids
+    from winsdk.windows.storage.streams import DataReader
+
+    readings: list[tuple[str, int]] = []
+    failures: list[tuple[str, str]] = []
+    try:
+        selector = GattDeviceService.get_device_selector_from_uuid(GattServiceUuids.battery)
+        entries = list(await DeviceInformation.find_all_async(selector, []))
+    except Exception as exc:  # noqa: BLE001
+        return {}, f'蓝牙电池服务枚举失败: {exc}'
+    for entry in entries:
+        name = str(entry.name or '').strip()
+        try:
+            service = await GattDeviceService.from_id_async(entry.id)
+            if service is None:
+                failures.append((name, '服务不可用'))
+                continue
+            characteristics = await service.get_characteristics_async()
+            if int(characteristics.status) != 0:
+                failures.append((name, f'特征枚举状态 {characteristics.status}'))
+                continue
+            level: int | None = None
+            for characteristic in list(characteristics.characteristics or []):
+                if str(characteristic.uuid).lower() != BATTERY_LEVEL_UUID:
+                    continue
+                read = await characteristic.read_value_async()
+                if int(read.status) != 0:
+                    failures.append((name, f'读取状态 {read.status}'))
+                    break
+                value = read.value
+                if value is None or int(value.length) <= 0:
+                    failures.append((name, '读不到电量值'))
+                    break
+                level = int(DataReader.from_buffer(value).read_byte())
+                break
+            else:
+                failures.append((name, '该设备没有电量特征'))
+            if level is not None:
+                readings.append((name, level))
+        except Exception as exc:  # noqa: BLE001 单个设备失败不影响其它外设
+            failures.append((name, str(exc)))
+    return summarize_battery_readings(readings, failures)
 
 
 async def collect(sctx: SensorContext) -> SensorResult:

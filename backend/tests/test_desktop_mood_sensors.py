@@ -15,6 +15,7 @@ if str(PLUGIN_DIR) not in sys.path:
 
 import dm_conditions  # noqa: E402
 import dm_external  # noqa: E402
+import dm_sensors_b  # noqa: E402
 import dm_sources  # noqa: E402
 import dm_timeline  # noqa: E402
 
@@ -262,6 +263,51 @@ async def test_report_event_triggers_timeline_event(tmp_path):
     await plugin.heartbeat(plugin.ctx)
     events = plugin.store.snapshot()['snapshot'].get('recent_events') or []
     assert any('锁屏' in str(event.get('text')) for event in events) or events == []
+
+
+def test_summarize_battery_readings_keeps_valid_and_flags_partial():
+    fields, note = dm_sensors_b.summarize_battery_readings(
+        [('MX Master 2S', 20), ('MX Anywhere 2S', 90)], [])
+    assert fields == {'peripherals': [{'name': 'MX Anywhere 2S', 'percent': 90},
+                                      {'name': 'MX Master 2S', 'percent': 20}]}
+    assert note is None
+
+    fields, note = dm_sensors_b.summarize_battery_readings(
+        [('MX Master 2S', 20)], [('Professor 1', '读取状态 1')])
+    assert fields == {'peripherals': [{'name': 'MX Master 2S', 'percent': 20}]}
+    assert note is not None and 'Professor 1' in note
+
+
+def test_summarize_battery_readings_rejects_bogus_percent():
+    """GATT 返回的是 uint8：>100 说明不是百分比，不许当成 100% 报出去。"""
+    fields, note = dm_sensors_b.summarize_battery_readings(
+        [('怪设备', 255), ('正常鼠标', 42), ('重复鼠标', 7), ('正常鼠标', 99)], [])
+    assert fields == {'peripherals': [{'name': '正常鼠标', 'percent': 42},
+                                     {'name': '重复鼠标', 'percent': 7}]}
+    assert note is None
+
+    fields, note = dm_sensors_b.summarize_battery_readings([], [('耳机', '读不到电量值')])
+    assert fields == {} and note is not None and '耳机' in note
+
+    fields, note = dm_sensors_b.summarize_battery_readings([], [])
+    assert fields == {} and note is not None and '未找到' in note
+
+
+@pytest.mark.asyncio
+async def test_peripheral_battery_reports_real_readings(tmp_path, monkeypatch):
+    """真实 winsdk 路径：GATT 电池服务能读到本机已配对蓝牙外设的电量。"""
+    pm, plugin = await _plugin(tmp_path)
+    context = await plugin.collect_context()
+    peripherals = context.get('peripherals')
+    if peripherals is None:
+        # 没有带 GATT 电池服务的设备时也必须给出原因，而不是静默没有字段
+        assert plugin._sensor_status.get('peripheral_battery')
+        pytest.skip(f'本机没有可读电量的蓝牙外设: {plugin._sensor_status.get("peripheral_battery")}')
+    assert isinstance(peripherals, list) and peripherals
+    for item in peripherals:
+        assert 0 <= int(item['percent']) <= 100
+        assert str(item['name']).strip()
+    assert dm_sensors_b._fmt_peripherals(peripherals)
 
 
 async def _plugin(tmp_path):
