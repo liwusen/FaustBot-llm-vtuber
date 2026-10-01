@@ -43,15 +43,22 @@ __all__ = [
     "ProcessorLease",
     "PruneReport",
     "get_processor_manager",
+    "invoke_processor",
+    "processor_status",
 ]
 
 _LAZY_MANAGER_NAMES = frozenset(
-    {"ProcessorManager", "ProcessorHandle", "ProcessorLease", "PruneReport", "get_processor_manager"}
+    {"ProcessorManager", "ProcessorHandle", "ProcessorLease", "PruneReport", "get_processor_manager",
+     "invoke_processor", "processor_status"}
 )
 
 
 def __getattr__(name: str):
     if name in _LAZY_MANAGER_NAMES:
+        if name in ("invoke_processor", "processor_status"):
+            from . import plugin_api
+
+            return getattr(plugin_api, name)
         from . import manager
 
         return getattr(manager, name)

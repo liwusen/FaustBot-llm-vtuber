@@ -6,10 +6,12 @@
     ".runtime",
     ".nodejs",
     "frontend",
-    "backend/tts-hub", "**/.*"
+    "backend/tts-hub", "**/.*",
+    "backend/faust_backend/vendor"
   ],
-  "venvPath": ".",
-  "venv": ".runtime",
+  "extraPaths": ["backend/faust_backend/vendor"],
+  "venvPath": ".runtime",
+  "venv": ".",
   "pythonVersion": "3.11",
   "typeCheckingMode": "off",
   "useLibraryCodeForTypes": true,

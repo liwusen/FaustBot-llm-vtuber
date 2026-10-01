@@ -140,6 +140,28 @@ class AgileContext:
     async def lcritical(self,msg:str):
         await self.alm.log(self.agile_name,"CRITICAL",msg,extra={})
 
+    async def processor(self,name:str,data:Any,*,config:Optional[dict]=None,
+                        timeout:Optional[float]=None,wait_timeout:Optional[float]=None)->Any:
+        """调用 Processor（跑在受管子进程里的重计算：VAD / OCR / OMNIJEV）。
+
+        一次调用 = 借出 → 等就绪 → invoke → 归还，引用计数不会泄漏。interval hook 跑在模块
+        自己的 loop 线程里，这里内部会切回 backend 主循环，所以直接 await 即可。
+
+        - ``config``：Processor 配置（如 OCR 的 ``{"langs":[...],"gpu":True}``、OMNIJEV 的
+          ``{"size":"4B","quant":"4bit"}``）。已有人持有且配置不一致时会抛
+          ``ProcessorConfigMismatchError``，不要硬塞不同配置。
+        - ``wait_timeout=None``：一直等到就绪。**首次调用可能触发 setup（模型下载/量化，分钟级）**，
+          要给上限就传秒数。
+        - ``timeout``：单次 invoke 的超时（缺省用 Processor 自己的 INVOKE_TIMEOUT）。
+
+        各 Processor 的入参/出参与成本见 ``skill://agile-engine/processor.md``。
+        """
+        return await self.ctx.processor_invoke(name,data,config=config,timeout=timeout,wait_timeout=wait_timeout)
+
+    async def processor_status(self,name:str)->dict:
+        """某个 Processor 的状态快照（state / refcount / last_error / config），排查用。"""
+        return await self.ctx.processor_status(name)
+
 class AgileModule:
     def __init__(self,name,description:str,version:str="1.0.0"):
         self.name:str = name

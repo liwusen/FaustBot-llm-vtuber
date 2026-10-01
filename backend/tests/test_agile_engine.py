@@ -868,3 +868,45 @@ async def test_module_status_lists_vfs_nodes_with_description(agile_env):
     assert "VFS 节点 (2)  定时任务: 0" in status_lines
     assert "- /desc/documented — 规则草稿（编辑后提交生效）" in status_lines
     assert "- /desc/plain" in status_lines
+
+
+@pytest.mark.asyncio
+async def test_module_calls_processor(agile_env):
+    """模块用 ``agile.processor(...)`` 调 Processor：参数透传、返回值直达，另有 processor_status。
+
+    这里用替身记录调用（真实 Processor 需要子进程 + 模型，属于集成测试）；
+    Agile 模块的调用最终落到 PluginContext.processor_invoke，链路见
+    tests/test_processor_manager.py::test_plugin_bridge_acquires_waits_and_releases。
+    """
+    calls: list[tuple] = []
+
+    async def _invoke(name, data, *, config=None, timeout=None, wait_timeout=None):
+        calls.append((name, data, config, timeout, wait_timeout))
+        return {"answers": {"ok": {"noul": 0.9}}}
+
+    def _status(name):
+        return {"name": name, "state": "ACTIVE"}
+
+    agile_env["ctx"].config["processor_invoke"] = _invoke
+    agile_env["ctx"].config["processor_status"] = _status
+
+    _write_module(agile_env["mods_dir"], "vision", '''
+from agile_base import AgileModule, AgileContext
+
+module = AgileModule("vision", "调用 Processor 的模块")
+
+@module.vfsContentFunc("/vision/judge", cacheStrategy="nocache")
+async def judge(_path, agile: AgileContext):
+    out = await agile.processor("OMNIJEV", {"frames": ["x.png"], "questions": {"ok": {"type": "noul", "instructions": "有弹窗吗"}}},
+                                config={"size": "4B", "quant": "4bit"}, timeout=7)
+    status = await agile.processor_status("OMNIJEV")
+    return "%s/%s" % (out["answers"]["ok"]["noul"], status["state"])
+
+def get_agile_module():
+    return module
+''')
+    assert (await runner.load_module("vision"))["ok"] is True
+    assert await agile_env["vfs"].read_text("/vision/judge") == "0.9/ACTIVE"
+    assert calls == [("OMNIJEV",
+                      {"frames": ["x.png"], "questions": {"ok": {"type": "noul", "instructions": "有弹窗吗"}}},
+                      {"size": "4B", "quant": "4bit"}, 7, None)]

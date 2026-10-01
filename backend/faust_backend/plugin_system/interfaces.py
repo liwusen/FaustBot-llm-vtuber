@@ -74,6 +74,33 @@ class PluginContext:
             return await res
         return res
 
+    async def processor_invoke(self, name: str, data: Any, *, config: dict[str, Any] | None = None,
+                               timeout: float | None = None,
+                               wait_timeout: float | None = None) -> Any:
+        """调用 Processor（跑在受管子进程里的重计算）：借出 → 等就绪 → invoke → 归还。
+
+        可从任意线程/事件循环调用（内部切回 backend 主循环）。``wait_timeout=None`` 表示
+        一直等到就绪——首次使用可能触发模型下载/量化，耗时以分钟计。
+        已有其它持有者且 ``config`` 不一致时抛 ``ProcessorConfigMismatchError``（不会偷偷重启）。
+        """
+        fn = self.config.get("processor_invoke")
+        if not callable(fn):
+            raise RuntimeError("processor_invoke is not available")
+        res = fn(name, data, config=config, timeout=timeout, wait_timeout=wait_timeout)
+        if inspect.isawaitable(res):
+            return await res
+        return res
+
+    async def processor_status(self, name: str) -> dict[str, Any]:
+        """某个 Processor 的状态快照（state / refcount / last_error / config）。"""
+        fn = self.config.get("processor_status")
+        if not callable(fn):
+            raise RuntimeError("processor_status is not available")
+        res = fn(name)
+        if inspect.isawaitable(res):
+            return await res
+        return res
+
     async def get_config(self, key: str, default: Any = None) -> Any:
         fn = self.config.get("plugin_config_get")
         if not callable(fn):

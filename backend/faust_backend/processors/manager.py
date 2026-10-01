@@ -11,7 +11,7 @@ import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import psutil
 
@@ -59,6 +59,20 @@ def _swallow(future: "asyncio.Future[Any]") -> None:
     """丢弃无人 await 的 future 异常，避免 "exception was never retrieved" 噪音。"""
     if not future.cancelled():
         future.exception()
+
+
+def _main_loop_hint() -> asyncio.AbstractEventLoop | None:
+    """backend 主事件循环（未启动或已关闭 → None）。
+
+    仅作**兜底归属**：worker 若绑在临时循环上（Agile 模块卸载即关的 interval loop），
+    停止/回收时要跨已关闭的循环，收不到应答就会挂住。
+    """
+    try:
+        from faust_backend.backend2front import get_main_loop
+    except Exception:  # noqa: BLE001 - 前端桥不可用时退回"首次调用者"策略
+        return None
+    loop = get_main_loop()
+    return loop if loop is not None and not loop.is_closed() else None
 
 
 class _InvokeJob:
@@ -139,9 +153,11 @@ class ProcessorLease:
 class ProcessorHandle:
     """某个 Processor 的运行时状态对象（按名字单例，归 ProcessorManager 所有）。"""
 
-    def __init__(self, name: str, entry: RegisteredProcessor) -> None:
+    def __init__(self, name: str, entry: RegisteredProcessor,
+                 manager: "ProcessorManager | None" = None) -> None:
         self.name = str(name)
         self.entry = entry
+        self._manager = manager        # 用于把跨循环的调用切回 worker 所在循环（见 _on_own_loop）
         self.state = STATE_STOPPED
         self.phase: str | None = None
         self.last_error: str | None = None
@@ -234,6 +250,36 @@ class ProcessorHandle:
             "last_invoke_seconds": self.last_invoke_seconds,
         }
 
+    # ── 事件循环归属 ──────────────────────────────────────
+
+    async def _on_own_loop(self, factory: Callable[[], Awaitable[Any]]) -> Any:
+        """在 worker 控制通道所属的事件循环上执行 ``factory()``。
+
+        worker 的 asyncio 流、reader/pump/start 任务都绑在启动它的那个循环上：从别的循环
+        （插件自己的 loop、Agile 模块的 interval 线程）直接 await 会撞
+        "attached to a different loop"。``ProcessorManager.bind_loop()`` 登记该循环后
+        这里自动切回去。
+
+        尚未登记时优先用 backend 主循环（``_main_loop_hint``），只有主循环也没有（单测、
+        独立脚本）才退化成"首次调用者所在循环为归属"。
+        """
+        manager = self._manager
+        loop = manager.bound_loop() if manager is not None else None
+        if loop is None:
+            hint = _main_loop_hint()
+            if hint is None:
+                if manager is not None:
+                    manager.bind_loop()
+                return await factory()
+            # worker 绝不能绑在临时 loop 上（Agile 模块卸载即关的 interval loop）：
+            # 那种情况下停止/回收要跨已关闭的循环，收不到应答会挂住。
+            if manager is not None:
+                manager.bind_loop(hint)
+            loop = hint
+        if loop is asyncio.get_running_loop():
+            return await factory()
+        return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(factory(), loop))
+
     async def get_log(self, level: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         """读日志缓冲，最新在前；``level`` 表示最低等级（如 ``"ERROR"``）。"""
         threshold = _LEVEL_NO.get(str(level).upper(), 0) if level else 0
@@ -294,7 +340,13 @@ class ProcessorHandle:
         self._notify()
 
     async def wait_until_ready(self, timeout: float | None = None) -> None:
-        """等 ACTIVE。启动失败/崩溃 → ``ProcessorStartError``；超时 → ``ProcessorTimeoutError``。"""
+        """等 ACTIVE。启动失败/崩溃 → ``ProcessorStartError``；超时 → ``ProcessorTimeoutError``。
+
+        可从任意线程/事件循环调用（自动切回 worker 所在循环，见 ``_on_own_loop``）。
+        """
+        return await self._on_own_loop(lambda: self._wait_until_ready_local(timeout))
+
+    async def _wait_until_ready_local(self, timeout: float | None = None) -> None:
         loop = asyncio.get_running_loop()
         deadline = None if timeout is None else loop.time() + float(timeout)
         while True:
@@ -640,7 +692,13 @@ class ProcessorHandle:
     # ── invoke ────────────────────────────────────────────
 
     async def invoke(self, data: Any, *, timeout: float | None = None) -> Any:
-        """FIFO 串行调用；非 ACTIVE 立即抛 ``ProcessorNotReadyError``。"""
+        """FIFO 串行调用；非 ACTIVE 立即抛 ``ProcessorNotReadyError``。
+
+        可从任意线程/事件循环调用（自动切回 worker 所在循环，见 ``_on_own_loop``）。
+        """
+        return await self._on_own_loop(lambda: self._invoke_local(data, timeout=timeout))
+
+    async def _invoke_local(self, data: Any, *, timeout: float | None = None) -> Any:
         if self.state != STATE_ACTIVE:
             raise ProcessorNotReadyError(f"{self.name} 当前状态 {self.state}，不能 invoke")
         loop = asyncio.get_running_loop()
@@ -711,7 +769,12 @@ class ProcessorHandle:
 
         config 规则（规格 §10）：ACTIVE 且无人引用时 config 变化 → 先停再按新
         config 重启；仍有其它引用时 config 不一致 → 明确报错，不偷偷重启。
+
+        可从任意线程/事件循环调用（自动切回 worker 所在循环，见 ``_on_own_loop``）。
         """
+        return await self._on_own_loop(lambda: self._acquire_lease_local(lease))
+
+    async def _acquire_lease_local(self, lease: ProcessorLease) -> None:
         if self.state == STATE_STOPPING and self._stop_task is not None and not self._stop_task.done():
             await asyncio.shield(self._stop_task)   # 等上一轮停止收尾，避免启动/停止交叉
         desired = dict(lease.config)
@@ -743,7 +806,13 @@ class ProcessorHandle:
     # ── 停止 ──────────────────────────────────────────────
 
     async def stop(self, *, reason: str = "manual") -> None:
-        """停止 worker（等 StopOp → terminate → kill）。幂等。"""
+        """停止 worker（等 StopOp → terminate → kill）。幂等。
+
+        可从任意线程/事件循环调用（自动切回 worker 所在循环，见 ``_on_own_loop``）。
+        """
+        return await self._on_own_loop(lambda: self._stop_local(reason=reason))
+
+    async def _stop_local(self, *, reason: str = "manual") -> None:
         if self.state == STATE_STOPPED and self._proc is None:
             return
         if self._stop_task is not None and not self._stop_task.done():
@@ -889,13 +958,27 @@ class ProcessorManager:
 
     def __init__(self) -> None:
         self._handles: dict[str, ProcessorHandle] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        """登记 worker 控制通道所在的事件循环（backend 启动时调用；未登记时首次调用者胜出）。
+
+        登记之后，从别的循环/线程调用 lease 的 acquire/wait/invoke/stop 会自动切回该循环
+        （见 ``ProcessorHandle._on_own_loop``），插件与 Agile 模块因此可以放心地在自己的
+        事件循环里调用 Processor。
+        """
+        self._loop = loop or asyncio.get_running_loop()
+
+    def bound_loop(self) -> asyncio.AbstractEventLoop | None:
+        """已登记的事件循环（未登记为 None）。"""
+        return self._loop
 
     def handle(self, name: str) -> ProcessorHandle:
         """取 handle（按需创建）。名字未注册抛 ``ProcessorNotFoundError``。"""
         entry = get_processor(name)
         handle = self._handles.get(entry.name)
         if handle is None:
-            handle = ProcessorHandle(entry.name, entry)
+            handle = ProcessorHandle(entry.name, entry, self)
             self._handles[entry.name] = handle
         return handle
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .ocr import OcrProcessor
+from .omnijev import OmnijevProcessor
 from .vad import VadProcessor
 
-__all__ = ["OcrProcessor", "VadProcessor"]
+__all__ = ["OcrProcessor", "OmnijevProcessor", "VadProcessor"]

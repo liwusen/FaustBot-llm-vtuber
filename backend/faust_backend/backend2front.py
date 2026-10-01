@@ -17,6 +17,11 @@ def set_main_loop(loop: asyncio.AbstractEventLoop | None) -> None:
     _bridge.set_main_loop(loop)
 
 
+def get_main_loop() -> asyncio.AbstractEventLoop | None:
+    """backend 主事件循环（lifespan 启动时登记；未启动为 None）。"""
+    return _main_loop
+
+
 def FrontEndSay(text):
     _bridge.say(text)
 

@@ -73,6 +73,11 @@ jieba
 pytest>=9.0
 pytest-asyncio>=1.3
 
+# OmniJev Processor（全模态决策模型）：LoRA 适配器加载 + 4bit/8bit 量化
+# torch 不在此列：它由 setup-runtime.bat --torch <variant> 按显卡变体安装
+peft>=0.15
+bitsandbytes>=0.45
+
 # 后端直接 import、此前只靠传递依赖顺带安装（缺一个就启动失败）
 typing_extensions>=4.12
 psutil

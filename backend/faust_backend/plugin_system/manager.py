@@ -15,7 +15,7 @@ from typing import Any
 import pluggy
 
 import faust_backend.trigger_manager as trigger_manager
-from faust_backend.processors import get_processor_manager
+from faust_backend.processors import get_processor_manager, invoke_processor, processor_status
 from faust_backend.tools.vfs import get_faustbot_vfs
 
 from .hooks import CoreHooks, hookimpl
@@ -233,6 +233,11 @@ class PluginManager:
                 "trigger_update": trigger_manager.update_trigger,
                 "trigger_delete": trigger_manager.delete_trigger,
                 "plugin_config_register": lambda schema: self._register_plugin_config_schema(plugin_id, schema),
+                "processor_invoke": lambda name, data, *, config=None, timeout=None,
+                                           wait_timeout=None: invoke_processor(
+                    name, data, requirer=plugin_id, config=config, timeout=timeout,
+                    wait_timeout=wait_timeout),
+                "processor_status": processor_status,
                 "plugin_config_get": lambda key, default=None: self._plugin_config_get(plugin_id, key, default),
                 "plugin_config_set": lambda key, value: self._plugin_config_set(plugin_id, key, value),
                 "plugin_config_list": lambda: self._plugin_config_list(plugin_id),

@@ -1067,3 +1067,85 @@ async def test_wait_until_ready_wakes_when_start_task_finishes(manager_factory):
 
     with pytest.raises(ProcessorStartError):
         await asyncio.wait_for(waiter, 10)
+
+
+# ── 插件 / Agile 模块接入 ───────────────────────────────────
+# Agile 模块的 interval hook 跑在模块自己的 event loop 线程里，Processor 的 worker 控制通道
+# 却绑在 backend 主循环上：跨循环调用必须被切回去，否则会撞 "attached to a different loop"。
+
+
+def _in_fresh_loop(coro_factory):
+    """在全新的事件循环里跑一个协程（模拟 Agile 模块的模块专属 loop）。"""
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro_factory())
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_foreign_loop_invoke_hops_back_to_bound_loop(manager_factory):
+    manager = manager_factory()
+    lease = await manager.startRequire("TEST_ECHO", requirer="agile")
+    await lease.wait_until_ready(timeout=30)
+    manager.bind_loop()                                    # = backend 启动时的登记
+    assert manager.bound_loop() is asyncio.get_running_loop()
+
+    # 从别的循环（另一个线程）调用：内部切回登记循环，结果照常
+    assert await asyncio.to_thread(_in_fresh_loop, lambda: lease.invoke({"n": 7})) == {"echo": {"n": 7}}
+    # 登记循环自己调用仍然直接执行，不受影响
+    assert await lease.invoke({"n": 8}) == {"echo": {"n": 8}}
+    assert manager.handle("TEST_ECHO").state == "ACTIVE"
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_plugin_bridge_acquires_waits_and_releases(manager_factory, monkeypatch):
+    """插件/Agile 的调用入口：借出 → 等就绪 → invoke → 归还（含失败路径）。"""
+    from faust_backend.processors import plugin_api
+    from faust_backend.processors.errors import ProcessorNotFoundError, ProcessorStartError
+
+    manager = manager_factory()
+    monkeypatch.setattr(plugin_api, "get_processor_manager", lambda: manager)
+
+    assert await plugin_api.invoke_processor("TEST_ECHO", {"n": 1}, requirer="plug") == {"echo": {"n": 1}}
+    assert manager.handle("TEST_ECHO").refcount == 0        # 引用已归还，不会泄漏
+
+    with pytest.raises(ProcessorStartError):
+        await plugin_api.invoke_processor("TEST_FAIL_START", {}, requirer="plug")
+    assert manager.handle("TEST_FAIL_START").refcount == 0  # 失败同样归还
+
+    with pytest.raises(ProcessorNotFoundError):
+        await plugin_api.invoke_processor("NOPE", {}, requirer="plug")
+
+    status = plugin_api.processor_status("TEST_ECHO")
+    assert status["name"] == "TEST_ECHO" and "last_error" in status
+
+
+@pytest.mark.asyncio
+async def test_plugin_context_delegates_processor_calls():
+    """PluginContext.processor_invoke 只是把调用转给注入的 callable（并 await 其结果）。"""
+    from pathlib import Path
+
+    from faust_backend.plugin_system.interfaces import PluginContext
+
+    calls: list[tuple] = []
+
+    async def _invoke(name, data, *, config=None, timeout=None, wait_timeout=None):
+        calls.append((name, data, config, timeout, wait_timeout))
+        return {"ok": True}
+
+    def _status(name):
+        return {"name": name, "state": "ACTIVE"}
+
+    ctx = PluginContext(plugin_id="p", plugin_dir=Path("."),
+                        config={"processor_invoke": _invoke, "processor_status": _status})
+    assert await ctx.processor_invoke("OCR", {"image": 1}, config={"gpu": True}, timeout=5) == {"ok": True}
+    assert calls == [("OCR", {"image": 1}, {"gpu": True}, 5, None)]
+    assert await ctx.processor_status("OCR") == {"name": "OCR", "state": "ACTIVE"}
+
+    bare = PluginContext(plugin_id="p", plugin_dir=Path("."), config={})
+    with pytest.raises(RuntimeError, match="processor_invoke is not available"):
+        await bare.processor_invoke("OCR", {})

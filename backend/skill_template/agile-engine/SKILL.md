@@ -68,6 +68,30 @@ faustbot://agile/{name}/log/errors     # 仅 ERROR/CRITICAL
 
 排查错误：先读 `faustbot://agile/{name}/status`（看 last_error），再读 `log/errors`。
 
+## 用 Processor 看画面 / 听声音
+
+模块可以调用三个重计算子进程（独立显存/进程，崩溃不拖垮 Agent）：
+
+```python
+out = await agile.processor("OMNIJEV", {                       # 全模态决策：看图/视频 + 类型化问题 → 校准概率
+    "frames": ["D:/shot.png"],                                 # 也可传 np.uint8[H,W,3|4]（多张=编号面板）
+    "questions": {"ok": {"type": "noul", "instructions": "画面里出现了报错弹窗。"}},
+})
+print(out["answers"]["ok"]["noul"])
+```
+
+| 名字 | 用途 | 首次调用 |
+|---|---|---|
+| `VAD` | 音频帧是否有人声 | 秒级 |
+| `OCR` | 截图取字与位置 | 分钟级（下模型） |
+| `OMNIJEV` | 看图/视频回答带概率的问题（三问型 + 区域框选） | **10–45 分钟**（下载 1.7–8.9GB + 量化） |
+
+```python
+await agile.processor_status("OMNIJEV")    # 排查：state / last_error / refcount
+```
+
+入参出参、config、成本与错误处理见 **`skill://agile-engine/processor.md`**（写之前先读它）。
+
 ## 装饰器用法
 
 ```python

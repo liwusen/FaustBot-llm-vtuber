@@ -665,6 +665,8 @@ async def lifespan(app: FastAPI):
 
     # ── startup ──
     backend2frontend.set_main_loop(asyncio.get_running_loop())
+    # Processor 的 worker 控制通道绑在主循环上：登记后插件/Agile 模块可从自己的循环调用
+    get_processor_manager().bind_loop()
     araya_runtime.get_araya_runtime(refresh=True)
     try:
         from faust_backend.memory import get_memory
