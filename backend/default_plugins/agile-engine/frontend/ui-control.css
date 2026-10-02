@@ -1,0 +1,39 @@
+/* LimitedUI 悬浮提示条（app 窗口的左下角非模态小条）。
+   这份 CSS 也会被注入配置窗口，所以类名带插件前缀，避免污染其它页面。 */
+.agile-ui-hint {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 1400;
+  display: none;
+  max-width: 60vw;
+  padding: 6px 10px;
+  border: 1px solid #f0c36d;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #7a5a12;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* 配置窗口 Agile 页的会话状态行 */
+.agile-ui-session {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.agile-ui-session-idle {
+  color: #64748b;
+}
+.agile-ui-session-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}

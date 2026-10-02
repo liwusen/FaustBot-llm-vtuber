@@ -104,6 +104,29 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 - 模块副作用小,不用了就 `agileOperate(action="disable", name="{name}")` 停用即可;
   需要改逻辑时先 `reload`,修改完再用 `reload` 生效。
 
+### 让 Faust 自己操作窗口：LimitedUI
+
+当用户希望你**替他玩**某个慢节奏游戏/软件,而你有把握看懂画面时,用 `ctx.limited_ui(spec)`:
+抓目标窗口客户区 → 问 OmniJev 下一步做什么 → 注入按键/左键点击。写之前读
+`skill://agile-engine/ui-control.md`(能力边界、字段表、钩子契约、审计节点都在那里)。
+
+**必须知道的四条**:
+
+1. **只适合慢节奏**:每步 ≈1.3s(OmniJev 4B-4bit 单次推理),只适合回合制/卡牌/战棋/模拟经营/对话类;
+   动作游戏、实时操作一律不用。
+2. **仅 Windows**,且**目标窗口必须保持前台**:失焦就会暂停并提示用户点击那个窗口。
+   只有"按单个键"和"左键单击一个区域"两种动作。
+3. **有封号风险**:对在线游戏注入输入可能被判定作弊。**先问用户、建议只用于单机**;
+   每次开会话都会弹批准窗口(试运行/允许操作/拒绝),批准是一次性的、按会话生效。
+4. **护栏不是沙箱**:它限制的是"经由它"的注入(限制对象是 OmniJev 这个小模型),
+   你自己写的模块代码仍然是任意 Python。
+
+**不确定就交给它判**:拿不准时它会**先松手再唤醒你**(`limited_ui::escalate` 事件,带 `batched` 优先级),
+你读 `faustbot://agile/{module}/ops/recent`(最近 200 步)、`ops/summary`(每问把握度/不确定次数)、
+`ops/last_escalation.json`、`ops/frame.jpg` 弄清楚发生了什么,然后写
+`faustbot://agile/{module}/control`: `{"action":"resume"|"stop"|"patch_keys"}`。
+`frame_changed` 长期为 false 说明注入根本没被游戏接受,应该提醒用户而不是继续调参。
+
 ---
 
 ## Trigger 触发器

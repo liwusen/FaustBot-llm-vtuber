@@ -31,6 +31,9 @@ class Plugin(FaustPlugin):
     async def startup(self, ctx: PluginContext) -> None:
         self.ctx = ctx
         runner.configure(ctx)
+        # 导入即对齐进程 DPI 感知（设计 §7.3）：截图/客户区/点击坐标必须都是物理像素，
+        # 且不依赖 pyautogui 的导入顺序。
+        import uidrv  # noqa: F401
         await runner.register_overview_node()
         # 启动时自动加载所有 .py 模块（.disabled 跳过）；单个失败不阻塞启动
         for item in runner.list_modules():
@@ -44,13 +47,18 @@ class Plugin(FaustPlugin):
     def register_frontend(self) -> list[dict]:
         return [
             {"type": "js", "path": "/faust/plugins/agile-engine/frontend/panel.js"},
+            {"type": "js", "path": "/faust/plugins/agile-engine/frontend/app-hook.js"},
+            {"type": "css", "path": "/faust/plugins/agile-engine/frontend/ui-control.css"},
         ]
 
     @hookimpl
     async def communicate_handler(self, payload: dict, ctx: PluginContext) -> dict | None:
-        """Agile 配置面板数据接口（只读状态/日志/存储）。"""
+        """Agile 配置面板数据接口（只读状态/日志/存储）+ LimitedUI 会话信号。"""
         action = str((payload or {}).get("action") or "").strip().lower()
         try:
+            ui = self._limited_ui_action(action, payload or {})
+            if ui is not None:
+                return ui
             if action == "get_modules":
                 items = []
                 for item in runner.list_modules():
@@ -95,6 +103,44 @@ class Plugin(FaustPlugin):
             return {"status": "error", "message": str(exc)}
         return None
 
+    def _limited_ui_action(self, action: str, payload: dict) -> dict | None:
+        """LimitedUI 的前端信号入口（app-hook.js 与配置面板都走这里）。
+
+        - ``ui_session_status``：面板显示"当前会话 / 已操作 N 次 / 已跑 M 分钟"；
+        - ``ui_session_stop``：急停热键、面板 [停止] → 请求松手 + 暂停；
+        - ``ui_blink_ack`` / ``ui_window_bounds`` / ``ui_session_state_ack``：回执。
+        """
+        if not action.startswith("ui_"):
+            return None
+        import uidrv
+        hub = uidrv.hub
+        if action == "ui_session_status":
+            return hub.session_status()
+        if action == "ui_session_stop":
+            name = str(payload.get("name") or "").strip() or None
+            hub.request_stop(name)
+            return {"status": "ok", "message": "已请求停止 UI 操作会话（松手 + 暂停）"}
+        if action == "ui_blink_ack":
+            fid = str(payload.get("feedback_id") or "").strip()
+            if not fid:
+                return {"status": "error", "message": "缺少 feedback_id"}
+            ok = hub.resolve_request(fid, {"ok": bool(payload.get("ok", True))})
+            return {"status": "ok" if ok else "ignored", "message": "" if ok else "未知的 feedback_id"}
+        if action == "ui_window_bounds":
+            req = str(payload.get("req_id") or "").strip()
+            if not req:
+                return {"status": "error", "message": "缺少 req_id"}
+            bounds = {k: payload.get(k) for k in ("x", "y", "width", "height")}
+            ok = hub.resolve_request(req, bounds)
+            return {"status": "ok" if ok else "ignored"}
+        if action == "ui_session_state_ack":
+            req = str(payload.get("req_id") or "").strip()
+            if not req:
+                return {"status": "error", "message": "缺少 req_id"}
+            ok = hub.resolve_request(req, {"active": bool(payload.get("active"))})
+            return {"status": "ok" if ok else "ignored"}
+        return {"status": "error", "message": f"未知的 UI 信号: {action}"}
+
     @hookimpl
     def plugin_loaded(self, ctx: PluginContext) -> None:
         global _PLUGIN
@@ -120,10 +166,15 @@ class Plugin(FaustPlugin):
             """Description:
             管理 Agile 模块（Agent 可编程的轻量扩展模块）。
             Agile 模块 = 放在 ~/.faustbot/agile-modules/ 下 of .py 文件，能力限于
-            VFS 内容/写/编辑节点、定时任务、事件、日志；不能注册工具或修改 Agent 上下文。
+            VFS 内容/写/编辑节点、定时任务、事件、日志、**Processor 调用（VAD/OCR/OMNIJEV）**、
+            **受限 UI 操作（LimitedUI：看窗口画面 → 让 OmniJev 决定按键/点击 → 注入，带 HIL 批准）**；
+            不能注册工具或修改 Agent 上下文。
             模块状态与日志可读 faustbot://agile/status、faustbot://agile/{name}/status、
             faustbot://agile/{name}/log/all、faustbot://agile/{name}/log/errors。
-            编写协议见 skill: agile-engine。
+            UI 操作会话的最近步记录与汇总读 faustbot://agile/{name}/ops/recent 、ops/summary、
+            ops/last_escalation.json、ops/frame.jpg；恢复/停止会话写 faustbot://agile/{name}/control。
+            编写协议见 skill: agile-engine、skill: agile-engine/processor.md、
+            skill: agile-engine/ui-control.md。
             action:
             - list: 列出所有模块文件与加载状态（无需 name）
             - load <name>: 加载模块（已加载则提示用 reload）

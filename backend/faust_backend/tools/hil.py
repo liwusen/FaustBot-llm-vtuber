@@ -9,26 +9,69 @@ import faust_backend.events as events
 import faust_backend.backend2front as backend2frontend
 
 
-async def HILRequest(id, title, summary, timeout_seconds: int = 120, severity: str = "warning"):
+def _norm_button(button: dict) -> dict:
+    """归一化一个自定义按钮：``{value, label, approved, default}``。"""
+    value = str((button or {}).get("value") or "").strip()
+    if not value:
+        raise ValueError("HIL 自定义按钮缺少 value")
+    label = str((button or {}).get("label") or value).strip()
+    approved = (button or {}).get("approved")
+    if approved is None:
+        approved = value == "allow"
+    return {"value": value, "label": label, "approved": bool(approved),
+            "default": bool((button or {}).get("default"))}
+
+
+async def HILPrompt(id, title, summary, *, buttons: list[dict] | None = None,
+                    timeout_seconds: int = 120, severity: str = "warning"):
+    """弹出人工确认窗口并等待选择。
+
+    - ``buttons=None``：前端渲染默认的两个按钮（拒绝 / 批准）；
+    - ``buttons``：前端按给定顺序渲染 ``[{value,label,approved,default}]``，按钮的 ``value`` 会回传。
+
+    Returns: ``(approved: bool, reason: str, choice: str)``；超时为 ``(False, "timeout", "timeout")``。
+    """
     request_id = str(id or f"hil_{uuid.uuid4().hex}")
     future = events.create_hil_request(request_id)
-    backend2frontend.FrontendHIL({
+    payload = {
         "request_id": request_id,
         "title": str(title or "需要人工确认"),
         "summary": str(summary or ""),
         "severity": str(severity or "warning"),
         "timeout_seconds": int(max(5, timeout_seconds)),
-    })
+    }
+    if buttons:
+        payload["buttons"] = [_norm_button(b) for b in buttons]
+    backend2frontend.FrontendHIL(payload)
     try:
         result = await asyncio.wait_for(future, timeout=max(5, int(timeout_seconds)))
     except asyncio.TimeoutError:
         events.cancel_hil_request(request_id, "timeout")
         backend2frontend.FrontEndCloseNimbleWindow({"callback_id": request_id, "reason": "timeout"})
-        return False, "timeout"
+        return False, "timeout", "timeout"
 
-    approved = bool((result or {}).get("approved"))
-    reason = str((result or {}).get("reason") or ("approved" if approved else "rejected"))
+    result = result or {}
+    approved = bool(result.get("approved"))
+    reason = str(result.get("reason") or ("approved" if approved else "rejected"))
+    choice = str(result.get("choice") or ("allow" if approved else "reject"))
+    return approved, reason, choice
+
+
+async def HILRequest(id, title, summary, timeout_seconds: int = 120, severity: str = "warning"):
+    """既有入口：二值批准/拒绝，返回 ``(approved, reason)``。"""
+    approved, reason, _choice = await HILPrompt(
+        id=id, title=title, summary=summary,
+        timeout_seconds=timeout_seconds, severity=severity)
     return approved, reason
+
+
+async def HILChoiceRequest(id, title, summary, buttons: list[dict],
+                           timeout_seconds: int = 120, severity: str = "warning") -> str:
+    """多选入口：返回被点按钮的 ``value``（超时 → ``"timeout"``）。"""
+    _approved, _reason, choice = await HILPrompt(
+        id=id, title=title, summary=summary, buttons=buttons,
+        timeout_seconds=timeout_seconds, severity=severity)
+    return choice
 
 
 @register

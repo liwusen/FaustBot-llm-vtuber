@@ -630,14 +630,34 @@ async def chat_websocket(websocket: WebSocket):
                 pass
         await _stop_forward_task()
 
+async def _watch_frontend_disconnect(websocket: WebSocket) -> None:
+    """只读地等待前端断开；返回即代表连接已死（调用方据此退出命令循环）。"""
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+    except WebSocketDisconnect:
+        return
+    except Exception as e:  # noqa: BLE001 - 任何读取异常都等价于连接不可用
+        log.debug("命令 WebSocket 读取探测结束: %s", e)
+        return
+
+
 @router.websocket("/faust/command")
 async def command_websocket(websocket: WebSocket):
     await websocket.accept()
     backend2frontend.FrontEndSay("Hello World! 你好,世界!")
     nimble.push_persistent_sessions_to_frontend()
+    # 本循环只发不收：前端重启/崩溃时连接不会立刻报错（内核会静默保留 socket），
+    # 旧连接的循环就成了僵尸——继续从队列抢任务、丢进死 socket，新前端永远收不到命令。
+    # 所以额外挂一个只读任务，客户端一走就结束，主循环据此退出。
+    disconnect_watch = asyncio.create_task(_watch_frontend_disconnect(websocket))
     try:
         batch_buffer: list[tuple[float, dict]] = []  # (first_ts, item)
         while True:
+            if disconnect_watch.done():
+                raise WebSocketDisconnect(1006)
             if backend2frontend.hasFrontEndTask():
                 task = await backend2frontend.popFrontEndTask()
                 log.debug("从 backend2frontend 队列发送前端任务: %s", task[:80] if isinstance(task, str) else str(task)[:80])
@@ -784,6 +804,8 @@ async def command_websocket(websocket: WebSocket):
             log.warning("Command WebSocket 报告错误时已断开")
         except RuntimeError as send_error:
             log.warning("Command WebSocket 在错误报告前已关闭: %s", send_error)
+    finally:
+        disconnect_watch.cancel()
 
 
 @router.post("/faust/command/forward")

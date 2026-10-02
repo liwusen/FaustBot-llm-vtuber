@@ -3,10 +3,9 @@ Agile Log Manager
 from faust_backend.plugin_system import PluginContext
 """
 import time
+import threading
 from pydantic import BaseModel, Field
 from faust_backend.logger import get_logger
-from asyncio import Lock
-
 
 
 class LogContent(BaseModel):
@@ -18,7 +17,11 @@ class LogContent(BaseModel):
 
 BUFFER_SIZE = 1000
 logs: list[LogContent] = []
-lock = Lock()
+# 必须是线程锁：日志来自 backend 主事件循环，也来自每个模块自己的 interval 线程/事件循环。
+# 用 asyncio.Lock 时，第二个 loop 会 await 另一个 loop 上的 future，而 release 又发生在第一个
+# loop 的线程里——跨 loop 唤醒会抛 "Non-thread-safe operation"，等待方永远等不到（实测会卡死
+# interval hook）。临界区里没有任何 await，同步锁足够。
+lock = threading.Lock()
 LEVEL_MAP={
     "DEBUG": 10,
     "INFO": 20,
@@ -43,13 +46,13 @@ class AgileLogManager:
             extra = extra
         )
         self.logger.info(log_content.model_dump())
-        async with lock:
+        with lock:
             logs.append(log_content)
             if len(logs) > BUFFER_SIZE:
                 logs.pop(0)
 
     async def getLog(self,agile_from:str=None,level:str=None,start_time:float=None,end_time:float=None):
-        async with lock:
+        with lock:
             filtered_logs = logs
             if agile_from is not None:
                 filtered_logs = [log for log in filtered_logs if log.agile_from == agile_from]

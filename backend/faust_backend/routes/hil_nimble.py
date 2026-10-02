@@ -16,21 +16,26 @@ async def human_in_loop_feedback_post(payload: dict):
     feedback = None
     request_id = None
     reason = None
+    choice = None
     log.debug("HIL feedback payload: %s", payload)
     if isinstance(payload, dict):
         feedback = payload.get('feedback')
         request_id = payload.get('request_id') or payload.get('id')
         reason = payload.get('reason')
+        choice = payload.get('choice')
     if feedback is None:
         return {"error": "no feedback provided"}
     approved = bool(feedback)
     resolved = False
     if request_id:
-        resolved = events.resolve_hil_request(str(request_id), {
+        resolution = {
             "approved": approved,
             "reason": reason or ("approved" if approved else "rejected"),
             "request_id": str(request_id),
-        })
+        }
+        if choice is not None:
+            resolution["choice"] = str(choice)
+        resolved = events.resolve_hil_request(str(request_id), resolution)
         backend2frontend.FrontEndCloseNimbleWindow({"callback_id": str(request_id), "reason": "approved" if approved else "rejected"})
     else:
         if approved:

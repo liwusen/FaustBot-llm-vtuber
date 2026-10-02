@@ -636,6 +636,7 @@ const GLOBAL_SHORTCUTS = [
   { accelerator: 'CommandOrControl+Alt+Up', command: 'SCALE_UP' },
   { accelerator: 'CommandOrControl+Alt+Down', command: 'SCALE_DOWN' },
   { accelerator: 'CommandOrControl+Alt+M', command: 'RANDOM_MOTION' },
+  { accelerator: 'CommandOrControl+Alt+K', command: 'UI_CONTROL_STOP' },
   { accelerator: 'CommandOrControl+Shift+T', command: 'FOCUS_TEXT_CHAT' },
 ];
 
@@ -668,13 +669,13 @@ function registerGlobalShortcuts() {
   }
 }
 
-// --- PTT（按住说话）模式切换 ---
-// PTT_MODE=true 时 Ctrl+Alt+A 从 TOGGLE_ASR 切换为全局钩子长按语义；
-// Electron globalShortcut 没有 keyup 事件，必须用 uiohook-napi。
+// --- PTT（按住说话）的 uiohook 生命周期 ---
+// uiohook 是进程级全局钩子：只服务 PTT，不用了就停。
 const PTT_ACCELERATOR = 'CommandOrControl+Alt+A';
 let pttModeActive = false;   // 主进程当前是否处于 PTT 模式
-let pttHookStarted = false;  // uiohook 是否已注册监听
 let pttKeyHeld = false;      // 本次按住是否已发过 PTT_DOWN（防 auto-repeat 重复发）
+let uiohookListenersBound = false;
+let uiohookRunning = false;
 
 function onPttKeyDown(e) {
   if (!pttModeActive) return;
@@ -692,29 +693,49 @@ function onPttKeyUp(e) {
   sendFaustCommand('PTT_UP');
 }
 
+function bindUiohookListeners() {
+  if (uiohookListenersBound) return;
+  uIOhook.on('keydown', onPttKeyDown);
+  uIOhook.on('keyup', onPttKeyUp);
+  uiohookListenersBound = true;
+}
+
+// 启停由"是否仍有人需要"决定；start/stop 失败必须显式报错，不静默吞
+function syncUiohook() {
+  if (pttModeActive) {
+    bindUiohookListeners();
+    if (!uiohookRunning) {
+      uIOhook.start();
+      uiohookRunning = true;
+    }
+    return true;
+  }
+  if (uiohookRunning) {
+    uIOhook.stop();
+    uiohookRunning = false;
+  }
+  return true;
+}
+
 function enablePttMode() {
   try { globalShortcut.unregister(PTT_ACCELERATOR); } catch (e) {
     console.error('[ptt] unregister TOGGLE_ASR failed', e);
   }
-  if (!pttHookStarted) {
-    try {
-      uIOhook.on('keydown', onPttKeyDown);
-      uIOhook.on('keyup', onPttKeyUp);
-      uIOhook.start();
-      pttHookStarted = true;
-    } catch (e) {
-      // 显式报错并回退为 TOGGLE_ASR，不让麦克风控制静默失效
-      console.error('[ptt] hook start failed, fallback to TOGGLE_ASR', e);
-      try {
-        const ok = globalShortcut.register(PTT_ACCELERATOR, () => sendFaustCommand('TOGGLE_ASR'));
-        if (!ok) console.warn('[ptt] fallback register failed:', PTT_ACCELERATOR);
-      } catch (e2) {
-        console.error('[ptt] fallback register error', e2);
-      }
-      return false;
-    }
-  }
   pttModeActive = true;
+  try {
+    syncUiohook();
+  } catch (e) {
+    // 显式报错并回退为 TOGGLE_ASR，不让麦克风控制静默失效
+    console.error('[ptt] hook start failed, fallback to TOGGLE_ASR', e);
+    pttModeActive = false;
+    try {
+      const ok = globalShortcut.register(PTT_ACCELERATOR, () => sendFaustCommand('TOGGLE_ASR'));
+      if (!ok) console.warn('[ptt] fallback register failed:', PTT_ACCELERATOR);
+    } catch (e2) {
+      console.error('[ptt] fallback register error', e2);
+    }
+    return false;
+  }
   console.info('[ptt] PTT mode enabled (Ctrl+Alt+A = hold to talk)');
   return true;
 }
@@ -722,20 +743,14 @@ function enablePttMode() {
 function disablePttMode() {
   // 切换瞬间若还按着，先补发 PTT_UP 防止渲染端麦克风卡开
   if (pttKeyHeld) { pttKeyHeld = false; sendFaustCommand('PTT_UP'); }
-  if (pttHookStarted) {
-    try { uIOhook.stop(); } catch (e) { console.error('[ptt] hook stop failed', e); }
-    try { uIOhook.removeAllListeners('keydown'); uIOhook.removeAllListeners('keyup'); } catch (e) {
-      console.error('[ptt] hook removeAllListeners failed', e);
-    }
-    pttHookStarted = false;
-  }
+  pttModeActive = false;
+  try { syncUiohook(); } catch (e) { console.error('[ptt] hook stop failed', e); }
   try {
     const ok = globalShortcut.register(PTT_ACCELERATOR, () => sendFaustCommand('TOGGLE_ASR'));
     if (!ok) console.warn('[shortcut] re-register failed:', PTT_ACCELERATOR);
   } catch (e) {
     console.error('[shortcut] re-register error:', PTT_ACCELERATOR, e);
   }
-  pttModeActive = false;
   console.info('[ptt] PTT mode disabled (Ctrl+Alt+A = TOGGLE_ASR)');
   return true;
 }
@@ -840,10 +855,17 @@ function createWindow(){
   });
 
   // 持续置顶：失焦或被压时重申 screen-saver 级别，防全屏窗口下桌宠丢失置顶/焦点。
-  mainWindow.on('blur', () => { ensureTopMost(mainWindow); });
-  setInterval(() => { ensureTopMost(mainWindow); }, 1000);
+  mainWindow.on('blur', () => ensureTopMost(mainWindow));
+  const topMostTimer = setInterval(() => { ensureTopMost(mainWindow); }, 1000);
 
-  mainWindow.on('closed', ()=>{ mainWindow = null });
+  // recreateFrontendMainWindow() 是「先关旧窗 → 再建新窗」，旧窗的 closed 事件可能晚于新窗创建（close 是异步的）。
+  // 若无条件把模块级 mainWindow 置空，新窗就再也收不到 faust-command（转发处判空后静默丢弃）。
+  // 所以只在自己仍是当前 mainWindow 时才清空。
+  const thisWindow = mainWindow;
+  thisWindow.on('closed', () => {
+    if (mainWindow === thisWindow) mainWindow = null;
+    clearInterval(topMostTimer);
+  });
 
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
 }

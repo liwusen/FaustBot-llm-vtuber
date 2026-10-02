@@ -31,8 +31,51 @@
     }).join('');
   }
 
+  let sessionTimer = null;
+
+  function renderSession(sessions){
+    const el = document.getElementById('agile-ui-session');
+    if (!el) return;
+    if (!sessions || !sessions.length) {
+      el.innerHTML = '<span class="agile-ui-session-idle">当前没有 UI 操作会话</span>';
+      return;
+    }
+    el.innerHTML = sessions.map(function(s){
+      const mins = (Math.round((s.elapsed_s || 0) / 6) / 10).toFixed(1);
+      const mode = s.dry_run ? '试运行' : s.state;
+      return '<div class="agile-ui-session-row">'
+        + '<span>当前会话：<b>' + s.module + '</b>（' + mode + '）</span>'
+        + '<span>已操作 ' + (s.injections || 0) + ' 次</span>'
+        + '<span>已跑 ' + mins + ' 分钟</span>'
+        + '<button class="btn btn-ghost" data-agile-ui-stop="' + s.module + '">停止</button>'
+        + '</div>';
+    }).join('');
+    Array.from(el.querySelectorAll('button[data-agile-ui-stop]')).forEach(function(btn){
+      btn.addEventListener('click', function(){
+        communicate({ action: 'ui_session_stop', name: btn.getAttribute('data-agile-ui-stop') })
+          .then(function(){ return refreshSession(); })
+          .catch(function(){});
+      });
+    });
+  }
+
+  async function refreshSession(){
+    try {
+      const data = await communicate({ action: 'ui_session_status' });
+      renderSession(data && data.sessions);
+    } catch (e) {
+      renderSession([]);
+    }
+  }
+
   function renderPage(container){
+    if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
     container.innerHTML = `
+<article class="card full-span">
+  <h3 class="card-title">受限 UI 操作（LimitedUI）</h3>
+  <p class="card-help">模块用 <code>ctx.limited_ui(spec)</code> 开的会话：小模型（OmniJev）看画面决定按键/点击，全程受上限与审计约束。这里只显示会话状态与急停（热键 <b>Ctrl+Alt+K</b> 同效）。</p>
+  <div id="agile-ui-session" class="agile-ui-session"></div>
+</article>
 <article class="card full-span">
   <h3 class="card-title">Agile Module</h3>
   <p class="card-help">只读展示 Agile 模块状态：加载情况、VFS 节点、定时任务、存储键与日志数量。点击模块名查看其最近日志。</p>
@@ -74,6 +117,8 @@
     refresh().catch(function(){
       container.innerHTML = '<article class="card full-span"><h3 class="card-title">Agile Module</h3><p class="card-help">Agile 插件状态读取失败（插件未加载或后端未就绪）</p></article>';
     });
+    refreshSession();
+    sessionTimer = setInterval(function(){ refreshSession(); }, 3000);
   }
 
   api.addPage({ id: 'agile-engine', label: 'Agile 模块', desc: 'Agile 模块状态、存储与日志', plugin: 'agile-engine', render: renderPage });

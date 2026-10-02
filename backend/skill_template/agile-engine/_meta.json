@@ -1,8 +1,8 @@
 {
   "slug": "agile-engine",
   "name": "Agile 模块开发",
-  "version": "1.2.0",
-  "description": "Agent 自建 Agile 模块：轻量 VFS/定时/事件/日志扩展层，能力受限、卸载可逆，写坏不影响 Agent 本体；可调用 Processor（OMNIJEV/OCR/VAD）看画面、取字、听声音",
-  "usage": "当需要为某个持续任务（封装外部 API、轮询端口、维护状态节点、条件报警）编写可热加载的轻量模块时，先 read(skill://agile-engine/SKILL.md) 再动手；与插件(plugin-creation)的区别：插件能碰 Agent 核心，Agile 模块不能",
+  "version": "1.3.0",
+  "description": "Agent 自建 Agile 模块：轻量 VFS/定时/事件/日志扩展层，能力受限、卸载可逆，写坏不影响 Agent 本体；可调用 Processor（OMNIJEV/OCR/VAD）看画面、取字、听声音，也可用 LimitedUI 在护栏与 HIL 批准下操作窗口（按键/点击，仅 Windows）",
+  "usage": "当需要为某个持续任务（封装外部 API、轮询端口、维护状态节点、条件报警）编写可热加载的轻量模块时，先 read(skill://agile-engine/SKILL.md) 再动手；要让小模型看画面替你按键/点击时读 skill://agile-engine/ui-control.md；与插件(plugin-creation)的区别：插件能碰 Agent 核心，Agile 模块不能",
   "builtin": true
 }

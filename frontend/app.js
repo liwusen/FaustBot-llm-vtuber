@@ -426,6 +426,25 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         return getModelViewportBounds();
       },
 
+      // LimitedUI 眨眼：临时隐藏/显示形象（Live2D/PIXI 用 visible；VRM 是独立 canvas 用 display）
+      setModelVisible(flag){
+        const next = !!flag;
+        try {
+          if (modelType === 'vrm' && vrmScene) {
+            const canvas = vrmScene.getCanvas();
+            if (canvas) canvas.style.display = next ? '' : 'none';
+            return true;
+          }
+          if (currentModel) {
+            currentModel.visible = next;
+            return true;
+          }
+        } catch (e) {
+          console.warn('[faustAppUI] setModelVisible failed', e);
+        }
+        return false;
+      },
+
       showBubble(text, source = 'ai'){
         bubble.showResultBubble(source, text);
       },
@@ -2001,6 +2020,14 @@ import { initAsrBubble } from './libs/asr-bubble.js';
           title: String(payload?.title || payload?.request || '需要人工确认').trim(),
           summary: String(payload?.summary || '').trim(),
           severity: String(payload?.severity || 'warning').trim().toLowerCase(),
+          buttons: Array.isArray(payload?.buttons)
+            ? payload.buttons.filter((b) => b && b.value).map((b) => ({
+                value: String(b.value),
+                label: String(b.label || b.value),
+                approved: b.approved === undefined ? undefined : !!b.approved,
+                default: !!b.default,
+              }))
+            : undefined,
         });
       } else if (cmd === 'MD_BLOCK'){
         if (!arg) return;

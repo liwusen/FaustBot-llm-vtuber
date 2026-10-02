@@ -51,15 +51,17 @@ export function initHilApproval({ feedbackEndpoint }) {
     return rect.width > 0 && clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
-  async function submitDecision(requestId, approved, reason) {
+  async function submitDecision(requestId, approved, reason, choice) {
+    const body = {
+      request_id: requestId,
+      feedback: !!approved,
+      reason: String(reason || '').trim() || (approved ? 'approved' : 'rejected'),
+    };
+    if (choice !== undefined && choice !== null && choice !== '') body.choice = String(choice);
     const r = await fetch(feedbackEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        request_id: requestId,
-        feedback: !!approved,
-        reason: String(reason || '').trim() || (approved ? 'approved' : 'rejected'),
-      }),
+      body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error) throw new Error((j && (j.detail || j.error)) || `HTTP ${r.status}`);
@@ -116,46 +118,43 @@ export function initHilApproval({ feedbackEndpoint }) {
     const actionRow = document.createElement('div');
     actionRow.className = 'hil-approval-actions';
 
-    const rejectBtn = document.createElement('button');
-    rejectBtn.type = 'button';
-    rejectBtn.className = 'hil-approval-btn secondary';
-    rejectBtn.textContent = '\u62D2\u7EDD';
+    const customButtons = Array.isArray(payload.buttons) && payload.buttons.length
+      ? payload.buttons.filter((b) => b && b.value)
+      : null;
+    const buttonSpecs = customButtons || [
+      { value: 'reject', label: '\u62D2\u7EDD', approved: false, default: false },
+      { value: 'allow', label: '\u6279\u51C6', approved: true, default: true },
+    ];
 
-    const approveBtn = document.createElement('button');
-    approveBtn.type = 'button';
-    approveBtn.className = 'hil-approval-btn primary';
-    approveBtn.textContent = '\u6279\u51C6';
+    const buttons = buttonSpecs.map((spec) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      const isDefault = !!spec.default;
+      const isPrimary = spec.approved !== undefined ? !!spec.approved : String(spec.value) === 'allow';
+      btn.className = 'hil-approval-btn ' + (isDefault ? 'primary' : (isPrimary ? 'primary' : 'secondary'));
+      btn.textContent = String(spec.label || spec.value);
+      btn.dataset.choice = String(spec.value);
+      btn.onclick = async () => {
+        setBusy(true);
+        try {
+          const approved = spec.approved !== undefined ? !!spec.approved : String(spec.value) === 'allow';
+          const fallback = approved ? 'approved_by_user' : String(spec.value);
+          await submitDecision(payload.request_id, approved, reasonInput.value || fallback, String(spec.value));
+          close(payload.request_id);
+        } catch (e) {
+          console.error('submit HIL decision failed', e);
+          setBusy(false);
+        }
+      };
+      return btn;
+    });
 
     const setBusy = (busy) => {
-      approveBtn.disabled = busy;
-      rejectBtn.disabled = busy;
+      buttons.forEach((b) => { b.disabled = busy; });
       reasonInput.disabled = busy;
     };
 
-    rejectBtn.onclick = async () => {
-      setBusy(true);
-      try {
-        await submitDecision(payload.request_id, false, reasonInput.value || 'rejected_by_user');
-        close(payload.request_id);
-      } catch (e) {
-        console.error('submit HIL reject failed', e);
-        setBusy(false);
-      }
-    };
-
-    approveBtn.onclick = async () => {
-      setBusy(true);
-      try {
-        await submitDecision(payload.request_id, true, reasonInput.value || 'approved_by_user');
-        close(payload.request_id);
-      } catch (e) {
-        console.error('submit HIL approve failed', e);
-        setBusy(false);
-      }
-    };
-
-    actionRow.appendChild(rejectBtn);
-    actionRow.appendChild(approveBtn);
+    buttons.forEach((b) => actionRow.appendChild(b));
 
     shell.appendChild(badge);
     shell.appendChild(title);

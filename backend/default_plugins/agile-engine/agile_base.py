@@ -81,13 +81,18 @@ class AgileContext:
     def __init__(self,ctx:PluginContext,alm:AgileLogManager,agile_name:str,
                  trigger_limiter:Optional[Callable[[],Any]]=None,
                  on_activity:Optional[Callable[[],Any]]=None,
-                 storage:Optional[AgileStorage]=None):
+                 storage:Optional[AgileStorage]=None,
+                 data_dir:Optional[Path]=None):
         self.ctx = ctx
         self.alm = alm
         self.agile_name = agile_name
         self._trigger_limiter = trigger_limiter
         self._on_activity = on_activity
         self.storage = storage  # AgileStorage:模块级 KV 持久存储(可为 None,如测试桩)
+        self.data_dir = Path(data_dir) if data_dir is not None else (
+            storage.path.parent if storage is not None else Path.cwd())
+        # 随模块卸载一起清理的额外 VFS 节点: [(path, func)]（runner 在 _unregister_hooks 里回收）
+        self.transient_vfs: list[tuple[str, Any]] = []
 
     async def vfs_write(self,path:str,content:Any,description:str=""):
         await self.ctx.vfs_write(path,content,description=description)
@@ -161,6 +166,136 @@ class AgileContext:
     async def processor_status(self,name:str)->dict:
         """某个 Processor 的状态快照（state / refcount / last_error / config），排查用。"""
         return await self.ctx.processor_status(name)
+
+    async def register_transient_vfs(self, path: str, func: Callable[..., Any], description: str = "") -> None:
+        """注册一个只读 VFS 节点，随模块卸载/禁用一起被清理（runner 回收 transient_vfs）。"""
+        await self.vfs_write_symbolic(path, func, writable=False, description=description)
+        self.transient_vfs.append((str(path), func))
+
+    async def limited_ui(self, spec: dict, hooks: Optional[dict] = None):
+        """创建一个**受限 UI 操作**会话（看画面 → 小模型决定动作 → 执行），返回决策器。
+
+        限制对象是小模型（OmniJev）：所有护栏（门限、白名单、前台/遮挡校验、上限、审计、
+        急停）都在决策器基类里，子类只能提供"决策来源"。
+
+        - ``spec``：会话声明（``decider``/``purpose``/``target``/``states``/``limits``/…），
+          字段不合法直接抛错，不静默修正；
+        - ``hooks``：只允许 ``{"context": fn, "classify": fn}`` 两个钩子，可 sync/async：
+          ``context(frame, *, step_id) -> str | None`` 给画面补充文字（如血量/手牌）；
+          ``classify(frame, *, step_id) -> str | None`` 自己判状态（必须是 ``spec["states"]`` 的键）。
+
+        典型用法（interval hook 里）::
+
+            dec = await agile.limited_ui(spec, hooks={"classify": my_classify})
+            res = await dec.open()
+            if not res.ok:
+                await agile.lwarning(f"UI 会话未打开: {res.reason}")
+                return
+            d = await dec.step("该出牌了")     # decide + inject + 审计一行
+            if not d.ok:
+                await agile.linfo(d.describe())
+
+        平台：**仅 Windows**，其它平台调用即抛错（不静默降级）。
+        详细约定与风险见 ``skill://agile-engine/ui-control.md``。
+        """
+        import sys as _sys
+        if _sys.platform != "win32":
+            raise RuntimeError(
+                f"limited_ui 仅支持 Windows（当前平台 {_sys.platform}）："
+                "键盘/点击注入与客户区抓帧都依赖 Win32 API，不做降级实现")
+        from uidrv import create_decider, hub
+        from uidrv.blink import FrontendLink
+        from uidrv.decider import SessionSpec, SessionState, UIDeps
+        from uidrv.input import get_input_backend
+        from uidrv.win import ensure_dpi_aware, get_win_backend
+        from faust_backend import backend2front as backend2frontend
+        from faust_backend.tools.hil import HILChoiceRequest
+
+        ensure_dpi_aware()
+        parsed = SessionSpec.parse(spec)
+
+        wrapped: dict[str, Any] = {}
+        for hook_name, fn in dict(hooks or {}).items():
+            if hook_name not in ("context", "classify"):
+                raise ValueError(
+                    f"未知的 limited_ui 钩子 {hook_name!r}；只支持 context / classify")
+            if not callable(fn):
+                raise ValueError(f"limited_ui 钩子 {hook_name} 不是可调用对象")
+            wrapped[hook_name] = build_invoker(fn, self)
+
+        module = self.agile_name
+
+        async def ask(payload: dict, config: dict) -> Any:
+            return await self.processor("OMNIJEV", payload, config=config or None,
+                                        wait_timeout=600.0)
+
+        async def hil(payload: dict, timeout: float) -> str:
+            import uuid as _uuid
+            return await HILChoiceRequest(
+                id=f"limited_ui_{module}_{_uuid.uuid4().hex[:8]}",
+                title=payload.get("title", "UI 操作请求"),
+                summary=payload.get("summary", ""), buttons=list(payload.get("buttons") or []),
+                timeout_seconds=int(timeout), severity=payload.get("severity", "warning"))
+
+        async def escalate(data: dict, recall: str) -> None:
+            await self.event_fire("limited_ui::escalate", data, recall_description=recall,
+                                  lifespan=7200, priority=parsed.escalate.priority)
+
+        def sink(command: str, payload: dict) -> None:
+            backend2frontend.frontendAvatarCommand(command, payload)
+
+        deps = UIDeps(
+            win=get_win_backend(),
+            input=get_input_backend(),
+            frontend=FrontendLink(sink, hub),
+            audit_root=self.data_dir,
+            processor_ask=ask,
+            hil=hil,
+            escalate=escalate,
+            signal=hub,
+        )
+        decider = create_decider(parsed.decider, module, parsed, wrapped, deps)
+        for path, (fn, description) in decider.vfs_nodes().items():
+            await self.register_transient_vfs(path, (lambda _p, f=fn: f()), description)
+
+        # 控制节点：主 Agent 读 ops/* 后用写 faustbot://agile/{module}/control 恢复/停止/改动作表
+        def _control_text(_p: str = "") -> str:
+            return json.dumps({
+                "module": module,
+                "state": decider.state.value,
+                "steps": decider.step_count,
+                "injections": decider.injection_count,
+                "paused_reason": decider.pause_reason,
+                "closed_reason": decider.closed_reason,
+                "help": {"action": "resume | stop | patch_keys", "states": "patch_keys 时传 {状态: {actions: {...}}}"},
+            }, ensure_ascii=False, indent=2)
+
+        async def _on_control(_node: Any, content: Any) -> str:
+            try:
+                data = json.loads(content) if isinstance(content, str) else dict(content or {})
+            except Exception as exc:  # noqa: BLE001
+                return f"control 需要 JSON: {exc}"
+            act = str(data.get("action") or "").strip().lower()
+            if act == "resume":
+                if decider.state is SessionState.CLOSED:
+                    return f"会话已结束（{decider.closed_reason}），无法恢复；请重新 open()"
+                await decider.resume()
+                return "已恢复注入"
+            if act == "stop":
+                hub.request_stop(module)
+                return "已请求停止（松手 + 暂停）"
+            if act == "patch_keys":
+                try:
+                    decider.patch_states(dict(data.get("states") or {}))
+                except Exception as exc:  # noqa: BLE001
+                    return f"动作表未更新: {exc}"
+                return "动作表已更新"
+            return f"未知 action: {act!r}（支持 resume / stop / patch_keys）"
+
+        control_path = f"/agile/{module}/control"
+        await self.register_transient_vfs(control_path, _control_text, "UI 操作会话控制（JSON 写入）")
+        await self.ctx.vfs_set_write_handler(control_path, _on_control)
+        return decider
 
 class AgileModule:
     def __init__(self,name,description:str,version:str="1.0.0"):

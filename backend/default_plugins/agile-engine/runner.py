@@ -355,8 +355,13 @@ async def _unregister_hooks(instance: dict[str, Any]) -> None:
     # 2. interval 停止
     for handle in instance.get("interval_handles", []):
         handle.stop()
-    # 3. VFS 节点归属校验后删除
+    # 3. VFS 节点归属校验后删除（含模块经 register_transient_vfs 注册的额外节点）
     vfs = await get_faustbot_vfs()
+    agile_obj = instance.get("agile")
+    transients = list(getattr(agile_obj, "transient_vfs", None) or [])
+    if transients:
+        instance["vfs_paths"] = list(instance.get("vfs_paths", [])) + [p for p, _ in transients]
+        instance["owned_funcs"] = list(instance.get("owned_funcs", [])) + [f for _, f in transients]
     owned = set(instance.get("owned_funcs", []))
     for path in list(instance.get("vfs_paths", [])):
         try:
@@ -506,7 +511,8 @@ async def _load_module_async(name: str, preset_limit: int | None = None) -> dict
         agile = AgileContext(_CTX, LM, name,
                              trigger_limiter=lambda n=name: check_trigger_limit(n),
                              on_activity=lambda n=name: _stamp_activity(n),
-                             storage=AgileStorage(name, STORAGE_DIR))
+                             storage=AgileStorage(name, STORAGE_DIR),
+                             data_dir=STORAGE_DIR)
         vfs_paths, owned_funcs, interval_handles, vfs_descriptions = await _register_hooks(agile_module, agile, name)
         mirror_paths = await _register_mirror_nodes(name)
         # 生效上限：reload 传入的 preset_limit > 磁盘持久化值 > 默认值

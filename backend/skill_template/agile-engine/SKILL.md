@@ -25,6 +25,8 @@ Agile 模块适合：**你自己（Agent）为某个持续任务编写的、需�
 - ✅ interval 定时任务
 - ✅ event_fire 事件（经触发器唤醒你自己）
 - ✅ 日志（ALM，可被 VFS 查询）
+- ✅ Processor（OMNIJEV/OCR/VAD：看画面、取字、听声音）
+- ✅ 受限 UI 操作（LimitedUI：看窗口画面 → OmniJev 决定按键/点击 → 注入，带 HIL 批准与审计）
 - ❌ 注册 Agent 工具、修改上下文、拦截消息
 
 ## 模块文件
@@ -91,6 +93,25 @@ await agile.processor_status("OMNIJEV")    # 排查：state / last_error / refco
 ```
 
 入参出参、config、成本与错误处理见 **`skill://agile-engine/processor.md`**（写之前先读它）。
+
+## 用 LimitedUI 操作窗口（看画面 → 按键/点击）
+
+模块还能在**受护栏约束**的前提下操作 Windows 窗口：抓目标窗口客户区 → 问 OmniJev 下一步做什么
+→ 注入按键/左键点击。护栏（门限、白名单、前台/遮挡校验、上限、审计、急停、眨眼）全在能力基类里，
+**限制对象是 OmniJev 这个小模型**，不是沙箱。
+
+```python
+dec = await agile.limited_ui(spec, hooks={"classify": my_classify})   # 只创建
+res = await dec.open()          # 会弹 HIL 批准窗口：试运行 / 允许操作 / 拒绝
+if res.ok:
+    d = await dec.step("轮到你了")      # decide + inject + 审计一行；d.ok 才是"真的发出去了"
+```
+
+三条硬前提：**仅 Windows**；**每步 ≈1.3s（只适合回合制/卡牌/战棋这类慢节奏）**；
+**目标窗口必须保持前台**（失焦即暂停并提示用户）。
+
+完整字段表、钩子契约、急停四路、审计与 `faustbot://agile/{name}/control` 的用法见
+**`skill://agile-engine/ui-control.md`**（**写之前先读它**，尤其第 0 节的三条风险）。
 
 ## 装饰器用法
 
