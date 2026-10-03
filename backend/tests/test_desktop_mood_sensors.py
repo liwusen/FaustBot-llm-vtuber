@@ -327,7 +327,7 @@ def _speech_rule(rule_id='always_speech'):
 
 
 async def _gated_plugin(tmp_path):
-    """关掉会随环境波动、影响免打扰判断的感知源（全屏/麦克风），让 disturbed 只由静音阀决定。"""
+    """关掉会随环境波动、影响免打扰判断的感知源（全屏/麦克风/外部上报），扰动原因由测试注入。"""
     pm, plugin = await _plugin(tmp_path)
     pm.set_plugin_config_values('desktop-mood', {
         'ENABLE_AUDIO_DEVICES': False, 'ENABLE_WINDOW_GEOMETRY': False, 'ENABLE_EXTERNAL_REPORT': False})
@@ -335,18 +335,18 @@ async def _gated_plugin(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_quiet_valve_and_disturb_gate_silence_speech(tmp_path, monkeypatch):
+async def test_disturb_gate_silences_speech(tmp_path, monkeypatch):
     _pm, plugin = await _gated_plugin(tmp_path)
     plugin.store.set_rules([_speech_rule()])
     said: list[str] = []
     monkeypatch.setattr(sys.modules['faust_plugin_desktop-mood'].backend2frontend, 'FrontEndSay',
                         lambda text: said.append(text))
 
-    plugin.store.set_quiet_until(int(time.time()) + 300)
+    monkeypatch.setattr(plugin, '_disturb_reasons', lambda context: ['测试：打扰中'])
     await plugin.heartbeat(plugin.ctx)
-    assert said == []  # 静音阀期间不打扰
+    assert said == []  # 免打扰期间不打扰
 
-    plugin.store.set_quiet_until(0)
+    monkeypatch.setattr(plugin, '_disturb_reasons', lambda context: [])
     await plugin.heartbeat(plugin.ctx)
     assert said == ['在的。']
 
@@ -360,7 +360,7 @@ async def test_bypass_disturb_action_still_fires(tmp_path, monkeypatch):
     said: list[str] = []
     monkeypatch.setattr(sys.modules['faust_plugin_desktop-mood'].backend2frontend, 'FrontEndSay',
                         lambda text: said.append(text))
-    plugin.store.set_quiet_until(int(time.time()) + 300)
+    monkeypatch.setattr(plugin, '_disturb_reasons', lambda context: ['测试：打扰中'])
     await plugin.heartbeat(plugin.ctx)
     assert said == ['要紧事。']
 

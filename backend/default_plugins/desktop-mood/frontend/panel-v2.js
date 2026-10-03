@@ -139,16 +139,9 @@
 
   function renderDisturb(perception){
     const reasons = perception.disturb_reasons || [];
-    const quietLeft = Math.max(0, Number(perception.quiet_until || 0) - Math.floor(Date.now() / 1000));
     return '<p class="card-help">免打扰状态：'
       + (perception.disturbed ? '<span class="desktop-status desktop-status-off">不建议打扰</span> ' + esc(reasons.join('、')) : '<span class="desktop-status desktop-status-on">可以打扰</span>')
-      + '</p>'
-      + '<p class="card-help">静音阀：' + (quietLeft > 0 ? '剩余 ' + durationText(quietLeft) : '未开启') + '</p>'
-      + '<div class="toolbar">'
-      + '<button class="btn btn-secondary" data-quiet="1800">静音 30 分钟</button>'
-      + '<button class="btn btn-secondary" data-quiet="3600">静音 1 小时</button>'
-      + '<button class="btn btn-secondary" data-quiet="0">解除静音</button>'
-      + '</div>';
+      + '</p>';
   }
 
   function renderRules(items){
@@ -163,7 +156,7 @@
     return '<table class="simple-table"><thead><tr><th>启用</th><th>规则</th><th>类型</th><th>冷却</th></tr></thead><tbody>'
       + rows + '</tbody></table>'
       + '<div class="toolbar"><button id="desktop-rule-save" class="btn btn-secondary">保存规则开关</button>'
-      + '<span class="card-help">引擎不会自动调整冷却：觉得某条太吵就关掉它、调高它的 cooldown_sec，或用上面的静音阀。'
+      + '<span class="card-help">引擎不会自动调整冷却：觉得某条太吵就关掉它、调高它的 cooldown_sec。'
       + '类型为「即时附加」的规则命中时不会说话、不弹窗、不打断：文本先入队，随后随你的下一条消息或前台触发器送达（后台触发器不附加），整段最多 100 字。</span></div>';
   }
 
@@ -225,10 +218,10 @@
       + '<table class="simple-table"><thead><tr><th>来源</th><th>分级</th><th>状态</th><th>间隔</th><th>采集到的数据</th></tr></thead>'
       + '<tbody id="desktop-perception-rows"></tbody></table>'
       + '</article>'
-      + '<article class="card full-span"><h3 class="card-title">免打扰与静音阀</h3><div id="desktop-disturb-box">加载中...</div></article>'
+      + '<article class="card full-span"><h3 class="card-title">免打扰</h3><div id="desktop-disturb-box">加载中...</div></article>'
       + '<article class="card full-span"><h3 class="card-title">规则</h3><div id="desktop-rules-box">加载中...</div></article>'
       + '<article class="card full-span"><h3 class="card-title">即时附加</h3><div id="desktop-attach-box">加载中...</div>'
-      + '<p class="card-help">附加随你的下一条消息或前台触发器出现，后台触发器不附加；只放相对上次附加发生变化的内容，整段硬上限 100 字、最多 6 行，且不受免打扰闸门或静音阀拦截。'
+      + '<p class="card-help">附加随你的下一条消息或前台触发器出现，后台触发器不附加；只放相对上次附加发生变化的内容，整段硬上限 100 字、最多 6 行，且不受免打扰闸门拦截。'
       + '补充内容就在「规则」卡片里加一条 kind 为 attach 的规则。</p></article>'
       + '<article class="card full-span"><h3 class="card-title">其他配置</h3>'
       + '<div class="toolbar"><label>当前情绪 <select id="desktop-mood-select"><option value="auto">自动</option><option value="rainy">雨天</option><option value="warm">温暖</option><option value="dark">低沉</option></select></label>'
@@ -307,12 +300,6 @@
       const codeDir = document.getElementById('desktop-code-dir');
       if (codeDir) codeDir.value = String(configValues.CODE_WATCH_DIR || '');
 
-      Array.prototype.forEach.call(container.querySelectorAll('button[data-quiet]'), function(button){
-        button.onclick = async function(){
-          await communicate({ action: 'quiet', seconds: Number(button.getAttribute('data-quiet')) });
-          refresh();
-        };
-      });
       const saveMood = document.getElementById('desktop-mood-save');
       if (saveMood) saveMood.onclick = async function(){
         await communicate({ action: 'set_mood', mood: document.getElementById('desktop-mood-select').value });

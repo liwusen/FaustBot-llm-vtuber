@@ -133,7 +133,7 @@ flowchart LR
 |---|---|
 | `probability` | 0~1，条件命中后再过一道概率（降低频繁环境的打扰） |
 | `for_seconds` | 条件需**连续满足** N 秒才触发（例：`field_over app_session.seconds 5400` + `for_seconds:60`） |
-| `when_not_disturbed` | 免打扰时（全屏/会议/锁屏/静音阀）不触发 |
+| `when_not_disturbed` | 免打扰时（全屏/会议/锁屏）不触发 |
 
 ### action（按 kind）
 
@@ -147,7 +147,7 @@ flowchart LR
 | `attach` | `attach`（必填，字符串或对象，见下节） | **不说话、不打断**：把文本暂存进附加队列，之后随用户消息/前台触发器附加出去 |
 
 打断型动作（`speech` / `nimble` / `emotion`）在免打扰时默认不发；确需强行放行就给 action 加 `"bypass_disturb": true`。
-`attach` 不属于打断型，天然不受免打扰闸门/静音阀拦截，不需要（也不该）加 `bypass_disturb`。
+`attach` 不属于打断型，天然不受免打扰闸门拦截，不需要（也不该）加 `bypass_disturb`。
 
 `speech` / `note` / `summary` 支持模板占位：`{hour}`、`{battery}`、`{idle}`、`{app}`、`{window}`、`{media}`、`{attention}`、`{rhythm_awake_minutes}`。
 
@@ -185,7 +185,7 @@ flowchart LR
 - **送达时机**：只在**下一条用户消息**或**前台触发器**上附加；**后台触发器不附加**。
 - **附加内容**：队列文本 + 这段时间里"变化过的桌面信息"一起追加到那条消息末尾。
 - **硬上限 100 字**：含 `[桌面] ` 前缀与 ` · ` 分隔符，最多 6 行；只放相对上次附加**发生变化**的内容，最近 20 条不重复。
-- **不受免打扰闸门/静音阀拦截**：它不是打扰，是随用户消息附带的摘要。
+- **不受免打扰闸门拦截**：它不是打扰，是随用户消息附带的摘要。
 - **启发式自动附加**：引擎会自己挑"AI 可能需要的"变化（时间线事件优先，剩余预算按字段权重补）；规则 `attach` 命中时会再跑一次同一启发式，把这条文本并进同一份摘要。
 - **面板可见**：`get_perception` 返回的 `perception.attach` = `{"enabled": bool, "auto": bool, "budget": 100, "queued": int, "last_text": str|null, "last_at": int|null, "sent_total": int, "last_error": str|null}`。
 

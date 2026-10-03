@@ -391,15 +391,6 @@ class DesktopMoodStore:
             namespace[key] = value
             self.save()
 
-    # ── 静音阀：用户说"别吵"，所有规则停火 ──
-    def get_quiet_until(self) -> int:
-        return int(self._state.get('quiet_until') or 0)
-
-    def set_quiet_until(self, ts: int) -> None:
-        with self._lock:
-            self._state['quiet_until'] = int(ts)
-            self.save()
-
     def set_last_idle_state(self, state: str) -> None:
         with self._lock:
             self._state['last_idle_state'] = state
@@ -494,7 +485,7 @@ class Plugin(FaustPlugin):
             "away_digest（用户离开期间发生的事）、attention/activity_level（心流/碎片、平静/激烈）、rhythm_today"
             "（今日节律，7 天档案见 faustbot://desktop-mood/narrative/rhythm.md）。\n"
             "想根据用户环境主动提醒、播报、关心用户时，先读 faustbot://desktop-mood/overview.md；判断「用户现在忙不忙」用 "
-            "attention 与 context.disturbed（免打扰闸门：全屏/会议/锁屏/用户静音阀）。\n"
+            "attention 与 context.disturbed（免打扰闸门：全屏/会议/锁屏）。\n"
             "规则（自动触发动作）的编辑入口见 faustbot://plugins/desktop-mood/rules.md"
             "，改规则必须走「编辑 rules.json 草稿 → 读/写 reload 节点提交」。kind=attach 的规则不说话、不弹窗，"
             "只把文本暂存进随行附加队列，等用户开口（或前台触发器）时一起送进模型，总长 ≤100 字且只放变化过的内容。\n",
@@ -589,7 +580,7 @@ class Plugin(FaustPlugin):
             '  变化过的内容，最近 20 条不重复；不受免打扰闸门影响（它不是打扰）。文本支持 {battery} 等模板占位。',
             '  例：{"kind":"attach","action":{"attach":{"text":"电量只剩 {battery}%，记得插电","ttl_sec":1800}}}。',
             '  引擎还会启发式自动附加"AI 可能需要的"变化（事件优先、字段按 attach_weight 补），规则命中时一并跑。',
-            '免打扰闸门: 全屏、麦克风占用、会议软件前台、锁屏、用户静音阀时，speech/nimble/emotion 默认不发；',
+            '免打扰闸门: 全屏、麦克风占用、会议软件前台、锁屏时，speech/nimble/emotion 默认不发；',
             '  需要强行放行就加 action.bypass_disturb=true。调度上只受 rule.cooldown_sec 与 GLOBAL_COOLDOWN_SEC 限制。',
             '',
             '详细 schema、条件类型、动作类型与示例见 skill://desktop-mood-rules/SKILL.md。',
@@ -713,7 +704,7 @@ class Plugin(FaustPlugin):
             "narrative（一句话场景摘要）、recent_events（最近变化）、away_digest（你不在时发生的事）、"
             "attention/activity_level（心流/碎片、平静/激烈）、rhythm_today（今日节律，档案见 "
             "faustbot://desktop-mood/narrative/rhythm.md）。\n"
-            "判断「现在能不能打扰用户」看 overview.md 里的免打扰行（全屏/会议/锁屏/静音阀）；被关闭的源标「未启用」、"
+            "判断「现在能不能打扰用户」看 overview.md 里的免打扰行（全屏/会议/锁屏）；被关闭的源标「未启用」、"
             "采集失败的源标「不可用：原因」，不要臆测，也不要把规则建在它们上面。\n"
             "用户消息末尾可能带一行 [桌面] 即时摘要（≤100 字，只含相对上次发生变化的内容，由 kind=attach 规则与"
             "启发式自动附上）；它只是提示，需要细节时仍以 faustbot://desktop-mood/ 为准。\n"
@@ -1010,8 +1001,6 @@ class Plugin(FaustPlugin):
                 if field_name not in context and field_name in self._last_fields:
                     context[field_name] = self._last_fields[field_name]
 
-        # quiet_until 必须在算 disturbed 之前写入，否则静音阀当轮不生效
-        context['quiet_until'] = self.store.get_quiet_until() if self.store is not None else 0
         context['disturb_reasons'] = self._disturb_reasons(context)
         context['disturbed'] = bool(context['disturb_reasons'])
         self._sensor_status = status
@@ -1037,9 +1026,6 @@ class Plugin(FaustPlugin):
         process_name = str((context.get('window_process') or {}).get('name') or '').lower()
         if process_name in MEETING_PROCESS_HINTS:
             reasons.append(f'会议软件前台（{process_name}）')
-        quiet_until = int(context.get('quiet_until') or 0)
-        if quiet_until > _now():
-            reasons.append('用户开了静音阀')
         return reasons
 
     async def _collect_clipboard(self) -> dict[str, Any] | None:
@@ -1121,7 +1107,6 @@ class Plugin(FaustPlugin):
             'activity_level': observed.get('activity_level'),
             'disturbed': bool(observed.get('disturbed')),
             'disturb_reasons': observed.get('disturb_reasons') or [],
-            'quiet_until': int(snapshot.get('quiet_until') or 0),
             'attach': attach_payload,
         }
 
@@ -1150,19 +1135,6 @@ class Plugin(FaustPlugin):
             if not accepted:
                 return {"status": "error", "detail": detail}
             return {"status": "ok", "detail": detail}
-        if action == 'quiet':
-            if self.store is None:
-                return {"status": "error", "detail": 'plugin not loaded'}
-            seconds = (payload or {}).get('seconds')
-            if seconds is None:
-                until = 0
-            else:
-                try:
-                    until = _now() + max(0, int(float(seconds)))
-                except (TypeError, ValueError):
-                    return {"status": "error", "detail": 'seconds 必须是数字'}
-            self.store.set_quiet_until(until)
-            return {"status": "ok", "quiet_until": until}
         if action == 'set_rules':
             items = (payload or {}).get('items')
             if self.store is None:
@@ -1289,7 +1261,7 @@ class Plugin(FaustPlugin):
                 log.warning('event-trigger 创建失败: %s', exc)
 
     def _suppressed_by_disturb(self, rule: dict[str, Any], context: dict[str, Any]) -> bool:
-        """免打扰闸门：全屏/会议/锁屏/静音阀时，打断型动作默认不发。
+        """免打扰闸门：全屏/会议/锁屏时，打断型动作默认不发。
 
         规则可用 action.bypass_disturb=true 强行放行，或用 condition.when_not_disturbed 只在安静时触发。
         """
