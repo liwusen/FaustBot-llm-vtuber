@@ -527,6 +527,113 @@ def test_agent_docs_mention_subagent_model():
     assert "ava_subagent_models" in agent or "ava_subagent_models" in task
 
 
+# ── 每个模型可配置上下文长度（model_context_lengths） ──
+
+
+def test_model_context_lengths_roundtrip(tmp_path):
+    """model_context_lengths 经 dumps() → loads() 往返后保持一致，且不影响 models 结构。"""
+    p = make_providers()
+    p.providers[0].models = ["deepseek-v4-pro", "deepseek-v4"]
+    p.providers[0].model_context_lengths = {
+        "deepseek-v4-pro": 128000,
+        "deepseek-v4": 64000,
+    }
+
+    path = tmp_path / "provider.private.json"
+    dumps(p, str(path))
+    loaded = loads(str(path))
+
+    assert loaded.providers[0].model_context_lengths == {
+        "deepseek-v4-pro": 128000,
+        "deepseek-v4": 64000,
+    }
+    # models 结构未被改动
+    assert loaded.providers[0].models == ["deepseek-v4-pro", "deepseek-v4"]
+    # 未配置的 provider 保持空 dict
+    assert loaded.providers[1].model_context_lengths == {}
+
+
+def test_save_config_persists_model_context_lengths(tmp_path, monkeypatch):
+    """POST /faust/admin/config 携带含 model_context_lengths 的 providers 后，
+    重新加载（ensure_model_providers_loaded）能读到该值。"""
+    from fastapi.testclient import TestClient
+    import faust_backend.config_loader as conf
+    import faust_backend.runtime.state as state_mod
+    import faust_backend.routes.admin_config as admin_config_mod
+    import faust_backend.admin_runtime as admin_runtime
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "CONFIG_FILE_PATH", str(tmp_path / "faust.config.json"))
+    monkeypatch.setattr(conf, "CONFIG_FILE_P_PATH", str(tmp_path / "faust.config.private.json"))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    monkeypatch.setattr(admin_runtime, "PUBLIC_CONFIG_PATH", tmp_path / "faust.config.json")
+    monkeypatch.setattr(admin_runtime, "PRIVATE_CONFIG_PATH", tmp_path / "faust.config.private.json")
+    monkeypatch.setattr(state_mod, "get_model_providers", conf.ensure_model_providers_loaded)
+
+    async def _noop_check(*a, **kw):
+        return None
+
+    monkeypatch.setattr(
+        "faust_backend.component_manager.check_and_manage_services",
+        _noop_check,
+    )
+
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(admin_config_mod.router)
+    client = TestClient(app)
+
+    r = client.post("/faust/admin/config", json={
+        "public": {},
+        "providers": [
+            {
+                "name": "p1",
+                "base_url": "http://p1/v1",
+                "key": "k1",
+                "models": ["m1", "m2"],
+                "model_context_lengths": {"m1": 200000},
+            }
+        ],
+        "main_model": "p1::m1",
+        "subagent_models": ["p1::m1"],
+    })
+    assert r.status_code == 200, r.text
+
+    # 已落盘
+    saved = json.loads((tmp_path / "provider.private.json").read_text(encoding="utf-8"))
+    assert saved["providers"][0]["model_context_lengths"] == {"m1": 200000}
+
+    # save_config 末尾会 reload_configs()（清空 MODEL_PROVIDERS 缓存），此处显式再从磁盘加载
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    mp = conf.ensure_model_providers_loaded()
+    provider = next(p for p in mp.providers if p.name == "p1")
+    assert provider.model_context_lengths["m1"] == 200000
+    # 未配置的 m2 不在其中
+    assert "m2" not in provider.model_context_lengths
+
+
+def test_model_context_lengths_absent_by_default(tmp_path):
+    """未配置的模型不出现在 model_context_lengths 中：默认值由调用方决定，
+    provider 层不填默认（新 provider 为空 dict，旧配置缺字段也能加载）。"""
+    # 新建 provider：空 dict，不预填任何模型默认值
+    assert ModelProvider(name="x", base_url="http://x/v1").model_context_lengths == {}
+    p = make_providers()
+    assert p.providers[0].model_context_lengths == {}
+    p.providers[0].models = ["m1", "m2"]
+    p.providers[0].model_context_lengths = {"m1": 128000}
+    assert "m2" not in p.providers[0].model_context_lengths
+
+    # 旧配置文件缺少该字段时加载为 {}，不报错
+    path = tmp_path / "provider.private.json"
+    path.write_text(json.dumps({
+        "providers": [{"name": "x", "base_url": "http://x/v1", "models": ["m1"]}],
+        "main_model": "x::m1",
+    }), encoding="utf-8")
+    loaded = loads(str(path))
+    assert loaded.providers[0].model_context_lengths == {}
+
+
 def test_reasoning_config_migrates_old_thinking(tmp_path, monkeypatch):
     """旧 THINKING_ENABLED/THINKING_INTENSITY 迁移为单一 REASONING_CONFIG。"""
     import faust_backend.config_loader as conf
@@ -595,3 +702,167 @@ def test_set_reasoning_effort_validates_level(monkeypatch):
     resp = asyncio.run(chat_route._set_reasoning_effort("off"))
     assert "off" in resp
     assert saved.get("REASONING_CONFIG") == "off"
+
+
+# ── /models 元数据解析与上下文长度自动填充 ──
+
+
+def _fake_models_client(payload):
+    """构造一个返回固定 /models payload 的假 AsyncClient。"""
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kw):
+            return FakeResp()
+
+    return FakeClient
+
+
+def test_extract_context_length_supports_both_field_names():
+    """OpenRouter 用 context_length，DeepSeek 用 context_window。"""
+    from faust_backend.provider import _extract_context_length
+
+    assert _extract_context_length({"context_length": 1050000}) == 1050000
+    assert _extract_context_length({"context_window": 1048576}) == 1048576
+    # 顶层缺失时回退到 top_provider
+    assert _extract_context_length({"top_provider": {"context_length": 200000}}) == 200000
+
+
+def test_extract_context_length_rejects_invalid_values():
+    from faust_backend.provider import _extract_context_length
+
+    assert _extract_context_length({}) is None
+    assert _extract_context_length({"context_length": 0}) is None
+    assert _extract_context_length({"context_length": -5}) is None
+    assert _extract_context_length({"context_length": "128000"}) is None
+    # bool 是 int 的子类，必须显式排除，否则 True 会变成 1
+    assert _extract_context_length({"context_length": True}) is None
+    assert _extract_context_length({"context_length": None}) is None
+
+
+def test_fetch_provider_model_entries_normalizes(monkeypatch):
+    import httpx
+    from faust_backend.provider import fetch_provider_model_entries
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_models_client(
+            {
+                "data": [
+                    {"id": "with-ctx", "context_length": 1000},
+                    {"id": "no-ctx", "object": "model"},
+                    {"id": "with-window", "context_window": 2000},
+                    "not-a-dict",
+                    {"no_id": True},
+                ]
+            }
+        ),
+    )
+    entries = asyncio.run(fetch_provider_model_entries(make_providers().providers[0]))
+    assert entries == [
+        {"id": "with-ctx", "context_length": 1000},
+        {"id": "no-ctx", "context_length": None},
+        {"id": "with-window", "context_length": 2000},
+    ]
+
+
+def test_fetch_provider_model_entries_bare_list_has_no_metadata(monkeypatch):
+    import httpx
+    from faust_backend.provider import fetch_provider_model_entries
+
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_models_client(["a", "b"]))
+    entries = asyncio.run(fetch_provider_model_entries(make_providers().providers[0]))
+    assert entries == [
+        {"id": "a", "context_length": None},
+        {"id": "b", "context_length": None},
+    ]
+
+
+def test_auto_load_fills_context_length_from_api(monkeypatch):
+    """API 报了上下文长度就自动填，省去用户手填。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_models_client(
+            {
+                "data": [
+                    {"id": "m1", "context_length": 128000},
+                    {"id": "m2"},  # 无元数据 → 保持未配置
+                ]
+            }
+        ),
+    )
+    p = make_providers().providers[0]
+    p.models = ["stale"]
+    asyncio.run(auto_load_model_for_provider(p, force=True))
+    assert p.models == ["m1", "m2"]
+    assert p.model_context_lengths == {"m1": 128000}
+    assert "m2" not in p.model_context_lengths
+
+
+def test_auto_load_does_not_clobber_user_configured_length(monkeypatch):
+    """用户手工配置的值优先于 API 元数据。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_models_client({"data": [{"id": "m1", "context_length": 128000}]}),
+    )
+    p = make_providers().providers[0]
+    p.models = []
+    p.model_context_lengths = {"m1": 999999}
+    asyncio.run(auto_load_model_for_provider(p, force=True))
+    assert p.model_context_lengths["m1"] == 999999
+
+
+def test_auto_load_force_prunes_stale_context_lengths(monkeypatch):
+    """force 刷新时，已不在模型列表中的陈旧条目应被清理。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_models_client({"data": [{"id": "m1", "context_length": 128000}]}),
+    )
+    p = make_providers().providers[0]
+    p.models = ["m1", "removed-model"]
+    p.model_context_lengths = {"m1": 111, "removed-model": 222}
+    asyncio.run(auto_load_model_for_provider(p, force=True))
+    assert p.model_context_lengths == {"m1": 111}
+
+
+def test_auto_load_is_idempotent_when_models_present(monkeypatch):
+    """默认路径（force=False）已有 models 时不触网。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    def _boom(*a, **kw):
+        raise AssertionError("不应发起网络请求")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _boom)
+    p = make_providers().providers[0]
+    p.models = ["m1"]
+    assert asyncio.run(auto_load_model_for_provider(p)) == ["m1"]
+

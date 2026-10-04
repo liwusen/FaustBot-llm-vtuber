@@ -187,13 +187,26 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
     """持有主 Agent 锁的流式生产任务：只负责推进 astream_events 并把解析后的
     事件推入队列。锁的持有时间只覆盖 LLM 会话本身，与消费者（websocket 发送）
     的节拍无关——修复前端停止读取或插件 hook 阻塞时全局锁被无限期持有的问题。"""
+    from faust_backend.runtime.compact import COMPACT_TAG
+
     max_attempts = 3
+    # 压缩调用（before_model 内部发起、带 COMPACT_TAG 的模型调用）的事件必须与
+    # 主模型输出分流，转成 compact_* 事件，避免摘要文本泄进正文气泡。
+    compact_active = False
+
+    async def _close_compact(*, ok: bool = True) -> None:
+        nonlocal compact_active
+        if compact_active:
+            compact_active = False
+            await queue.put({"type": "compact_done", "ok": ok})
+
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
         try:
             await _acquire_agent_lock("stream_chat_agent_events")
         except RuntimeError as e:
             # 锁超时等获取失败：必须通知消费者，否则消费者在 queue.get() 上永久等待
+            await _close_compact(ok=False)
             await queue.put(_StreamFailed(e))
             return
         log.debug("开始调用 LLM")
@@ -211,10 +224,24 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
                     raise asyncio.CancelledError("User interrupted")
                 event_name = str(event.get("event") or "").strip().lower()
                 data = event.get("data") or {}
+                is_compact_call = COMPACT_TAG in (event.get("tags") or [])
                 if event_name == "on_chat_model_stream":
                     chunk = data.get("chunk")
                     if not chunk or not state.is_ai_message_chunk(chunk):
                         continue
+                    if is_compact_call:
+                        # 压缩调用：内容只走 compact_* 通道，绝不进入正文 delta
+                        if not compact_active:
+                            compact_active = True
+                            await queue.put({"type": "compact_start"})
+                        compact_text = state.message_content_to_text(chunk.content)
+                        if compact_text:
+                            await queue.put(
+                                {"type": "compact_delta", "content": compact_text}
+                            )
+                        continue
+                    # 主模型开始输出 => 压缩阶段已结束（成功或失败降级都走这里）
+                    await _close_compact()
                     # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
                     additional_kwargs = (
                         getattr(chunk, "additional_kwargs", {}) or {}
@@ -229,6 +256,10 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
                     delta_text = state.message_content_to_text(chunk.content)
                     if delta_text:
                         await queue.put({"type": "delta", "content": delta_text})
+                    continue
+                if event_name == "on_chat_model_end":
+                    if is_compact_call:
+                        await _close_compact()
                     continue
                 if event_name == "on_tool_start":
                     await queue.put({
@@ -251,13 +282,16 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
                     })
                     continue
             log.debug("LLM 调用结束")
+            await _close_compact()
             await queue.put(_STREAM_DONE)
             return
         except asyncio.CancelledError:
             # 中断/消费者关闭：通知消费者（若还在等待），锁在 finally 中释放
+            await _close_compact(ok=False)
             await queue.put(_StreamFailed(asyncio.CancelledError("User interrupted")))
             raise
         except Exception as e:
+            await _close_compact(ok=False)
             if state.is_rate_limit_error(e) and attempt < max_attempts:
                 log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
             else:
@@ -302,23 +336,32 @@ async def stream_chat_agent_events(
             pass
 
 
-def _compose_runtime_extensions():
-    from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
-    from faust_backend.runtime.model_retry import with_model_retry
-    from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
-
-    base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
+def _collect_runtime_tools() -> list:
+    """收集主 Agent 的完整工具列表（内置 + MCP + 插件注入）。"""
     from faust_backend.mcp_manager import get_mcp_manager
 
+    base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
     mcp_tools = get_mcp_manager().get_langchain_tools()
     if mcp_tools:
         base_tools.extend(mcp_tools)
     pm = state.plugin_manager
-    tools = (
-        pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME)
-        if pm
-        else base_tools
-    )
+    if pm:
+        return pm.compose_tools(base_tools=base_tools, agent_name=state.AGENT_NAME)
+    return base_tools
+
+
+def _compose_runtime_middlewares(*, compact_middleware=None) -> list:
+    """组装中间件栈。
+
+    compact_middleware 会插在 ModelRetryMiddleware 之前（重试始终是最内层，
+    只重放模型请求本身），并且始终排在最外层之后，保证判定基于未修复/未桥接
+    的原始消息。
+    """
+    from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
+    from faust_backend.runtime.model_retry import with_model_retry
+    from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
+
+    pm = state.plugin_manager
     middlewares = pm.compose_middlewares(agent_name=state.AGENT_NAME) if pm else []
     # Filter out any stale mm_bridge instances from old plugin state
     middlewares = [
@@ -330,9 +373,23 @@ def _compose_runtime_extensions():
         m for m in middlewares if not isinstance(m, ToolCallRepairMiddleware)
     ]
     middlewares.append(ToolCallRepairMiddleware())
+    # Always-on 会话压缩：保命机制，不依赖插件开关
+    if compact_middleware is not None:
+        from faust_backend.runtime.compact import CompactMiddleware
+
+        middlewares = [
+            m for m in middlewares if not isinstance(m, CompactMiddleware)
+        ]
+        middlewares.append(compact_middleware)
     # Always-on: 瞬时模型故障统一退避重试（最内层，只重放模型请求本身）
-    middlewares = with_model_retry(middlewares)
-    return tools, middlewares
+    return with_model_retry(middlewares)
+
+
+def _compose_runtime_extensions(*, compact_middleware=None):
+    return (
+        _collect_runtime_tools(),
+        _compose_runtime_middlewares(compact_middleware=compact_middleware),
+    )
 
 
 def _find_tool_by_name(name: str):
@@ -390,7 +447,7 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
         except Exception as exc:
             log.warning("关闭旧 SubagentManager 失败: %s", exc)
     manager = SubagentManager(checkpointerPath=subagent_db_path)
-    manager.setChatModel(await _build_chat_model(model_name=model_name))
+    manager.setChatModel(await _build_chat_model(model_name=model_name), spec=model_name)
     _tools, middlewares = _compose_runtime_extensions()
     manager.setMiddlewares(middlewares)
     for name, toolset in _build_subagent_toolsets().items():
@@ -433,9 +490,20 @@ async def _build_chat_model(*, model_name: str):
 
 
 async def _create_agent_with_extensions(*, model_name: str, checkpointer):
-    tools, mgmt_middlewares = _compose_runtime_extensions()
-    tools = middleware.wrap_tools(tools)
+    from faust_backend.runtime.compact import build_compact_middleware
+
+    tools = _collect_runtime_tools()
     chat_model = await _build_chat_model(model_name=model_name)
+    # 压缩 middleware 需要「与主请求逐字节相同的工具 schema」来命中前缀缓存，
+    # 而 wrap_tools 是就地包装（不改变 schema），因此在包装前构建即可。
+    compact_middleware = await build_compact_middleware(
+        model=chat_model, tools=tools, model_spec=model_name
+    )
+    tools = middleware.wrap_tools(tools)
+    mgmt_middlewares = _compose_runtime_middlewares(
+        compact_middleware=compact_middleware
+    )
+    state.compact_middleware = compact_middleware
     kwargs = {
         "model": chat_model,
         "checkpointer": checkpointer,
@@ -443,7 +511,6 @@ async def _create_agent_with_extensions(*, model_name: str, checkpointer):
     }
     if mgmt_middlewares:
         kwargs["middleware"] = mgmt_middlewares
-        return create_agent(**kwargs)
     return create_agent(**kwargs)
 
 

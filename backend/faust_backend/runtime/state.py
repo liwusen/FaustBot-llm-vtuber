@@ -80,6 +80,9 @@ processor_prune_task = None
 uvicorn_server: Server | None = None
 plugin_manager: "PluginManager | None" = None  # set by lifecycle
 subagent_manager: SubagentManager | None = None
+# 主 Agent 的会话压缩中间件实例（由 lifecycle 在重建时设置），
+# 供 /compact 斜杠命令直接触发一次强制压缩。
+compact_middleware: "object | None" = None
 fastapi_app: FastAPI | None = None
 
 

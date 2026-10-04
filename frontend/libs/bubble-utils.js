@@ -82,6 +82,7 @@ export function entryHash(entry, source) {
     if (entry.type === 'text') pick.push(String(source || '') + ':' + (entry.text || ''));
     else if (entry.type === 'md') pick.push('md:' + (entry.text || ''));
     else if (entry.type === 'reasoning') pick.push('r:' + (entry.text || '') + ':' + (entry.expanded ? '1' : '0'));
+    else if (entry.type === 'compact') pick.push('compact:' + (entry.text || '') + ':' + (entry.done ? '1' : '0') + ':' + (entry.expanded ? '1' : '0'));
     else if (entry.type === 'tool') {
       pick.push('t:' + (entry.callId || '') + ':' + String(entry.done ? '1' : '0') + ':' + (entry.expanded ? '1' : '0'));
       pick.push(String(entry.toolName || ''));
@@ -107,7 +108,26 @@ function setMarkdownCached(text, html) {
   }
 }
 
-export function renderBubbleEntryHtml(source, entry, index, reasoningIdx) {
+function getCachedMarkdownHtml(raw) {
+  const key = String(raw || '');
+  let html = getMarkdownCached(key);
+  if (html === undefined) {
+    html = renderMarkdownHtml(key);
+    setMarkdownCached(key, html);
+  }
+  return html;
+}
+
+// 会话压缩内容：流式期间是纯文本（保留换行），完成后是结构化 Markdown 摘要
+function renderCompactContentHtml(entry) {
+  const text = String(entry.text || '');
+  if (!entry.done) {
+    return '<div class="thinking-content compact-content">' + escapeHtml(text) + '</div>';
+  }
+  return '<div class="thinking-content compact-content md-block">' + getCachedMarkdownHtml(text) + '</div>';
+}
+
+export function renderBubbleEntryHtml(source, entry, index, reasoningIdx, compactIdx) {
   const item = entry;
   if (!item || typeof item !== 'object') return '';
   if (item.type === 'reasoning') {
@@ -128,6 +148,24 @@ export function renderBubbleEntryHtml(source, entry, index, reasoningIdx) {
       '</section>'
     );
   }
+  if (item.type === 'compact') {
+    const statusText = item.done ? '已完成' : '进行中';
+    return (
+      '<section class="thinking-card compact-card">' +
+        '<details class="thinking-details compact-details" data-c="' + (compactIdx === undefined ? index : compactIdx) + '"' + (item.expanded ? ' open' : '') + '>' +
+          '<summary class="thinking-summary">' +
+            '<span class="thinking-arrow">&#9654;</span>' +
+            '<span class="thinking-divider"></span>' +
+            '<span class="thinking-label compact-label">会话压缩</span>' +
+            '<span class="thinking-status compact-status' + (item.done ? ' compact-status-done' : '') + '">' + statusText + '</span>' +
+          '</summary>' +
+          '<div class="thinking-body">' +
+            renderCompactContentHtml(item) +
+          '</div>' +
+        '</details>' +
+      '</section>'
+    );
+  }
   if (item.type === 'text') {
     const formatted = formatResultBubbleText(source, item.text || '');
     if (!formatted) return '';
@@ -135,12 +173,7 @@ export function renderBubbleEntryHtml(source, entry, index, reasoningIdx) {
   }
   if (item.type === 'md') {
     const raw = item.text || '';
-    let html = getMarkdownCached(raw);
-    if (html === undefined) {
-      html = renderMarkdownHtml(raw);
-      setMarkdownCached(raw, html);
-    }
-    return `<div class="result-bubble-main md-block">${html}</div>`;
+    return `<div class="result-bubble-main md-block">${getCachedMarkdownHtml(raw)}</div>`;
   }
   if (item.type !== 'tool') return '';
   const toolName = escapeHtml(item.toolName ? item.toolName : '未知工具');
@@ -173,7 +206,7 @@ export function renderBubbleEntryHtml(source, entry, index, reasoningIdx) {
 // 同键就地打补丁：流式分片只改变条目内容时不再重建节点，
 // 保证 <details> 元素存活（mousedown/mouseup 落在同一节点上，click 不丢、open 状态天然保留）。
 // 返回 false 表示该条目的 DOM 形态不支持原地更新，调用方应回退为重建节点。
-export function patchBubbleEntryNode(node, source, entry, index, reasoningIdx) {
+export function patchBubbleEntryNode(node, source, entry, index, reasoningIdx, compactIdx) {
   if (!node || !entry || typeof entry !== 'object') return false;
 
   if (entry.type === 'reasoning') {
@@ -186,6 +219,28 @@ export function patchBubbleEntryNode(node, source, entry, index, reasoningIdx) {
     // textContent 赋值与渲染期的 escapeHtml + innerHTML 等价
     content.textContent = entry.text || '';
     counter.textContent = '思考:' + reasoningText.length + '字';
+    if (details.open !== !!entry.expanded) details.open = !!entry.expanded;
+    return true;
+  }
+
+  if (entry.type === 'compact') {
+    const details = node.querySelector('details.thinking-details');
+    const content = node.querySelector('.compact-content');
+    const status = node.querySelector('.compact-status');
+    if (!details || !content || !status) return false;
+    // 索引不符说明节点形态已变，交由调用方重建（与 reasoning 分支同构）
+    if (details.dataset.c !== String(compactIdx === undefined ? index : compactIdx)) return false;
+    if (entry.done) {
+      // 完成：由纯文本切到 Markdown（innerHTML 渲染，浏览器会由 CSS 恢复 normal 空白处理）
+      content.classList.add('md-block');
+      content.innerHTML = getCachedMarkdownHtml(entry.text || '');
+    } else {
+      content.classList.remove('md-block');
+      // textContent 赋值与渲染期的 escapeHtml + innerHTML 等价
+      content.textContent = String(entry.text || '');
+    }
+    status.textContent = entry.done ? '已完成' : '进行中';
+    status.classList.toggle('compact-status-done', !!entry.done);
     if (details.open !== !!entry.expanded) details.open = !!entry.expanded;
     return true;
   }
@@ -203,13 +258,7 @@ export function patchBubbleEntryNode(node, source, entry, index, reasoningIdx) {
   if (entry.type === 'md') {
     const main = node.firstElementChild;
     if (!main || !main.classList.contains('md-block')) return false;
-    const raw = entry.text || '';
-    let html = getMarkdownCached(raw);
-    if (html === undefined) {
-      html = renderMarkdownHtml(raw);
-      setMarkdownCached(raw, html);
-    }
-    main.innerHTML = html;
+    main.innerHTML = getCachedMarkdownHtml(entry.text || '');
     return true;
   }
 
@@ -236,9 +285,17 @@ export function renderResultBubbleHtml(source, entries) {
   const blocks = [];
   const items = Array.isArray(entries) ? entries : [];
   let reasoningIdx = 0;
+  let compactIdx = 0;
   for (let i = 0; i < items.length; i++) {
     const isReasoning = !!(items[i] && items[i].type === 'reasoning');
-    const html = renderBubbleEntryHtml(source, items[i], i, isReasoning ? reasoningIdx++ : reasoningIdx);
+    const isCompact = !!(items[i] && items[i].type === 'compact');
+    const html = renderBubbleEntryHtml(
+      source,
+      items[i],
+      i,
+      isReasoning ? reasoningIdx++ : reasoningIdx,
+      isCompact ? compactIdx++ : compactIdx,
+    );
     if (html) blocks.push(html);
   }
   return blocks.join('');
@@ -256,6 +313,9 @@ export function cloneBubbleEntries(entries) {
     }
     if (item.type === 'reasoning') {
       return { type: 'reasoning', text: String(item.text || ''), expanded: !!item.expanded };
+    }
+    if (item.type === 'compact') {
+      return { type: 'compact', text: String(item.text || ''), done: !!item.done, expanded: !!item.expanded };
     }
     if (item.type === 'tool') {
       return {

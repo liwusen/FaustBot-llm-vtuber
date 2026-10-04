@@ -232,6 +232,7 @@ def load_configs():
     global FAUSTBOT_CLOUD_BASE_URL, FAUSTBOT_CLOUD_TIMEOUT_SECONDS
     global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_REMOVE_SOURCE, MM_BRIDGE_KEEP_TURNS, MM_BRIDGE_MAX_PIXELS
     global REASONING_CONFIG
+    global COMPACT_THRESHOLD_RATIO, COMPACT_KEEP_ROUNDS
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
     global AUTO_FORCE_INTERRUPT
@@ -335,6 +336,22 @@ def load_configs():
         REASONING_CONFIG = str(config.get('THINKING_INTENSITY', 'medium') or 'medium').strip()
     if REASONING_CONFIG not in {'off', 'low', 'medium', 'high'}:
         REASONING_CONFIG = 'medium'
+    # 会话压缩（auto compact）配置。
+    # COMPACT_THRESHOLD_RATIO: 触发压缩的上下文占用比例，默认 0.8
+    #   （留 20% 余量给压缩指令与摘要输出，保证压缩调用本身不会因超限而失败）。
+    # COMPACT_KEEP_ROUNDS: 压缩后保留最近多少轮对话，默认 3。
+    try:
+        COMPACT_THRESHOLD_RATIO = float(config.get('COMPACT_THRESHOLD_RATIO', 0.8) or 0.8)
+    except (TypeError, ValueError):
+        COMPACT_THRESHOLD_RATIO = 0.8
+    if not 0.1 <= COMPACT_THRESHOLD_RATIO <= 0.95:
+        COMPACT_THRESHOLD_RATIO = 0.8
+    try:
+        COMPACT_KEEP_ROUNDS = int(config.get('COMPACT_KEEP_ROUNDS', 3) or 3)
+    except (TypeError, ValueError):
+        COMPACT_KEEP_ROUNDS = 3
+    if COMPACT_KEEP_ROUNDS < 1:
+        COMPACT_KEEP_ROUNDS = 3
     PLUGIN_MARKET_USE_GH_PROXY = bool(config.get('PLUGIN_MARKET_USE_GH_PROXY', False))
     MD_BLOCK_ENABLED = bool(config.get('MD_BLOCK_ENABLED', True))
     # 用户发起对话时, 若主 Agent 正被前台/后台触发器占用:

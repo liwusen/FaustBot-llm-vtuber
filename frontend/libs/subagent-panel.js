@@ -3,7 +3,7 @@
 // 说明：状态列表、事件缓存、选中项全部内聚在本模块；
 // 气泡属性与鼠标穿透控制器通过注入的 getter/回调读取，模块内不引用 app.js 闭包变量。
 
-import { escapeHtml } from './bubble-utils.js';
+import { escapeHtml, renderMarkdownHtml } from './bubble-utils.js';
 
 export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndpoint, deleteEndpoint }) {
   const subagentSummaryEl = document.getElementById('subagentSummary');
@@ -92,6 +92,17 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
         last.ts = event.ts;
         continue;
       }
+      // 会话压缩：compact_start/compact_delta/compact_done 折叠成单个 compact 事件
+      if (eventType === 'compact_start' || eventType === 'compact_delta' || eventType === 'compact_done') {
+        if (eventType !== 'compact_start' && last && last.type === 'compact' && !last.done) {
+          if (eventType === 'compact_delta') last.content = String(last.content || '') + String(event.content || '');
+          else last.done = true;
+          last.ts = event.ts;
+          continue;
+        }
+        normalized.push({ type: 'compact', content: String(event.content || ''), done: eventType === 'compact_done', ts: event.ts });
+        continue;
+      }
       normalized.push({ ...event });
     }
     return normalized;
@@ -100,6 +111,7 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
   function formatSubagentPanelEvent(event){
     const eventType = String(event.type || '').trim();
     if (eventType === 'reasoning_delta') return { label: '思考', body: String(event.content || '') };
+    if (eventType === 'compact') return { label: '会话压缩', body: String(event.content || ''), kind: 'compact', done: !!event.done };
     if (eventType === 'delta') return { label: '输出', body: String(event.content || '') };
     if (eventType === 'tool_start') return { label: '调用工具', body: String(event.tool_name || '') };
     if (eventType === 'queued') {
@@ -116,6 +128,39 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     return { label: eventType || 'event', body: typeof event === 'object' ? JSON.stringify(event, null, 2) : String(event || '') };
   }
 
+  // 事件正文：普通事件为转义纯文本；compact 输出与主气泡一致的折叠卡片（完成态走 Markdown）
+  function subagentEventInnerHtml(formatted){
+    const typeHtml = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div>`;
+    if (formatted.kind !== 'compact') {
+      return typeHtml + `<div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
+    }
+    const text = String(formatted.body || '');
+    const content = formatted.done
+      ? `<div class="thinking-content compact-content md-block">${renderMarkdownHtml(text)}</div>`
+      : `<div class="thinking-content compact-content">${escapeHtml(text)}</div>`;
+    return typeHtml +
+      '<section class="thinking-card compact-card">' +
+        '<details class="thinking-details compact-details">' +
+          '<summary class="thinking-summary">' +
+            '<span class="thinking-arrow">&#9654;</span>' +
+            '<span class="thinking-divider"></span>' +
+            '<span class="thinking-label compact-label">会话压缩</span>' +
+            `<span class="thinking-status compact-status${formatted.done ? ' compact-status-done' : ''}">${formatted.done ? '已完成' : '进行中'}</span>` +
+          '</summary>' +
+          '<div class="thinking-body">' + content + '</div>' +
+        '</details>' +
+      '</section>';
+  }
+
+  function buildSubagentEventNode(key, hash, event){
+    const node = document.createElement('div');
+    node.className = 'subagent-panel-event';
+    node.dataset.eventKey = key;
+    node.dataset.eventHash = hash;
+    node.innerHTML = subagentEventInnerHtml(formatSubagentPanelEvent(event));
+    return node;
+  }
+
   function subagentEventKey(events, index) {
     const event = events[index];
     const eventType = String((event && event.type) || 'event');
@@ -128,6 +173,7 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     const eventType = String(event.type || '');
     let body = '';
     if (eventType === 'reasoning_delta' || eventType === 'delta') body = String(event.content || '');
+    else if (eventType === 'compact') body = String(event.content || '') + ':' + (event.done ? '1' : '0');
     else if (eventType === 'tool_start') body = String(event.tool_name || '');
     else if (eventType === 'queued' || eventType === 'input') body = JSON.stringify((((event.message || {}).messages || [])[0] || {}).content || '');
     else if (eventType === 'error') body = String(event.content || event.error || '');
@@ -165,23 +211,11 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
       const key = keys[i];
       const hash = hashes[i];
       if (!el) {
-        const node = document.createElement('div');
-        node.className = 'subagent-panel-event';
-        node.dataset.eventKey = key;
-        node.dataset.eventHash = hash;
-        const formatted = formatSubagentPanelEvent(events[i]);
-        node.innerHTML = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
-        eventsEl.appendChild(node);
+        eventsEl.appendChild(buildSubagentEventNode(key, hash, events[i]));
         continue;
       }
       if (el.dataset.eventKey !== key || el.dataset.eventHash !== hash) {
-        const node = document.createElement('div');
-        node.className = 'subagent-panel-event';
-        node.dataset.eventKey = key;
-        node.dataset.eventHash = hash;
-        const formatted = formatSubagentPanelEvent(events[i]);
-        node.innerHTML = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div><div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
-        el.replaceWith(node);
+        el.replaceWith(buildSubagentEventNode(key, hash, events[i]));
       }
     }
     for (let i = keys.length; i < children.length; i++) {
@@ -282,7 +316,7 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     if (!subagentEventCache[name]) subagentEventCache[name] = [];
     const cached = subagentEventCache[name];
     const last = cached[cached.length - 1];
-    if ((msg.type === 'reasoning_delta' || msg.type === 'delta') && last && last.type === msg.type) {
+    if ((msg.type === 'reasoning_delta' || msg.type === 'delta' || msg.type === 'compact_delta') && last && last.type === msg.type) {
       last.content = (last.content || '') + (msg.content || '');
       last.ts = msg.ts || Date.now();
     } else {

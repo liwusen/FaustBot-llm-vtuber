@@ -1,7 +1,7 @@
 import json
 import uuid
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional
 from langchain_openai import ChatOpenAI
 from faust_backend.thinking import (
             ReasoningChatOpenAI,
@@ -13,6 +13,10 @@ from faust_backend.thinking import (
 # httpx 会以自身 UA 发请求（AsyncOpenAI/Python x.y.z、python-httpx/x.y），部分
 # 网关据此做来源识别或拦截，因此所有 LLM 与 /models 请求都显式携带该 UA。
 FAUSTBOT_USER_AGENT = "faustbot/3 (langchain)"
+
+# 模型未配置上下文长度时使用的默认值（token）。DeepSeek / Qwen 等主流模型
+# 均为 128k 量级，作为默认值可让未显式配置的模型直接获得可用的 auto compact。
+DEFAULT_CONTEXT_LENGTH = 128_000
 
 # OpenCode Go 要求每个会话携带稳定 session ID（用于路由优化与 prompt 缓存）。
 # 进程生命周期内保持稳定，重启后更换。
@@ -39,17 +43,30 @@ class ModelProvider(BaseModel):
     base_url: str
     key: Optional[str] = None
     models: List[str] = []
+    # 模型名 → 上下文长度（token）。未配置的模型不出现在此 dict 中，
+    # 默认值（128000）由调用方在使用时决定，provider 层不填默认值。
+    model_context_lengths: Dict[str, int] = {}
     thinking_type: str = "qwen"  # Default thinking type (qwen/deepseek/openai/none/mimo/glm/minimax)
     opencode_go: bool = False  # OpenCode Go 订阅适配: 自动附带 x-opencode-session 会话头
 
 ModelProvider.model_rebuild()  # Rebuild the model to resolve forward references
 ModelProviders.model_rebuild()  # Rebuild the model to resolve forward references
 
-async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
-    """从 provider 的 GET {base_url}/models 拉取模型列表。
+async def fetch_provider_model_entries(provider: ModelProvider) -> List[dict]:
+    """从 provider 的 GET {base_url}/models 拉取模型条目（含元数据）。
 
     带 10s 超时；对非 OpenAI 兼容的响应结构做容错解析，
     任何异常都会抛出明确的 ValueError（前端向导据此提示用户）。
+
+    返回 `[{"id": str, "context_length": int | None}]`。
+
+    各 Provider 的元数据丰富程度差异很大（实测）：
+      - deepseek : context_window / max_output_tokens / input_modalities /
+                   output_modalities / effort / api_capabilities
+      - OpenRouter: context_length / architecture / pricing / top_provider /
+                   supported_parameters / knowledge_cutoff / reasoning / benchmarks
+      - aliyun / OpenCode Go: 只有 id / object / created / owned_by
+    目前只消费「上下文长度」（其余字段暂无使用方，故不解析，避免死代码）。
     """
     import httpx
     headers = {"User-Agent": FAUSTBOT_USER_AGENT}
@@ -68,20 +85,57 @@ async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
     except httpx.HTTPError as exc:
         raise ValueError(f"请求 {provider.base_url}/models 失败: {exc}") from exc
 
-    res = []
+    entries: List[dict] = []
     # OpenAI 兼容: {"data": [{"id": "..."}]}
     data = models_data.get("data") if isinstance(models_data, dict) else None
     if isinstance(data, list):
         for item in data:
-            mid = item.get("id") if isinstance(item, dict) else None
-            if mid:
-                res.append(str(mid))
-    # 兜底: 直接是字符串数组
+            if not isinstance(item, dict):
+                continue
+            mid = item.get("id")
+            if not mid:
+                continue
+            entries.append(
+                {"id": str(mid), "context_length": _extract_context_length(item)}
+            )
+    # 兜底: 直接是字符串数组（无元数据）
     elif isinstance(models_data, list):
-        res = [str(m) for m in models_data if str(m).strip()]
-    if not res:
+        entries = [
+            {"id": str(m), "context_length": None}
+            for m in models_data
+            if str(m).strip()
+        ]
+    if not entries:
         raise ValueError(f"无法从 {provider.base_url}/models 解析模型列表")
-    return res
+    return entries
+
+
+def _extract_context_length(item: dict) -> Optional[int]:
+    """从 /models 条目里提取上下文长度（token）。
+
+    字段名随 Provider 而异：OpenRouter 用 `context_length`，DeepSeek 用
+    `context_window`。取不到或值非法时返回 None（调用方保留「未配置」状态，
+    由 DEFAULT_CONTEXT_LENGTH 兜底）。
+    """
+    for key in ("context_length", "context_window"):
+        value = item.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    # OpenRouter 部分条目把 context_length 也放在 top_provider 下
+    top_provider = item.get("top_provider")
+    if isinstance(top_provider, dict):
+        value = top_provider.get("context_length")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return int(value)
+    return None
+
+
+async def get_provider_models_by_api(provider: ModelProvider) -> List[str]:
+    """从 provider 的 GET {base_url}/models 拉取模型名列表（只要 id）。"""
+    return [entry["id"] for entry in await fetch_provider_model_entries(provider)]
+
 
 async def auto_load_model_for_provider(provider: ModelProvider, force: bool = False) -> List[str]:
     """自动从 provider API 拉取模型列表并写入 provider.models。
@@ -92,9 +146,36 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
     force=False（默认，构建 LLM 的热路径）：已有 models 时跳过网络请求（幂等）。
     force=True（前端「自动加载模型」按钮）：丢弃已有 models 后重新拉取，保证
     列表与 Provider 端一致；拉取失败时抛错，旧列表不被清空。
+
+    同时用 API 返回的元数据**自动填充 `model_context_lengths`**：
+      - 只填空缺项，**不覆盖用户手工配置的值**（用户配置优先）；
+      - force=True 时顺带清理已不在模型列表中的陈旧条目。
     """
-    if force or not provider.models:
-        provider.models = await get_provider_models_by_api(provider)
+    if not (force or not provider.models):
+        return provider.models
+
+    entries = await fetch_provider_model_entries(provider)
+    provider.models = [entry["id"] for entry in entries]
+
+    lengths = dict(provider.model_context_lengths or {})
+    if force:
+        # 显式刷新：丢弃已不在列表中的模型（其上下文长度也就无从生效）
+        lengths = {k: v for k, v in lengths.items() if k in provider.models}
+    filled = 0
+    for entry in entries:
+        reported = entry.get("context_length")
+        if reported is None:
+            continue
+        if lengths.get(entry["id"]):
+            continue  # 用户已配置，不覆盖
+        lengths[entry["id"]] = reported
+        filled += 1
+    provider.model_context_lengths = lengths
+    if filled:
+        print(
+            f"[provider] 已从 /models 元数据自动填充 {filled} 个模型的上下文长度"
+            f"（provider={provider.name}）"
+        )
     return provider.models
 
 async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:str="deepseek::deepseek-v4-pro",intensity:str|None = "medium")-> ReasoningChatOpenAI|ChatOpenAI:
@@ -279,6 +360,26 @@ def get_main_credentials(providers: ModelProviders) -> tuple[str, str, str]:
     if not provider:
         return "", "", ""
     return model_name, provider.key or "", provider.base_url
+
+
+def get_context_length(providers: ModelProviders, spec: str) -> int:
+    """返回 spec 对应模型的上下文长度（token）。
+
+    未配置该模型、或 spec 无法解析、或 provider 不存在时，回退到
+    DEFAULT_CONTEXT_LENGTH（128000）。provider 层不写回默认值，
+    保证「未配置」这一状态在持久化数据里始终可辨。
+    """
+    try:
+        provider_name, model_name = parse_spec(spec)
+    except ValueError:
+        return DEFAULT_CONTEXT_LENGTH
+    provider = next((p for p in providers.providers if p.name == provider_name), None)
+    if provider is None:
+        return DEFAULT_CONTEXT_LENGTH
+    configured = (provider.model_context_lengths or {}).get(model_name)
+    if isinstance(configured, int) and configured > 0:
+        return configured
+    return DEFAULT_CONTEXT_LENGTH
 
 
 def get_default_subagent_model(providers: ModelProviders) -> str:

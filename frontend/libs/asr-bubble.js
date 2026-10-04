@@ -172,6 +172,24 @@ export function initAsrBubble({
       restoreToggleAnchor(details);
       return;
     }
+    if (details.dataset && details.dataset.c !== undefined) {
+      const cIdx = parseInt(details.dataset.c, 10);
+      if (!isNaN(cIdx) && Array.isArray(asrBubbleState.entries)) {
+        let count = -1;
+        for (const entry of asrBubbleState.entries) {
+          if (entry && entry.type === 'compact') {
+            count++;
+            if (count === cIdx) {
+              // 写回展开态：否则下一个 compact_delta 的 patch 会把 open 折回 false
+              entry.expanded = details.open;
+              break;
+            }
+          }
+        }
+      }
+      restoreToggleAnchor(details);
+      return;
+    }
     if (details.dataset && details.dataset.r !== undefined) {
       const rIdx = parseInt(details.dataset.r, 10);
       if (!isNaN(rIdx) && Array.isArray(asrBubbleState.entries)) {
@@ -257,12 +275,15 @@ export function initAsrBubble({
   function applyBubbleEntriesDiff(source, entries) {
     const children = Array.from(asrTextEl.children);
     let reasoningIdx = 0;
+    let compactIdx = 0;
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const key = entryKey(source, entry, i);
       const hash = entryHash(entry, source);
       const isReasoning = !!(entry && entry.type === 'reasoning');
       const entryReasoningIdx = isReasoning ? reasoningIdx++ : reasoningIdx;
+      const isCompact = !!(entry && entry.type === 'compact');
+      const entryCompactIdx = isCompact ? compactIdx++ : compactIdx;
       let el = children[i];
       if (el && el.dataset.entryKey !== key) {
         for (let j = i; j < children.length; j++) children[j].remove();
@@ -273,18 +294,18 @@ export function initAsrBubble({
         el = document.createElement('div');
         el.dataset.entryKey = key;
         el.dataset.entryHash = hash;
-        el.innerHTML = renderBubbleEntryHtml(source, entry, i, entryReasoningIdx);
+        el.innerHTML = renderBubbleEntryHtml(source, entry, i, entryReasoningIdx, entryCompactIdx);
         asrTextEl.appendChild(el);
         children.push(el);
         hydrateNewBubbleNode(el);
         continue;
       }
       if (el.dataset.entryHash === hash) continue;
-      if (!patchBubbleEntryNode(el, source, entry, i, entryReasoningIdx)) {
+      if (!patchBubbleEntryNode(el, source, entry, i, entryReasoningIdx, entryCompactIdx)) {
         const node = document.createElement('div');
         node.dataset.entryKey = key;
         node.dataset.entryHash = hash;
-        node.innerHTML = renderBubbleEntryHtml(source, entry, i, entryReasoningIdx);
+        node.innerHTML = renderBubbleEntryHtml(source, entry, i, entryReasoningIdx, entryCompactIdx);
         el.replaceWith(node);
         el = node;
         children[i] = node;

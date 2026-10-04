@@ -51,6 +51,38 @@ function _saveProvidersToState(providers) {
   _markProvidersDirty();
 }
 
+// ── 上下文长度（token）工具 ──
+// provider.model_context_lengths: { [模型名]: int }；未配置的模型不在其中，
+// 由后端在使用时回退默认值 128000。
+
+function _makeContextLengthInput(value) {
+  const input = el("input", "input");
+  input.type = "number";
+  input.min = "1";
+  input.step = "1";
+  input.placeholder = "默认 128k";
+  input.value = (value === undefined || value === null) ? "" : String(value);
+  return input;
+}
+
+// 合法（正整数）返回 int；留空或非法返回 null（语义：未配置 / 清空该配置）
+function _parseContextLength(raw) {
+  const text = String(raw === undefined || raw === null ? "" : raw).trim();
+  if (!text) return null;
+  const n = Number(text);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
+  return n;
+}
+
+// 就地写入 provider[providerName] 的 model_context_lengths[modelName]
+function _setModelContextLength(providers, providerName, modelName, length) {
+  const target = providers.find((p) => p.name === providerName);
+  if (!target) return;
+  if (!target.model_context_lengths) target.model_context_lengths = {};
+  if (length === null) delete target.model_context_lengths[modelName];
+  else target.model_context_lengths[modelName] = length;
+}
+
 // ── Provider 添加/编辑 Modal ──
 
 function openProviderModal(existing) {
@@ -159,12 +191,22 @@ function openProviderModal(existing) {
       // 2) 再加载模型（后端会清空该 provider 已有模型后重新拉取）
       const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(name)}/load-models`,
         null, null);
-      // 3) 用最新列表覆盖该 provider 的 models（不覆盖其它 provider 的未保存改动）
+      // 3) 用最新列表覆盖该 provider 的 models（不覆盖其它 provider 的未保存改动）；
+      //    同时接收后端从 /models 元数据自动填充的上下文长度
       const next = JSON.parse(JSON.stringify(state.providers || []));
       const t = next.find((p) => p.name === name);
-      if (t) t.models = (r.models || []).slice();
+      if (t) {
+        t.models = (r.models || []).slice();
+        if (r.model_context_lengths) t.model_context_lengths = { ...r.model_context_lengths };
+      }
       _saveProvidersToState(next);
-      showBanner("success", "模型加载成功: " + (r.models || []).length + " 个（保存后生效）");
+      const filled = Object.keys(r.model_context_lengths || {}).length;
+      showBanner(
+        "success",
+        `模型加载成功: ${(r.models || []).length} 个`
+          + (filled ? `，其中 ${filled} 个模型的上下文长度由 /models 自动填充` : "")
+          + "（保存后生效）",
+      );
     } catch (e) {
       showBanner("error", "模型加载失败: " + (e && e.detail ? e.detail : String(e)));
     }
@@ -217,6 +259,18 @@ function openProviderModal(existing) {
 function openModelModal(entry) {
   const nameInput = el("input", "input");
   nameInput.value = entry.model;
+  const entryProvider = _findProvider(entry.provider);
+  const ctxInput = _makeContextLengthInput(
+    entryProvider && entryProvider.model_context_lengths
+      ? entryProvider.model_context_lengths[entry.model]
+      : undefined
+  );
+  const ctxField = el("div", "form-field");
+  ctxField.append(el("label", "form-field-label", "上下文长度"));
+  const ctxControl = el("div", "form-field-control");
+  ctxControl.append(ctxInput);
+  ctxField.append(ctxControl);
+
   const bar = el("div", "toolbar");
   bar.append(
     makeButton("保存", () => {
@@ -227,6 +281,9 @@ function openModelModal(entry) {
       if (!target) { closeModal(); return; }
       const oldSpec = entry.spec;
       target.models = (target.models || []).map((m) => (m === entry.model ? newName : m));
+      // 上下文长度随重命名从旧模型名迁移到新模型名
+      _setModelContextLength(providers, entry.provider, entry.model, null);
+      _setModelContextLength(providers, entry.provider, newName, _parseContextLength(ctxInput.value));
       // 同步主/Subagent 选择里的 spec 引用
       if (state.mainModel === oldSpec) state.mainModel = `${entry.provider}::${newName}`;
       state.subagentModels = (state.subagentModels || []).map((s) => (s === oldSpec ? `${entry.provider}::${newName}` : s));
@@ -241,6 +298,8 @@ function openModelModal(entry) {
       const target = providers.find((p) => p.name === entry.provider);
       if (target) {
         target.models = (target.models || []).filter((m) => m !== entry.model);
+        // 同步删除该模型名的上下文长度配置
+        _setModelContextLength(providers, entry.provider, entry.model, null);
       }
       if (state.mainModel === entry.spec) state.mainModel = "";
       state.subagentModels = (state.subagentModels || []).filter((s) => s !== entry.spec);
@@ -252,7 +311,7 @@ function openModelModal(entry) {
     }, "btn btn-ghost"),
     makeButton("关闭", closeModal)
   );
-  openModal(`编辑模型 - ${entry.spec}`, [nameInput, bar]);
+  openModal(`编辑模型 - ${entry.spec}`, [nameInput, ctxField, bar]);
 }
 
 // ── 模块渲染入口 ──
@@ -321,12 +380,31 @@ function renderProviderWizard() {
     });
     subWrap.append(cb);
 
+    // 上下文长度：number 输入，留空 = 未配置（后端默认 128000）
+    const providerEntry = _findProvider(entry.provider);
+    const ctxWrap = el("div", "toolbar compact");
+    const ctxInput = _makeContextLengthInput(
+      providerEntry && providerEntry.model_context_lengths
+        ? providerEntry.model_context_lengths[entry.model]
+        : undefined
+    );
+    ctxInput.style.maxWidth = "140px";  // 表格内收窄（.input 默认 width:100%）
+    ctxInput.addEventListener("change", () => {
+      const length = _parseContextLength(ctxInput.value);
+      const providers = JSON.parse(JSON.stringify(state.providers || []));
+      _setModelContextLength(providers, entry.provider, entry.model, length);
+      _saveProvidersToState(providers);
+      ctxInput.value = length === null ? "" : String(length);  // 非法输入回退为清空
+      // 不整表重渲染：输入框原生状态已更新（同下方 radio/checkbox 的做法）。
+    });
+    ctxWrap.append(ctxInput);
+
     const ops = el("div", "toolbar compact");
     ops.append(makeButton("编辑", () => openModelModal(entry), "btn btn-ghost"));
 
-    return [entry.provider, entry.model, radioWrap, subWrap, ops];
+    return [entry.provider, entry.model, ctxWrap, radioWrap, subWrap, ops];
   });
-  const modelsCard = makeSimpleTableCard("Models", ["Provider", "模型", "主模型", "Subagent", "操作"], modelRows, {
+  const modelsCard = makeSimpleTableCard("Models", ["Provider", "模型", "上下文长度", "主模型", "Subagent", "操作"], modelRows, {
     pageSize: 10,
     searchKey: 1,
   });
@@ -356,6 +434,35 @@ function renderProviderWizard() {
       _markProvidersDirty();
       rerenderAiModule();
       showBanner(fail ? "error" : "success", `模型加载完成: 成功 ${ok} 个, 失败 ${fail} 个（保存后生效）`);
+    }, "btn btn-secondary"),
+    makeButton("同步上下文长度（来自 /models）", async () => {
+      // 已加载过模型的 Provider 不会被上面的按钮覆盖，但它们的上下文长度
+      // 可能仍是空的。这里对**全部** Provider 重跑一次 /models，用 API 元数据
+      // 填充缺失的上下文长度（用户手工填过的值不会被覆盖）。
+      const all = state.providers || [];
+      if (!all.length) { showBanner("info", "还没有 Provider"); return; }
+      let ok = 0, fail = 0;
+      for (const p of all) {
+        try {
+          await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(p.name)}/load-models`);
+          ok++;
+        } catch (e) {
+          fail++;
+        }
+      }
+      const pr = await cfgApi("GET", "/faust/admin/providers");
+      state.providers = pr.providers || [];
+      state.mainModel = pr.main_model || "";
+      state.subagentModels = pr.subagent_models || [];
+      const filled = (state.providers || []).reduce(
+        (n, p) => n + Object.keys(p.model_context_lengths || {}).length, 0);
+      _markProvidersDirty();
+      rerenderAiModule();
+      showBanner(
+        fail ? "error" : "success",
+        `上下文长度同步完成: 成功 ${ok} 个 Provider, 失败 ${fail} 个；`
+          + `当前共 ${filled} 个模型有明确上下文长度（保存后生效）`,
+      );
     }, "btn btn-secondary")
   );
 

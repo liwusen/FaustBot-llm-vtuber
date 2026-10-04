@@ -3,8 +3,6 @@ import asyncio
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.base import empty_checkpoint
 
 import faust_backend.backend2front as backend2frontend
 import faust_backend.events as events
@@ -29,16 +27,6 @@ log = get_logger("faust.chat")
 
 router = APIRouter(tags=["chat"])
 router.description = "聊天/通信：WebSocket 流式聊天、命令转发、命令反馈，以及遗留的 POST 聊天接口" # type: ignore
-
-COMPACT_SYSTEM_PROMPT = """你是一个对话压缩器。你的任务是把当前 Agent 会话压缩成一段高密度中文摘要，供系统作为后续上下文继续使用。
-
-要求：
-1. 保留用户目标、未完成事项、关键约束、重要偏好、当前代码状态、失败尝试与结论。
-2. 保留仍然有效的文件路径、命令、配置状态、MCP/Plugin/Skill/服务状态。
-3. 图片或多模态内容只能转述其与任务相关的信息，不要保留无关细节。
-4. 工具调用必须折叠成“做了什么、结果是什么、后续影响是什么”。
-5. 不要写寒暄，不要写面向用户的话，不要写 Markdown 标题。
-6. 输出必须是单段或少量短段落纯文本，直接可作为系统上下文拼接。"""
 
 
 def _is_slash_command(text: str) -> bool:
@@ -123,23 +111,49 @@ async def _set_reasoning_effort(level: str) -> str:
 
 
 async def _session_token_summary() -> str:
+    """统计当前会话 token。
+
+    token 数字一律取 LLM API 的返回值（最近一条 AIMessage 的 usage_metadata），
+    不做本地推算：上游没返回 usage 时如实说明「暂无 API 计数」，而不是猜一个数。
+    """
+    from faust_backend.runtime import state as runtime_state
+    from faust_backend.provider import get_context_length
+    from faust_backend.runtime.compact import _reported_tokens
+    import faust_backend.config_loader as conf
+
     messages = await _get_checkpoint_messages()
     if not messages:
         return "当前会话没有可统计的上下文。"
-    from faust_backend.runtime import state as runtime_state
-    _providers = runtime_state.get_model_providers()
-    chat_model = await _build_chat_model(model_name=_providers.main_model)
-    try:
-        total = chat_model.get_num_tokens_from_messages(messages)
-        return f"当前会话 messages={len(messages)}，估算 tokens={total}"
-    except NotImplementedError:
-        joined = "\n\n".join(_message_to_plain_text(message) for message in messages)
-        try:
-            total = chat_model.get_num_tokens(joined)
-            return f"当前会话 messages={len(messages)}，估算 tokens={total}（按纯文本降级估算）"
-        except Exception:
-            approx = max(1, len(joined.encode("utf-8")) // 4)
-            return f"当前会话 messages={len(messages)}，估算 tokens≈{approx}（按字节降级估算）"
+    providers = runtime_state.get_model_providers()
+    spec = providers.main_model
+    context_length = get_context_length(providers, spec)
+    threshold = max(1, int(context_length * conf.COMPACT_THRESHOLD_RATIO))
+    lines = [
+        f"模型: {spec}",
+        f"messages={len(messages)}",
+    ]
+    usage = None
+    for message in reversed(messages):
+        if type(message).__name__ == "AIMessage" and getattr(message, "usage_metadata", None):
+            usage = message.usage_metadata
+            break
+    if not usage:
+        lines.append("tokens: 暂无 API 计数（本会话尚无 LLM 响应上报 usage）")
+    else:
+        lines.append(f"prompt_tokens={usage.get('input_tokens', '-')}")
+        lines.append(f"completion_tokens={usage.get('output_tokens', '-')}")
+        lines.append(f"total_tokens={usage.get('total_tokens', '-')}")
+        details = usage.get("input_token_details") or {}
+        cache_read = details.get("cache_read")
+        if cache_read is not None:
+            lines.append(f"缓存命中(cache_read)={cache_read}")
+        reported = _reported_tokens(messages)
+        ratio = (reported / context_length * 100) if context_length else 0.0
+        lines.append(
+            f"上下文长度={context_length} 触发阈值={threshold} "
+            f"({conf.COMPACT_THRESHOLD_RATIO:.0%}) 当前占用={ratio:.1f}%"
+        )
+    return "\n".join(lines)
 
 
 async def _clear_current_session() -> str:
@@ -156,62 +170,46 @@ async def _clear_current_session() -> str:
 
 
 async def _compact_session_stream(websocket: WebSocket) -> str:
+    """手动 /compact：调用与 auto compact 同一个 middleware，并流式推送卡片。
+
+    与 auto compact 的唯一区别是「无视阈值强制压一次」；压缩逻辑、提示词、
+    缓存策略完全共用，避免两套实现漂移。
+    """
+    middleware = state.compact_middleware
+    if middleware is None:
+        raise RuntimeError("会话压缩中间件未就绪（运行时可能未成功重建）")
     messages = await _get_checkpoint_messages()
     if not messages:
         return "当前会话没有可压缩的上下文。"
-    transcript = "\n\n".join(_message_to_plain_text(message) for message in messages)
-    from faust_backend.runtime import state as runtime_state
-    _providers = runtime_state.get_model_providers()
-    llm = await _build_chat_model(model_name=_providers.main_model)
-    chunks: list[str] = []
-    payload = [
-        SystemMessage(content=COMPACT_SYSTEM_PROMPT),
-        HumanMessage(content=transcript),
-    ]
-    async for chunk in llm.astream(payload):
-        delta = state.message_content_to_text(getattr(chunk, "content", ""))
-        if not delta:
-            continue
-        chunks.append(delta)
-        await websocket.send_text(json.dumps({"type": "delta", "content": delta}, ensure_ascii=False))
-    summary = "".join(chunks).strip()
-    if not summary:
-        raise RuntimeError("对话压缩结果为空")
-    await _replace_session_with_summary(summary)
-    return summary
 
+    await websocket.send_text(
+        json.dumps(_main_event_payload("compact_start"), ensure_ascii=False)
+    )
 
-async def _replace_session_with_summary(summary: str) -> None:
-    if state.checkpointer is None:
-        raise RuntimeError("checkpointer 未初始化，无法压缩会话")
-    if hasattr(state.checkpointer, "adelete_thread"):
-        await state.checkpointer.adelete_thread(str(state.THREAD_ID))
-    if state.subagent_manager is not None:
-        await state.subagent_manager.reset_persistent_state()
-    reset_output_store(clear_persisted=True)
-    checkpoint = empty_checkpoint()
-    state.makeup_init_prompt()#更新 PROMPT
-    checkpoint["channel_values"]["messages"] = [
-        SystemMessage(content=state.PROMPT),
-        HumanMessage(content=f"你的压缩后的历史对话:\n{summary}")
-    ]
-    checkpoint["updated_channels"] = ["messages"]
-    config = {
-        "configurable": {
-            "thread_id": str(state.THREAD_ID),
-            "checkpoint_ns": "",
-        }
-    }
-    metadata = {
-        "source": "compact",
-        "step": 0,
-        "parents": {},
-        "ls_integration": "faust_slash_compact",
-    }
-    await state.checkpointer.aput(config, checkpoint, metadata, {"messages": 1}) # type: ignore
-    pm = getattr(state, 'plugin_manager', None)
-    if pm:
-        pm.reset_all_plugin_sessions()
+    async def _on_delta(text: str) -> None:
+        await websocket.send_text(
+            json.dumps(
+                _main_event_payload("compact_delta", content=text), ensure_ascii=False
+            )
+        )
+
+    update = await middleware.force_compact(messages, on_delta=_on_delta)
+    if not update:
+        await websocket.send_text(
+            json.dumps(_main_event_payload("compact_done"), ensure_ascii=False)
+        )
+        return "当前会话没有可压缩的历史轮次。"
+
+    # 通过 graph 的 aupdate_state 应用更新：它会走 add_messages reducer，
+    # 因此 RemoveMessage(REMOVE_ALL_MESSAGES) 与顺序重排都能被正确执行。
+    # as_node 必须显式指定：create_agent 编译出的图有 model/tools 两个节点，
+    # 不指定时 langgraph 无法判断该写入归属哪个节点（Ambiguous update）。
+    config = {"configurable": {"thread_id": str(state.THREAD_ID)}}
+    await state.agent.aupdate_state(config, update, as_node="model")
+    await websocket.send_text(
+        json.dumps(_main_event_payload("compact_done"), ensure_ascii=False)
+    )
+    return "对话压缩完成。"
 
 
 async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -> tuple[bool, str]:
@@ -236,7 +234,11 @@ async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -
     if name == "compact":
         if websocket is None:
             return True, "POST 接口暂不支持 /compact，请使用 WebSocket 聊天接口。"
-        return True, await _compact_session_stream(websocket)
+        await _compact_session_stream(websocket)
+        # 已自行推送 compact_* 完整流。返回 None 让上层跳过通用的
+        # start/delta/done —— 否则通用 start 会重置前端 entries，
+        # 把刚推送的压缩卡片清掉。
+        return True, None
     return True, f"未知命令: /{name}"
 
 
@@ -409,6 +411,23 @@ async def _run_agent_stream(websocket: WebSocket, text: str, agent=None, origin:
                     if state.subagent_manager and state.subagent_manager.consume_status_dirty():
                         await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
                     continue
+                if event.get("type") in {"compact_start", "compact_delta", "compact_done"}:
+                    # 会话压缩卡片：只进前端折叠卡片，绝不并入 reply（因此不进 TTS）
+                    payload = dict(event)
+                    payload["agent_id"] = "main"
+                    if pm:
+                        results = await pm._call_pluggy_hook('agent_event_sent', event=payload, current_history=current_history, ctx=None)
+                        if results:
+                            for r in results:
+                                if r is None:
+                                    payload = None
+                                    break
+                                if isinstance(r, dict):
+                                    payload = r
+                    if payload:
+                        current_history.append(payload)
+                        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+                    continue
                 if event.get("type") in {"tool_start", "tool_result"}:
                     payload = dict(event)
                     payload["agent_id"] = "main"
@@ -575,6 +594,11 @@ async def chat_websocket(websocket: WebSocket):
             trigger_manager.note_user_interaction()
             handled, command_reply = await _handle_slash_command(text, websocket)
             if handled:
+                if command_reply is None:
+                    # 命令已自行推送完整事件流（/compact 的压缩卡片），
+                    # 不能再发通用 start，否则会重置前端 entries。
+                    log.info("Slash Command 自行推送事件流（无通用回复）")
+                    continue
                 # Send subagent summary before start/done per requirement
                 if state.subagent_manager and state.subagent_manager.consume_status_dirty():
                     await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))

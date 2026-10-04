@@ -69,7 +69,11 @@ async def admin_remove_provider(name: str):
 
 @router.post("/faust/admin/providers/{name}/load-models")
 async def admin_auto_load_models(name: str):
-    """自动调用 auto_load_model_for_provider 拉取模型列表（前端向导第 2 步）。"""
+    """自动调用 auto_load_model_for_provider 拉取模型列表（前端向导第 2 步）。
+
+    一并返回该 provider 的 model_context_lengths：auto_load 会用 /models 的
+    元数据自动填充上下文长度，前端需要立刻反映这些值，否则要等到下次整表刷新。
+    """
     from faust_backend.provider import resolve_provider, auto_load_model_for_provider
     mp = _get_mp()
     try:
@@ -82,7 +86,12 @@ async def admin_auto_load_models(name: str):
     except Exception as exc:  # noqa: BLE001 - 网络/API 错误转 502
         raise HTTPException(status_code=502, detail=f"模型加载失败: {exc}")
     conf.save_model_providers()
-    return {"status": "ok", "provider": name, "models": models}
+    return {
+        "status": "ok",
+        "provider": name,
+        "models": models,
+        "model_context_lengths": provider.model_context_lengths or {},
+    }
 
 
 @router.post("/faust/admin/model/select")

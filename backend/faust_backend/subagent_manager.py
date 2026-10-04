@@ -47,6 +47,8 @@ class SubagentManager:
         self.checkpointer:AsyncSqliteSaver | None = None
         self._checkpointer_lock = asyncio.Lock()
         self.chatModel: BaseChatModel | None = None
+        # 默认 Subagent 模型的 'provider::model' spec，供会话压缩按模型查上下文长度。
+        self.chatModelSpec: str | None = None
         self.middlewares: list[AgentMiddleware] = []
         self.identityPrefix = "你是 FaustBot 主 Agent 创建的 Subagent。你需要专注执行分配给你的子任务，并把输出保持为可观察、可审计的工作流。"
         self.abortEvents: dict[str, Event] = {}
@@ -167,9 +169,52 @@ class SubagentManager:
         """注册一个工具组，供 Subagent 创建时选择。"""
         self.subagentPublicToolSets[toolSetName] = list(tools or [])
     
-    def setChatModel(self, chatModel: BaseChatModel):
-        """设置 Subagent 使用的 LLM。"""
+    def setChatModel(self, chatModel: BaseChatModel, spec: str | None = None):
+        """设置 Subagent 使用的 LLM。spec 为 'provider::model'，用于会话压缩。"""
         self.chatModel = chatModel
+        if spec is not None:
+            self.chatModelSpec = spec
+
+    def setChatModelSpec(self, spec: str | None) -> None:
+        """单独设置默认 Subagent 模型 spec（供 /faust/admin 重建时同步）。"""
+        self.chatModelSpec = spec
+
+    async def _compose_subagent_middlewares(
+        self,
+        *,
+        tools: list[StructuredTool],
+        chat_model: BaseChatModel | None,
+        model_spec: str | None,
+        base: list[AgentMiddleware] | None = None,
+    ) -> list[AgentMiddleware]:
+        """在共享中间件栈上追加一个针对本 Subagent 的会话压缩中间件。
+
+        压缩调用必须携带与本 Subagent 主请求**逐字节相同**的工具 schema 才能
+        命中前缀缓存，因此 mock 工具必须按该 Subagent 的实际 toolset 构建，
+        不能共用主 Agent 的工具列表。
+        """
+        from faust_backend.runtime.compact import (
+            CompactMiddleware,
+            build_compact_middleware,
+        )
+
+        middlewares = list(base if base is not None else self.middlewares)
+        compact_middleware = await build_compact_middleware(
+            model=chat_model if chat_model is not None else self.chatModel,
+            tools=tools,
+            model_spec=model_spec,
+        )
+        if compact_middleware is None:
+            log.warning("Subagent 未能构建会话压缩中间件（model_spec=%s）", model_spec)
+            return middlewares
+        middlewares = [m for m in middlewares if not isinstance(m, CompactMiddleware)]
+        middlewares.append(compact_middleware)
+        log.info(
+            "Subagent 中间件栈: %s（阈值 %d tokens）",
+            [type(m).__name__ for m in middlewares],
+            compact_middleware.threshold_tokens,
+        )
+        return middlewares
 
     def setMiddlewares(self, middlewares: list[AgentMiddleware]) -> None:
         """设置所有 Subagent 共享的中间件。"""
@@ -433,8 +478,7 @@ class SubagentManager:
                 providers, spec=model, intensity=_thinking
             )
         requested_toolsets = list(toolsetsNames or [])
-        active_middlewares = list(middlewares if middlewares is not None else self.middlewares)
-        
+
         newAgentTools:list[StructuredTool]=[]
         if requested_toolsets:
             for toolsetName in requested_toolsets:
@@ -445,7 +489,14 @@ class SubagentManager:
         newAgentTools.append(self._build_final_result_tool(agent_name))
 
         final_prompt = self._compose_system_prompt(systemPrompt)
-        
+
+        active_middlewares = await self._compose_subagent_middlewares(
+            tools=newAgentTools,
+            chat_model=chat_model,
+            model_spec=model if model is not None else self.chatModelSpec,
+            base=list(middlewares if middlewares is not None else self.middlewares),
+        )
+
         langchainAgent = self._create_langchain_agent(
             tools=newAgentTools,
             systemPrompt=final_prompt,
@@ -502,10 +553,15 @@ class SubagentManager:
         # 如果 agent 是 None（例如从持久化恢复后），重新创建
         if subagent.agent is None:
             checkpointer = await self._ensure_checkpointer()
+            rebuilt_middlewares = await self._compose_subagent_middlewares(
+                tools=subagent.toolset,
+                chat_model=self.chatModel,
+                model_spec=self.chatModelSpec,
+            )
             subagent.agent = self._create_langchain_agent(
                 tools=subagent.toolset,
                 systemPrompt=subagent.systemPrompt,
-                middlewares=self.middlewares,
+                middlewares=rebuilt_middlewares,
                 checkpointer=checkpointer,
             )
             log.info("Rebuilt agent for subagent '%s'", agent_name)
@@ -691,6 +747,11 @@ class SubagentManager:
         Yields:
             dict: _description_
         """        
+        from faust_backend.runtime.compact import COMPACT_TAG
+
+        # 压缩调用（带 COMPACT_TAG 的模型调用）必须与 Subagent 的正常输出分流：
+        # 否则摘要文本会作为普通 delta 泄进 Subagent 输出，前端也看不到压缩卡片。
+        compact_active = False
         async for event in agent.astream_events(payload,config=config,version="v2"):
             if abortEvent and abortEvent.is_set():
                 raise asyncio.CancelledError("User interrupted")
@@ -698,10 +759,23 @@ class SubagentManager:
                 continue
             event_name = str(event.get("event") or "").strip().lower()
             data = event.get("data") or {}
+            is_compact_call = COMPACT_TAG in (event.get("tags") or [])
             if event_name == "on_chat_model_stream":
                 chunk = data.get("chunk")
                 if not chunk or not SubagentManager._is_ai_message_chunk(chunk):
                     continue
+                if is_compact_call:
+                    if not compact_active:
+                        compact_active = True
+                        yield {"type": "compact_start"}
+                    compact_text = SubagentManager._message_content_to_text(chunk.content)
+                    if compact_text:
+                        yield {"type": "compact_delta", "content": compact_text}
+                    continue
+                # 主模型开始输出 => 压缩阶段结束（成功或失败降级都走这里）
+                if compact_active:
+                    compact_active = False
+                    yield {"type": "compact_done"}
                 # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
                 additional_kwargs = chunk.additional_kwargs or {}
                 reasoning = (
@@ -714,6 +788,11 @@ class SubagentManager:
                 delta_text = SubagentManager._message_content_to_text(chunk.content)
                 if delta_text:
                     yield {"type": "delta", "content": delta_text}
+                continue
+            if event_name == "on_chat_model_end":
+                if is_compact_call and compact_active:
+                    compact_active = False
+                    yield {"type": "compact_done"}
                 continue
             if event_name == "on_tool_start":
                 yield {
@@ -731,6 +810,9 @@ class SubagentManager:
                     "call_id": str(event.get("run_id") or ""),
                 }
                 continue
+        # 流结束时压缩卡片若仍未收尾（如压缩调用报错后直接结束），补发 done
+        if compact_active:
+            yield {"type": "compact_done", "ok": False}
 
 if __name__ == "__main__":
     import asyncio

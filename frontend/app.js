@@ -2348,6 +2348,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     if (!currentChatRequest) {
       if (msg.type === 'start' || msg.type === 'delta' || msg.type === 'reasoning_delta'
           || msg.type === 'tool_start' || msg.type === 'tool_result' || msg.type === 'done'
+          || msg.type === 'compact_start' || msg.type === 'compact_delta' || msg.type === 'compact_done'
           || msg.type === 'interrupted') {
         // 仅当被动会话不存在时才创建；流进行中 currentChatRequest 仍为 null，
         // 若每次消息都重建会清空已累积的 replyText/pendingBuffer/entries，
@@ -2464,6 +2465,50 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       } else {
         req.entries.push({ type: 'reasoning', text: msg.content || '', expanded: false });
       }
+      bubble.showResultBubble('ai', req.entries);
+      return;
+    }
+
+    // 会话压缩：内容只进 entries 渲染折叠卡片，绝不写入 replyText、绝不朗读
+    // （不调用 ttsChunker / enqueueStreamTtsSentence / motion.consumeMotionTokens）
+    if (msg.type === 'compact_start'){
+      if (!req.entries) req.entries = [];
+      const lastEntry = req.entries[req.entries.length - 1];
+      if (!lastEntry || lastEntry.type !== 'compact') {
+        req.entries.push({ type: 'compact', text: '', done: false, expanded: false });
+      }
+      bubble.showResultBubble('ai', req.entries);
+      return;
+    }
+
+    if (msg.type === 'compact_delta'){
+      if (!req.entries) req.entries = [];
+      let entry = req.entries[req.entries.length - 1];
+      if (!entry || entry.type !== 'compact') {
+        entry = { type: 'compact', text: '', done: false, expanded: false };
+        req.entries.push(entry);
+      }
+      entry.text = String(entry.text || '') + (msg.content || '');
+      // 沿用气泡持有的展开状态（与 reasoning_delta 一致，避免流式增量把用户展开的卡片折回去）
+      const bubbleState = bubble.getState();
+      if (Array.isArray(bubbleState.entries)) {
+        const idx = req.entries.indexOf(entry);
+        if (idx >= 0 && bubbleState.entries[idx]) {
+          entry.expanded = !!bubbleState.entries[idx].expanded;
+        }
+      }
+      bubble.showResultBubble('ai', req.entries);
+      return;
+    }
+
+    if (msg.type === 'compact_done'){
+      if (!req.entries) req.entries = [];
+      let entry = req.entries[req.entries.length - 1];
+      if (!entry || entry.type !== 'compact') {
+        entry = { type: 'compact', text: '', done: false, expanded: false };
+        req.entries.push(entry);
+      }
+      entry.done = true;
       bubble.showResultBubble('ai', req.entries);
       return;
     }

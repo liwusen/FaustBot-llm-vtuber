@@ -123,9 +123,14 @@ RenderMarkdownBlock("# 本周计划\n\n| 日期 | 任务 |\n|---|---|\n| 周二 
 | `/effort off\|low\|medium\|high` | 设置全局思考配置 REASONING_CONFIG（off=关闭思考，其余为强度），立即重建生效 |
 | `/thinking on\|off` | 思考开关快捷命令（on≈`/effort medium`，off≈`/effort off`） |
 | `/status` | 查看当前状态（Agent/Reasoning/Skills/Plugins/Services/MCP） |
-| `/session` | 统计当前会话上下文 token 估算 |
+| `/session` | 查看当前会话 token（prompt/completion/total、缓存命中 cache_read、上下文长度与触发阈值；数字全部来自 LLM API 返回值） |
 | `/clear` | 清空当前会话 |
-| `/compact` | 触发对话压缩（仅 WebSocket 聊天接口） |
+| `/compact` | 手动触发一次对话压缩（与 auto compact 共用同一套中间件与提示词；仅 WebSocket 聊天接口） |
+
+上下文压缩说明：
+- 会话占用达到模型上下文长度的 80%（`COMPACT_THRESHOLD_RATIO` 可配）时**自动**触发压缩，无需你或用户干预；压缩后保留最近 3 轮对话（`COMPACT_KEEP_ROUNDS` 可配）。
+- 每个模型的上下文长度在配置中心「AI 服务商」→ Models 表格或「编辑模型」中配置；未配置时默认按 128000 计。
+- 压缩调用复用你当前的上下文前缀（同样的 System 与工具定义），因此能命中上游前缀缓存；它不会调用任何工具。
 
 思考行为说明：
 - 每个 Provider 有自己的 **Thinking 格式**（`thinking_type`：qwen/deepseek/openai/none），决定思考参数的写法
