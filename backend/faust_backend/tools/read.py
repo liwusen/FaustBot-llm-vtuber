@@ -72,7 +72,7 @@ async def read(
     *,
     force_plain_text: bool = False,
     show_line_number: bool = False,
-    with_metadata: bool = False,
+    with_metadata: bool = True,
 ) -> str:
     """Read a file, directory, tool output, or memory document — the universal read tool.
 
@@ -104,16 +104,17 @@ async def read(
       all list when the target is a directory.
     - Use this when: exploring what files exist, finding a file whose name you forgot.
 
-    **Listing with metadata:**
-    - `read("src/", with_metadata=True)` → each file entry gains an indented
-      metadata line: `  [3KB, 400 lines, 03/16]` (size, line count, mtime).
+    **Listing with metadata (default):**
+    - `read("src/")` → each file entry gains an indented metadata line:
+      `  [3KB, 400 lines, 03/16]` (size, line count, mtime).
       Directories never get a metadata line.
-    - `read("faustbot://", with_metadata=True)` → each VFS node gains its
-      `[description]`; `read("skill://", with_metadata=True)` and
-      `read("sourceCode://backend/", with_metadata=True)` behave like plain
+    - `read("faustbot://")` → each VFS node gains its `[description]`;
+      `read("skill://")` and `read("sourceCode://backend/")` behave like plain
       directory listings.
     - Line counts are shown only for known source files (≤2MB, valid UTF-8);
       other files still show size/date.
+    - Use `read("src/", with_metadata=False)` for a bare name listing when the
+      metadata noise is not needed.
     - Use this when: you need a file's size, recency, or line count before
       deciding whether to read it.
 
@@ -193,11 +194,10 @@ async def read(
                           line number (e.g. "36:print(xxx)"). Applies to any
                           text output: a line range, a whole-file read, or
                           `:raw`. Defaults to False.
-        with_metadata: If True, directory listings add per-entry metadata
-                       (size, line count, mtime), VFS nodes add their
+        with_metadata: If True (default), directory listings add per-entry
+                       metadata (size, line count, mtime), VFS nodes add their
                        description, and memory documents add date/lines/tags.
                        Only applies to listings; single-file reads ignore it.
-                       Defaults to False.
 
     Returns:
         For files: structural summary (code) or first 300 lines; or specified range;

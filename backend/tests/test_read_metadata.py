@@ -1,9 +1,9 @@
-"""read(with_metadata=True) 列举元数据测试。
+"""read 列举元数据测试（with_metadata 默认为 True）。
 
 覆盖：FS 目录（源码行数白名单 / 大文件 / 二进制 / 目录无元数据）、sourceCode://、
 skill://（技能名 description + 目录内文件 stats）、memory://（日期/行数/前 3 tag）、
 faustbot://（节点 description / 空描述 / set_description），
-以及 with_metadata=False 时输出与既有行为一致。
+默认值（不传 with_metadata 即带元数据）以及 with_metadata=False 时输出与既有行为一致。
 
 Run: python -m pytest backend/tests/test_read_metadata.py -v
 """
@@ -54,13 +54,25 @@ class TestFsListingMetadata:
         assert _entry_meta(result, "sub/") is None
 
     @pytest.mark.asyncio
+    async def test_metadata_is_default(self, tmp_path):
+        """不传 with_metadata 时默认带元数据（默认值 True）。"""
+        from faust_backend.tools.read import read
+
+        (tmp_path / "alpha.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+        (tmp_path / "sub").mkdir()
+
+        result = await read.ainvoke({"uri": str(tmp_path)})
+
+        assert re.fullmatch(r"\d+B, 2 lines, \d{2}/\d{2}", _entry_meta(result, "alpha.py"))
+
+    @pytest.mark.asyncio
     async def test_without_metadata_output_is_unchanged(self, tmp_path):
         from faust_backend.tools.read import read
 
         (tmp_path / "alpha.py").write_text("a = 1\n", encoding="utf-8")
         (tmp_path / "sub").mkdir()
 
-        result = await read.ainvoke({"uri": str(tmp_path)})
+        result = await read.ainvoke({"uri": str(tmp_path), "with_metadata": False})
 
         assert result == "  sub/\n  alpha.py"
 
@@ -144,7 +156,7 @@ class TestSkillListingMetadata:
 
         assert re.search(r"skill://demo_skill/\n    \[演示技能说明\]", result)
 
-        plain = await read.ainvoke({"uri": "skill://"})
+        plain = await read.ainvoke({"uri": "skill://", "with_metadata": False})
         assert "演示技能说明" not in plain
 
     @pytest.mark.asyncio
@@ -180,7 +192,7 @@ class TestVfsDescription:
             assert re.search(r"faustbot://meta-test-dir/\n    \[测试目录说明\]", result)
             assert not re.search(r"faustbot://meta-blank-node\n    \[", result)
 
-            plain = await read.ainvoke({"uri": "faustbot://"})
+            plain = await read.ainvoke({"uri": "faustbot://", "with_metadata": False})
             assert "测试节点说明" not in plain
         finally:
             await vfs.delete("/meta-test-node")
@@ -252,7 +264,7 @@ class TestMemoryTreeMetadata:
             "/notes/work", "l1\nl2\nl3", description="工作笔记", tags=["工作"], index=False
         )
 
-        result = await read.ainvoke({"uri": "memory://notes/"})
+        result = await read.ainvoke({"uri": "memory://notes/", "with_metadata": False})
 
         assert "work" in result
         assert "[" not in result

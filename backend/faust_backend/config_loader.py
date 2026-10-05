@@ -16,6 +16,10 @@ a_path=os.path.abspath
 PROJECT_ROOT = d_name(d_name(a_path(__file__)))
 # 用户数据根目录（~/.faustbot），存放配置、Agent 数据、缓存等
 CONFIG_ROOT = os.path.join(os.path.expanduser("~"), ".faustbot")
+# 工具的默认工作目录（WORKDIR_ROOT）：Agent 自己的工作目录
+#   ~/.faustbot/agents/{AGENT_NAME}
+# AGENT_NAME 由 load_configs() 读取，故此处仅给出占位值，真实值在
+# load_configs() 与模块尾部按 AGENT_NAME 重算（agent 切换后 reload_configs() 同样重算）。
 WORKDIR_ROOT = CONFIG_ROOT
 SKILL_TEMPLATE_ROOT = p_join(PROJECT_ROOT, 'skill_template')
 CONFIG_FILE_P_PATH = p_join(CONFIG_ROOT, 'faust.config.private.json')
@@ -213,7 +217,7 @@ def _ensure_private_config_exists():
 def load_configs():
     global private_config, config
     global CHAT_API_KEY, SEARCH_API_KEY, FAUSTBOT_CLOUD_SERVICE_KEY
-    global CHAT_MODEL, CHAT_API_BASE, AGENT_NAME, AGENT_ROOT
+    global CHAT_MODEL, CHAT_API_BASE, AGENT_NAME, AGENT_ROOT, WORKDIR_ROOT
     global EMBED_API_KEY, EMBED_API_BASE, EMBED_MODEL
     global KB_ENABLED, ARAYA_ENABLED, ARAYA_IDLE_MINUTES
     global RERANK_ENABLED, RERANK_TOP_K, BM25_ONLY
@@ -364,6 +368,9 @@ def load_configs():
     PROCESSOR_PRUNE_INTERVAL = float(config.get('PROCESSOR_PRUNE_INTERVAL', 30) or 0)
     PROCESSOR_IDLE_TIMEOUT = float(config.get('PROCESSOR_IDLE_TIMEOUT', 300) or 0)
     AGENT_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
+    # 所有工具的默认工作目录 = 该 Agent 的专属目录（确保存在，工具可直接相对路径读写）
+    WORKDIR_ROOT = p_join(CONFIG_ROOT, "agents", AGENT_NAME)
+    os.makedirs(WORKDIR_ROOT, exist_ok=True)
     return config, private_config
 
 
@@ -482,5 +489,8 @@ if args.MOO:
     print("[config_loader]Apt-get:MOO!")
     sys.exit(1)
 AGENT_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
+# 命令行 --agent 覆盖后同步默认工作目录（与 load_configs() 内保持一致）
+WORKDIR_ROOT=p_join(CONFIG_ROOT, "agents", AGENT_NAME)
+os.makedirs(WORKDIR_ROOT, exist_ok=True)
 if __name__=="__main__":
     print_globals()

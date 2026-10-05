@@ -71,6 +71,9 @@ class Plugin(FaustPlugin):
         # 注册配置
         ctx.register_config([
             {"key": "MY_KEY", "type": "str", "label": "我的配置", "default": "value"},
+            # type "llm"：配置中心显示"当前模型标识符 + 模型选择按钮"，
+            # 值存 "provider::model" 字符串，未选择时缺省为主对话模型
+            {"key": "MY_MODEL", "type": "llm", "label": "使用的模型"},
         ])
         # 写入 VFS 文档
         ctx.vfs_write("/plugins/my-plugin.md", "# My Plugin\n\nAgent 读取此文件了解插件能力")

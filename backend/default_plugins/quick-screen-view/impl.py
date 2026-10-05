@@ -26,9 +26,9 @@ TOOL_NAME = "quickScreenView"
 CONFIG_SCHEMA: list[dict[str, Any]] = [
     {
         "key": "screen-model",
-        "type": "str",
-        "label": "屏幕分析模型 (provider::model)",
-        "default": "",
+        "type": "llm",
+        "label": "屏幕分析模型",
+        "description": "在配置中心用「模型选择」挑选；留空/未选择时使用主对话模型。",
     },
     {
         "key": "mode",
@@ -129,8 +129,8 @@ class Plugin(FaustPlugin):
         spec = str(await self._config("screen-model", "") or "").strip()
         if not spec:
             return (
-                f"{ERROR_PREFIX} screen-model 未配置：请在配置中心为 quick-screen-view "
-                "插件设置 screen-model（格式 provider::model）"
+                f"{ERROR_PREFIX} screen-model 未选择，且主对话模型未配置："
+                "请先在配置中心配置主模型，或在 quick-screen-view 插件配置里用「模型选择」指定屏幕分析模型"
             )
         try:
             window = float(await self._config("text-cache-seconds", 60.0) or 0.0)

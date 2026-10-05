@@ -28,6 +28,31 @@ from faust_backend.logger import get_logger
 from typing_extensions import deprecated
 log = get_logger(__name__)
 
+# 配置键类型：LLM 选择（前端渲染为"当前模型标识符 + 模型选择按钮"）
+# 取值是 "provider::model" 字符串；缺省值 = 主对话模型标识符。
+LLM_CONFIG_TYPES = frozenset({"llm", "model"})
+_ALLOWED_CONFIG_TYPES = frozenset({"str", "string", "int", "float", "bool", "json", "text"})
+
+
+def _normalize_config_type(raw: Any) -> str:
+    """schema 的 type 归一化：llm/model → llm，未知类型 → str。"""
+    typ = str(raw or "str").strip().lower()
+    if typ in LLM_CONFIG_TYPES:
+        return "llm"
+    if typ not in _ALLOWED_CONFIG_TYPES:
+        return "str"
+    return typ
+
+
+def _main_model_spec() -> str:
+    """LLM 选择型配置键的缺省值：主对话模型标识符（如 'deepseek::deepseek-v4-pro'）。"""
+    try:
+        providers = conf.ensure_model_providers_loaded()
+    except Exception as exc:  # noqa: BLE001 - provider 配置损坏不应让插件配置读取整体失败
+        log.warning("读取主对话模型失败，llm 类型配置缺省为空: %s", exc)
+        return ""
+    return str(providers.main_model or "")
+
 
 def _run_awaitable_sync(awaitable: Any) -> Any:
     """在同步上下文中执行协程：优先复用运行中的事件循环，否则新建一个。
@@ -290,9 +315,7 @@ class PluginManager:
             key = str(item.get("key") or "").strip()
             if not key:
                 continue
-            typ = str(item.get("type") or "str").strip().lower()
-            if typ not in {"str", "string", "int", "float", "bool", "json", "text"}:
-                typ = "str"
+            typ = _normalize_config_type(item.get("type"))
             default_value = item.get("default")
             if default_value is not None:
                 try:
@@ -312,8 +335,8 @@ class PluginManager:
         return out
 
     def _coerce_config_value(self, typ: str, value: Any) -> Any:
-        t = (typ or "str").lower()
-        if t in {"str", "string", "text"}:
+        t = _normalize_config_type(typ)
+        if t in {"str", "string", "text", "llm"}:
             return "" if value is None else str(value)
         if t == "int":
             return int(value)
@@ -348,15 +371,29 @@ class PluginManager:
         self._save_state()
         return {"schema": normalized, "values": dict(values)}
 
+    def _llm_key_default(self, state: dict[str, Any], key: str) -> str:
+        """llm 类型配置键的缺省值（= 主对话模型标识符）；非 llm 键返回空串。"""
+        for item in state.get("schema") or []:
+            if str(item.get("key")) == key and str(item.get("type") or "").lower() == "llm":
+                return _main_model_spec()
+        return ""
+
     def _plugin_config_get(self, plugin_id: str, key: str, default: Any = None) -> Any:
         state = self._ensure_plugin_config_state(plugin_id)
         values = state.setdefault("values", {})
         if key in values:
-            return values.get(key)
+            stored = values.get(key)
+            # llm 键的空值（未选择 / 被清空）视为"未配置" → 回落到主对话模型
+            if stored is None or stored == "":
+                fallback = self._llm_key_default(state, key)
+                if fallback:
+                    return fallback
+            return stored
         for item in state.get("schema") or []:
             if str(item.get("key")) == key and item.get("default") is not None:
                 return item.get("default")
-        return default
+        fallback = self._llm_key_default(state, key)
+        return fallback if fallback else default
 
     def _plugin_config_set(self, plugin_id: str, key: str, value: Any) -> Any:
         state = self._ensure_plugin_config_state(plugin_id)
@@ -373,7 +410,14 @@ class PluginManager:
 
     def _plugin_config_list(self, plugin_id: str) -> dict[str, Any]:
         state = self._ensure_plugin_config_state(plugin_id)
-        return dict(state.get("values") or {})
+        values = dict(state.get("values") or {})
+        for item in state.get("schema") or []:
+            key = str(item.get("key") or "")
+            if not key or str(item.get("type") or "").lower() != "llm":
+                continue
+            if values.get(key) in (None, ""):
+                values[key] = _main_model_spec()
+        return values
 
     def get_plugin_config_snapshot(self, plugin_id: str) -> dict[str, Any]:
         state = self._ensure_plugin_config_state(plugin_id)
@@ -388,6 +432,15 @@ class PluginManager:
                     values[key] = self._coerce_config_value(str(item.get("type") or "str"), item.get("default"))
                 except Exception:
                     values[key] = item.get("default")
+        # llm 类型：缺省（或存了空值）= 主对话模型标识符，前端据此显示"当前使用的模型"
+        for item in schema:
+            if str(item.get("type") or "").lower() != "llm":
+                continue
+            key = str(item.get("key") or "")
+            if not key:
+                continue
+            if values.get(key) in (None, ""):
+                values[key] = _main_model_spec()
         return {"plugin_id": plugin_id, "schema": schema, "values": values}
 
     def set_plugin_config_values(self, plugin_id: str, values: dict[str, Any]) -> dict[str, Any]:
