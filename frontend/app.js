@@ -513,6 +513,10 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   });
 
   document.getElementById('app').appendChild(app.view);
+  // Ctrl(⌘) + 滚轮：在 Live2D 模型上缩放模型（VRM 画布有自己的滚轮缩放）。
+  // 必须用非被动的原生监听器：PIXI 内部的 wheel 监听是 passive 的，无法 preventDefault，
+  // 会顺带触发 Electron/Chromium 的页面缩放。
+  app.view.addEventListener('wheel', handleLive2DCtrlWheel, { passive: false });
   loadAppPluginAssets();
 
   try{ window.PIXI = PIXI; }catch(e){/* ignore in non-browser env */}
@@ -610,6 +614,19 @@ import { initAsrBubble } from './libs/asr-bubble.js';
 
   function nudgeScale(step){
     setScaleFactor(Math.round((scaleFactor + step) * 100) / 100);
+  }
+
+  // Ctrl/Cmd + 滚轮悬停在模型上 → 缩放模型大小（与缩放滑块共用 scaleFactor，范围 0.1~2.0）
+  function handleLive2DCtrlWheel(e){
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (modelType !== 'live2d' || !currentModel) return;
+    if (!isPointerOnModel(e.clientX, e.clientY)) return;
+    e.preventDefault();
+    const step = e.deltaY > 0 ? -0.05 : 0.05;
+    setScaleFactor(Math.round((scaleFactor + step) * 100) / 100);
+    refreshQuickControllerVisibility();
+    updateQuickControllerPosition();
+    updateTextChatBarPosition();
   }
 
   async function readModelDefinition(path){

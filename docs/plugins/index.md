@@ -20,5 +20,6 @@ FaustBot 自带一批内置插件，开箱即用。它们能扩展 Faust 的能�
 | [剪贴板](clipboard.md) | 读写系统剪贴板（**已弃用**） | ❌ |
 | [RSS 感知](rss-watcher.md) | 订阅 RSS，空闲时主动播报新闻 | ❌ |
 | [情绪化桌面 Desktop Mood](desktop-mood.md) | 感知桌面环境，主动做出反应 | ❌ |
+| [Agent 通信 Agent Communicate](agent-communicate.md) | 让 Faust 调用本机外部编码 Agent（opencode 等，ACP 协议） | ❌ |
 
 点击插件名查看它的使用指南。想自己开发插件，请看 [插件开发指南](../create-plugin-guide.md)。

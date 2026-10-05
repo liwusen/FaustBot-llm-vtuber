@@ -2,8 +2,18 @@
 // 用法: const subagent = initSubagentPanel({ getBubbleProps, forceInteractive, statusEndpoint, deleteEndpoint });
 // 说明：状态列表、事件缓存、选中项全部内聚在本模块；
 // 气泡属性与鼠标穿透控制器通过注入的 getter/回调读取，模块内不引用 app.js 闭包变量。
+//
+// 事件渲染与主 Agent 的 AsrBubble 对齐：事件先归一化为气泡条目
+// （reasoning / compact / tool / text），再复用 bubble-utils 的折叠卡片渲染，
+// 工具调用因此折叠显示（点击展开参数与返回值），展开态在重渲染后保持。
 
-import { escapeHtml, renderMarkdownHtml } from './bubble-utils.js';
+import {
+  escapeHtml,
+  renderBubbleEntryHtml,
+  patchBubbleEntryNode,
+  entryKey,
+  entryHash,
+} from './bubble-utils.js';
 
 export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndpoint, deleteEndpoint }) {
   const subagentSummaryEl = document.getElementById('subagentSummary');
@@ -15,6 +25,12 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
   let subagentStatuses = [];
   let subagentEventCache = {};
   let selectedSubagentName = '';
+  // 当前渲染的气泡条目（与 AsrBubble 同一套结构），toggle 回写展开态用
+  let subagentPanelEntries = [];
+  // 展开态持久化：重渲染后按 callId / 序号恢复（事件缓存里没有 expanded 字段）
+  const toolExpandedState = new Map();
+  const reasoningExpandedState = new Map();
+  const compactExpandedState = new Map();
 
   function formatSubagentEventSummary(item){
     if (!item) return '';
@@ -79,109 +95,205 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     }
   }
 
-  function normalizeSubagentPanelEvents(events){
+  // ── 事件 → 气泡条目归一化（与 AsrBubble 共用同一套 item 结构） ──
+  // reasoning_delta/delta 折叠相邻同类；compact_start/delta/done 折叠为单个 compact；
+  // tool_start + tool_result 按 call_id 合并成一张折叠卡片；其余事件退化为 note 行。
+  function normalizeSubagentPanelEntries(events){
     const source = Array.isArray(events) ? events : [];
-    const normalized = [];
+    const entries = [];
+    const toolEntriesById = new Map();
+    let reasoningIdx = 0;
+    let compactIdx = 0;
     for (const event of source){
       if (!event || typeof event !== 'object') continue;
       const eventType = String(event.type || '').trim();
       if (!eventType) continue;
-      const last = normalized[normalized.length - 1];
-      if ((eventType === 'reasoning_delta' || eventType === 'delta') && last && last.type === eventType) {
-        last.content = String(last.content || '') + String(event.content || '');
-        last.ts = event.ts;
-        continue;
-      }
-      // 会话压缩：compact_start/compact_delta/compact_done 折叠成单个 compact 事件
-      if (eventType === 'compact_start' || eventType === 'compact_delta' || eventType === 'compact_done') {
-        if (eventType !== 'compact_start' && last && last.type === 'compact' && !last.done) {
-          if (eventType === 'compact_delta') last.content = String(last.content || '') + String(event.content || '');
-          else last.done = true;
-          last.ts = event.ts;
+      const last = entries[entries.length - 1];
+      if (eventType === 'reasoning_delta') {
+        if (last && last.type === 'reasoning') {
+          last.text = String(last.text || '') + String(event.content || '');
           continue;
         }
-        normalized.push({ type: 'compact', content: String(event.content || ''), done: eventType === 'compact_done', ts: event.ts });
+        entries.push({ type: 'reasoning', text: String(event.content || ''), expanded: reasoningExpandedState.get(reasoningIdx) === true });
+        reasoningIdx++;
         continue;
       }
-      normalized.push({ ...event });
+      if (eventType === 'delta') {
+        if (last && last.type === 'text') {
+          last.text = String(last.text || '') + String(event.content || '');
+          continue;
+        }
+        entries.push({ type: 'text', text: String(event.content || '') });
+        continue;
+      }
+      // 会话压缩：compact_start/compact_delta/compact_done 折叠成单个 compact 条目
+      if (eventType === 'compact_start' || eventType === 'compact_delta' || eventType === 'compact_done') {
+        if (eventType !== 'compact_start' && last && last.type === 'compact' && !last.done) {
+          if (eventType === 'compact_delta') last.text = String(last.text || '') + String(event.content || '');
+          else last.done = true;
+          continue;
+        }
+        entries.push({ type: 'compact', text: String(event.content || ''), done: eventType === 'compact_done', expanded: compactExpandedState.get(compactIdx) === true });
+        compactIdx++;
+        continue;
+      }
+      if (eventType === 'tool_start') {
+        const callId = String(event.call_id || '');
+        const entry = {
+          type: 'tool',
+          callId,
+          toolName: String(event.tool_name || '未知工具'),
+          args: Object.prototype.hasOwnProperty.call(event, 'args') ? event.args : {},
+          output: '',
+          done: false,
+          expanded: toolExpandedState.get(callId) === true,
+        };
+        toolEntriesById.set(callId || ('#' + entries.length), entry);
+        entries.push(entry);
+        continue;
+      }
+      if (eventType === 'tool_result') {
+        const callId = String(event.call_id || '');
+        const entry = toolEntriesById.get(callId);
+        if (entry) {
+          entry.output = String(event.output === undefined || event.output === null ? '' : event.output);
+          entry.done = true;
+          if (event.tool_name) entry.toolName = String(event.tool_name);
+          continue;
+        }
+        // 没有配对的 tool_start（事件缓存被裁剪）：退化为一张已完成的工具卡片
+        entries.push({
+          type: 'tool',
+          callId,
+          toolName: String(event.tool_name || '未知工具'),
+          args: {},
+          output: String(event.output === undefined || event.output === null ? '' : event.output),
+          done: true,
+          expanded: toolExpandedState.get(callId) === true,
+        });
+        continue;
+      }
+      entries.push({ type: 'note', ...formatSubagentNote(event) });
     }
-    return normalized;
+    return entries;
   }
 
-  function formatSubagentPanelEvent(event){
+  // 无法映射到气泡条目的状态类事件：仍以「标签 + 正文」的朴素行展示
+  function formatSubagentNote(event){
     const eventType = String(event.type || '').trim();
-    if (eventType === 'reasoning_delta') return { label: '思考', body: String(event.content || '') };
-    if (eventType === 'compact') return { label: '会话压缩', body: String(event.content || ''), kind: 'compact', done: !!event.done };
-    if (eventType === 'delta') return { label: '输出', body: String(event.content || '') };
-    if (eventType === 'tool_start') return { label: '调用工具', body: String(event.tool_name || '') };
-    if (eventType === 'queued') {
-      const content = (((event.message || {}).messages || [])[0] || {}).content || '';
-      return { label: '排队中', body: String(content) };
-    }
-    if (eventType === 'input') {
-      const content = (((event.message || {}).messages || [])[0] || {}).content || '';
-      return { label: '主Agent消息', body: String(content) };
-    }
+    const messageContent = (((event.message || {}).messages || [])[0] || {}).content || '';
+    if (eventType === 'queued') return { label: '排队中', body: String(messageContent) };
+    if (eventType === 'input') return { label: '主Agent消息', body: String(messageContent) };
     if (eventType === 'error') return { label: '错误', body: String(event.content || event.error || '') };
     if (eventType === 'stopping') return { label: '停止中', body: '已发送停止请求' };
     if (eventType === 'stopped') return { label: '已停止', body: 'Subagent 已停止' };
-    return { label: eventType || 'event', body: typeof event === 'object' ? JSON.stringify(event, null, 2) : String(event || '') };
+    return { label: eventType || 'event', body: JSON.stringify(event, null, 2) };
   }
 
-  // 事件正文：普通事件为转义纯文本；compact 输出与主气泡一致的折叠卡片（完成态走 Markdown）
-  function subagentEventInnerHtml(formatted){
-    const typeHtml = `<div class="subagent-panel-event-type">${escapeHtml(String(formatted.label || 'event'))}</div>`;
-    if (formatted.kind !== 'compact') {
-      return typeHtml + `<div class="subagent-panel-event-body">${escapeHtml(String(formatted.body || ''))}</div>`;
+  // 条目正文：note 行为转义纯文本；其余条目与主 Agent 气泡共用折叠卡片渲染
+  function subagentEntryInnerHtml(entry, index, reasoningIdx, compactIdx){
+    if (entry && entry.type === 'note') {
+      return '<div class="subagent-panel-note">' +
+        `<div class="subagent-panel-event-type">${escapeHtml(String(entry.label || 'event'))}</div>` +
+        `<div class="subagent-panel-event-body">${escapeHtml(String(entry.body || ''))}</div>` +
+        '</div>';
     }
-    const text = String(formatted.body || '');
-    const content = formatted.done
-      ? `<div class="thinking-content compact-content md-block">${renderMarkdownHtml(text)}</div>`
-      : `<div class="thinking-content compact-content">${escapeHtml(text)}</div>`;
-    return typeHtml +
-      '<section class="thinking-card compact-card">' +
-        '<details class="thinking-details compact-details">' +
-          '<summary class="thinking-summary">' +
-            '<span class="thinking-arrow">&#9654;</span>' +
-            '<span class="thinking-divider"></span>' +
-            '<span class="thinking-label compact-label">会话压缩</span>' +
-            `<span class="thinking-status compact-status${formatted.done ? ' compact-status-done' : ''}">${formatted.done ? '已完成' : '进行中'}</span>` +
-          '</summary>' +
-          '<div class="thinking-body">' + content + '</div>' +
-        '</details>' +
-      '</section>';
+    return renderBubbleEntryHtml('ai', entry, index, reasoningIdx, compactIdx);
   }
 
-  function buildSubagentEventNode(key, hash, event){
+  function subagentEntryHash(entry){
+    // note 条目不进 bubble-utils 的 hash 规则（其 pick 为空会恒等）
+    if (entry && entry.type === 'note') return 'note:' + String(entry.label || '') + '\u0001' + String(entry.body || '');
+    return entryHash(entry, 'ai');
+  }
+
+  function buildSubagentEntryNode(key, hash, entry, index, reasoningIdx, compactIdx){
     const node = document.createElement('div');
     node.className = 'subagent-panel-event';
-    node.dataset.eventKey = key;
-    node.dataset.eventHash = hash;
-    node.innerHTML = subagentEventInnerHtml(formatSubagentPanelEvent(event));
+    node.dataset.entryKey = key;
+    node.dataset.entryHash = hash;
+    node.innerHTML = subagentEntryInnerHtml(entry, index, reasoningIdx, compactIdx);
     return node;
   }
 
-  function subagentEventKey(events, index) {
-    const event = events[index];
-    const eventType = String((event && event.type) || 'event');
-    // normalize 已在源头折叠相邻同类型事件（reasoning_delta/delta），索引即稳定 key
-    return eventType + ':' + index;
+  // 与 asr-bubble 的 applyBubbleEntriesDiff 同构：同键就地打补丁（保留 <details> 与 open 状态）
+  function applySubagentEntriesDiff(entries, eventsEl){
+    const children = Array.from(eventsEl.children);
+    let reasoningIdx = 0;
+    let compactIdx = 0;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const key = entryKey('ai', entry, i);
+      const hash = subagentEntryHash(entry);
+      const isReasoning = !!(entry && entry.type === 'reasoning');
+      const entryReasoningIdx = isReasoning ? reasoningIdx++ : reasoningIdx;
+      const isCompact = !!(entry && entry.type === 'compact');
+      const entryCompactIdx = isCompact ? compactIdx++ : compactIdx;
+      let el = children[i];
+      if (el && el.dataset.entryKey !== key) {
+        for (let j = i; j < children.length; j++) children[j].remove();
+        children.length = i;
+        el = undefined;
+      }
+      if (!el) {
+        el = buildSubagentEntryNode(key, hash, entry, i, entryReasoningIdx, entryCompactIdx);
+        eventsEl.appendChild(el);
+        children.push(el);
+        continue;
+      }
+      if (el.dataset.entryHash === hash) continue;
+      if (!patchBubbleEntryNode(el, 'ai', entry, i, entryReasoningIdx, entryCompactIdx)) {
+        const node = buildSubagentEntryNode(key, hash, entry, i, entryReasoningIdx, entryCompactIdx);
+        el.replaceWith(node);
+        el = node;
+        children[i] = node;
+      }
+      el.dataset.entryHash = hash;
+    }
+    for (let i = entries.length; i < children.length; i++) children[i].remove();
   }
 
-  function subagentEventHash(event) {
-    if (!event || typeof event !== 'object') return 'null';
-    const eventType = String(event.type || '');
-    let body = '';
-    if (eventType === 'reasoning_delta' || eventType === 'delta') body = String(event.content || '');
-    else if (eventType === 'compact') body = String(event.content || '') + ':' + (event.done ? '1' : '0');
-    else if (eventType === 'tool_start') body = String(event.tool_name || '');
-    else if (eventType === 'queued' || eventType === 'input') body = JSON.stringify((((event.message || {}).messages || [])[0] || {}).content || '');
-    else if (eventType === 'error') body = String(event.content || event.error || '');
-    else body = JSON.stringify(event);
-    return eventType + ':' + body;
+  // 展开/收起后写回展开态：否则下一次 patch 会把 open 折回 false
+  function handleSubagentPanelToggle(ev){
+    const details = ev.target;
+    if (!details || !details.classList || !details.dataset) return;
+    const dataset = details.dataset;
+    if (dataset.callId) {
+      const callId = String(dataset.callId);
+      toolExpandedState.set(callId, !!details.open);
+      for (const entry of subagentPanelEntries) {
+        if (entry && entry.type === 'tool' && String(entry.callId || '') === callId) { entry.expanded = details.open; break; }
+      }
+      return;
+    }
+    if (dataset.c !== undefined) {
+      const cIdx = parseInt(dataset.c, 10);
+      if (isNaN(cIdx)) return;
+      compactExpandedState.set(cIdx, !!details.open);
+      let count = -1;
+      for (const entry of subagentPanelEntries) {
+        if (entry && entry.type === 'compact') {
+          count++;
+          if (count === cIdx) { entry.expanded = details.open; break; }
+        }
+      }
+      return;
+    }
+    if (dataset.r !== undefined) {
+      const rIdx = parseInt(dataset.r, 10);
+      if (isNaN(rIdx)) return;
+      reasoningExpandedState.set(rIdx, !!details.open);
+      let count = -1;
+      for (const entry of subagentPanelEntries) {
+        if (entry && entry.type === 'reasoning') {
+          count++;
+          if (count === rIdx) { entry.expanded = details.open; break; }
+        }
+      }
+    }
   }
 
-  function applySubagentPanelDiff(item, events){
+  function applySubagentPanelDiff(item, entries){
     if (!subagentPanelBody) return;
     // ── meta 区全量刷新（字段少且低频） ──
     const metaHtml = [
@@ -202,37 +314,18 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
       if (existingMeta) existingMeta.outerHTML = metaHtml;
     }
     // ── events 区 diff 更新 ──
-    const keys = events.map((e, i) => subagentEventKey(events, i));
-    const hashes = events.map((e) => subagentEventHash(e));
-    const children = Array.from(eventsEl.children);
-    const childCountBefore = children.length;
-    for (let i = 0; i < keys.length; i++) {
-      const el = children[i];
-      const key = keys[i];
-      const hash = hashes[i];
-      if (!el) {
-        eventsEl.appendChild(buildSubagentEventNode(key, hash, events[i]));
-        continue;
-      }
-      if (el.dataset.eventKey !== key || el.dataset.eventHash !== hash) {
-        el.replaceWith(buildSubagentEventNode(key, hash, events[i]));
-      }
+    applySubagentEntriesDiff(entries, eventsEl);
+    if (!entries.length) {
+      eventsEl.innerHTML = '<div class="subagent-panel-event"><div class="subagent-panel-note"><div class="subagent-panel-event-body">暂无事件</div></div></div>';
     }
-    for (let i = keys.length; i < children.length; i++) {
-      children[i].remove();
-    }
-    if (!events.length) {
-      eventsEl.innerHTML = '<div class="subagent-panel-event"><div class="subagent-panel-event-body">暂无事件</div></div>';
-    }
-    return childCountBefore !== keys.length;
   }
 
   function renderSubagentPanel(item){
     if (!subagentPanel || !subagentPanelBody || !item) return;
     selectedSubagentName = String(item.name || '');
     if (subagentPanelTitle) subagentPanelTitle.textContent = `Subagent: ${selectedSubagentName}`;
-    const events = normalizeSubagentPanelEvents(item.recent_events);
-    applySubagentPanelDiff(item, events);
+    subagentPanelEntries = normalizeSubagentPanelEntries(item.recent_events);
+    applySubagentPanelDiff(item, subagentPanelEntries);
     subagentPanel.style.display = 'flex';
     forceInteractive();
   }
@@ -330,6 +423,11 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
 
   function hideSummary(){
     if (subagentSummaryEl) subagentSummaryEl.style.display = 'none';
+  }
+
+  // 折叠卡片展开/收起（事件委托，卡片是流式重建的，不能逐节点绑定）
+  if (subagentPanelBody) {
+    subagentPanelBody.addEventListener('toggle', handleSubagentPanelToggle, true);
   }
 
   return {

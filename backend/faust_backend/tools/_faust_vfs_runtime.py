@@ -181,7 +181,15 @@ class AsyncVirtualFileSystem:
             node = self._get_node_unlocked(path)
             return bool(node and not node.is_directory)
 
-    async def write(self, path: str, content: Any, *, writable: bool = True, description: str = '') -> None:
+    async def write(self, path: str, content: Any, *, writable: bool = True, description: str = '') -> str | None:
+        """写入节点。
+
+        **handler 返回值契约（v1 起生效）**：存在 write_handler 时，handler 的返回值经本方法
+        返回给调用方。只有**非空 str** 会被返回，其余（None / 空串 / dict / list / int …）一律
+        归一为 None，调用方无需自行判型。返回的字符串约定为给 Agent 的 ACK 文本，由
+        write/edit 工具以 `↳ {msg}` 形式追加到工具输出。
+        无 handler（普通内容节点）时返回 None。
+        """
         parts = self.get_path_parts(path)
         if not parts:
             raise ValueError('Cannot write to root directory')
@@ -196,12 +204,18 @@ class AsyncVirtualFileSystem:
                 # 未显式给描述时保留旧节点的描述，内容重写不应丢失元数据
                 keep_desc = description or (existing.description if existing is not None else '')
                 parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=content, writable=writable, description=keep_desc)
-                return
+                return None
         result = handler(existing, content)
         if inspect.isawaitable(result):
-            await result
+            result = await result
+        return result if isinstance(result, str) and result else None
 
-    async def edit(self, path: str, edited_content: Any, *, writable: bool = True) -> None:
+    async def edit(self, path: str, edited_content: Any, *, writable: bool = True) -> str | None:
+        """编辑节点（语义为"提交这份完整新内容"，不是 diff）。
+
+        handler 签名为 (node, new_content)，返回值契约与 :meth:`write` 完全一致：
+        仅非空 str 被返回，其余归一为 None。
+        """
         parts = self.get_path_parts(path)
         if not parts:
             raise ValueError('Cannot edit root directory')
@@ -214,10 +228,11 @@ class AsyncVirtualFileSystem:
                 if existing is not None and existing.is_symbolic and not existing.writable:
                     raise PermissionError(f'Symbolic node is read-only: {self.normalize_path(path)}')
                 parent.children[file_name] = VfsNode(name=file_name, is_directory=False, content=edited_content, writable=writable, description=existing.description if existing is not None else '')
-                return
+                return None
         result = handler(existing, edited_content)
         if inspect.isawaitable(result):
-            await result
+            result = await result
+        return result if isinstance(result, str) and result else None
 
     async def write_symbolic(self, path: str, func: SymbolicFunc, *, should_be_included_in_search: bool = True, writable: bool = False, description: str = '') -> None:
         """注册一个 symbol 节点：读取时调用 func(path) 生成内容。

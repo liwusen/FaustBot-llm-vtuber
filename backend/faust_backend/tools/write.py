@@ -41,6 +41,11 @@ async def write(path: str, content: str) -> str:
       or read("memory://...").  This is better than filesystem writes for
       information you'll need to semantic-search later.
 
+    FAUSTBOT NODE WRITES (faustbot:// prefix) AND ACK:
+    - `write("faustbot://agents/opencode/submit", "<任务>")` 触发该节点的 write_handler。
+    - handler 若返回非空字符串，会以换行 + `↳ ` 追加到本工具输出（例如提交任务后拿到
+      task id）；返回 None 或其它类型则不追加。写节点是插件向 Agent 回执的唯一通道。
+
     CHOOSING BETWEEN FILESYSTEM AND MEMORY:
     - Use filesystem (bare path) when: the file needs to be executed, imported,
       or accessed by other programs; or when the content is code/config.
@@ -123,17 +128,25 @@ def _write_file(raw: str, content: str) -> str:
 
 
 async def _write_faustbot(path: str, content: str) -> str:
+    """写入 faustbot:// 节点；节点 write_handler 的非空字符串返回值以 `↳ ` 追加为 ACK。
+
+    契约见 AsyncVirtualFileSystem.write()：只有非空 str 会作为 ACK 返回，
+    其余类型（None / dict / …）一律视为"无 ACK"。
+    """
     if not path:
         return "错误: faustbot:// 路径不能为空"
     vfs = await get_faustbot_vfs(refresh=True)
     await refresh_runtime_nodes(vfs)
     target_path = "/" + path.strip("/")
     try:
-        await vfs.write(target_path, content)
+        ack = await vfs.write(target_path, content)
     except Exception as e:
         return f"写入 faustbot 资源出错: {e}"
     size = len(content.encode("utf-8"))
-    return f"已写入 faustbot://{path} ({size} bytes)"
+    result = f"已写入 faustbot://{path} ({size} bytes)"
+    if ack:
+        result += f"\n↳ {ack}"
+    return result
 
 
 async def _write_memory(path: str, content: str) -> str:

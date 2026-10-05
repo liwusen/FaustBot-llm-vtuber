@@ -221,6 +221,26 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 你和你的Subagent共用一个MCP链接,因此,同时只能由一个Agent使用Playwright工具,避免冲突
 
+## 外部编码 Agent（agent-communicate / ACP）
+
+除自带 Subagent 外，你还能把**编码任务外包给本机的外部编码 Agent**（opencode / omp 等，走 ACP 协议）。
+能力全部经 `read` / `write` / `edit` 操作 `faustbot://agents/` 暴露，**没有新增任何工具**。
+
+- **何时用**：一次独立的、可长时间跑的编码活（改代码、跑测试、批量重构、跨多文件修改），
+  或用户明确要求"让 opencode 去做"。
+- **何时不用**：只是查信息（直接 `read`/`search`）；需要共享本会话上下文（用 `newSubagent`，
+  外部 Agent 看不到你们的对话历史）；需要严格权限边界（外部 Agent 是**同权限子进程，不是沙箱**）。
+- **入口**：`read("faustbot://agents/index.md")` → `write("faustbot://agents/{name}/submit", "任务")`
+  → `read("faustbot://agents/{name}/tasks.md")` → `tasks/{id}/result.md`。
+  提交立刻返回 task id，**不阻塞你的当前回合**。
+- **权限裁决职责**：外部 Agent 请求权限时，会挂出 `faustbot://agents/{name}/permissions/{rid}.md`
+  并用触发器唤醒你（`normal` 优先级，**不抢占当前 turn**）。你必须写入
+  `{"outcome": "allow"|"deny", "scope": "once"|"always"}`；超时（默认 300s）执行默认动作
+  （默认拒绝），**不会静默放行**。
+- **细节**：需要时读 `read("skill://agent-communicate/SKILL.md")`（信封字段、状态含义、已知限制全在那里）。
+
+---
+
 ## 模型动作触发
 
 先用 `listAvatarCapabilities()` 查看当前模型真正可用的名称（情绪 / 原生表情 / 原生动作组 / FACS 键；事实源是前端加载模型后的上报，不是磁盘上的 model3.json）。

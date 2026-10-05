@@ -74,7 +74,11 @@ export function initAsrBubble({
     const hidden = !!(w && w.hidden);
     const editMode = uiWidgetManager.isEditMode();
     const visible = computeBubbleVisible(w);
-    asrBubbleEl.classList.toggle('ui-widget-hidden-preview', hidden && editMode);
+    // transientHidden 气泡的 hidden 由运行时消息驱动，编辑态不做灰显预览：
+    // 否则布景台里调的文字颜色/大小看到的都不是真实效果
+    asrBubbleEl.classList.toggle('ui-widget-hidden-preview', hidden && editMode && !(w && w.transientHidden));
+    // 编辑态空气泡：给一行占位预览文本，否则改文字颜色/字号时气泡里没有字可看
+    asrBubbleEl.classList.toggle('ui-widget-empty-preview', visible && editMode && !asrTextHasContent && !summaryHasContent());
     asrBubbleEl.style.display = visible ? 'flex' : 'none';
     return visible;
   }

@@ -556,6 +556,12 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   scrollbar-width: thin;
 }
 
+/* 编辑态下的空气泡：给出占位预览文本，
+   否则布景台/右键属性面板里调「文字颜色 / 字体大小」时气泡内没有字可看，看起来像没生效 */
+#asrBubble.ui-widget-empty-preview #asrText::after {
+  content: '预览：文字颜色与字号在此生效';
+}
+
 .result-bubble-main {
   white-space: pre-wrap;
   word-break: break-word;
@@ -1422,7 +1428,13 @@ body.click-through .autocomplete-dropdown {
   gap: 8px;
 }
 
+/* 条目容器：折叠卡片（thinking-card）自带样式，容器只做布局；
+   note 行（排队中/主Agent消息/错误/停止…）沿用旧的事件盒子外观 */
 .subagent-panel-event {
+  border-radius: 10px;
+}
+
+.subagent-panel-note {
   padding: 10px 12px;
   border-radius: 10px;
   background: rgba(148, 163, 184, 0.08);

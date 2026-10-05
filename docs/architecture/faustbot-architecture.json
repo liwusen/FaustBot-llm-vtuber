@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "FaustBot 系统架构",
+    "output": "faustbot-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/liwusen/FaustBot-llm-vtuber",
+      "revision": "a5accaa51424b89444b8f3ec0a0cce3b57ddcc9d"
+    },
+    "viewBox": [1340, 610],
+    "views": [
+      {
+        "id": "chat-path",
+        "label": "主对话链路",
+        "focus": ["frontend", "api", "agent", "llm"],
+        "note": "用户消息经 WebSocket 进入 LangGraph Agent，再由 Agent 流向 LLM Provider。"
+      },
+      {
+        "id": "context-and-state",
+        "label": "上下文与持久化",
+        "focus": ["agent", "compact", "checkpoint", "memory"],
+        "note": "会话压缩在模型调用前判定，并改写 checkpoint 中的会话消息。"
+      },
+      {
+        "id": "extensions",
+        "label": "扩展与工具",
+        "focus": ["tools", "plugins", "subagents", "speech", "api"],
+        "note": "工具、插件、子 Agent 与语音子进程围绕后端展开。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "label": "Electron 前端",
+      "sublabel": "Live2D / VRM 虚拟形象",
+      "pos": [40, 280],
+      "size": [140, 64],
+      "sources": [{ "path": "frontend/app.js", "label": "聊天与 WebSocket 客户端" }]
+    },
+    {
+      "id": "speech",
+      "type": "backend",
+      "label": "语音服务",
+      "sublabel": "VAD / ASR / TTS",
+      "tag": "受管子进程",
+      "pos": [40, 480],
+      "size": [140, 64],
+      "sources": [{ "path": "backend/faust_backend/speech_runtime.py", "label": "语音运行时" }]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI 后端",
+      "sublabel": "HTTP + WebSocket",
+      "tag": ":13900",
+      "pos": [300, 280],
+      "size": [150, 64],
+      "sources": [{ "path": "backend/main.py", "label": "应用与路由注册" }]
+    },
+    {
+      "id": "plugins",
+      "type": "backend",
+      "label": "插件系统",
+      "sublabel": "pluggy 钩子",
+      "tag": "工具 / 中间件 / 路由",
+      "pos": [300, 480],
+      "size": [150, 64],
+      "sources": [{ "path": "backend/faust_backend/plugin_system/manager.py", "label": "插件管理器" }]
+    },
+    {
+      "id": "compact",
+      "type": "backend",
+      "label": "会话压缩中间件",
+      "sublabel": "before_model 判定",
+      "tag": "复用前缀命中缓存",
+      "pos": [490, 80],
+      "size": [150, 64],
+      "sources": [{ "path": "backend/faust_backend/runtime/compact.py", "label": "CompactMiddleware" }]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "工具注册表",
+      "sublabel": "read / write / execute",
+      "tag": "VFS + MCP 工具",
+      "pos": [700, 80],
+      "size": [150, 64],
+      "sources": [{ "path": "backend/faust_backend/llm_tools.py", "label": "工具集与运行时路径" }]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "LangGraph Agent",
+      "sublabel": "create_agent + 中间件栈",
+      "tag": "主 Agent 锁",
+      "pos": [560, 268],
+      "size": [170, 88],
+      "sources": [
+        { "path": "backend/faust_backend/runtime/lifecycle.py", "label": "构建与流式事件" }
+      ]
+    },
+    {
+      "id": "subagents",
+      "type": "backend",
+      "label": "SubagentManager",
+      "sublabel": "独立工具组与上下文",
+      "pos": [560, 480],
+      "size": [170, 64],
+      "sources": [{ "path": "backend/faust_backend/subagent_manager.py", "label": "子 Agent 生命周期" }]
+    },
+    {
+      "id": "checkpoint",
+      "type": "database",
+      "label": "SQLite Checkpointer",
+      "sublabel": "会话消息持久化",
+      "tag": "faust_checkpoint.db",
+      "pos": [880, 80],
+      "size": [160, 64],
+      "sources": [
+        { "path": "backend/faust_backend/runtime/lifecycle.py", "label": "AsyncSqliteSaver" }
+      ]
+    },
+    {
+      "id": "memory",
+      "type": "database",
+      "label": "多模态记忆",
+      "sublabel": "向量 + 知识图谱 + BM25",
+      "pos": [880, 480],
+      "size": [160, 64],
+      "sources": [{ "path": "backend/faust_backend/memory/store.py", "label": "GraphStore" }]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM Provider",
+      "sublabel": "OpenAI 兼容接口",
+      "tag": "provider::model",
+      "pos": [1120, 280],
+      "size": [160, 64],
+      "sources": [{ "path": "backend/faust_backend/provider.py", "label": "Provider 与模型配置" }]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "后端主进程",
+      "wraps": ["api", "agent", "compact", "tools", "plugins", "subagents", "memory", "checkpoint"]
+    },
+    {
+      "kind": "region",
+      "label": "受管子进程",
+      "wraps": ["speech"]
+    }
+  ],
+  "connections": [
+    { "id": "frontend-to-api", "from": "frontend", "to": "api", "label": "WS /faust/chat", "variant": "emphasis" },
+    { "id": "api-to-agent", "from": "api", "to": "agent", "label": "流式事件", "variant": "emphasis" },
+    { "id": "agent-to-llm", "from": "agent", "to": "llm", "label": "对话补全", "variant": "emphasis" },
+    { "id": "agent-to-compact", "from": "agent", "to": "compact", "label": "调用前判定", "fromSide": "top", "toSide": "bottom" },
+    { "id": "agent-to-tools", "from": "agent", "to": "tools", "label": "工具调用", "fromSide": "top", "toSide": "bottom" },
+    { "id": "agent-to-checkpoint", "from": "agent", "to": "checkpoint", "label": "读写会话状态" },
+    { "id": "agent-to-memory", "from": "agent", "to": "memory", "label": "记忆注入与检索" },
+    { "id": "agent-to-plugins", "from": "agent", "to": "plugins", "label": "中间件与钩子", "variant": "dashed" },
+    { "id": "agent-to-subagents", "from": "agent", "to": "subagents", "label": "派发子任务", "labelAt": [645, 420] },
+    {
+      "id": "speech-to-api",
+      "from": "speech",
+      "to": "api",
+      "label": "语音双向流 ASR / TTS",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [[110, 410], [375, 410]]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "前端 · Electron",
+      "items": [
+        "Live2D / VRM 虚拟形象与实时口型同步",
+        "WebSocket 全双工聊天、命令与子 Agent 事件",
+        "配置中心：Provider、模型上下文长度、插件与技能"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "后端 · LangGraph Agent",
+      "items": [
+        "create_agent 组装工具与内置中间件栈",
+        "会话压缩：按模型上下文长度自动触发 auto compact",
+        "Subagent、MCP 与插件共同注入可用工具"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "数据与外部依赖",
+      "items": [
+        "多模态记忆：向量 + 知识图谱 + BM25 混合检索",
+        "SQLite Checkpointer 持久化会话消息",
+        "LLM Provider 与 MCP Server 均为外部进程"
+      ]
+    }
+  ]
+}

@@ -51,7 +51,9 @@ aiofiles
 
 #
 aiohttp~=3.13.0
-Brotli
+# >=1.2.0: openai(httpx2) 与 aiohttp 都按新签名调用
+# brotli.Decompressor.process(data, output_buffer_limit=...)，1.1.0 会 TypeError
+Brotli>=1.2.0
 pure-protobuf
 yarl
 # pdm-backend
@@ -82,3 +84,7 @@ bitsandbytes>=0.45
 typing_extensions>=4.12
 psutil
 aiosqlite
+
+# agent-communicate 插件：ACP 官方 Python SDK（stdio 传输，不自研 JSON-RPC）
+# 上游有 migration-guide-0.7/0.11 且 1.0.0rc1/rc2 已预发布，故 pin 具体版本
+agent-client-protocol==0.12.1

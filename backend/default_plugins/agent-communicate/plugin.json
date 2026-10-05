@@ -1,0 +1,11 @@
+{
+  "id": "agent-communicate",
+  "name": "Agent Communicate",
+  "version": "0.1.0",
+  "description": "通过 ACP 协议调用外部编码 Agent（opencode 等）：VFS 提交任务、读取结果、裁决权限",
+  "author": "FaustBot",
+  "enabled": true,
+  "entry": "impl.py",
+  "priority": 320,
+  "faustbot.internal.mark.builtin": true
+}

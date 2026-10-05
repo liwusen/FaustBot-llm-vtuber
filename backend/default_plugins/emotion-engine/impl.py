@@ -200,16 +200,27 @@ def _schedule_proactive_chat(content: str) -> bool:
         log.warning("emotion-engine: agent 未就绪，跳过主动寒暄")
         return False
     try:
-        asyncio.create_task(
+        task = asyncio.create_task(
             invoke_agent_locked(
                 state.agent,
                 {"messages": [{"role": "user", "content": content}]},
             )
         )
-        return True
     except RuntimeError:
         log.error("emotion-engine: 无运行中的事件循环，跳过主动寒暄")
         return False
+
+    def _on_done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        error = t.exception()
+        if error is not None:
+            # 后台主动寒暄失败必须留痕：不取一次 exception() 只会得到
+            # asyncio 的 "Task exception was never retrieved"，无从定位。
+            log.error("emotion-engine: 主动寒暄调用失败: %s", error)
+
+    task.add_done_callback(_on_done)
+    return True
 
 
 class EmotionState:

@@ -45,6 +45,12 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
     **Editing memory documents:**
     - `edit("memory://notes/todo", "old line", "new line")` — same rules apply.
 
+    **faustbot:// NODES (ACK):**
+    - `edit("faustbot://agents/opencode/permissions/req_1.md", "old", "new")` 走节点的
+      edit_handler，handler 收到的是替换后的**完整新内容**（不是 diff）。
+    - handler 若返回非空字符串，会以换行 + `↳ ` 追加到本工具输出（这是节点向 Agent
+      回执的唯一通道）；返回 None 或其它类型则不追加。
+
     Args:
         path: File path (relative to project root), memory:// or faustbot:// URI.
         old_str: Exact text to replace. Must be unique in the file.
@@ -101,7 +107,7 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
 
-        async def write_back(content: str) -> str | None:
+        async def write_back(content: str) -> tuple[str | None, str | None]:
             try:
                 await store.file_write(mem_path, content)
                 # 触发 LLM 实体抽取
@@ -111,8 +117,8 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
                 except Exception:
                     pass
             except Exception as e:
-                return f"无法写入记忆文档 memory://{mem_path}: {e}"
-            return None
+                return f"无法写入记忆文档 memory://{mem_path}: {e}", None
+            return None, None
     elif is_faustbot:
         vfs_path = "/" + path[len("faustbot://"):].strip("/")
         try:
@@ -127,12 +133,14 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
 
-        async def write_back(content: str) -> str | None:
+        async def write_back(content: str) -> tuple[str | None, str | None]:
+            # 走 vfs.edit：节点的 edit_handler 才会被触发（vfs.write 只认 write_handler）。
+            # handler 语义是"提交这份完整新内容"，与 replace_exact 产出的 result 一致。
             try:
-                await vfs.write(vfs_path, content)
+                ack = await vfs.edit(vfs_path, content)
             except Exception as e:
-                return f"无法写入 faustbot 文档 {path}: {e}"
-            return None
+                return f"无法写入 faustbot 文档 {path}: {e}", None
+            return None, ack
     else:
         file_path = Path(path)
         if not file_path.is_absolute():
@@ -142,7 +150,7 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
             original = file_path.read_text(encoding="utf-8")
         except FileNotFoundError:
             _msg = f"文件不存在: {file_path}\n"
-            _msg += "建议: 先用 read(\"{path}\") 确认路径，或 write(\"{path}\", content) 创建文件。"
+            _msg += f"建议: 先用 read(\"{path}\") 确认路径，或 write(\"{path}\", content) 创建文件。"
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
         except Exception as e:
@@ -150,12 +158,12 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
             log.info("edit OUTPUT %s", _msg[:120])
             return _msg
 
-        async def write_back(content: str) -> str | None:
+        async def write_back(content: str) -> tuple[str | None, str | None]:
             try:
                 file_path.write_text(content, encoding="utf-8")
             except Exception as e:
-                return f"无法写入文件 {file_path}: {e}"
-            return None
+                return f"无法写入文件 {file_path}: {e}", None
+            return None, None
 
     # ── 精确替换 ──
     result, match_count = replace_exact(original, old_str, new_str)
@@ -181,10 +189,13 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
         return _msg
 
     # ── 写回 ──
-    write_err = await write_back(result)
+    write_err, ack = await write_back(result)
     if write_err:
         log.info("edit OUTPUT %s", write_err[:120])
         return write_err
     _msg = f"已编辑 {path} (1 处替换)"
+    if ack:
+        # faustbot:// 节点的 edit_handler 返回值 = 给 Agent 的 ACK，追加到工具输出
+        _msg += f"\n↳ {ack}"
     log.info("edit OUTPUT %s", _msg[:120])
     return _msg

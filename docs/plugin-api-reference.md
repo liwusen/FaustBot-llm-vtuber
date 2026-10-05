@@ -133,6 +133,9 @@ await ctx.register_config([
     {"key": "PUSH_THRESHOLD", "type": "int", "label": "推送阈值", "default": 3},
     {"key": "QUIET_START", "type": "str", "label": "静默开始", "default": "23:00"},
     {"key": "ENABLE_FEATURE", "type": "bool", "label": "启用功能", "default": True},
+    # LLM 选择：配置中心显示"当前模型标识符 + 模型选择按钮"，值是 "provider::model"
+    # 字符串；未选择时缺省使用主对话模型标识符
+    {"key": "SCREEN_MODEL", "type": "llm", "label": "屏幕分析模型"},
 ])
 
 # 注册配置 schema（string 格式，旧版兼容）
@@ -151,7 +154,10 @@ await ctx.set_config("PUSH_THRESHOLD", 5)
 configs = await ctx.list_configs()
 ```
 
-支持的配置类型：`str`, `string`, `int`, `float`, `bool`, `json`, `text`
+支持的配置类型：`str`, `string`, `int`, `float`, `bool`, `json`, `text`, `llm`
+
+`llm`（LLM 选择）类型：值是模型标识符字符串（`provider::model`），在配置中心用「模型选择」
+弹窗从已配置的 Provider 模型列表中单选；未选择/清空时缺省值为主对话模型标识符。
 
 ### 虚拟文件系统（VFS）
 
@@ -175,6 +181,41 @@ await ctx.vfs_delete("/plugins/my-plugin/old.md")
 # 列出目录
 files = await ctx.vfs_list("/plugins/my-plugin/")
 ```
+
+#### write / edit handler 的返回值 = 给 Agent 的 ACK（v1 起生效）
+
+节点可以通过 `ctx.vfs_set_write_handler(path, fn)` / `ctx.vfs_set_edit_handler(path, fn)`
+接管写入；handler 签名为 `(node, content)`，可同步或异步。**它的返回值会被 VFS 透传**，
+并出现在 Agent 的 `write` / `edit` 工具输出里——这是插件向 Agent 回执的唯一确定性通道。
+
+| handler 返回 | VFS 返回值 | 工具输出 |
+|---|---|---|
+| 非空 `str` | 原样返回该字符串 | 追加换行 + `↳ ` + 原文（**保留多行**） |
+| `None` / 空串 `""` | `None` | 不追加 |
+| 其它类型（dict / list / int …） | `None` | 忽略，不追加，**不报错** |
+
+```python
+def on_write(node, content):
+    task = submit(content)
+    return f"已提交 {task.id}（队列 1/3）\n结果读取：faustbot://agents/x/tasks/{task.id}/result.md"
+
+await ctx.vfs_set_write_handler("/agents/x/submit", on_write)
+# Agent 的 write("faustbot://agents/x/submit", ...) 输出：
+#   已写入 faustbot://agents/x/submit (168 bytes)
+#   ↳ 已提交 task_7（队列 1/3）
+#     结果读取：...
+```
+
+要点：
+
+- **只认 `str`**：想给 Agent 提示就 `return "文本"`；返回 dict 之类不会报错，但也不会显示。
+- `edit` 工具的 `faustbot://` 分支走的是 **`edit_handler`**（不是 `write_handler`），
+  handler 收到的是替换后的**完整新内容**（不是 diff），语义为"提交这份新内容"。
+- 校验失败请**抛异常**：异常文本会作为工具输出返回给 Agent（`write` 工具显示为
+  `写入 faustbot 资源出错: …`，`edit` 工具显示为 `无法写入 faustbot 文档 …`）。
+- **agile-engine 影响**：agile-engine 的包装器会透传模块 hook 的返回值，因此模块的
+  write hook 若 `return "ok"`，现在会出现在 Agent 的工具输出里。这是有意的新契约：
+  模块 hook 只在需要给 Agent 回执时才返回值，其余情况返回 `None`。
 
 ---
 

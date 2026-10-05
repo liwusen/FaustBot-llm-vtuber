@@ -32,7 +32,9 @@ async def triggerAddTool(trigger_json: str) -> str:
         添加一个新的触发器（同 id 会覆盖旧触发器）。
         通用字段: id, type, recall_description(可选), lifespan(可选,秒),
         run_background(可选,默认 false), priority(可选,默认 "normal")。
-        priority 三档: "interrupt"=立即唤醒（告警/紧急事件）;
+        priority 三档（注意：当前**没有任何一档能抢占进行中的 turn**，都只会在
+        当前 turn 结束后送达）:
+        "interrupt"=与 "normal" 行为相同，仅表示高优先级的常规唤醒（告警/紧急事件）;
         "normal"=常规（默认）; "batched"=低优先级（高频/低价值感知事件,
         消费侧按 30 秒窗口合并为一次唤醒,不打扰但绝不丢失）。
         run_background=true 时触发器在后台运行，你被触发时输出的内容/工具调用不会被推送给用户，只有你知道；

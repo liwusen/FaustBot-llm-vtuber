@@ -1717,6 +1717,32 @@ body {
 	outline: 2px solid #2563eb;
 	outline-offset: 2px;
 }
+
+/* ── 插件配置：LLM 选择（type: "llm"）当前标识符 + 模型选择按钮 ── */
+.llm-pick-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+.llm-spec {
+	flex: 1 1 220px;
+	min-width: 0;
+	padding: 9px 12px;
+	border-radius: 10px;
+	border: 1px solid var(--line-strong);
+	background: rgba(63, 107, 232, 0.06);
+	color: #24418f;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 13px;
+	word-break: break-all;
+}
+.llm-spec-unset {
+	background: rgba(148, 163, 184, 0.12);
+	color: var(--muted);
+	font-style: italic;
+}
 .simple-table td .toolbar.compact {
 	justify-content: flex-start;
 }

@@ -1,0 +1,8 @@
+{
+  "slug": "agent-communicate",
+  "name": "Agent 通信（ACP）",
+  "version": "1.0.0",
+  "description": "把编码任务外包给外部 Agent（opencode / omp）：VFS 提交、轮询进度、读取结果、裁决权限",
+  "usage": "用户让你调用/询问 opencode（或其他外部编码 Agent）、或需要外部 Agent 代为改代码时：先 read(skill://agent-communicate/SKILL.md)，再 write faustbot://agents/{name}/submit 提交任务；结果读 tasks/{id}/result.md，权限请求在 permissions/{id}.md 裁决",
+  "builtin": true
+}

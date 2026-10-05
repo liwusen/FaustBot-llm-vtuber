@@ -30,7 +30,9 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
       const el = widget.element;
       if (!el) return;
       el.classList.toggle('ui-widget-editing-target', editMode);
-      el.classList.toggle('ui-widget-hidden-preview', editMode && !!widget.hidden);
+      // transientHidden（asr-bubble）的 hidden 由运行时驱动，不做灰显预览：
+      // 编辑时看到的就是真实颜色/样式
+      el.classList.toggle('ui-widget-hidden-preview', editMode && !!widget.hidden && !widget.transientHidden);
       // 进入编辑态时，让被隐藏的组件恢复显示以便选中/拖动（清除内联 display:none，交回 CSS 默认）
       if (editMode && widget.hidden) {
         el.style.display = '';
@@ -140,13 +142,24 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
 
     const propFields = [];
     const propSchema = widget.schema && widget.schema.props ? widget.schema.props : {};
+    const notifyPropChange = () => {
+      if (typeof onPropChange === 'function') onPropChange();
+    };
+    // 属性变更统一入口：每次都取最新的 props 再合并。
+    // 面板打开时拿到的 widget 是快照，直接用它合并会把「同一面板里刚改过的其它属性」
+    // 回滚掉（右键改完颜色再改字号 → 颜色被旧快照覆盖，看起来就是"颜色不生效"）。
+    const applyProp = (propKey, value) => {
+      const latest = manager.getWidget(widget.id);
+      const nextProps = { ...((latest && latest.props) || {}), [propKey]: value };
+      manager.updateWidget(widget.id, { props: nextProps });
+      if (typeof refreshLayout === 'function') refreshLayout();
+      persist();
+      notifyPropChange();
+    };
     Object.entries(propSchema).forEach(([propKey, propDef]) => {
       // 支持两种定义：'boolean'/'number' 字符串，或 {type, label} 对象
       const propType = typeof propDef === 'string' ? propDef : ((propDef && propDef.type) || 'boolean');
       const propLabel = (typeof propDef === 'object' && propDef.label) ? propDef.label : propKey;
-      const notifyPropChange = () => {
-        if (typeof onPropChange === 'function') onPropChange();
-      };
       if (propType === 'boolean') {
         const row = document.createElement('label');
         row.className = 'switch-row';
@@ -154,12 +167,7 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = !!(widget.props && widget.props[propKey]);
-        input.addEventListener('change', () => {
-          manager.updateWidget(widget.id, { props: { ...(widget.props || {}), [propKey]: input.checked } });
-          if (typeof refreshLayout === 'function') refreshLayout();
-          persist();
-          notifyPropChange();
-        });
+        input.addEventListener('change', () => applyProp(propKey, input.checked));
         row.append(input);
         propFields.push(row);
       } else if (propType === 'color') {
@@ -172,20 +180,15 @@ export function initUiWidgetEditor({ manager, saveSettings, refreshLayout, onEdi
         input.className = 'input';
         input.type = 'color';
         input.value = (widget.props && widget.props[propKey]) || '#000000';
-        input.addEventListener('change', () => {
-          manager.updateWidget(widget.id, { props: { ...(widget.props || {}), [propKey]: input.value } });
-          if (typeof refreshLayout === 'function') refreshLayout();
-          persist();
-          notifyPropChange();
-        });
+        // input：取色器拖动中即时生效（Electron 原生取色框只保证触发 input）；
+        // change：关闭取色框后确认一次，双保险。
+        input.addEventListener('input', () => applyProp(propKey, input.value));
+        input.addEventListener('change', () => applyProp(propKey, input.value));
         wrap.append(text, input);
         propFields.push(wrap);
       } else {
         const field = makeNumberField(propLabel, widget.props && widget.props[propKey] != null ? widget.props[propKey] : 0, (value) => {
-          manager.updateWidget(widget.id, { props: { ...(widget.props || {}), [propKey]: value } });
-          if (typeof refreshLayout === 'function') refreshLayout();
-          persist();
-          notifyPropChange();
+          applyProp(propKey, value);
         });
         propFields.push(field);
       }

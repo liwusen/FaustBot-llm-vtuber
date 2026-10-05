@@ -1,0 +1,553 @@
+/* Agent 通信（agent-communicate）配置页面板
+ *
+ * 亮色简约风，与配置中心（Configer）一致；禁止紫黑色 UI（仓库硬性规则）。
+ * 所有颜色一律取自配置中心的 CSS 变量（frontend/config-window.css 的 :root），
+ * 仅额外使用 transparent；不新增任何调色板。
+ * 其余视觉复用既有 class：card / simple-table / toolbar / switch / btn /
+ * tag-chip / empty-state / card-title / card-help / full-span / tag-list。
+ *
+ * 版面重点：总览数字 → 待决权限 → 任务 → Agent 列表 → 折叠区。
+ */
+
+/* ── 通用 ───────────────────────────────────────────────── */
+
+/* 卡片是 .module-container（grid）的子项；grid 子项默认 min-width:auto，
+ * 会被 min-width:560px 的表格顶宽，窄窗口下右侧内容直接被 .app-shell 裁掉。
+ * 置 0 后由 .agent-communicate-table-wrap 负责内部横向滚动。 */
+.agent-communicate-card,
+.agent-communicate-perm-card,
+.agent-communicate-fold-card {
+  min-width: 0;
+}
+
+/* 顶部错误条：后端失败必须显式可见（不隐瞒错误） */
+.agent-communicate-error {
+  grid-column: 1 / -1;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.agent-communicate-error[hidden],
+.agent-communicate-alert[hidden],
+.agent-communicate-perm-card[hidden],
+.agent-communicate-stream-wrap[hidden] {
+  display: none;
+}
+
+/* 卡片头：标题在左、动作在右，避免"一整行说明 + 一整行按钮" */
+.agent-communicate-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.agent-communicate-head .card-help {
+  max-width: 74ch;
+}
+
+.agent-communicate-subtitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-communicate-pane-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.agent-communicate-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-top: 4px;
+  color: var(--blue);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.agent-communicate-link:hover {
+  text-decoration: underline;
+}
+
+/* 状态标签：给 tag-chip 换配色（进程阶段 / 任务状态） */
+.agent-communicate-tag-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-color: transparent;
+}
+
+.agent-communicate-tag-info {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: transparent;
+}
+
+.agent-communicate-tag-warn {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.agent-communicate-error-text {
+  color: var(--accent);
+}
+
+.agent-communicate-notice {
+  color: var(--ok);
+}
+
+.agent-communicate-notice:empty {
+  display: none;
+}
+
+/* 行内代码：会话 id / 任务 id / 解析出的命令 */
+.agent-communicate-code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* 能力标签弱化，避免一整行都在抢注意力 */
+.agent-communicate-chip {
+  background: var(--bg2);
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+/* ── 总览条 ─────────────────────────────────────────────── */
+
+.agent-communicate-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.agent-communicate-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg2);
+}
+
+.agent-communicate-stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.agent-communicate-stat-value {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.agent-communicate-stat-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.agent-communicate-stat.is-ok {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.agent-communicate-stat.is-ok .agent-communicate-stat-value {
+  color: var(--ok);
+}
+
+.agent-communicate-stat.is-alert {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.agent-communicate-stat.is-alert .agent-communicate-stat-value {
+  color: var(--accent);
+}
+
+/* 一句话提示：整页最该被看到的结论 */
+.agent-communicate-alert {
+  border-left: 3px solid var(--line-strong);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-communicate-alert.is-alert {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.agent-communicate-alert.is-ok {
+  border-left-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* ── 待决权限（首屏重点） ─────────────────────────────── */
+
+.agent-communicate-perm-card {
+  border-left: 3px solid var(--accent);
+}
+
+.agent-communicate-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.agent-communicate-perm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-communicate-perm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg1);
+}
+
+.agent-communicate-perm.is-urgent {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.agent-communicate-perm-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-communicate-perm-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-communicate-perm-title {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-communicate-perm-args {
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-communicate-perm-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+
+.agent-communicate-countdown-lg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-communicate-countdown-lg > span:first-child {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.agent-communicate-countdown-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.agent-communicate-countdown-lg.is-urgent > span:first-child,
+.agent-communicate-countdown-lg.is-expired > span:first-child {
+  color: var(--accent);
+}
+
+/* ── 表格：不再让中文竖排 ─────────────────────────────── */
+
+/* 窄窗口下让表格在卡片内部横向滚动，而不是把整张卡撑出面板
+ * （flex 子项默认 min-width:auto，会被 min-width:560px 的表格顶宽） */
+.agent-communicate-table-wrap {
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.agent-communicate-table {
+  table-layout: fixed;
+  min-width: 560px;
+}
+
+.agent-communicate-table td,
+.agent-communicate-table th {
+  vertical-align: middle;
+}
+
+.agent-communicate-nowrap {
+  white-space: nowrap;
+}
+
+.agent-communicate-ellipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-communicate-table .tag-chip {
+  white-space: nowrap;
+}
+
+/* 任务表的状态列塞得下"运行中"徽标 */
+.agent-communicate-task-table td .tag-chip {
+  padding: 3px 8px;
+}
+
+/* 表内分组标题行（进行中 / 历史） */
+.agent-communicate-group-row td {
+  background: var(--bg2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-communicate-group-row td > span {
+  margin-right: 10px;
+}
+
+/* Agent 行内展开（命令与配置） */
+.agent-communicate-detail-row td {
+  background: var(--bg2);
+  padding: 12px;
+}
+
+.agent-communicate-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-communicate-detail .tag-list {
+  gap: 6px;
+}
+
+.agent-communicate-agent-row.is-running td:first-child {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+/* 紧凑开关：表格单元格里 52px 的开关太占地方 */
+.agent-communicate-switch-row-sm {
+  justify-content: flex-start;
+}
+
+.agent-communicate-switch-sm {
+  width: 38px;
+  height: 22px;
+  flex: none;
+}
+
+.agent-communicate-switch-sm .switch-slider::before {
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+}
+
+.agent-communicate-switch-sm input:checked + .switch-slider::before {
+  transform: translateX(16px);
+}
+
+/* 行内按钮组：小一号，避免按钮比内容还抢眼 */
+.agent-communicate-inline-actions {
+  flex-wrap: wrap;
+}
+
+.agent-communicate-inline-actions .btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+/* ── 实时输出 ───────────────────────────────────────────── */
+
+.agent-communicate-stream-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+/* 两栏布局（正文 / 事件流）；窄窗口自动折行 */
+.agent-communicate-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.agent-communicate-stream {
+  margin: 0;
+  min-height: 72px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg2);
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── 折叠区（手动提交 / agents 配置 / 探测结果） ───────── */
+
+.agent-communicate-fold-card {
+  padding: 12px 18px;
+}
+
+.agent-communicate-fold > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-communicate-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-communicate-fold > summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+
+.agent-communicate-fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.agent-communicate-fold-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-communicate-fold-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+/* ── 手动提交信封 ───────────────────────────────────────── */
+
+.agent-communicate-submit {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-communicate-submit .textarea {
+  min-height: 72px;
+}
+
+.agent-communicate-select {
+  width: auto;
+  min-width: 160px;
+  padding: 6px 8px;
+}
+
+/* ── agents 配置表 ─────────────────────────────────────── */
+
+.agent-communicate-config-table {
+  min-width: 880px;
+}
+
+.agent-communicate-config-table td {
+  vertical-align: middle;
+}
+
+.agent-communicate-cell-input {
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.agent-communicate-cell-wide {
+  min-width: 200px;
+}
+
+.agent-communicate-cell-num {
+  min-width: 78px;
+}
+
+.agent-communicate-config-status {
+  color: var(--muted);
+}
+
+.agent-communicate-config-status.is-dirty {
+  color: var(--accent);
+}

@@ -140,7 +140,9 @@ export function createUiWidgetManager({ getModelBounds, onWidgetChange, onLayout
       el.style.display = 'none';
       return;
     }
-    el.classList.toggle('ui-widget-hidden-preview', !!(widget.hidden && editMode));
+    // transientHidden 组件（asr-bubble 等）的 hidden 由运行时业务逻辑驱动，
+    // 编辑态不做"隐藏预览"灰显，否则用户在这里改的颜色/样式看到的都不是真实效果
+    el.classList.toggle('ui-widget-hidden-preview', !!(widget.hidden && editMode && !widget.transientHidden));
     const anchor = getWidgetAnchor(widget.id);
     if (typeof widget.onLayout === 'function') {
       widget.onLayout(el, anchor, widget, { editMode });

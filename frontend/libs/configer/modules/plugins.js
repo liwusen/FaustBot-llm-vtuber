@@ -12,6 +12,66 @@ function parsePluginFieldValue(fieldType, rawValue) {
   return rawValue;
 }
 
+// ── 配置键类型 "llm"（LLM 选择）──
+// 值就是模型标识符字符串 "provider::model"；缺省值由后端回填主对话模型。
+// 显示：当前标识符 + 「模型选择」按钮；选择列表与 AI 服务商页面的 Models 列表同源。
+
+const LLM_CONFIG_TYPES = new Set(["llm", "model"]);
+
+function isLlmConfigType(type) {
+  return LLM_CONFIG_TYPES.has(String(type || "").toLowerCase());
+}
+
+async function openPluginLlmPicker(item, key, specEl) {
+  // 模型列表来自 state.providers（AI 服务商页面数据源）；插件页没加载过就先拉一次
+  if (!(state.providers || []).length) {
+    try {
+      await ensureModuleData("ai");
+    } catch (e) {
+      console.warn("load providers for llm picker failed", e);
+    }
+  }
+  const entries = _allModelEntries();
+  const current = String(state.pluginConfigDraft[key] || "");
+  const nodes = [
+    el("p", "card-help",
+      "选中即写入该配置项（保存插件配置并重载后生效）。存储值是模型标识符，形如 provider::model。"),
+  ];
+  if (!entries.length) {
+    nodes.push(el("div", "empty-state", "暂无可用模型：请先到「AI 服务商」页面添加 Provider 并加载模型列表。"));
+  } else {
+    const rows = entries.map((entry) => {
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `plugin-llm-pick-${key}`;
+      radio.className = "provider-pick";
+      radio.checked = current === entry.spec;
+      radio.addEventListener("change", () => {
+        if (!radio.checked) return;
+        state.pluginConfigDraft[key] = entry.spec;
+        if (specEl) {
+          specEl.textContent = entry.spec;
+          specEl.classList.remove("llm-spec-unset");
+        }
+        showBanner("success", `${item.label || key} 已选择 ${entry.spec}（保存插件配置后生效）`);
+      });
+      const providerEntry = _findProvider(entry.provider);
+      const ctxLength = providerEntry && providerEntry.model_context_lengths
+        ? providerEntry.model_context_lengths[entry.model]
+        : undefined;
+      return [entry.provider, entry.model, ctxLength ? String(ctxLength) : "默认", radio];
+    });
+    nodes.push(makeSimpleTableCard(
+      `模型列表 - ${item.label || key}`,
+      ["Provider", "模型", "上下文长度", "选择"],
+      rows,
+      { pageSize: 10, searchKey: 1 },
+    ));
+  }
+  openModal(`模型选择 - ${item.label || key}`, nodes);
+}
+
+
 function pluginHealthLabel(plugin) {
   const status = String(((plugin || {}).health || {}).status || "unknown").toLowerCase();
   const map = {
@@ -299,6 +359,17 @@ function renderPluginsModule() {
           txt.textContent = Boolean(input.checked) ? "已启用" : "已禁用";
         });
         if (help) wrap.append(help);
+        wrap.append(row);
+        form.append(wrap);
+        continue;
+      } else if (isLlmConfigType(type)) {
+        const specText = val === null || val === undefined || String(val) === "" ? "" : String(val);
+        const row = el("div", "llm-pick-row");
+        const specEl = el("code", `llm-spec${specText ? "" : " llm-spec-unset"}`,
+          specText || "(未选择 · 缺省使用主对话模型)");
+        row.append(specEl, makeButton("模型选择", () => { openPluginLlmPicker(item, key, specEl); }, "btn btn-secondary"));
+        wrap.append(el("p", "card-help",
+          String(item.description || "当前使用的模型标识符（provider::model）；未选择时使用主对话模型。")));
         wrap.append(row);
         form.append(wrap);
         continue;

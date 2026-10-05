@@ -659,21 +659,29 @@ async def command_websocket(websocket: WebSocket):
                     batch_buffer = []
                     trigger_text = trigger_manager.format_batch_injection(items, first_ts)
                     log.info('批量触发器注入 %d 条: %s', len(items), trigger_text[:120])
-                    batch_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
-                    if batch_text == "__IGNORED__":
-                        log.info('批量触发器消息已被插件拦截，跳过本次注入')
-                    else:
-                        batch_task = asyncio.create_task(
-                            invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": batch_text}]})
-                        )
-                        _register_trigger_task(batch_task)
-                        try:
+                    # 插件钩子（记忆检索/情绪向量）与 Agent 调用都可能失败（如 LLM
+                    # 传输层异常），任一失败都不得炸掉整个命令 WS 循环——与后台/前台
+                    # 触发器分支保持一致的容错语义。
+                    batch_task: asyncio.Task | None = None
+                    try:
+                        batch_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
+                        if batch_text == "__IGNORED__":
+                            log.info('批量触发器消息已被插件拦截，跳过本次注入')
+                        else:
+                            batch_task = asyncio.create_task(
+                                invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": batch_text}]})
+                            )
+                            _register_trigger_task(batch_task)
                             await batch_task
-                        except asyncio.CancelledError:
-                            if not batch_task.cancelled():
-                                raise
-                            log.info('批量触发器被用户插话打断')
-                        finally:
+                    except asyncio.CancelledError:
+                        # 批量任务被用户插话取消属正常流程；自身被取消则继续向上抛
+                        if batch_task is None or not batch_task.cancelled():
+                            raise
+                        log.info('批量触发器被用户插话打断')
+                    except Exception as e:
+                        log.error('批量触发器 Agent 调用失败: %s', e)
+                    finally:
+                        if batch_task is not None:
                             _clear_trigger_task(batch_task)
             if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
                 if not state.RUNTIME_READY or state.agent is None:
@@ -724,26 +732,29 @@ async def command_websocket(websocket: WebSocket):
                 if run_background or chat_ws is None:
                     # 后台触发器（或无前端连接时降级）：仅执行，不推送前端
                     # 前台流式路径在 _run_agent_stream 内部做插件处理，这里不能重复处理
-                    bg_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
-                    if bg_text == "__IGNORED__":
-                        log.info('触发器消息已被插件拦截，跳过后台执行: %s', trigger_text[:80])
-                        continue
-                    bg_task = asyncio.create_task(
-                        invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": bg_text}]})
-                    )
-                    _register_trigger_task(bg_task)
+                    bg_task: asyncio.Task | None = None
                     try:
+                        bg_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
+                        if bg_text == "__IGNORED__":
+                            log.info('触发器消息已被插件拦截，跳过后台执行: %s', trigger_text[:80])
+                            continue
+                        bg_task = asyncio.create_task(
+                            invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": bg_text}]})
+                        )
+                        _register_trigger_task(bg_task)
                         await bg_task
                         log.debug('后台触发器执行完成: %s', trigger_text[:80])
                     except asyncio.CancelledError:
-                        if not bg_task.cancelled():
+                        # 后台任务被用户插话取消属正常流程；自身被取消则继续向上抛
+                        if bg_task is None or not bg_task.cancelled():
                             raise
                         log.info('后台触发器被用户插话打断: %s', trigger_text[:80])
                     except Exception as e:
-                        # Agent 调用失败（如 LLM 连接错误）不应炸掉整个命令 WS 循环
-                        log.error('后台触发器 Agent 调用失败: %s', e)
+                        # 插件钩子/Agent 调用失败（如 LLM 连接错误）不应炸掉整个命令 WS 循环
+                        log.error('后台触发器执行失败: %s', e)
                     finally:
-                        _clear_trigger_task(bg_task)
+                        if bg_task is not None:
+                            _clear_trigger_task(bg_task)
                 else:
                     # 前台触发器：通过 chat websocket 流式推送
                     fg_task = asyncio.create_task(_run_trigger_stream_frontend(chat_ws, trigger_text))
@@ -772,14 +783,11 @@ async def command_websocket(websocket: WebSocket):
                     pass
     except WebSocketDisconnect:
         log.info("Command WebSocket 断开")
-    except Exception as e:
-        log.error("Command WebSocket 错误: %s", e)
-        try:
-            await websocket.send_text(f"SAY COMMAND LOOP ERROR::{e}")
-        except WebSocketDisconnect:
-            log.warning("Command WebSocket 报告错误时已断开")
-        except RuntimeError as send_error:
-            log.warning("Command WebSocket 在错误报告前已关闭: %s", send_error)
+    except Exception:
+        # 不再把致命错误塞进 SAY 通道：前端会把 SAY 内容渲染成气泡并用 TTS 当作
+        # Faust 的台词朗读（frontend/app.js 的 SAY 分支）。这里只记录完整栈，
+        # 连接关闭后 Electron 主进程会自动重连。
+        log.exception("Command WebSocket 循环致命错误，连接即将关闭")
 
 
 @router.post("/faust/command/forward")
