@@ -268,6 +268,10 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   color: #fff;
 }
 
+/* ── 文字聊天输入栏 ──
+   结构参照 DSH composer：单个大圆角白容器，上部文本区 + 下部工具条
+   （左：圆形「+」；中：提示/状态；右：上下文占用药丸 + 圆形发送键）。
+   配色一律使用 --faust-* 令牌，保持与 Configer 同一套亮色简约体系。 */
 #textChatBar {
   position: fixed;
   left: 50%;
@@ -276,17 +280,23 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
+  gap: 4px;
   min-width: 320px;
   max-width: min(54vw, 620px);
-  padding: 10px 12px;
-  border-radius: 18px;
-  background: rgba(255,255,255,0.94);
-  border: 1px solid rgba(24,42,58,0.10);
-  border-radius: 16px;
-  box-shadow: 0 12px 30px -18px rgba(24,42,58,0.5);
-  color: #182a3a;
+  padding: 12px 14px 10px;
+  border-radius: 20px;
+  background: var(--faust-panel-strong);
+  border: 1px solid var(--faust-line);
+  box-shadow: 0 18px 40px -22px rgba(24, 42, 58, 0.42), 0 2px 10px -8px rgba(24, 42, 58, 0.28);
+  color: var(--faust-text);
   transform: translate(-50%, -50%);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* 聚焦态整块提亮：文本区没有自己的边框，焦点反馈由容器承担 */
+#textChatBar:focus-within {
+  border-color: rgba(63, 107, 232, 0.52);
+  box-shadow: 0 18px 40px -20px rgba(32, 55, 91, 0.4), 0 0 0 3px var(--faust-blue-soft);
 }
 
 #textChatAttachments {
@@ -299,45 +309,98 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #eef1f5;
-  border: 1px solid #dfe5ec;
+  background: var(--faust-panel);
+  border: 1px solid var(--faust-line);
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
-  color: #5c6d7d;
+  color: var(--faust-muted);
   max-width: 220px;
 }
-.composer-chip.is-image { background: #e5f7ef; border-color: #bfe8d6; color: #0b8a60; }
+/* 图片附件沿用 Configer 的 ok 色（--ok #2c9158 / --ok-soft #e8f7ef） */
+.composer-chip.is-image { background: #e8f7ef; border-color: #c3e6d3; color: #2c9158; }
 .composer-chip.just-added { animation: chip-pop 0.6s ease; }
 @keyframes chip-pop { 0% { transform: scale(0.85); opacity: 0.3; } 100% { transform: scale(1); opacity: 1; } }
 .composer-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-chip-x { cursor: pointer; color: #8aa0b2; flex-shrink: 0; }
-.composer-chip-x:hover { color: #d9534f; }
+.composer-chip-x { cursor: pointer; color: var(--faust-muted); flex-shrink: 0; }
+.composer-chip-x:hover { color: var(--faust-accent); }
+
+/* ── 下部工具条 ── */
 #textChatBarFooter {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 0;
+  min-height: 34px;
 }
+
+.composer-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 #textChatAttachBtn {
-  background: rgba(255,255,255,0.95);
-  border: 1px solid rgba(24,42,58,0.08);
-  border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(32, 55, 91, 0.18);
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  /* Configer 的 --bg #eef3f8：中性浅灰圆钮，不与发送键抢注意力 */
+  background: rgba(238, 243, 248, 0.92);
+  color: var(--faust-muted);
   cursor: pointer;
-  font-size: 14px;
-  padding: 3px 8px;
-  transition: box-shadow 0.15s ease, transform 0.12s ease;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
 }
 #textChatAttachBtn:hover {
-  box-shadow: 0 4px 10px rgba(32, 55, 91, 0.26);
+  background: var(--faust-blue-soft);
+  color: var(--faust-blue);
   transform: translateY(-1px);
 }
+#textChatAttachBtn:active { transform: translateY(0); }
+
 #textChatHint {
-  font-size: 10px;
-  color: #8aa0b2;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--faust-muted);
   margin-right: auto;
+  /* min-width:0 + nowrap + ellipsis：窄容器下提示文字可收缩，不会顶破输入栏 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s ease;
 }
+#textChatBar.is-sending #textChatHint { color: var(--faust-blue); }
+#textChatBar.is-error #textChatHint { color: var(--faust-accent); }
+
+/* 上下文占用药丸：纯展示，hover 由 title 给出完整数字 */
+#contextMeter {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--faust-line);
+  background: var(--faust-panel);
+  color: var(--faust-muted);
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+#contextMeter[hidden] { display: none; }
 
 
 #textChatInput {
@@ -346,15 +409,15 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   box-sizing: border-box;
   background: transparent;
   border: none;
-  color: #182a3a;
+  color: var(--faust-text);
+  font-family: inherit;
   font-size: 14px;
   border-radius: 8px;
-  padding: 4px 6px;
+  padding: 4px 2px;
   line-height: 24px;
   resize: none;
   overflow-y: hidden;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 #textChatInput::placeholder {
@@ -362,10 +425,10 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
 }
 
 #textChatInput:focus {
-  background: rgba(255,255,255,0.65);
+  background: transparent;
 }
 
-#textChatInput:focus-visible,
+/* 焦点反馈由 #textChatBar:focus-within 承担，文本区不再画自己的 outline */
 #textChatSendBtn:focus-visible,
 #modelQuickController button:focus-visible,
 #hideAsrBubbleBtn:focus-visible,
@@ -378,22 +441,50 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
 }
 
 #textChatSendBtn {
-  background: #0ea474;
-  color: #fff;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: none;
-  border-radius: 8px;
-  padding: 4px 10px;
-  font-size: 16px;
-  line-height: 1;
+  border-radius: 50%;
+  background: var(--faust-blue);
+  color: #fff;
   cursor: pointer;
-  box-shadow: 0 4px 12px -4px rgba(14, 164, 116, 0.55);
-  transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 6px 14px -6px rgba(63, 107, 232, 0.75);
+  transition: transform 0.12s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
-#textChatSendBtn:hover {
+#textChatSendBtn .composer-icon { stroke-width: 2; }
+
+#textChatSendBtn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px -4px rgba(14, 164, 116, 0.65);
-  filter: brightness(1.04);
+  background: #3459cf;
+  box-shadow: 0 10px 18px -8px rgba(63, 107, 232, 0.85);
+}
+
+#textChatSendBtn:active:not(:disabled) { transform: translateY(0); }
+
+/* 空输入 / 发送中都要真 disabled：空态淡蓝，语义与「按了也没用」一致 */
+#textChatSendBtn:disabled {
+  background: var(--faust-blue-soft);
+  color: rgba(63, 107, 232, 0.5);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* 发送中：脉冲区别于「空输入」，说明消息已提交、正在等回复 */
+#textChatBar.is-sending #textChatSendBtn {
+  background: var(--faust-blue);
+  color: #fff;
+  animation: composer-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes composer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 107, 232, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(63, 107, 232, 0); }
 }
 
 #textChatStatus {
@@ -1369,7 +1460,7 @@ body.click-through .autocomplete-dropdown {
     width: calc(100vw - 24px);
     max-width: none;
     min-width: 0;
-    padding: 10px;
+    padding: 10px 12px 8px;
     transform: translate(-50%, 0);
   }
 

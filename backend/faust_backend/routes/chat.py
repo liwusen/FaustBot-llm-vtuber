@@ -19,6 +19,7 @@ from faust_backend.runtime.lifecycle import (
     invoke_agent_locked, stream_chat_agent_events, schedule_memory_record_sync,
     rebuild_runtime, _build_chat_model,
 )
+from faust_backend.runtime.session_stats import collect_session_stats, get_checkpoint_messages
 from faust_backend.mcp_manager import get_mcp_manager
 from faust_backend.logger import get_logger
 from faust_backend.runtime.output_store import reset_output_store
@@ -42,21 +43,6 @@ def _parse_slash_command(text: str) -> tuple[str, str]:
     name = str(parts[0] or "").strip().lower()
     arg = str(parts[1] or "").strip() if len(parts) > 1 else ""
     return name, arg
-
-
-async def _get_checkpoint_messages() -> list:
-    if state.checkpointer is None:
-        return []
-    cfg = {"configurable": {"thread_id": state.THREAD_ID}}
-    checkpoint_tuple = await state.checkpointer.aget_tuple(cfg) # type: ignore
-    if checkpoint_tuple is None:
-        return []
-    checkpoint = getattr(checkpoint_tuple, "checkpoint", None)
-    if not isinstance(checkpoint, dict):
-        return []
-    values = checkpoint.get("channel_values") or {}
-    messages = values.get("messages") or []
-    return list(messages) if isinstance(messages, list) else []
 
 
 def _message_to_plain_text(message) -> str:
@@ -110,48 +96,34 @@ async def _set_reasoning_effort(level: str) -> str:
     return f"Reasoning effort 已设置为 {level}"
 
 
+def _usage_field(value) -> str:
+    return "-" if value is None else str(value)
+
+
 async def _session_token_summary() -> str:
-    """统计当前会话 token。
+    """统计当前会话 token 的文本渲染。
 
-    token 数字一律取 LLM API 的返回值（最近一条 AIMessage 的 usage_metadata），
-    不做本地推算：上游没返回 usage 时如实说明「暂无 API 计数」，而不是猜一个数。
+    数字来源与「拿不到 API 计数就不猜」的判定全部在
+    `runtime/session_stats.py`（与 GET /faust/session/context 共用同一实现）。
     """
-    from faust_backend.runtime import state as runtime_state
-    from faust_backend.provider import get_context_length
-    from faust_backend.runtime.compact import _reported_tokens
-    import faust_backend.config_loader as conf
-
-    messages = await _get_checkpoint_messages()
-    if not messages:
+    stats = await collect_session_stats()
+    if not stats["messages"]:
         return "当前会话没有可统计的上下文。"
-    providers = runtime_state.get_model_providers()
-    spec = providers.main_model
-    context_length = get_context_length(providers, spec)
-    threshold = max(1, int(context_length * conf.COMPACT_THRESHOLD_RATIO))
     lines = [
-        f"模型: {spec}",
-        f"messages={len(messages)}",
+        f"模型: {stats['model']}",
+        f"messages={stats['messages']}",
     ]
-    usage = None
-    for message in reversed(messages):
-        if type(message).__name__ == "AIMessage" and getattr(message, "usage_metadata", None):
-            usage = message.usage_metadata
-            break
-    if not usage:
+    if not stats["has_api_usage"]:
         lines.append("tokens: 暂无 API 计数（本会话尚无 LLM 响应上报 usage）")
     else:
-        lines.append(f"prompt_tokens={usage.get('input_tokens', '-')}")
-        lines.append(f"completion_tokens={usage.get('output_tokens', '-')}")
-        lines.append(f"total_tokens={usage.get('total_tokens', '-')}")
-        details = usage.get("input_token_details") or {}
-        cache_read = details.get("cache_read")
-        if cache_read is not None:
-            lines.append(f"缓存命中(cache_read)={cache_read}")
-        reported = _reported_tokens(messages)
-        ratio = (reported / context_length * 100) if context_length else 0.0
+        lines.append(f"prompt_tokens={_usage_field(stats['input_tokens'])}")
+        lines.append(f"completion_tokens={_usage_field(stats['output_tokens'])}")
+        lines.append(f"total_tokens={_usage_field(stats['total_tokens'])}")
+        if stats["cache_read_tokens"] is not None:
+            lines.append(f"缓存命中(cache_read)={stats['cache_read_tokens']}")
         lines.append(
-            f"上下文长度={context_length} 触发阈值={threshold} "
-            f"({conf.COMPACT_THRESHOLD_RATIO:.0%}) 当前占用={ratio:.1f}%"
+            f"上下文长度={stats['context_length']} 触发阈值={stats['threshold_tokens']} "
+            f"({stats['compact_threshold_ratio']:.0%}) 当前占用={stats['percent']:.1f}%"
         )
     return "\n".join(lines)
 
@@ -178,7 +150,7 @@ async def _compact_session_stream(websocket: WebSocket) -> str:
     middleware = state.compact_middleware
     if middleware is None:
         raise RuntimeError("会话压缩中间件未就绪（运行时可能未成功重建）")
-    messages = await _get_checkpoint_messages()
+    messages = await get_checkpoint_messages()
     if not messages:
         return "当前会话没有可压缩的上下文。"
 

@@ -50,6 +50,7 @@ from faust_backend.routes.ui_settings import router as ui_settings_router
 _t.end("admin_routes")
 _t.begin("chat_routes")
 from faust_backend.routes.chat import router as chat_router
+from faust_backend.routes.session import router as session_router
 from faust_backend.routes.hil_nimble import router as hil_nimble_router
 from faust_backend.routes.audio import router as audio_router
 from faust_backend.routes.system import router as system_router
@@ -108,6 +109,7 @@ routers = [
     processors_router,
     ui_settings_router,
     chat_router,
+    session_router,
     hil_nimble_router,
     audio_router,
     system_router,

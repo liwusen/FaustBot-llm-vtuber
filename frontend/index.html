@@ -95,11 +95,22 @@
   </div>
   <div id="textChatBar">
     <div id="textChatAttachments"></div>
-    <textarea id="textChatInput" rows="1" placeholder="输入文字与 Faust 对话"></textarea>
+    <textarea id="textChatInput" rows="1" placeholder="输入内容，/ 调用指令"></textarea>
     <div id="textChatBarFooter">
-      <button id="textChatAttachBtn" type="button" title="添加附件">📎</button>
+      <button id="textChatAttachBtn" type="button" title="添加附件" aria-label="添加附件">
+        <svg class="composer-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="M10 4.4v11.2M4.4 10h11.2" />
+        </svg>
+      </button>
       <span id="textChatHint">Enter 发送 · Shift+Enter 换行</span>
-      <button id="textChatSendBtn" title="发送">✈️</button>
+      <span id="contextMeter" hidden>
+        <span id="contextMeterText">— / 128K</span>
+      </span>
+      <button id="textChatSendBtn" type="button" title="发送" aria-label="发送" disabled>
+        <svg class="composer-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="M10 15.6V4.4M4.8 9.6 10 4.4l5.2 5.2" />
+        </svg>
+      </button>
     </div>
   </div>
 

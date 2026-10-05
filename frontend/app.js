@@ -9,6 +9,7 @@ import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
 import { initAudioPlayback } from './libs/audio-playback.js';
 import { initAutocomplete } from './libs/autocomplete.js';
 import { initChatComposer } from './libs/chat-composer.js';
+import { initContextMeter } from './libs/context-meter.js';
 import { createUiWidgetManager } from './libs/ui-widget-manager.js';
 import { initUiWidgetEditor } from './libs/ui-widget-editor.js';
 import { initLayoutSidePanel } from './libs/layout-side-panel.js';
@@ -1815,6 +1816,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   const NIMBLE_MESSAGE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/message`;
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
+  const SESSION_CONTEXT_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/session/context`;
   const nimbleWin = initNimbleWindows({
     messageEndpoint: NIMBLE_MESSAGE_ENDPOINT,
     closeEndpoint: NIMBLE_CLOSE_ENDPOINT,
@@ -2294,6 +2296,11 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }
   }
 
+  // 上下文占用药丸句柄（在下方 composer 装配处赋值；先声明避免 WS 首帧早于装配时踩 TDZ）
+  let contextMeter = null;
+  // 输入栏 composer 句柄（装配在下方；提前声明，理由同上）
+  let composer = null;
+
   async function handleChatWsMessage(ev){
     let raw = ev.data;
     if (raw && typeof raw !== 'string') {
@@ -2340,6 +2347,14 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       cancelPendingWaitingNotice();
       if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
       return;
+    }
+
+    // 主 Agent 的终结事件后刷新上下文占用。放在所有分支早退之前，
+    // 保证 forced done / 被动流 / 压缩结束都不会漏刷新（refresh 自带并发去重）。
+    if (msg.agent_id === 'main'
+        && (msg.type === 'done' || msg.type === 'interrupted' || msg.type === 'error' || msg.type === 'compact_done')) {
+      if (msg.type === 'error' && composer) composer.setHint('网络错误', 'error');
+      if (contextMeter) contextMeter.refresh();
     }
 
     // 后端主动推送的流（触发器唤醒、Nimble 消息等）没有对应的主动请求。
@@ -2742,13 +2757,23 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       await interruptAgentAndWait();
     }
     textChatSending = true;
-    textChatSendBtn.disabled = true;
+    if (composer) {
+      composer.setSending(true);
+      composer.setHint('发送中…', 'busy');
+    } else {
+      textChatSendBtn.disabled = true;
+    }
     try{
       bubble.showResultBubble('user', fullText);
       await sendToChat(fullText);
     }finally{
       textChatSending = false;
-      textChatSendBtn.disabled = false;
+      if (composer) {
+        composer.setSending(false);
+        composer.setHint(null); // 若刚才出错，错误提示仍在生存期内，这里不会覆盖它
+      } else {
+        textChatSendBtn.disabled = false;
+      }
       if (textChatStatus && textChatStatus.textContent === '发送中...') textChatStatus.textContent = '文字待命';
     }
   }
@@ -2773,6 +2798,10 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     deleteEndpoint: SUBAGENT_DELETE_ENDPOINT,
   });
 
+  // 输入栏默认尺寸：仅用于「元素尚未测量」（display:none / 首帧）时兜底锚点与视口夹取。
+  // 高度对应新版两行结构（1 行文本 + 工具条）；实际高度由 offsetHeight 动态覆盖。
+  const TEXT_CHAT_BAR_DEFAULT_SIZE = { width: 420, height: 100 };
+
   function updateTextChatBarPosition(){
     const textChatBar = document.getElementById('textChatBar');
     if (!textChatBar) return;
@@ -2789,9 +2818,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         const b = vrmScene.getBounds();
         const clientX = b.x + b.width * widget.coord.x + widget.offset.x;
         const waistY = b.y + b.height * widget.coord.y + widget.offset.y;
-        const size = uiWidgetManager.getWidgetSize('text-chat-bar', { width: 420, height: 64 });
+        const size = uiWidgetManager.getWidgetSize('text-chat-bar', TEXT_CHAT_BAR_DEFAULT_SIZE);
         const chatScale = widget.scale || 1;
-        // 以默认高度 64px 的底边为锚:长高时只向上生长
+        // 以默认尺寸的底边为锚:长高时只向上生长
         const barHeight = (textChatBar.offsetHeight || size.height) * chatScale;
         const centerY = waistY + (size.height * chatScale) / 2 - barHeight / 2;
         const clamped = clampToViewport(clientX, centerY, size.width * chatScale, barHeight, window.innerWidth, window.innerHeight, 12);
@@ -2809,9 +2838,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       if (!anchor) return;
       const clientX = anchor.x + widget.offset.x;
       const waistY = anchor.y + widget.offset.y;
-      const size = uiWidgetManager.getWidgetSize('text-chat-bar', { width: 420, height: 64 });
+      const size = uiWidgetManager.getWidgetSize('text-chat-bar', TEXT_CHAT_BAR_DEFAULT_SIZE);
       const chatScale = widget.scale || 1;
-      // 以默认高度 64px 的底边为锚:长高时只向上生长
+      // 以默认尺寸的底边为锚:长高时只向上生长
       const barHeight = (textChatBar.offsetHeight || size.height) * chatScale;
       const centerY = waistY + (size.height * chatScale) / 2 - barHeight / 2;
       const clamped = clampToViewport(clientX, centerY, size.width * chatScale, barHeight, window.innerWidth, window.innerHeight, 12);
@@ -3124,11 +3153,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
 
   // ── Chat composer: 多行/附件/剪贴板 (extracted to libs/chat-composer.js) ──
   let composerToastTimer = null;
-  const composer = initChatComposer({
+  composer = initChatComposer({
     textarea: textChatInput,
     chipContainer: textChatAttachments,
     barElement: document.getElementById('textChatBar'),
     pickButton: textChatAttachBtn,
+    sendButton: textChatSendBtn,
+    hintElement: document.getElementById('textChatHint'),
     getAutoAttachEnabled: () => String((runtimeLive2DConfig || {}).AUTO_IMAGE_ATTACH_ENABLED ?? 'true').toLowerCase() !== 'false',
     onHeightChange: () => updateTextChatBarPosition(),
     toast: (msg) => {
@@ -3139,9 +3170,17 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       }
     },
   });
+  // ── 上下文占用药丸（数字与格式化规则只在后端，前端只负责渲染） ──
+  contextMeter = initContextMeter({
+    endpoint: SESSION_CONTEXT_ENDPOINT,
+    element: document.getElementById('contextMeter'),
+    textElement: document.getElementById('contextMeterText'),
+  });
+  contextMeter.refresh();
   // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
   initAutocomplete(textChatInput, sendTextChatMessage);
   window.__chatComposer = composer; // 调试/CDP 验证句柄
+  window.__contextMeter = contextMeter;
 
   // 每帧统一布局：由小组件管理器驱动所有 managed 组件的定位/显隐
   // （内建 quick-controller/text-chat-bar/asr-bubble 通过各自 onLayout 钩子接入）
