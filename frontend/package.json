@@ -1,6 +1,6 @@
 {
   "name": "faust-frontend",
-  "version": "3.4.4",
+  "version": "3.5.0",
   "private": true,
   "main": "electron-main.js",
   "license": "GPL-3.0",
