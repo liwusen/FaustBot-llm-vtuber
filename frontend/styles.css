@@ -786,6 +786,11 @@ body.click-through .nimble-window:not(.nimble-fullscreen) canvas {
   color: #8a9199;
 }
 
+/* 压缩失败：与 #asrBubble[data-source="error"] 同一红色系，方便一眼看出没压成 */
+.compact-status-error {
+  color: #dc2626;
+}
+
 .compact-content {
   white-space: pre-wrap;
   word-break: break-word;

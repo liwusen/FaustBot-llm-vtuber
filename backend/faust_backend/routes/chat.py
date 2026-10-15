@@ -152,25 +152,33 @@ async def _compact_session_stream(websocket: WebSocket) -> str:
     if middleware is None:
         raise RuntimeError("会话压缩中间件未就绪（运行时可能未成功重建）")
     messages = await get_checkpoint_messages()
+
+    async def _notice(text: str) -> None:
+        """无需压缩时也要给出一张卡片，避免 /compact 看起来毫无反应。"""
+        await _safe_send(websocket, _main_event_payload("compact_start"))
+        await _safe_send(websocket, _main_event_payload("compact_delta", content=text))
+        await _safe_send(websocket, _main_event_payload("compact_done"))
+
     if not messages:
+        await _notice("当前会话没有可压缩的上下文。")
         return "当前会话没有可压缩的上下文。"
 
-    await websocket.send_text(
-        json.dumps(_main_event_payload("compact_start"), ensure_ascii=False)
-    )
+    await _safe_send(websocket, _main_event_payload("compact_start"))
 
     async def _on_delta(text: str) -> None:
-        await websocket.send_text(
-            json.dumps(
-                _main_event_payload("compact_delta", content=text), ensure_ascii=False
-            )
-        )
+        # 走 _safe_send：连接中途断开时不能抛异常，否则会顺着 _acompact →
+        # force_compact 冒出去，让已经推送的压缩卡片停在无终态的状态。
+        await _safe_send(websocket, _main_event_payload("compact_delta", content=text))
 
     update = await middleware.force_compact(messages, on_delta=_on_delta)
     if not update:
-        await websocket.send_text(
-            json.dumps(_main_event_payload("compact_done"), ensure_ascii=False)
+        await _safe_send(
+            websocket,
+            _main_event_payload(
+                "compact_delta", content="当前会话没有可压缩的历史轮次。"
+            ),
         )
+        await _safe_send(websocket, _main_event_payload("compact_done"))
         return "当前会话没有可压缩的历史轮次。"
 
     # 通过 graph 的 aupdate_state 应用更新：它会走 add_messages reducer，
@@ -179,9 +187,7 @@ async def _compact_session_stream(websocket: WebSocket) -> str:
     # 不指定时 langgraph 无法判断该写入归属哪个节点（Ambiguous update）。
     config = {"configurable": {"thread_id": str(state.THREAD_ID)}}
     await state.agent.aupdate_state(config, update, as_node="model")
-    await websocket.send_text(
-        json.dumps(_main_event_payload("compact_done"), ensure_ascii=False)
-    )
+    await _safe_send(websocket, _main_event_payload("compact_done"))
     return "对话压缩完成。"
 
 
@@ -207,10 +213,27 @@ async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -
     if name == "compact":
         if websocket is None:
             return True, "POST 接口暂不支持 /compact，请使用 WebSocket 聊天接口。"
-        await _compact_session_stream(websocket)
-        # 已自行推送 compact_* 完整流。返回 None 让上层跳过通用的
-        # start/delta/done —— 否则通用 start 会重置前端 entries，
-        # 把刚推送的压缩卡片清掉。
+        # /compact 自行推送 compact_* 卡片流，所以不能让上层再发通用 start
+        # （那会重置前端 entries，把刚推送的压缩卡片清掉）。
+        # 但**必须**补一个终结事件：前端只在 done / interrupted / error 时释放
+        # currentChatRequest，缺了它 sendToChat 的 Promise 永不 settle，
+        # 输入框会永久卡在"发送中"，表现为"压缩完成后再也无法互动"。
+        try:
+            await _compact_session_stream(websocket)
+        except Exception as e:  # noqa: BLE001
+            log.error("手动会话压缩失败: %s", e, exc_info=True)
+            reason = state.format_chat_error(e)
+            # 把失败原因一并塞进 compact_done：前端据此把卡片标成失败并显示原因，
+            # 否则卡片在失败时照样显示"完成"（ok 字段此前完全没人读）。
+            await _safe_send(
+                websocket, _main_event_payload("compact_done", ok=False, error=reason)
+            )
+            await _safe_send(
+                websocket, _main_event_payload("error", error=reason)
+            )
+        else:
+            # 压缩卡片已由 compact_done 收尾，这里再补终结事件释放前端请求状态
+            await _safe_send(websocket, _main_event_payload("done"))
         return True, None
     return True, f"未知命令: /{name}"
 
@@ -227,6 +250,22 @@ def _main_event_payload(event_type: str, **kwargs) -> dict:
     payload = {"agent_id": "main", "type": event_type}
     payload.update(kwargs)
     return payload
+
+
+async def _safe_send(websocket: WebSocket, payload: dict) -> bool:
+    """向 websocket 发送一个事件；连接已断开时只记录，不抛异常。
+
+    发送失败若往外抛，会顺着接收循环冒出去而杀死整条连接；而前端此时还在等
+    终结事件，输入框就永久卡死了。凡是"必须发出"的通知都走这里。
+    """
+    try:
+        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "向 websocket 发送 %s 失败（连接可能已关闭）: %s", payload.get("type"), exc
+        )
+        return False
 
 
 # 活跃的 /faust/chat websocket 连接，供前台触发器流式推送复用
@@ -573,7 +612,17 @@ async def chat_websocket(websocket: WebSocket):
                 await websocket.send_text(json.dumps(_main_event_payload("error", error="no text provided"), ensure_ascii=False))
                 continue
             trigger_manager.note_user_interaction()
-            handled, command_reply = await _handle_slash_command(text, websocket)
+            try:
+                handled, command_reply = await _handle_slash_command(text, websocket)
+            except Exception as e:  # noqa: BLE001
+                # 斜杠命令抛异常绝不能杀死接收循环：循环一退出 websocket 就断开，
+                # 而前端仍在等终结事件，输入框会永久卡在"发送中"。
+                log.error("斜杠命令处理失败: %s", e, exc_info=True)
+                await _safe_send(
+                    websocket,
+                    _main_event_payload("error", error=state.format_chat_error(e)),
+                )
+                continue
             if handled:
                 if command_reply is None:
                     # 命令已自行推送完整事件流（/compact 的压缩卡片），

@@ -2219,16 +2219,34 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }
     chatWsReady = new Promise((resolve, reject)=>{
       try{
-        chatWs = new WebSocket(CHAT_ENDPOINT);
-        chatWs.onopen = ()=>{
+        const ws = new WebSocket(CHAT_ENDPOINT);
+        chatWs = ws;
+        ws.onopen = ()=>{
+          if (chatWs !== ws) return;
           if (chatStatusEl) chatStatusEl.textContent = '已连接';
           resolve();
         };
-        chatWs.onerror = (e)=> reject(e);
-        chatWs.onmessage = handleChatWsMessage;
-        chatWs.onclose = ()=>{
+        ws.onerror = (e)=> reject(e);
+        ws.onmessage = handleChatWsMessage;
+        ws.onclose = ()=>{
+          // 身份校验：旧 socket 的 onclose 可能晚于新连接建立（旧 socket 处于
+          // CLOSING 时 openChatWs 会新建连接）。此时若继续往下走，就会把新连接
+          // 的 chatWs 清成 null，并 reject 一个刚刚发在新连接上的请求 —— 后端
+          // 正常回复到达时 currentChatRequest 已为 null，回复会被当成被动流。
+          if (chatWs !== ws) return;
           chatWs = null;
           chatWsReady = null;
+          // 断线时必须释放挂起的主动请求：sendToChat 在等一个 Promise，
+          // 而该 Promise 只在 done / interrupted / error 时 settle。
+          // 后端若因任何原因没发终结事件就断开（异常、进程重启、命令处理
+          // 抛错），不在这里兜底的话 currentChatRequest 会一直非 null，
+          // 输入框永久卡在"发送中"——表现为"再也无法互动"。
+          if (currentChatRequest){
+            try { currentChatRequest.reject(new Error('聊天连接已断开')); } catch(e){}
+            currentChatRequest = null;
+          }
+          passiveChatRequest = null;
+          agentIsProcessing = false;
           if (chatStatusEl) chatStatusEl.textContent = chatWsPersistent ? '重连中...' : '聊天未连接';
           // 常驻模式下断线自动重连（带退避），保证后端触发器/被动流始终有 WS 可推送
           if (chatWsPersistent){
@@ -2504,6 +2522,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     // 会话压缩：内容只进 entries 渲染折叠卡片，绝不写入 replyText、绝不朗读
     // （不调用 ttsChunker / enqueueStreamTtsSentence / motion.consumeMotionTokens）
     if (msg.type === 'compact_start'){
+      // /compact 刻意不发通用 start（那会重置 entries），而 reveal() 只挂在
+      // start / SAY / MD_BLOCK 上：用户点过 × 隐藏气泡后，整个压缩过程会渲染进
+      // 一个 display:none 的气泡里 —— 表现为"点了 /compact 毫无反应"。
+      // 压缩卡片属于「新消息」，这里自己 reveal，并把状态栏切成压缩态。
+      bubble.reveal();
+      if (chatStatusEl) chatStatusEl.textContent = '正在压缩会话...';
+      if (textChatStatus) textChatStatus.textContent = '正在压缩会话...';
       if (!req.entries) req.entries = [];
       const lastEntry = req.entries[req.entries.length - 1];
       if (!lastEntry || lastEntry.type !== 'compact') {
@@ -2534,6 +2559,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }
 
     if (msg.type === 'compact_done'){
+      // 可能没有 compact_start（中间件未就绪等异常发生在推 start 之前），
+      // 所以这里再 reveal 一次，保证失败卡片也能被看见。
+      bubble.reveal();
       if (!req.entries) req.entries = [];
       let entry = req.entries[req.entries.length - 1];
       if (!entry || entry.type !== 'compact') {
@@ -2541,6 +2569,16 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         req.entries.push(entry);
       }
       entry.done = true;
+      // 后端 ok=false 表示压缩失败：把卡片标成失败并附上原因。
+      // （此前 ok 字段完全没人读，失败时卡片照样显示"已完成"。）
+      const failed = msg.ok === false;
+      if (failed && !entry.error) {
+        const reason = String(msg.error || '压缩失败');
+        entry.text = String(entry.text || '') + (entry.text ? '\n\n' : '') + '[失败] ' + reason;
+      }
+      entry.error = failed;
+      if (chatStatusEl) chatStatusEl.textContent = failed ? '压缩失败' : '压缩完成';
+      if (textChatStatus) textChatStatus.textContent = failed ? '压缩失败' : '压缩完成';
       bubble.showResultBubble('ai', req.entries);
       return;
     }
@@ -2624,8 +2662,12 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         if (chatStatusEl) chatStatusEl.textContent = '就绪';
         passiveChatRequest = null;
       } else {
-        if (chatStatusEl) chatStatusEl.textContent = '聊天完成';
-        if (textChatStatus) textChatStatus.textContent = '文字已发送';
+        // /compact 的收尾 done：卡片是最后一条 entry，状态栏给压缩结果而不是"聊天完成"
+        const tail = (request.entries && request.entries[request.entries.length - 1]) || null;
+        const compactTail = !!(tail && tail.type === 'compact');
+        const tailText = compactTail ? (tail.error ? '压缩失败' : '压缩完成') : null;
+        if (chatStatusEl) chatStatusEl.textContent = tailText || '聊天完成';
+        if (textChatStatus) textChatStatus.textContent = tailText || '文字已发送';
         currentChatRequest = null;
         request.resolve(reply);
         if (request.resumeAfter){

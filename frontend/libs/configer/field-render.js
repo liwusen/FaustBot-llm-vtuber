@@ -1,5 +1,8 @@
 // Config field rendering utilities
 
+// 「高级配置」折叠区展开状态，按模块记住（见 renderConfigModule：重渲染不该把它合上）
+let advancedFoldState = {};
+
 function toText(v) {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
@@ -327,8 +330,14 @@ function pickModuleFields(moduleId) {
   const privateKeys = Object.keys(state.config.private || {}).sort((a, b) => a.localeCompare(b));
 
   if (moduleId === "ai") {
+    // 压缩成本控制的三个键是一组：总开关只控开关，两个上限只在开关打开时显示
+    // （与语音模块按模式隐藏字段同构，避免关着时摆一堆不生效的旋钮）。
+    const costControlOn = Boolean(state.config.public.COMPACT_COST_CONTROL_ENABLED);
     return {
-      publicKeys: AI_PUBLIC_KEYS.filter((k) => publicKeys.includes(k)),
+      publicKeys: AI_PUBLIC_KEYS.filter((k) => {
+        if (!costControlOn && COMPACT_COST_KEYS.has(k)) return false;
+        return publicKeys.includes(k);
+      }),
       privateKeys: AI_PRIVATE_KEYS.filter((k) => privateKeys.includes(k)),
     };
   }
@@ -430,9 +439,16 @@ function renderConfigModule(moduleId) {
     for (const key of advancedPri) {
       body.append(makeFieldCard("private", key, state.config.private[key]));
     }
+    // 展开状态按模块记住：切换开关等操作会触发整块重渲染（renderModule），
+    // 不记住的话折叠区会自己合上，刚被开关带出来的字段看起来"没出现"。
+    if (advancedFoldState[moduleId]) {
+      body.classList.add("open");
+      divider.classList.add("open");
+    }
     divider.addEventListener("click", () => {
-      body.classList.toggle("open");
-      divider.classList.toggle("open");
+      const open = body.classList.toggle("open");
+      divider.classList.toggle("open", open);
+      advancedFoldState[moduleId] = open;
     });
     appendToActiveModule(divider);
     appendToActiveModule(body);

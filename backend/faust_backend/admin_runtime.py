@@ -60,6 +60,14 @@ PUBLIC_CONFIG_DEFAULTS = {
     "MM_BRIDGE_MAX_PIXELS": 640000,#800*800 for deepseek-v4-flash-vision-exp
     "ARAYA_IDLE_MINUTES": 30,
     "AUTO_FORCE_INTERRUPT": True,
+    # 会话压缩成本控制总开关（默认关闭）。见 config_loader 中同名键的注释。
+    "COMPACT_COST_CONTROL_ENABLED": False,
+    # 成本控制打开后才生效的两个上限（见 config_loader 同名键的注释）
+    "COMPACT_MAX_INPUT_TOKENS": 0,
+    "COMPACT_MAX_OUTPUT_TOKENS": 4000,
+    # 压缩触发与保留策略（与上面的成本控制开关无关，始终生效）
+    "COMPACT_THRESHOLD_RATIO": 0.8,
+    "COMPACT_KEEP_ROUNDS": 3,
     "TTS_CHUNK_IDEAL_TOKENS": 30,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": True,

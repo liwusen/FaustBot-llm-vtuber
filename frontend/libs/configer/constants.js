@@ -115,11 +115,18 @@ var ADVANCED_KEYS = new Set([
   "BM25_ONLY",
   // 多模态桥接
   "MM_BRIDGE_MAX_PIXELS",
+  // 会话压缩成本控制（省 token，默认关闭）
+  "COMPACT_COST_CONTROL_ENABLED",
+  "COMPACT_MAX_INPUT_TOKENS", "COMPACT_MAX_OUTPUT_TOKENS",
+  // 压缩触发与保留策略（始终生效）
+  "COMPACT_THRESHOLD_RATIO", "COMPACT_KEEP_ROUNDS",
   // Live2D 微调
   "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET",
   "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG",
 ]);
-var AI_PUBLIC_KEYS = ["EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_MAX_PIXELS", "MD_BLOCK_ENABLED", "AUTO_FORCE_INTERRUPT", "REASONING_CONFIG"];
+var AI_PUBLIC_KEYS = ["EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_MAX_PIXELS", "MD_BLOCK_ENABLED", "AUTO_FORCE_INTERRUPT", "REASONING_CONFIG", "COMPACT_COST_CONTROL_ENABLED", "COMPACT_MAX_INPUT_TOKENS", "COMPACT_MAX_OUTPUT_TOKENS", "COMPACT_THRESHOLD_RATIO", "COMPACT_KEEP_ROUNDS"];
+// 只在「压缩成本控制」打开后才在 AI 服务商页显示的项（关着时不显示，避免出现一堆无效旋钮）
+var COMPACT_COST_KEYS = new Set(["COMPACT_MAX_INPUT_TOKENS", "COMPACT_MAX_OUTPUT_TOKENS"]);
 var AI_PRIVATE_KEYS = ["SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "LIVE2D_MOUSE_TRACKING_STRENGTH", "AUTO_IMAGE_ATTACH_ENABLED", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG", "PTT_MODE"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "TTS_CHUNK_IDEAL_TOKENS", "ASR_MODE", "WHISPER_MODEL", "WHISPER_LANGUAGE", "WHISPER_INITIAL_PROMPT", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "MIMO_TTS_BASE_URL", "MIMO_TTS_MODEL", "MIMO_TTS_VOICE", "MIMO_TTS_STYLE_PROMPT", "MIMO_TTS_FORMAT", "MIMO_TTS_REFER_WAV_PATH", "MIMO_ASR_MODEL", "MIMO_ASR_LANGUAGE", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
@@ -132,6 +139,11 @@ META.EDGE_TTS_PITCH = { label: "Edge TTS 音高", help: "Edge TTS 的音高设�
 META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 Edge TTS 的超时秒数。" };
 META.MD_BLOCK_ENABLED = { label: "启用 Markdown 内容块", help: "开启后主 Agent 可使用 RenderMarkdownBlock 工具向气泡推送 Markdown 内容块（支持 mermaid 图表），内容仅展示不朗读。保存后立即生效。" };
 META.AUTO_FORCE_INTERRUPT = { label: "自动强制打断", help: "开启后，用户发起对话时若主 Agent 正被前台/后台触发器占用，会立即强制打断该触发器（前台触发器补发 done），并把用户消息标记为\"(用户插话)\"交给 AI。关闭则不打断，用户消息排队等待锁。" };
+META.COMPACT_COST_CONTROL_ENABLED = { label: "压缩成本控制(省 Token)", help: "默认关闭。关闭时压缩调用与主请求前缀逐字节一致（完整命中上游前缀缓存），且不限制摘要输出长度（摘要不可能被截断）——最省心、最不容易丢历史。开启后才会应用下面两项「压缩摘要输出上限」「压缩输入上限」。保存后立即生效。" };
+META.COMPACT_MAX_OUTPUT_TOKENS = { label: "压缩摘要输出上限(Token)", help: "仅「压缩成本控制」开启时生效，默认 4000。摘要输出超过该值时：本次压缩结果不写回会话（避免摘要没覆盖到的历史被永久删掉），并在本进程内自动放弃该上限，请调大它或关闭成本控制。设为 0 = 不限制。" };
+META.COMPACT_MAX_INPUT_TOKENS = { label: "压缩输入上限(Token)", help: "仅「压缩成本控制」开启时生效，默认 0（不限制）。设为非 0 后，压缩调用会从最旧的消息开始丢弃超出部分——注意两个代价：①payload 不再与主请求前缀一致，前缀缓存只剩 System 与工具定义可用（总 token 变少，但单价升高）；②被丢掉的最旧历史不会进入摘要，却仍会被压缩删除，即永久丢失。建议保持 0。" };
+META.COMPACT_THRESHOLD_RATIO = { label: "压缩触发阈值(上下文占比)", help: "与成本控制开关无关，始终生效。会话占用达到模型上下文长度的该比例时自动压缩，默认 0.8（留 20% 余量给压缩指令与摘要输出，保证压缩调用本身不会先超限）。有效范围 0.1~0.95；超范围或非法值会回落到默认 0.8。保存后立即生效。" };
+META.COMPACT_KEEP_ROUNDS = { label: "压缩后保留轮数", help: "与成本控制开关无关，始终生效。压缩后保留最近多少轮对话，默认 3（1 轮 = 一条用户消息及其之后的全部消息，含工具调用）。小于 1 或非法值会回落到默认 3。注意：当真实轮数本身就 ≤ 该值时（例如刚压缩完又要再压），只会保留最后一轮——这是为了保证仍能压出空间。保存后立即生效。" };
 META.PTT_MODE = { label: "按住说话(PTT)", help: "开启后平时麦克风关闭，长按 Ctrl+Alt+A 说话，松开自动识别并发送。按住期间若 VAD 命中帧占比低于 10%（整段几乎没人声）则丢弃该段、不上传识别，右上角状态显示 \"(已忽略)\"。关闭则恢复普通监听模式。保存后立即生效（前端热重载）。" };
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"];
@@ -180,6 +192,8 @@ const SCALE_PRESETS = {
     // emotion-engine 的衰减速率：0 表示不衰减；上限放到 10 以免通用插件表单把值夹到 1
     DECAY_PER_MINUTE: { type: "range", min: 0, max: 10, step: 0.05, unit: " /min" },
     TTS_CHUNK_IDEAL_TOKENS: { type: "range", min: 10, max: 100, step: 1, unit: " tok" },
+    // 压缩触发阈值：与后端校验区间保持一致（0.1~0.95），避免拖到 1.0 又被静默回落成 0.8
+    COMPACT_THRESHOLD_RATIO: { type: "range", min: 0.1, max: 0.95, step: 0.05, unit: "" },
   };
 
 // ── 交互式功能引导 ──
