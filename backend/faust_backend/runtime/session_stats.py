@@ -79,13 +79,18 @@ def format_tokens(value: int) -> str:
 
 
 def _last_usage(messages: Sequence[AnyMessage]) -> Optional[dict]:
-    """取最近一条 AIMessage 的 usage_metadata（对齐上游语义：遇到第一条 AIMessage 即定论）。"""
+    """取最近一条**带用量**的 AIMessage 的 usage_metadata。
+
+    与 `compact._reported_tokens` 保持一致：遇到没有 `usage_metadata` 的
+    AIMessage 要继续往前找，而不是就地定论返回 None —— 否则本地构造/插件注入的
+    消息会让面板与自动压缩同时失去 API 口径，显示"—"且永不触发压缩。
+    仍然不本地估算：找不到真实上报值就返回 None。
+    """
     for message in reversed(messages):
         if isinstance(message, AIMessage):
             usage = getattr(message, "usage_metadata", None)
             if usage:
                 return dict(usage)
-            return None
     return None
 
 

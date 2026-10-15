@@ -237,6 +237,8 @@ def load_configs():
     global MM_BRIDGE_MAX_SCAN, MM_BRIDGE_MAX_PIXELS
     global REASONING_CONFIG
     global COMPACT_THRESHOLD_RATIO, COMPACT_KEEP_ROUNDS
+    global COMPACT_MAX_INPUT_TOKENS, COMPACT_MAX_OUTPUT_TOKENS
+    global COMPACT_COST_CONTROL_ENABLED
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
     global AUTO_FORCE_INTERRUPT
@@ -354,6 +356,38 @@ def load_configs():
         COMPACT_KEEP_ROUNDS = 3
     if COMPACT_KEEP_ROUNDS < 1:
         COMPACT_KEEP_ROUNDS = 3
+    # COMPACT_COST_CONTROL_ENABLED: 压缩成本控制总开关，默认 False（关闭）。
+    #   关闭（默认）时压缩调用与主请求前缀逐字节一致（完整命中前缀缓存），且不设置
+    #   摘要输出上限（摘要不可能被截断）——两个上限都完全不生效。
+    #   只有显式打开后，COMPACT_MAX_INPUT_TOKENS / COMPACT_MAX_OUTPUT_TOKENS 才生效；
+    #   代价见这两个键各自的注释（打破前缀缓存、摘要覆盖范围变小、可能截断摘要）。
+    #   值可能是 JSON 布尔，也可能是手写配置里的 "true"/"false" 字符串，故显式解析。
+    _raw_cost_control = config.get('COMPACT_COST_CONTROL_ENABLED', False)
+    if isinstance(_raw_cost_control, str):
+        COMPACT_COST_CONTROL_ENABLED = _raw_cost_control.strip().lower() in {'1', 'true', 'yes', 'on'}
+    else:
+        COMPACT_COST_CONTROL_ENABLED = bool(_raw_cost_control)
+    # COMPACT_MAX_INPUT_TOKENS: 压缩调用的输入上限（token），默认 0=不限制。
+    #   压缩会读取"将被丢弃的那段历史"，最贵的就是这一次调用。设上限后超限部分
+    #   从最旧的消息开始丢弃，成本可控，但摘要覆盖范围会变小（那段历史将永久丢失），
+    #   而且 payload 不再与主请求前缀一致（前缀缓存失效）。
+    #   注意这是安全阀，不参与触发判定；且需 COMPACT_COST_CONTROL_ENABLED=True 才生效。
+    try:
+        COMPACT_MAX_INPUT_TOKENS = int(config.get('COMPACT_MAX_INPUT_TOKENS', 0) or 0)
+    except (TypeError, ValueError):
+        COMPACT_MAX_INPUT_TOKENS = 0
+    if COMPACT_MAX_INPUT_TOKENS < 0:
+        COMPACT_MAX_INPUT_TOKENS = 0
+    # COMPACT_MAX_OUTPUT_TOKENS: 摘要输出上限（token），默认 4000。
+    #   结构化摘要不需要很长，设上限可避免输出成本失控（输出单价高于输入）。
+    #   需 COMPACT_COST_CONTROL_ENABLED=True 才生效；一旦摘要被截断，本次不会写回
+    #   checkpoint（避免丢失摘要未覆盖的历史），并在本进程内自动放弃该上限。
+    try:
+        COMPACT_MAX_OUTPUT_TOKENS = int(config.get('COMPACT_MAX_OUTPUT_TOKENS', 4000) or 0)
+    except (TypeError, ValueError):
+        COMPACT_MAX_OUTPUT_TOKENS = 4000
+    if COMPACT_MAX_OUTPUT_TOKENS < 0:
+        COMPACT_MAX_OUTPUT_TOKENS = 0
     PLUGIN_MARKET_USE_GH_PROXY = bool(config.get('PLUGIN_MARKET_USE_GH_PROXY', False))
     MD_BLOCK_ENABLED = bool(config.get('MD_BLOCK_ENABLED', True))
     # 用户发起对话时, 若主 Agent 正被前台/后台触发器占用:

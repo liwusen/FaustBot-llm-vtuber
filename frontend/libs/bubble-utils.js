@@ -82,7 +82,7 @@ export function entryHash(entry, source) {
     if (entry.type === 'text') pick.push(String(source || '') + ':' + (entry.text || ''));
     else if (entry.type === 'md') pick.push('md:' + (entry.text || ''));
     else if (entry.type === 'reasoning') pick.push('r:' + (entry.text || '') + ':' + (entry.expanded ? '1' : '0'));
-    else if (entry.type === 'compact') pick.push('compact:' + (entry.text || '') + ':' + (entry.done ? '1' : '0') + ':' + (entry.expanded ? '1' : '0'));
+    else if (entry.type === 'compact') pick.push('compact:' + (entry.text || '') + ':' + (entry.done ? '1' : '0') + ':' + (entry.expanded ? '1' : '0') + ':' + (entry.error ? '1' : '0'));
     else if (entry.type === 'tool') {
       pick.push('t:' + (entry.callId || '') + ':' + String(entry.done ? '1' : '0') + ':' + (entry.expanded ? '1' : '0'));
       pick.push(String(entry.toolName || ''));
@@ -149,7 +149,9 @@ export function renderBubbleEntryHtml(source, entry, index, reasoningIdx, compac
     );
   }
   if (item.type === 'compact') {
-    const statusText = item.done ? '已完成' : '进行中';
+    // 三态：进行中 / 已完成 / 失败（失败由后端 compact_done 的 ok=false 驱动）
+    const statusText = item.error ? '失败' : (item.done ? '已完成' : '进行中');
+    const statusClass = item.error ? ' compact-status-error' : (item.done ? ' compact-status-done' : '');
     return (
       '<section class="thinking-card compact-card">' +
         '<details class="thinking-details compact-details" data-c="' + (compactIdx === undefined ? index : compactIdx) + '"' + (item.expanded ? ' open' : '') + '>' +
@@ -157,7 +159,7 @@ export function renderBubbleEntryHtml(source, entry, index, reasoningIdx, compac
             '<span class="thinking-arrow">&#9654;</span>' +
             '<span class="thinking-divider"></span>' +
             '<span class="thinking-label compact-label">会话压缩</span>' +
-            '<span class="thinking-status compact-status' + (item.done ? ' compact-status-done' : '') + '">' + statusText + '</span>' +
+            '<span class="thinking-status compact-status' + statusClass + '">' + statusText + '</span>' +
           '</summary>' +
           '<div class="thinking-body">' +
             renderCompactContentHtml(item) +
@@ -239,8 +241,9 @@ export function patchBubbleEntryNode(node, source, entry, index, reasoningIdx, c
       // textContent 赋值与渲染期的 escapeHtml + innerHTML 等价
       content.textContent = String(entry.text || '');
     }
-    status.textContent = entry.done ? '已完成' : '进行中';
-    status.classList.toggle('compact-status-done', !!entry.done);
+    status.textContent = entry.error ? '失败' : (entry.done ? '已完成' : '进行中');
+    status.classList.toggle('compact-status-done', !!entry.done && !entry.error);
+    status.classList.toggle('compact-status-error', !!entry.error);
     if (details.open !== !!entry.expanded) details.open = !!entry.expanded;
     return true;
   }
