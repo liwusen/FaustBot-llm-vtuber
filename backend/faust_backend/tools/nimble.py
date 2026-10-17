@@ -180,7 +180,7 @@ async def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_te
         )
 
         if not persistent:
-            trigger_manager.append_trigger({
+            await trigger_manager.append_trigger({
                 "id": session["expire_trigger_id"],
                 "type": "nimble-expire",
                 "callback_id": callback_id,

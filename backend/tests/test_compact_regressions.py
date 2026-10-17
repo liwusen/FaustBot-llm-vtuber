@@ -261,8 +261,34 @@ def _run_compact(monkeypatch, *, mode: str, agent_fail: bool = False, messages=(
         monkeypatch, mode=mode, agent_fail=agent_fail, messages=messages,
         middleware=middleware,
     )
-    handled, reply = asyncio.run(chat_route._handle_slash_command("/compact", ws))
+
+    async def _drive():
+        handled, reply = await chat_route._handle_slash_command("/compact", ws)
+        # /compact 现在转后台执行（不再阻塞 WS 接收循环），这里等它把终结事件推完
+        await _wait_terminal(ws)
+        return handled, reply
+
+    handled, reply = asyncio.run(_drive())
     return handled, reply, ws
+
+
+async def _wait_terminal(ws, timeout: float = 5.0) -> None:
+    """等到后台 /compact 推出终结事件（done / error）为止。"""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if set(_event_types(ws)) & {"done", "error"}:
+            await asyncio.sleep(0.05)  # 让该终结序列里最后一条事件落地
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"未等到 /compact 终结事件: {_event_types(ws)}")
+
+
+def _event_types(ws) -> list[str]:
+    """兼容 _FakeWS.sent 与 _DeadWS.attempts 两种记录方式。"""
+    raw = getattr(ws, "sent", None)
+    if raw is None:
+        raw = getattr(ws, "attempts", [])
+    return [json.loads(t).get("type") for t in raw]
 
 
 def _payloads(ws) -> list[dict]:
@@ -377,6 +403,12 @@ def test_compact_survives_dead_socket(monkeypatch):
 
     monkeypatch.setattr(chat_route, "get_checkpoint_messages", _messages)
     ws = _DeadWS()
-    handled, reply = asyncio.run(chat_route._handle_slash_command("/compact", ws))
+
+    async def _drive():
+        handled, reply = await chat_route._handle_slash_command("/compact", ws)
+        await _wait_terminal(ws)
+        return handled, reply
+
+    handled, reply = asyncio.run(_drive())
     assert handled is True and reply is None
     assert ws.attempts, "即使发送失败也应尝试过推送事件（失败由 _safe_send 吞掉）"

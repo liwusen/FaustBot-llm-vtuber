@@ -13,6 +13,8 @@ from types import ModuleType
 from typing import Any
 
 import pluggy
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import faust_backend.trigger_manager as trigger_manager
 from faust_backend.processors import get_processor_manager, invoke_processor, processor_status
@@ -27,6 +29,12 @@ import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
 from typing_extensions import deprecated
 log = get_logger(__name__)
+
+# 同步 hook 桥在「当前线程就是事件循环线程」时的执行上限（秒）。正常路径不应走到
+# 那里：异步 hook 应当在 async 调用点用 await pm._call_pluggy_hook(...) 执行。
+SYNC_HOOK_BRIDGE_TIMEOUT_SEC = 10.0
+# 环上同步桥的专用工作线程：在自带临时事件循环里跑协程，绝不阻塞调用方的 loop
+_sync_hook_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pluggy-sync-hook")
 
 # 配置键类型：LLM 选择（前端渲染为"当前模型标识符 + 模型选择按钮"）
 # 取值是 "provider::model" 字符串；缺省值 = 主对话模型标识符。
@@ -54,20 +62,51 @@ def _main_model_spec() -> str:
     return str(providers.main_model or "")
 
 
+def _log_sync_hook_late_result(future: Any) -> None:
+    """超时被放弃等待的 hook 协程最终仍有异常时留痕，避免静默丢失。"""
+    exc = future.exception()
+    if exc is not None:
+        log.error("超时放弃等待的插件 hook 最终仍失败: %s", exc)
+
+
 def _run_awaitable_sync(awaitable: Any) -> Any:
     """在同步上下文中执行协程：优先复用运行中的事件循环，否则新建一个。
 
-    仅用于无法改为 async 的调用点（如 watchdog 线程、同步工具包装器）。
+    仅用于无法改为 async 的调用点（如 watchdog 线程、同步回调、同步工具包装器）。
 
     常规情况下,限制该函数使用。
 
     不允许在该文件之外使用这个函数.
+
+    分支策略（修复点）：
+    * 本线程没有运行中的循环 → 沿用本线程自建临时循环（watchdog 线程等场景）；
+    * 本线程**就是**事件循环线程 → 绝不能再 `run_coroutine_threadsafe(...).result()`
+      等自己：那是在等一个被自己阻塞住的 loop，必然永久自锁。旧实现在这里会冻死
+      整个后端，而 Agent 会话正持锁时，后果是后续所有 Agent 调用只能等满锁超时。
+      改为在专用工作线程的临时循环里执行，并带超时兜底。
     """
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(awaitable)
-    return asyncio.run_coroutine_threadsafe(awaitable, loop).result()
+
+    log.warning(
+        "同步插件 hook 桥被事件循环线程调用，已改用工作线程执行以避免自锁；"
+        "异步 hook 请改在 async 调用点用 await pm._call_pluggy_hook(...)"
+    )
+    future = _sync_hook_executor.submit(asyncio.run, awaitable)
+    try:
+        return future.result(timeout=SYNC_HOOK_BRIDGE_TIMEOUT_SEC)
+    except FuturesTimeoutError:
+        future.add_done_callback(_log_sync_hook_late_result)
+        log.error(
+            "同步插件 hook 在 %.0fs 内未完成，已放弃等待（调用点位于事件循环线程）",
+            SYNC_HOOK_BRIDGE_TIMEOUT_SEC,
+        )
+        raise RuntimeError(
+            f"同步插件 hook 在 {SYNC_HOOK_BRIDGE_TIMEOUT_SEC:g}s 内未完成；"
+            "请把该 hook 的调用点改为异步（await pm._call_pluggy_hook）"
+        ) from None
 
 
 class PluginLoadError(RuntimeError):

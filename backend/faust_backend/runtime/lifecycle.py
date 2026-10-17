@@ -6,7 +6,7 @@ _t.begin("builtin")
 import os
 import asyncio
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import Any
 
 _t.end("builtin")
@@ -132,9 +132,21 @@ def start_services():
         log.info("其他后端服务已启动")
 
 
-async def _acquire_agent_lock(owner: str) -> None:
+async def acquire_agent_lock(owner: str) -> None:
     """获取主 Agent 锁，带超时兜底。超时说明出现了真死锁（不可重入二次获取、
-    持锁路径被意外阻塞等），此时抛错并报告当前持有者，而不是无限等待。"""
+    持锁路径被意外阻塞等），此时抛错并报告当前持有者，而不是无限等待。
+
+    同一任务二次获取会**立刻**报错：asyncio.Lock 不可重入，真等下去只会卡满
+    AGENT_LOCK_TIMEOUT（/clear 曾经就这样把后端锁死 10 分钟，见
+    `_rebuild_runtime_locked` 的 lock_held 语义）。调用链里确实已持锁时，
+    应当显式传 `lock_held=True`，而不是再获取一次。
+    """
+    if state.agent_lock_owner_task is asyncio.current_task():
+        raise RuntimeError(
+            f"主 Agent 锁不可重入：当前任务已经持有它（持有者="
+            f"[{state.agent_lock_owner or '未知'}]，新的请求方=[{owner}]）。"
+            "调用链里嵌套了 Agent 调用，请显式传 lock_held=True。"
+        )
     try:
         await asyncio.wait_for(state.agent_lock.acquire(), timeout=state.AGENT_LOCK_TIMEOUT)
     except asyncio.TimeoutError:
@@ -145,7 +157,50 @@ async def _acquire_agent_lock(owner: str) -> None:
     state.mark_agent_lock_acquired(owner)
 
 
-async def invoke_agent_locked(target_agent, payload, config=None):
+class AgentLockBusy(RuntimeError):
+    """主 Agent 锁在超时内没有拿到（Agent 正忙，或持锁方僵死）。"""
+
+
+class TimedAgentLock:
+    """`async with` 形式的带超时主 Agent 锁。
+
+    与 `acquire_agent_lock` 同一实现：超时抛 `AgentLockBusy`，而不是无限等待。
+    修复前 rebuild 用的是裸 `async with state.agent_lock`，是全工程唯一一处
+    无超时获取，把斜杠命令与管理接口都变成了可以永久挂起的调用。
+    """
+
+    __slots__ = ("owner",)
+
+    def __init__(self, owner: str) -> None:
+        self.owner = owner
+
+    async def __aenter__(self) -> None:
+        try:
+            await acquire_agent_lock(self.owner)
+        except RuntimeError as e:
+            raise AgentLockBusy(str(e)) from None
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        state.agent_lock.release()
+        state.mark_agent_lock_released()
+
+
+class _StreamState:
+    """生产者→消费者的终结标记状态：保证恰好投递一次终结事件。"""
+
+    __slots__ = ("terminal_sent",)
+
+    def __init__(self) -> None:
+        self.terminal_sent = False
+
+
+async def invoke_agent_locked(target_agent, payload, config=None, *, lock_held: bool = False):
+    """调用主 Agent（含 429 退避重试）。
+
+    ``lock_held=True`` 表示调用方**已经持有**主 Agent 锁：此时不得再获取/释放它
+    （asyncio.Lock 不可重入），否则同一任务会自锁到 AGENT_LOCK_TIMEOUT。用于
+    `_rebuild_runtime_locked` 在"清空 + 重建"临界区内发起的引导对话。
+    """
     if config is None:
         config = {
             "configurable": {"thread_id": state.THREAD_ID},
@@ -153,8 +208,9 @@ async def invoke_agent_locked(target_agent, payload, config=None):
         }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        log.debug("等待 Agent 锁")
-        await _acquire_agent_lock("invoke_agent_locked")
+        if not lock_held:
+            log.debug("等待 Agent 锁")
+            await acquire_agent_lock("invoke_agent_locked")
         log.debug("开始调用 LLM")
         try:
             payload = await _apply_llm_request_pre(payload)
@@ -167,8 +223,11 @@ async def invoke_agent_locked(target_agent, payload, config=None):
             else:
                 raise
         finally:
-            state.agent_lock.release()
-            state.mark_agent_lock_released()
+            # lock_held=True 时锁归调用方所有，这里绝不能释放（会破坏外层临界区，
+            # 而且 mark_agent_lock_released 会把持有者信息一起清掉）
+            if not lock_held:
+                state.agent_lock.release()
+                state.mark_agent_lock_released()
         await _sleep_backoff(attempt)
     raise RuntimeError("agent invoke retries exhausted")
 
@@ -183,7 +242,9 @@ class _StreamFailed:
 _STREAM_DONE = object()  # 队列终结标记
 
 
-async def _stream_agent_producer(target_agent, payload, config, abort_event, queue):
+async def _stream_agent_producer(
+    target_agent, payload, config, abort_event, queue, stream_state: _StreamState
+):
     """持有主 Agent 锁的流式生产任务：只负责推进 astream_events 并把解析后的
     事件推入队列。锁的持有时间只覆盖 LLM 会话本身，与消费者（websocket 发送）
     的节拍无关——修复前端停止读取或插件 hook 阻塞时全局锁被无限期持有的问题。"""
@@ -194,6 +255,17 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
     # 主模型输出分流，转成 compact_* 事件，避免摘要文本泄进正文气泡。
     compact_active = False
 
+    async def _finish(item) -> None:
+        """投递终结标记，且只投一次。
+
+        所有退出路径都必须经过这里：等锁被外部 cancel、异常逃逸等情况下若没有
+        终结标记，消费者会永久停在 ``queue.get()`` 上（前端表现为永远转圈）。
+        """
+        if stream_state.terminal_sent:
+            return
+        stream_state.terminal_sent = True
+        await queue.put(item)
+
     async def _close_compact(*, ok: bool = True) -> None:
         nonlocal compact_active
         if compact_active:
@@ -203,11 +275,11 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
     for attempt in range(1, max_attempts + 1):
         log.debug("等待 Agent 锁")
         try:
-            await _acquire_agent_lock("stream_chat_agent_events")
+            await acquire_agent_lock("stream_chat_agent_events")
         except RuntimeError as e:
             # 锁超时等获取失败：必须通知消费者，否则消费者在 queue.get() 上永久等待
             await _close_compact(ok=False)
-            await queue.put(_StreamFailed(e))
+            await _finish(_StreamFailed(e))
             return
         log.debug("开始调用 LLM")
         # 通知消费者已获取锁（前端据此清除"排队等待中"状态）
@@ -283,25 +355,25 @@ async def _stream_agent_producer(target_agent, payload, config, abort_event, que
                     continue
             log.debug("LLM 调用结束")
             await _close_compact()
-            await queue.put(_STREAM_DONE)
+            await _finish(_STREAM_DONE)
             return
         except asyncio.CancelledError:
             # 中断/消费者关闭：通知消费者（若还在等待），锁在 finally 中释放
             await _close_compact(ok=False)
-            await queue.put(_StreamFailed(asyncio.CancelledError("User interrupted")))
+            await _finish(_StreamFailed(asyncio.CancelledError("User interrupted")))
             raise
         except Exception as e:
             await _close_compact(ok=False)
             if state.is_rate_limit_error(e) and attempt < max_attempts:
                 log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
             else:
-                await queue.put(_StreamFailed(e))
+                await _finish(_StreamFailed(e))
                 return
         finally:
             state.agent_lock.release()
             state.mark_agent_lock_released()
         await _sleep_backoff(attempt)
-    await queue.put(_StreamFailed(RuntimeError("agent stream retries exhausted")))
+    await _finish(_StreamFailed(RuntimeError("agent stream retries exhausted")))
 
 
 async def stream_chat_agent_events(
@@ -315,10 +387,25 @@ async def stream_chat_agent_events(
     # 立即向消费者反馈"等待锁/排队中"，前端可据此显示排队状态
     yield {"type": "waiting_lock"}
     queue: asyncio.Queue = asyncio.Queue()
+    stream_state = _StreamState()
     producer = asyncio.create_task(
-        _stream_agent_producer(target_agent, payload, config, abort_event, queue),
+        _stream_agent_producer(target_agent, payload, config, abort_event, queue, stream_state),
         name="stream_agent_producer",
     )
+
+    def _on_producer_done(_task: asyncio.Task) -> None:
+        """兜底：生产者没投终结标记就结束（等锁时被外部取消、尚未启动即被取消、
+        或异常逃逸）时补一条，消费者绝不能停在 queue.get() 上。"""
+        if stream_state.terminal_sent:
+            return
+        stream_state.terminal_sent = True
+        queue.put_nowait(
+            _StreamFailed(
+                RuntimeError("agent stream producer ended without a terminal event")
+            )
+        )
+
+    producer.add_done_callback(_on_producer_done)
     try:
         while True:
             item = await queue.get()
@@ -515,7 +602,38 @@ async def _create_agent_with_extensions(*, model_name: str, checkpointer):
 
 
 async def rebuild_runtime(
-    *, reset_dialog: bool = False, no_initial_chat: bool = False
+    *, reset_dialog: bool = False, no_initial_chat: bool = False, lock_held: bool = False
+):
+    """重建运行时；拿不到主 Agent 锁时返回 busy 结果，绝不无限期等待。
+
+    修复前这里是裸 `async with state.agent_lock`（全工程唯一一处无超时获取）：
+    斜杠命令 /clear /thinking /effort 在 WS 接收循环里 await 它，Agent 一忙就把
+    整个输入循环（连同 interrupt 控制消息）一起冻住，管理接口同样挂起且无诊断。
+    锁忙不等于运行时损坏：这里只报告状态，不清空 state.agent。
+
+    lock_held=True 表示调用方已经持有主 Agent 锁（如 /clear：清数据与重建必须
+    在同一个临界区里完成），此时不再重复获取——asyncio.Lock 不可重入。
+    """
+    try:
+        return await _rebuild_runtime_locked(
+            reset_dialog=reset_dialog,
+            no_initial_chat=no_initial_chat,
+            lock_held=lock_held,
+        )
+    except AgentLockBusy as e:
+        log.error("重建运行时未取得主 Agent 锁: %s", e)
+        return {
+            "agent_name": state.AGENT_NAME,
+            "agent_root": state.AGENT_ROOT,
+            "initial_chat_skipped": True,
+            "ready": False,
+            "status": "busy",
+            "error": str(e),
+        }
+
+
+async def _rebuild_runtime_locked(
+    *, reset_dialog: bool = False, no_initial_chat: bool = False, lock_held: bool = False
 ):  # TODO: 让逻辑更加清晰
     log.info(
         "正在重建运行时，reset_dialog=%s, no_initial_chat=%s",
@@ -523,7 +641,7 @@ async def rebuild_runtime(
         no_initial_chat,
     )
     _needs_initial_chat = False
-    async with state.agent_lock:
+    async with (nullcontext() if lock_held else TimedAgentLock("rebuild_runtime")):
         try:
             conf.reload_configs()
             from faust_backend.runtime import state as runtime_state
@@ -643,6 +761,7 @@ async def rebuild_runtime(
                 await invoke_agent_locked(
                     state.agent,
                     {"messages": [{"role": "system", "content": state.PROMPT}]},
+                    lock_held=lock_held,
                 )
             else:
                 await invoke_agent_locked(
@@ -659,6 +778,7 @@ async def rebuild_runtime(
                             }
                         ]
                     },
+                    lock_held=lock_held,
                 )
             log.info("运行时重建完成")
             state.set_runtime_state(ready=True, status="ready")

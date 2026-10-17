@@ -33,32 +33,24 @@ THREAD_ID = "main"  # langgraph checkpointer 需要这个ID,保持不变即可
 AGENT_LOCK_TIMEOUT = 600.0
 # 当前锁持有者描述（由 mark_agent_lock_acquired/released 维护），供超时报错诊断
 agent_lock_owner: str = ""
+# 当前锁持有者任务：用于可重入自检。asyncio.Lock 不可重入，同一任务二次获取会
+# 一直等到 AGENT_LOCK_TIMEOUT（表现为"卡死 10 分钟"），这里让它在获取时就立刻报错。
+agent_lock_owner_task: "asyncio.Task | None" = None
 
 
 def mark_agent_lock_acquired(owner: str) -> None:
-    global agent_lock_owner
+    global agent_lock_owner, agent_lock_owner_task
     agent_lock_owner = f"{owner}@{time.strftime('%H:%M:%S')}"
+    agent_lock_owner_task = asyncio.current_task()
 
 
 def mark_agent_lock_released() -> None:
-    global agent_lock_owner
+    global agent_lock_owner, agent_lock_owner_task
     agent_lock_owner = ""
+    agent_lock_owner_task = None
 
-# ── 中断信号 ──
-_agent_abort: asyncio.Event | None = None
-
-
-def get_abort_event() -> asyncio.Event:
-    global _agent_abort
-    if _agent_abort is None:
-        _agent_abort = asyncio.Event()
-    return _agent_abort
-
-
-def reset_abort_event() -> asyncio.Event:
-    global _agent_abort
-    _agent_abort = asyncio.Event()
-    return _agent_abort
+# 中断信号不再放在这里：它是**会话级**的（每个 chat websocket 一份），
+# 见 runtime/turn_state.py。进程级单例会让一个连接的中断打到另一个连接的流上。
 
 
 # ── SQLite 持久化 ──

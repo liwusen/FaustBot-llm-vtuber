@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,60 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_agent_lock():
+    """每个用例开始前换一把新的主 Agent 锁。
+
+    ``asyncio.Lock`` 会绑定首次使用它的事件循环，而 pytest-asyncio 的
+    ``loop_scope="module"`` 给每个测试模块一个独立循环：模块 A 先抢过这把锁之后，
+    模块 B 的用例就会撞上 "is bound to a different event loop"。这是与业务无关的
+    顺序性失败，因此在每个用例前重置，让整套用例与执行顺序无关。
+    """
+    from faust_backend.runtime import state
+
+    state.agent_lock = asyncio.Lock()
+    state.mark_agent_lock_released()
+    yield
+
+
+@pytest.fixture
+def hold_agent_lock():
+    """在**独立任务**里持有主 Agent 锁，模拟"别人正占用"。
+
+    不能直接用当前测试任务 acquire + ``mark_agent_lock_acquired``：那与真实的
+    重入调用无法区分，会被 ``acquire_agent_lock`` 的可重入守卫立刻拒绝
+    （守卫拦的正是"同一任务二次获取"这种真 bug）。
+    """
+
+    @asynccontextmanager
+    async def _hold(owner: str = "test_holder"):
+        from faust_backend.runtime import state
+
+        release = asyncio.Event()
+
+        async def _holder() -> None:
+            await state.agent_lock.acquire()
+            state.mark_agent_lock_acquired(owner)
+            try:
+                await release.wait()
+            finally:
+                state.agent_lock.release()
+                state.mark_agent_lock_released()
+
+        task = asyncio.create_task(_holder())
+        for _ in range(400):
+            if state.agent_lock.locked():
+                break
+            await asyncio.sleep(0.005)
+        try:
+            yield
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    return _hold
 
 
 @pytest.fixture

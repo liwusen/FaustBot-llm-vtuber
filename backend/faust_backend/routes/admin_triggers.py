@@ -25,7 +25,7 @@ async def admin_get_trigger(trigger_id: str):
 async def admin_create_or_upsert_trigger(payload: dict | None = None):
     body = payload or {}
     try:
-        await asyncio.to_thread(trigger_manager.append_trigger, body)
+        await trigger_manager.append_trigger(body)
         tid = str(body.get("id") or "")
         item = await asyncio.to_thread(trigger_manager.get_trigger, tid) if tid else body
         return {"status": "ok", "item": item}
@@ -37,7 +37,7 @@ async def admin_create_or_upsert_trigger(payload: dict | None = None):
 async def admin_update_trigger(trigger_id: str, payload: dict | None = None):
     body = payload or {}
     try:
-        await asyncio.to_thread(trigger_manager.update_trigger, trigger_id, body)
+        await trigger_manager.update_trigger(trigger_id, body)
         item = await asyncio.to_thread(trigger_manager.get_trigger, trigger_id)
         return {"status": "ok", "item": item}
     except Exception as e:

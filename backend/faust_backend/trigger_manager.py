@@ -8,7 +8,6 @@ import csv
 from pathlib import Path
 import threading
 import os
-import random
 
 import faust_backend.config_loader as conf
 import faust_backend.nimble as nimble
@@ -310,6 +309,33 @@ def get_next_trigger(timeout: Optional[float] = None):
         return None
 
 
+def peek_next_trigger():
+    """读取普通触发器队列的队首（不消费）。
+
+    播放闸门需要先看队首的 priority 再决定是否消费：不能为了等一条 normal
+    就把排在它后面的 interrupt 告警一起压住。
+    """
+    with trigger_queue.mutex:
+        if not trigger_queue.queue:
+            return None
+        return trigger_queue.queue[0]
+
+
+def take_interrupt_trigger():
+    """取走队列中第一个 interrupt 级触发器（不按 FIFO）。
+
+    hold 期间若队首是 normal，直接不消费会把后面的告警一起挡住（队头阻塞）；
+    这里单独把告警捞出来放行，其余顺序不变。
+    """
+    with trigger_queue.mutex:
+        for idx, item in enumerate(trigger_queue.queue):
+            if isinstance(item, dict) and item.get("priority") == "interrupt":
+                del trigger_queue.queue[idx]
+                trigger_queue.unfinished_tasks = max(0, trigger_queue.unfinished_tasks - 1)
+                return item
+    return None
+
+
 BATCH_WINDOW_SEC: float = 30.0  # batched 级事件合并窗口（秒）；修改此值调整打扰频率
 
 
@@ -363,7 +389,7 @@ def _pyeval_context() -> dict:
     }
 
 
-def append_trigger(trigger_dict_or_str: dict | str):
+async def append_trigger(trigger_dict_or_str: dict | str):
     """Append a new trigger to the store.
 
     Supported trigger types are 'datetime', 'interval', 'py-eval', 'event', and 'nimble-expire'.
@@ -406,8 +432,9 @@ def append_trigger(trigger_dict_or_str: dict | str):
     from faust_backend.runtime import state
     pm = getattr(state, 'plugin_manager', None)
     if pm:
-        # append_trigger 是同步入口（同步工具/to_thread 调用），使用同步桥接执行
-        results = pm._call_pluggy_hook_sync('trigger_append', payload=trigger, ctx=None)
+        # 这里必须走 async hook：append_trigger 的调用点（Agent 工具、HTTP 路由、
+        # 插件 API）大多就在事件循环上，同步桥在环上只能退化成工作线程 + 超时。
+        results = await pm._call_pluggy_hook('trigger_append', payload=trigger, ctx=None)
         if results:
             for item in results:
                 if item is None:
@@ -480,7 +507,7 @@ def get_trigger(trigger_id: str) -> dict | None:
     return None
 
 
-def update_trigger(trigger_id: str, trigger: dict | str) -> None:
+async def update_trigger(trigger_id: str, trigger: dict | str) -> None:
     """Update (upsert) one trigger by id."""
     if isinstance(trigger, str):
         trigger = json.loads(trigger)
@@ -489,7 +516,7 @@ def update_trigger(trigger_id: str, trigger: dict | str) -> None:
 
     payload = dict(trigger)
     payload["id"] = trigger_id
-    append_trigger(payload)
+    await append_trigger(payload)
 
 
 def get_trigger_information() -> str:
@@ -526,35 +553,15 @@ def get_trigger_queue_snapshot() -> list[dict]:
 
 
 if __name__ == "__main__":
-    append_trigger({
-        "id": "CORE_HEARTBEAT",
-        "type": "interval",
-        "interval_seconds": 300,
-        "recall_description": "核心心跳触发器，不要修改，每5分钟触发一次，用于Agent执行周期性任务或自我检查。"
-    })
-    log.info("初始 triggers: %s", get_trigger_information())
-    exit(0)
-    # test watchdog thread
-    append_trigger({
-        "id": "test_interval",
-        "type": "interval",
-        "interval_seconds": 5
-    })
-    append_trigger({
-        "id": "test_datetime",
-        "type": "datetime",
-        "target": (datetime.datetime.now() + datetime.timedelta(seconds=10)).isoformat()
-    })
-    append_trigger({
-        "id": "test_pyeval",
-        "type": "py-eval",
-        "eval_code": "random.random() < 0.1" 
-    })
-    start_trigger_watchdog_thread()
-    log.info("Trigger 看门狗线程已启动")
-    while True:
-        trig = get_next_trigger(timeout=1.0)
-        if trig:
-            log.info("Trigger 触发: %s", trig)
-        else:
-            log.debug("上一秒无 trigger 触发")
+    import asyncio
+
+    async def _seed_core_heartbeat() -> None:
+        await append_trigger({
+            "id": "CORE_HEARTBEAT",
+            "type": "interval",
+            "interval_seconds": 300,
+            "recall_description": "核心心跳触发器，不要修改，每5分钟触发一次，用于Agent执行周期性任务或自我检查。"
+        })
+        log.info("初始 triggers: %s", get_trigger_information())
+
+    asyncio.run(_seed_core_heartbeat())

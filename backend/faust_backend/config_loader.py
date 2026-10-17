@@ -34,6 +34,11 @@ PLUGIN_DATA_ROOT = p_join(CONFIG_ROOT, 'plugin_data')
 CONFIG_FILE_PATH = p_join(CONFIG_ROOT, 'faust.config.json')
 PRIVATE_CONFIG_AUTO_CREATED = False
 PRIVATE_CONFIG_WAS_MISSING = False
+# 触发器闸门(turn_gate)默认值: load_configs() 会用配置文件覆盖
+# TRIGGER_HOLD_MAX_SEC: 一轮回复结束后, 触发器最长被压多久(秒), 安全网
+# TRIGGER_READ_FLOOR_SEC: 没有音频时按回复字数估算的阅读下限(秒)
+TRIGGER_HOLD_MAX_SEC: float = 30.0
+TRIGGER_READ_FLOOR_SEC: float = 1.5
 
 
 def _copy_missing_file(src: Path, dst: Path) -> None:
@@ -242,6 +247,7 @@ def load_configs():
     global PLUGIN_MARKET_USE_GH_PROXY
     global MD_BLOCK_ENABLED
     global AUTO_FORCE_INTERRUPT
+    global TRIGGER_HOLD_MAX_SEC, TRIGGER_READ_FLOOR_SEC
     global TTS_CHUNK_IDEAL_TOKENS
     global PROCESSOR_PRUNE_INTERVAL, PROCESSOR_IDLE_TIMEOUT
     _ensure_private_config_exists()
@@ -393,6 +399,16 @@ def load_configs():
     # 用户发起对话时, 若主 Agent 正被前台/后台触发器占用:
     # 强制取消触发器任务(前台触发器补发 done), 并将用户消息标记为"(用户插话)"
     AUTO_FORCE_INTERRUPT = bool(config.get('AUTO_FORCE_INTERRUPT', True))
+    # 触发器闸门: 一轮回复结束后, 等"念完"(前端 ack)或超时才唤醒触发器
+    # TRIGGER_HOLD_MAX_SEC 是安全网上限; TRIGGER_READ_FLOOR_SEC 是无音频时的阅读下限
+    try:
+        TRIGGER_HOLD_MAX_SEC = max(0.0, float(config.get('TRIGGER_HOLD_MAX_SEC', 30.0) or 0.0))
+    except (TypeError, ValueError):
+        TRIGGER_HOLD_MAX_SEC = 30.0
+    try:
+        TRIGGER_READ_FLOOR_SEC = max(0.0, float(config.get('TRIGGER_READ_FLOOR_SEC', 1.5) or 0.0))
+    except (TypeError, ValueError):
+        TRIGGER_READ_FLOOR_SEC = 1.5
     # TTS 流式分块的理想块长(单位 Token, 10~100): 1字母=0.5 Token, 1汉字=1 Token
     TTS_CHUNK_IDEAL_TOKENS = int(config.get('TTS_CHUNK_IDEAL_TOKENS', 30) or 30)
     # Processor（子进程计算任务）空闲回收策略，单位秒

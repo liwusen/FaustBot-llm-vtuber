@@ -1068,6 +1068,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     try{ audio.stopAudio(); }catch(e){}
     try{ resetStreamTtsState(); }catch(e){}
     try{ if (ttsStatus) ttsStatus.textContent = '已打断'; }catch(e){}
+    // 主动打断 = 这一轮不再有声，立即把播放闸门回报给后端，别让触发器白等超时
+    sendTurnPlaybackDone(lastTurnId);
   }
 
   function interruptAgent(){
@@ -1081,6 +1083,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     agentIsProcessing = false;
     if (chatStatusEl) chatStatusEl.textContent = '就绪';
     resetStreamTtsState();
+    // 用户打断：按"这一轮已结束"回报，释放后端的播放闸门
+    sendTurnPlaybackDone(lastTurnId);
   }
 
   // 等待后端确认打断完成（interrupt_ack）的 Promise 解析器；
@@ -1846,6 +1850,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   let chatWsReady = null;
   let currentChatRequest = null;
   let passiveChatRequest = null;
+  // 最近一轮前台回复的 turn_id：done 后回报"念完了"，用户主动打断时也用它回报
+  let lastTurnId = '';
   // 主 Agent 排队提示（pending/waiting_lock）：延迟 1s 展示，收到 start 前取消
   let pendingWaitingTimer = null;
 
@@ -2213,6 +2219,34 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }
   }
 
+  // 播放闸门回报：告诉后端"这一轮的语音念完了"，触发器不必等满超时。
+  // 必须走 chat WS —— 后端前台触发器是在 command WS 的循环里 await 的，
+  // ack 若挂在 command WS 上会和消费循环互锁。
+  function sendTurnPlaybackDone(turnId){
+    const id = String(turnId || '');
+    if (!id) return;
+    if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    try{
+      chatWs.send(JSON.stringify({ type: 'turn_playback_done', turn_id: id }));
+    }catch(e){
+      console.warn('turn_playback_done send failed', e);
+    }
+  }
+
+  // 这一轮结束时回报：等本轮流式 TTS 播完（streamTtsPending 排空）再发。
+  // TTS 关闭 / 没有音频时 drain 立即返回，退化为后端的 read_floor 兜底。
+  function reportTurnPlaybackDone(request){
+    const turnId = String((request && request.turnId) || '');
+    if (!turnId) return;
+    waitForStreamTtsDrain()
+      .then(()=>{ sendTurnPlaybackDone(turnId); })
+      .catch((e)=>{
+        // 播放链路异常：声音本来就出不来，仍然回报，让后端按 read_floor 放行
+        console.warn('wait stream tts drain failed', e);
+        sendTurnPlaybackDone(turnId);
+      });
+  }
+
   function openChatWs(){
     if (chatWs && (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING)){
       return chatWsReady || Promise.resolve();
@@ -2426,6 +2460,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       interruptPlayback();
       // 新消息是唯一把气泡从隐藏态拉回来的时机（× 之后不会因为流式增量自动重现）
       bubble.reveal();
+      // 播放闸门：记住本轮 turn_id（后端在发 done 前 arm），done 后据此回报"念完了"
+      req.turnId = String(msg.turn_id || '');
+      if (req.turnId) lastTurnId = req.turnId;
       req.replyText = '';
       req.ttsChunker = null; // 新会话重置流式分块器（偏移从 0 重新累计）
       req.motionTokenBuffer = '';
@@ -2656,6 +2693,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       request.pendingMotions = [];
       if (!request.passive) agentIsProcessing = false;
       bubble.showResultBubble('ai', request.entries);
+      // 播放闸门：本轮内容已渲染完，等语音念完（或没有语音）就回报后端放行触发器
+      reportTurnPlaybackDone(request);
       if (request.passive){
         // 后端主动推送的流（触发器/Nimble）：展示完成后仅清被动会话，
         // 不触碰主动聊天的 currentChatRequest，也不 resolve。

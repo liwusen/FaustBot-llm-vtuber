@@ -43,9 +43,10 @@ def closes(monkeypatch):
         "FrontEndCloseNimbleWindow",
         lambda payload: recorded.pushed.append(payload),
     )
-    monkeypatch.setattr(
-        trigger_manager, "append_trigger", lambda trigger: recorded.appended.append(trigger)
-    )
+    async def _record_append(trigger):
+        recorded.appended.append(trigger)
+
+    monkeypatch.setattr(trigger_manager, "append_trigger", _record_append)
     monkeypatch.setattr(
         trigger_manager,
         "delete_trigger",

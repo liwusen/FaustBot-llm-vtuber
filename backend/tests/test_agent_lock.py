@@ -114,19 +114,18 @@ async def test_consumer_pause_does_not_hold_lock():
     assert await _wait_lock_released()
 
 
-async def test_invoke_agent_locked_timeout_and_recovery(lock_timeout_env):
-    """锁被占时按超时报错并报告持有者；释放后可正常恢复调用。"""
-    await state.agent_lock.acquire()
-    state.mark_agent_lock_acquired("test_holder")
-    try:
+async def test_invoke_agent_locked_timeout_and_recovery(lock_timeout_env, hold_agent_lock):
+    """锁被别人占着时按超时报错并报告持有者；释放后可正常恢复调用。
+
+    持有者必须是**另一个任务**：同一任务二次获取现在会被可重入守卫立刻拒绝
+    （那条路径由 test_agent_call_control 覆盖）。
+    """
+    async with hold_agent_lock("test_holder"):
         with pytest.raises(RuntimeError) as exc_info:
             await lifecycle.invoke_agent_locked(FakeInvokeAgent(), {"messages": []})
         msg = str(exc_info.value)
         assert "等待主 Agent 锁超时" in msg
         assert "test_holder" in msg
-    finally:
-        state.agent_lock.release()
-        state.mark_agent_lock_released()
 
     res = await lifecycle.invoke_agent_locked(FakeInvokeAgent(), {"messages": []})
     assert res["messages"][-1]["content"] == "ok"

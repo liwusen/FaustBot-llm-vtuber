@@ -624,7 +624,11 @@ class SubagentManager:
         return True
 
     async def removeSubagent(self, agent_name: str) -> bool:
-        """停止并删除 Subagent。等待 2 秒后强制 cancel。"""
+        """停止并删除 Subagent。等待 2 秒后强制 cancel，再等 2 秒后放弃等待。
+
+        两段等待都必须有上限：被取消方卡在不可取消区时，无上限的 ``await task``
+        会把调用方（Agent 工具 / HTTP 路由）永久挂住。
+        """
         subagent = self.subagents.get(agent_name)
         if subagent is None:
             return False
@@ -636,7 +640,11 @@ class SubagentManager:
             except asyncio.TimeoutError:
                 task.cancel()
                 try:
-                    await task
+                    await asyncio.wait_for(task, timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    log.error(
+                        "Subagent '%s' 取消后仍未退出，放弃等待并删除登记", agent_name
+                    )
                 except Exception:
                     pass
             except Exception:

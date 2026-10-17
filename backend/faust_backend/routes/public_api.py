@@ -46,7 +46,7 @@ async def event_trigger_push(req: EventTriggerPushRequest):
     if req.callback_id:
         trigger["callback_id"] = req.callback_id
     try:
-        await asyncio.to_thread(tm.append_trigger, trigger)
+        await tm.append_trigger(trigger)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Trigger 无效: {e}")
     except Exception as e:
@@ -61,7 +61,7 @@ async def generic_trigger_push(req: GenericTriggerPushRequest):
     if not isinstance(body, dict) or not body.get("type"):
         raise HTTPException(status_code=400, detail="trigger 必须是含 type 字段的 dict")
     try:
-        await asyncio.to_thread(tm.append_trigger, body)
+        await tm.append_trigger(body)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Trigger 无效: {e}")
     except Exception as e:

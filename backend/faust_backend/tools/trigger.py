@@ -58,7 +58,7 @@ async def triggerAddTool(trigger_json: str) -> str:
     """
     try:
         log.info("Adding new trigger with JSON: %s", trigger_json)
-        trigger_manager.append_trigger(trigger_json)
+        await trigger_manager.append_trigger(trigger_json)
         return "触发器添加成功"
     except Exception as e:
         return f"添加触发器出错: {str(e)}"

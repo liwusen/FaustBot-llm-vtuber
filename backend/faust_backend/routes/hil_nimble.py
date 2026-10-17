@@ -57,7 +57,7 @@ async def nimble_message_post(payload: dict):
         return {"error": f"unknown callback_id: {callback_id}"}
 
     if create_event_trigger:
-        trigger_manager.append_trigger({
+        await trigger_manager.append_trigger({
             "id": nimble.message_trigger_id(callback_id),
             "type": "event",
             "event_name": "nimble_message",
@@ -87,7 +87,7 @@ async def nimble_close_post(payload: dict):
     # AI 主动关闭（console 保留命令）不该再 append trigger：它自己刚关掉窗口，
     # 唤醒只会让它读到已关闭的 console。用户点 × 关闭照旧唤醒。
     if not by_agent:
-        trigger_manager.append_trigger({
+        await trigger_manager.append_trigger({
             "id": f"nimble_closed::{callback_id}",
             "type": "event",
             "event_name": "nimble_message",

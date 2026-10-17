@@ -45,6 +45,28 @@ def _make_trigger_for_event(event_name: str, payload: dict[str, Any]) -> dict[st
     }
 
 
+def _log_trigger_append_failure(future) -> None:
+    exc = future.exception()
+    if exc is not None:
+        log.error("Minecraft 事件触发器登记失败: %s", exc)
+
+
+def _schedule_trigger_append(payload: dict[str, Any]) -> None:
+    """在 MC 的 websocket 线程里登记触发器：投递到主事件循环执行。
+
+    `append_trigger` 现在是 async（插件 hook 走 async 路径），而 ``_on_message``
+    是 websocket-client 的同步回调（跑在 ``_ws_thread`` 里），不能直接 await。
+    """
+    from faust_backend.backend2front import get_main_loop
+
+    loop = get_main_loop()
+    if loop is None or not loop.is_running():
+        log.error("主事件循环不可用，Minecraft 事件触发器未能登记: %s", payload.get("id"))
+        return
+    future = asyncio.run_coroutine_threadsafe(trigger_manager.append_trigger(payload), loop)
+    future.add_done_callback(_log_trigger_append_failure)
+
+
 def _resolve_pending(request_id: str, ok: bool, data: dict[str, Any]) -> None:
     with _pending_lock:
         waiter = _pending.pop(request_id, None)
@@ -87,7 +109,7 @@ def _on_message(ws, message: str):
                     if now - _hurted_last_trigger_ts < 13:
                         return
                     _hurted_last_trigger_ts = now
-            trigger_manager.append_trigger(_make_trigger_for_event(event_name, event_payload))
+            _schedule_trigger_append(_make_trigger_for_event(event_name, event_payload))
     elif msg_type == "hello":
         pass
 

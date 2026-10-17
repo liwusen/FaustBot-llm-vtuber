@@ -99,6 +99,30 @@ def test_drain_batched_empty_returns_empty_list():
     assert tm.drain_batched() == []
 
 
+def test_peek_next_trigger_does_not_consume():
+    assert tm.peek_next_trigger() is None
+    tm._emit_trigger({"id": "a::1", "type": "event", "event_name": "e"})
+    head = tm.peek_next_trigger()
+    assert head is not None and head["id"] == "a::1"
+    assert tm.trigger_queue.qsize() == 1  # 仍在队列里
+
+
+def test_take_interrupt_trigger_skips_queued_normal():
+    """播放闸门 hold 时：队首 normal 不被消费，但后面的 interrupt 要能放行（避免队头阻塞）。"""
+    tm._emit_trigger({"id": "n::1", "type": "event", "event_name": "e"})
+    tm._emit_trigger({"id": "i::1", "type": "event", "event_name": "e", "priority": "interrupt"})
+    tm._emit_trigger({"id": "n::2", "type": "event", "event_name": "e"})
+    taken = tm.take_interrupt_trigger()
+    assert taken is not None and taken["id"] == "i::1"
+    remaining = [tm.get_next_trigger()["id"] for _ in range(tm.trigger_queue.qsize())]
+    assert remaining == ["n::1", "n::2"]          # 其余顺序不变
+    assert tm.take_interrupt_trigger() is None    # 没有告警时返回 None
+
+
+def test_take_interrupt_trigger_empty_queue():
+    assert tm.take_interrupt_trigger() is None
+
+
 def test_batch_injection_text_format():
     items = [
         {"id": "a::1", "type": "event", "event_name": "danmaku", "recall_description": "弹幕: hi"},

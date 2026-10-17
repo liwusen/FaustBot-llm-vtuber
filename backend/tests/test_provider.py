@@ -688,6 +688,8 @@ def test_set_reasoning_effort_validates_level(monkeypatch):
     rebuilt = []
     async def fake_rebuild(**kw):
         rebuilt.append(kw)
+        # 真实 rebuild_runtime 的契约是返回状态 dict（busy 时 status="busy"）
+        return {"ready": True, "status": "ready", "error": ""}
     monkeypatch.setattr(chat_route, "rebuild_runtime", fake_rebuild)
 
     import asyncio
