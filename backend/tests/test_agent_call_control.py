@@ -46,15 +46,43 @@ class FakeStreamAgent:
                 await self.gate.wait()
 
 
-class FakeInvokeAgent:
-    """假 Agent：ainvoke 立即返回，并记录调用次数。"""
+class FakeState:
+    """`aget_state` 的返回值：只需要 `.values["messages"]`。"""
 
-    def __init__(self):
+    def __init__(self, messages: list | None = None):
+        self.values = {"messages": list(messages or [])}
+
+
+class FakeInvokeAgent:
+    """假 Agent：ainvoke 立即返回，并记录调用；支持 checkpoint 读写。
+
+    `aupdate_state` 按 `add_messages` 的语义处理 `RemoveMessage(REMOVE_ALL)`
+    并追加其余消息，这样 `_seed_system_prompt` 的「先清空再重排」能被如实模拟。
+    """
+
+    def __init__(self, messages: list | None = None):
         self.calls: list[dict] = []
+        self.updates: list[dict] = []
+        self.messages: list = list(messages or [])
 
     async def ainvoke(self, payload, config=None):
         self.calls.append(payload)
         return {"messages": [{"content": "ok"}]}
+
+    async def aget_state(self, config=None):
+        return FakeState(self.messages)
+
+    async def aupdate_state(self, config, update, as_node=None):
+        from langchain_core.messages import RemoveMessage
+        from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+        self.updates.append(update)
+        for message in update.get("messages") or []:
+            if isinstance(message, RemoveMessage) and message.id == REMOVE_ALL_MESSAGES:
+                self.messages = []
+                continue
+            self.messages.append(message)
+        return None
 
 
 class FakeCheckpointer:
@@ -310,7 +338,7 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     monkeypatch.setattr(state, "RUNTIME_READY", state.RUNTIME_READY)
     monkeypatch.setattr(state, "RUNTIME_STATUS", state.RUNTIME_STATUS)
     monkeypatch.setattr(state, "RUNTIME_ERROR", state.RUNTIME_ERROR)
-    monkeypatch.setattr(state, "PROMPT", state.PROMPT)
+    monkeypatch.setattr(state, "PROMPT", "TEST SYSTEM PROMPT")
 
     async def _vfs(refresh=False):
         return object()
@@ -335,11 +363,15 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     return fake_agent
 
 
-async def test_rebuild_inside_exclusive_turn_runs_bootstrap_without_self_lock(monkeypatch):
-    """调度器回合内 rebuild 的引导对话不得再取锁（/clear 自锁的完整回归）。
+async def test_rebuild_inside_exclusive_turn_seeds_prompt_without_self_lock(monkeypatch):
+    """调度器回合内 rebuild 的引导步骤不得再取锁（/clear 自锁的完整回归）。
 
     斜杠命令现在跑在 ``exclusive`` 回合里：锁由 worker 持有，rebuild 内部的
-    ``TimedAgentLock`` 与引导调用都必须是 no-op，重建结束时锁归 worker 释放。
+    ``TimedAgentLock`` 与引导写入都必须是 no-op，重建结束时锁归 worker 释放。
+
+    `reset_dialog=True` 的引导是**纯状态写入**（植入角色 Prompt），不发起模型
+    调用：system-only 的模型请求在 Gemini/Anthropic 上非法（contents are
+    required / messages 不能为空），历史实现因此把 /clear 变成必然降级。
     """
     from faust_backend.runtime import scheduler as agent_scheduler
 
@@ -362,8 +394,80 @@ async def test_rebuild_inside_exclusive_turn_runs_bootstrap_without_self_lock(mo
     info = await asyncio.wait_for(handle.wait(), timeout=10)
 
     assert info["ready"] is True, info
-    assert info["initial_chat_skipped"] is False, "引导对话被跳过"
-    assert fake_agent.calls, "引导对话没有被调用"
+    assert info["initial_chat_skipped"] is False, "引导流程被跳过"
+    assert fake_agent.calls == [], "reset_dialog 不得发起模型调用（system-only 非法）"
+    assert fake_agent.updates, "引导流程必须写入 checkpoint"
+    from langchain_core.messages import SystemMessage
+
+    assert isinstance(fake_agent.messages[0], SystemMessage)
+    assert fake_agent.messages[0].content == state.PROMPT
     assert locked_during == [True], "重建过程中锁必须由调度器持有"
     await scheduler.shutdown(timeout=1.0)
     assert not state.agent_lock.locked()
+
+
+# ── 角色 Prompt 植入（reset_dialog 的引导步骤） ──
+
+
+async def test_seed_system_prompt_writes_on_empty_checkpoint(monkeypatch):
+    from langchain_core.messages import SystemMessage
+
+    monkeypatch.setattr(state, "PROMPT", "角色设定")
+    agent = FakeInvokeAgent()
+
+    seeded = await lifecycle._seed_system_prompt(agent)
+
+    assert seeded is True
+    assert agent.calls == []
+    assert len(agent.messages) == 1
+    assert isinstance(agent.messages[0], SystemMessage)
+    assert agent.messages[0].content == "角色设定"
+
+
+async def test_seed_system_prompt_is_idempotent(monkeypatch):
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    monkeypatch.setattr(state, "PROMPT", "角色设定")
+    agent = FakeInvokeAgent(
+        messages=[SystemMessage(content="角色设定"), HumanMessage(content="hi")]
+    )
+
+    seeded = await lifecycle._seed_system_prompt(agent)
+
+    assert seeded is False
+    assert agent.updates == []
+    assert [type(m).__name__ for m in agent.messages] == ["SystemMessage", "HumanMessage"]
+
+
+async def test_seed_system_prompt_replaces_stale_system_and_keeps_history(monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    monkeypatch.setattr(state, "PROMPT", "新设定")
+    agent = FakeInvokeAgent(
+        messages=[
+            SystemMessage(content="旧设定"),
+            HumanMessage(content="hi"),
+            AIMessage(content="hello"),
+        ]
+    )
+
+    seeded = await lifecycle._seed_system_prompt(agent)
+
+    assert seeded is True
+    assert [type(m).__name__ for m in agent.messages] == [
+        "SystemMessage",
+        "HumanMessage",
+        "AIMessage",
+    ]
+    assert agent.messages[0].content == "新设定"
+    assert agent.messages[1].content == "hi"
+    assert agent.calls == []
+
+
+async def test_seed_system_prompt_skips_empty_prompt(monkeypatch):
+    monkeypatch.setattr(state, "PROMPT", "")
+
+    agent = FakeInvokeAgent()
+
+    assert await lifecycle._seed_system_prompt(agent) is False
+    assert agent.updates == []
