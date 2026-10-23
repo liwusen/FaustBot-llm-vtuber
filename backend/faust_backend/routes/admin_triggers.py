@@ -29,6 +29,11 @@ async def admin_create_or_upsert_trigger(payload: dict | None = None):
         tid = str(body.get("id") or "")
         item = await asyncio.to_thread(trigger_manager.get_trigger, tid) if tid else body
         return {"status": "ok", "item": item}
+    except trigger_manager.TriggerRefused as e:
+        # D19：离线时 event 型触发器在产生侧被拒，必须让调用者看到原因
+        raise HTTPException(
+            status_code=409, detail={"error": str(e), "reason": e.reason}
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Trigger 保存失败: {e}")
 

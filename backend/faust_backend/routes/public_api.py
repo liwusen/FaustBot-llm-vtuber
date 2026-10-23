@@ -5,8 +5,20 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import faust_backend.trigger_manager as tm
+from faust_backend.runtime import frontend_presence
 
 router = APIRouter(tags=["public-api"])
+
+
+def _reject_offline(source: str) -> None:
+    """D19：前端离线时外部提交一律 409（拒绝必须对调用者可见）。"""
+    if frontend_presence.is_online():
+        return
+    frontend_presence.note_refused(source=source, reason="no_frontend")
+    raise HTTPException(
+        status_code=409,
+        detail={"error": "前端未连接，触发器已被拒绝", "reason": "no_frontend"},
+    )
 
 
 
@@ -36,6 +48,7 @@ async def event_trigger_push(req: EventTriggerPushRequest):
     """
     if not req.event_name.strip():
         raise HTTPException(status_code=400, detail="event_name 不能为空")
+    _reject_offline("public-api/event-trigger-push")
     trigger = {
         "id": f"public_{uuid.uuid4().hex[:12]}",
         "type": "event",
@@ -47,6 +60,11 @@ async def event_trigger_push(req: EventTriggerPushRequest):
         trigger["callback_id"] = req.callback_id
     try:
         await tm.append_trigger(trigger)
+    except tm.TriggerRefused as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": str(e), "reason": e.reason},
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Trigger 无效: {e}")
     except Exception as e:
@@ -60,8 +78,15 @@ async def generic_trigger_push(req: GenericTriggerPushRequest):
     body = req.trigger
     if not isinstance(body, dict) or not body.get("type"):
         raise HTTPException(status_code=400, detail="trigger 必须是含 type 字段的 dict")
+    _reject_offline("public-api/trigger")
     try:
         await tm.append_trigger(body)
+    except tm.TriggerRefused as e:
+        # append 侧的拒绝（event 型立即 fire）同样必须对调用者可见
+        raise HTTPException(
+            status_code=409,
+            detail={"error": str(e), "reason": e.reason},
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Trigger 无效: {e}")
     except Exception as e:

@@ -11,11 +11,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.trigger_manager as tm
+from faust_backend.runtime import frontend_presence
 
 
 @pytest.fixture(autouse=True)
 def _clean_queues():
-    """每个用例前后清空两个队列，隔离状态。"""
+    """每个用例前后清空两个队列并复位前端在线信号，隔离状态。"""
+    frontend_presence.reset()
+    frontend_presence.mark_online()  # D19：在线才允许触发，本文件测的是在线行为
     for q in (tm.trigger_queue, tm.batched_queue):
         with q.mutex:
             q.queue.clear()
@@ -23,6 +26,7 @@ def _clean_queues():
     for q in (tm.trigger_queue, tm.batched_queue):
         with q.mutex:
             q.queue.clear()
+    frontend_presence.reset()
 
 
 def test_base_trigger_priority_default_normal():
@@ -99,28 +103,13 @@ def test_drain_batched_empty_returns_empty_list():
     assert tm.drain_batched() == []
 
 
-def test_peek_next_trigger_does_not_consume():
-    assert tm.peek_next_trigger() is None
+def test_pop_next_trigger_is_non_blocking():
+    """取用规则（优先级/闸门/interrupt 越过 normal）归调度器，这里只验证非阻塞取用。"""
+    assert tm.pop_next_trigger() is None
     tm._emit_trigger({"id": "a::1", "type": "event", "event_name": "e"})
-    head = tm.peek_next_trigger()
+    head = tm.pop_next_trigger()
     assert head is not None and head["id"] == "a::1"
-    assert tm.trigger_queue.qsize() == 1  # 仍在队列里
-
-
-def test_take_interrupt_trigger_skips_queued_normal():
-    """播放闸门 hold 时：队首 normal 不被消费，但后面的 interrupt 要能放行（避免队头阻塞）。"""
-    tm._emit_trigger({"id": "n::1", "type": "event", "event_name": "e"})
-    tm._emit_trigger({"id": "i::1", "type": "event", "event_name": "e", "priority": "interrupt"})
-    tm._emit_trigger({"id": "n::2", "type": "event", "event_name": "e"})
-    taken = tm.take_interrupt_trigger()
-    assert taken is not None and taken["id"] == "i::1"
-    remaining = [tm.get_next_trigger()["id"] for _ in range(tm.trigger_queue.qsize())]
-    assert remaining == ["n::1", "n::2"]          # 其余顺序不变
-    assert tm.take_interrupt_trigger() is None    # 没有告警时返回 None
-
-
-def test_take_interrupt_trigger_empty_queue():
-    assert tm.take_interrupt_trigger() is None
+    assert tm.pop_next_trigger() is None
 
 
 def test_batch_injection_text_format():

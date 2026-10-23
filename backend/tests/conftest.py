@@ -22,12 +22,16 @@ def _fresh_agent_lock():
     ``loop_scope="module"`` 给每个测试模块一个独立循环：模块 A 先抢过这把锁之后，
     模块 B 的用例就会撞上 "is bound to a different event loop"。这是与业务无关的
     顺序性失败，因此在每个用例前重置，让整套用例与执行顺序无关。
-    """
-    from faust_backend.runtime import state
 
+    调度器单例同理（worker 任务绑定创建它的事件循环）：一并换新，避免跨模块串味。
+    """
+    from faust_backend.runtime import scheduler, state
+
+    scheduler.reset_scheduler()
     state.agent_lock = asyncio.Lock()
     state.mark_agent_lock_released()
     yield
+    scheduler.reset_scheduler()
 
 
 @pytest.fixture

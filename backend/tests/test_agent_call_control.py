@@ -97,7 +97,6 @@ async def test_producer_cancelled_while_waiting_lock_terminates_consumer(monkeyp
     state.mark_agent_lock_acquired("test_holder")
     agen = lifecycle.stream_chat_agent_events(FakeStreamAgent(), {"messages": []})
     try:
-        assert (await agen.__anext__())["type"] == "waiting_lock"
         # 推进生成器让它创建生产者；生产者此刻停在 acquire_agent_lock 上
         consumer = asyncio.create_task(agen.__anext__())
         await asyncio.sleep(0.1)
@@ -186,25 +185,37 @@ async def _unreachable() -> str:  # pragma: no cover - 必须不被调用
     raise AssertionError("锁被占用时不应进入清空/重建主体")
 
 
-# ── lock_held 语义（/clear 自锁回归） ──
+# ── 调度器回合内的自锁回归（/clear 曾经锁死 10 分钟） ──
 
 
-async def test_invoke_agent_locked_with_lock_held_does_not_reacquire(short_lock_timeout):
-    """调用方已持锁时，嵌套的 Agent 调用不得再次获取同一把锁。"""
+async def test_invoke_agent_locked_inside_scheduled_turn_does_not_reacquire(short_lock_timeout):
+    """调度器回合内嵌套的 Agent 调用不得再次获取同一把锁。
+
+    锁由调度器 worker 持有；回合体内的 ``invoke_agent_locked`` 走"已持锁"路径
+    （``acquire_agent_lock`` 在临界区内是 no-op），因此在短超时下也必须立刻返回。
+    """
+    from faust_backend.runtime import scheduler as agent_scheduler
+
     agent = FakeInvokeAgent()
-    await state.agent_lock.acquire()
-    state.mark_agent_lock_acquired("slash_clear")
-    try:
-        res = await asyncio.wait_for(
-            lifecycle.invoke_agent_locked(agent, {"messages": []}, lock_held=True),
-            timeout=5,
+    scheduler = agent_scheduler.AgentScheduler()
+    seen: list[bool] = []
+
+    async def _run():
+        seen.append(state.agent_lock.locked())
+        return await lifecycle.invoke_agent_locked(agent, {"messages": []})
+
+    handle = scheduler.submit(
+        agent_scheduler.AgentRequest(
+            agent_scheduler.TurnKind.USER, _run, label="exclusive", gate="exempt",
+            preemptible=False,
         )
-        assert state.agent_lock.locked(), "内层调用释放了调用方的锁"
-    finally:
-        state.agent_lock.release()
-        state.mark_agent_lock_released()
+    )
+    res = await asyncio.wait_for(handle.wait(), timeout=5)
     assert res["messages"][-1]["content"] == "ok"
+    assert seen == [True], "回合执行期间主 Agent 锁必须由 worker 持有"
     assert agent.calls
+    await scheduler.shutdown(timeout=1.0)
+    assert not state.agent_lock.locked()
 
 
 async def test_acquire_agent_lock_rejects_reentrancy(short_lock_timeout):
@@ -233,12 +244,9 @@ async def test_clear_success_path_completes_and_releases_lock(monkeypatch):
     monkeypatch.setattr(chat, "reset_output_store", lambda **kw: cleared.append(True))
     monkeypatch.setattr(state, "AGENT_LOCK_TIMEOUT", 0.3)
 
-    async def fake_rebuild(*, reset_dialog=False, no_initial_chat=False, lock_held=False):
-        # 真实 rebuild 在临界区之外还会发起一次引导对话：必须遵守同一个 lock_held
-        assert lock_held is True
-        await lifecycle.invoke_agent_locked(
-            state.agent, {"messages": []}, lock_held=lock_held
-        )
+    async def fake_rebuild(*, reset_dialog=False, no_initial_chat=False):
+        # 真实 rebuild 在同一个临界区里还会发起一次引导对话：绝不能再取一次锁
+        await lifecycle.invoke_agent_locked(state.agent, {"messages": []})
         return {"ready": True, "status": "ready", "error": ""}
 
     monkeypatch.setattr(chat, "rebuild_runtime", fake_rebuild)
@@ -327,21 +335,35 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     return fake_agent
 
 
-async def test_rebuild_with_lock_held_runs_bootstrap_without_self_lock(monkeypatch):
-    """调用方持锁时 rebuild 的引导对话不得再获取锁（/clear 自锁的完整回归）。"""
+async def test_rebuild_inside_exclusive_turn_runs_bootstrap_without_self_lock(monkeypatch):
+    """调度器回合内 rebuild 的引导对话不得再取锁（/clear 自锁的完整回归）。
+
+    斜杠命令现在跑在 ``exclusive`` 回合里：锁由 worker 持有，rebuild 内部的
+    ``TimedAgentLock`` 与引导调用都必须是 no-op，重建结束时锁归 worker 释放。
+    """
+    from faust_backend.runtime import scheduler as agent_scheduler
+
     fake_agent = _stub_rebuild_deps(monkeypatch)
     monkeypatch.setattr(state, "AGENT_LOCK_TIMEOUT", 0.3)
+    scheduler = agent_scheduler.AgentScheduler()
+    locked_during: list[bool] = []
 
-    async with lifecycle.TimedAgentLock("slash_clear"):
-        info = await asyncio.wait_for(
-            lifecycle.rebuild_runtime(
-                reset_dialog=True, no_initial_chat=False, lock_held=True
-            ),
-            timeout=10,
+    async def _run():
+        info = await lifecycle.rebuild_runtime(reset_dialog=True, no_initial_chat=False)
+        locked_during.append(state.agent_lock.locked())
+        return info
+
+    handle = scheduler.submit(
+        agent_scheduler.AgentRequest(
+            agent_scheduler.TurnKind.USER, _run, label="exclusive", gate="exempt",
+            preemptible=False,
         )
-        assert state.agent_lock.locked(), "重建过程释放了调用方的锁"
+    )
+    info = await asyncio.wait_for(handle.wait(), timeout=10)
 
     assert info["ready"] is True, info
     assert info["initial_chat_skipped"] is False, "引导对话被跳过"
     assert fake_agent.calls, "引导对话没有被调用"
+    assert locked_during == [True], "重建过程中锁必须由调度器持有"
+    await scheduler.shutdown(timeout=1.0)
     assert not state.agent_lock.locked()

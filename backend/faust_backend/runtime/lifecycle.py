@@ -6,7 +6,7 @@ _t.begin("builtin")
 import os
 import asyncio
 import time
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, nullcontext, suppress as contextlib_suppress
 from typing import Any
 
 _t.end("builtin")
@@ -136,16 +136,23 @@ async def acquire_agent_lock(owner: str) -> None:
     """获取主 Agent 锁，带超时兜底。超时说明出现了真死锁（不可重入二次获取、
     持锁路径被意外阻塞等），此时抛错并报告当前持有者，而不是无限等待。
 
+    调度器临界区内（``scheduler.in_scheduled_turn()``）直接返回：锁已由调度器
+    worker 为本回合持有，本任务只是它的子孙，二次获取必然自锁。这与"同一任务
+    二次获取"不同——后者仍是真 bug，继续报错。
+
     同一任务二次获取会**立刻**报错：asyncio.Lock 不可重入，真等下去只会卡满
-    AGENT_LOCK_TIMEOUT（/clear 曾经就这样把后端锁死 10 分钟，见
-    `_rebuild_runtime_locked` 的 lock_held 语义）。调用链里确实已持锁时，
-    应当显式传 `lock_held=True`，而不是再获取一次。
+    AGENT_LOCK_TIMEOUT（/clear 曾经就这样把后端锁死 10 分钟：嵌套的 Agent 调用
+    必须在调度器的同一个回合里执行，而不是二次取锁）。
     """
+    from faust_backend.runtime import scheduler
+
+    if scheduler.in_scheduled_turn():
+        return
     if state.agent_lock_owner_task is asyncio.current_task():
         raise RuntimeError(
             f"主 Agent 锁不可重入：当前任务已经持有它（持有者="
             f"[{state.agent_lock_owner or '未知'}]，新的请求方=[{owner}]）。"
-            "调用链里嵌套了 Agent 调用，请显式传 lock_held=True。"
+            "调用链里嵌套了 Agent 调用，应放在调度器的同一个回合里执行。"
         )
     try:
         await asyncio.wait_for(state.agent_lock.acquire(), timeout=state.AGENT_LOCK_TIMEOUT)
@@ -155,6 +162,37 @@ async def acquire_agent_lock(owner: str) -> None:
             f"[{state.agent_lock_owner or '未知'}]。这可能意味着持锁方已死锁或被阻塞。"
         ) from None
     state.mark_agent_lock_acquired(owner)
+
+
+def release_agent_lock() -> None:
+    """释放主 Agent 锁（**本调用点是否拥有它**）。
+
+    调度器回合内是 no-op：锁归回合所有，由 worker（或流式生产者在 LLM 会话结束时
+    提前）统一释放，嵌套的辅助调用（``TimedAgentLock`` 退出、``invoke_agent_locked``
+    返回）不得把回合的锁放掉——否则回合中段会出现"锁空窗"，外部持锁方可以插进来。
+    """
+    from faust_backend.runtime import scheduler
+
+    if scheduler.in_scheduled_turn():
+        return
+    state.agent_lock.release()
+    state.mark_agent_lock_released()
+
+
+def release_llm_stream_lock() -> None:
+    """流式生产者结束时的释放。
+
+    回合内：LLM 会话一结束就提前放掉本回合的锁（交付阶段的 websocket 发送/插件
+    hook 阻塞不再拖住全局锁——方案 1 的 P0 语义；worker 收尾时的释放是幂等的）。
+    回合外：就是普通释放。
+    """
+    from faust_backend.runtime import scheduler
+
+    if scheduler.in_scheduled_turn():
+        scheduler.release_turn_lock()
+        return
+    state.agent_lock.release()
+    state.mark_agent_lock_released()
 
 
 class AgentLockBusy(RuntimeError):
@@ -181,8 +219,7 @@ class TimedAgentLock:
             raise AgentLockBusy(str(e)) from None
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        state.agent_lock.release()
-        state.mark_agent_lock_released()
+        release_agent_lock()
 
 
 class _StreamState:
@@ -194,12 +231,12 @@ class _StreamState:
         self.terminal_sent = False
 
 
-async def invoke_agent_locked(target_agent, payload, config=None, *, lock_held: bool = False):
-    """调用主 Agent（含 429 退避重试）。
+async def _invoke_agent_unlocked(target_agent, payload, config=None):
+    """调用主 Agent（含 429 退避重试）；**调用方必须已经持有主 Agent 锁**。
 
-    ``lock_held=True`` 表示调用方**已经持有**主 Agent 锁：此时不得再获取/释放它
-    （asyncio.Lock 不可重入），否则同一任务会自锁到 AGENT_LOCK_TIMEOUT。用于
-    `_rebuild_runtime_locked` 在"清空 + 重建"临界区内发起的引导对话。
+    这是"锁归谁"的唯一表达方式：需要自己取锁的入口用 ``invoke_agent_locked``，
+    已经在临界区内的路径（rebuild 的引导对话）直接用它——不再需要 ``lock_held``
+    这类"我自己已经持锁"的布尔参数（asyncio.Lock 不可重入，传错就是自锁）。
     """
     if config is None:
         config = {
@@ -208,9 +245,6 @@ async def invoke_agent_locked(target_agent, payload, config=None, *, lock_held: 
         }
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        if not lock_held:
-            log.debug("等待 Agent 锁")
-            await acquire_agent_lock("invoke_agent_locked")
         log.debug("开始调用 LLM")
         try:
             payload = await _apply_llm_request_pre(payload)
@@ -222,14 +256,22 @@ async def invoke_agent_locked(target_agent, payload, config=None, *, lock_held: 
                 log.warning("429 限流，重试 attempt=%d/%d", attempt, max_attempts)
             else:
                 raise
-        finally:
-            # lock_held=True 时锁归调用方所有，这里绝不能释放（会破坏外层临界区，
-            # 而且 mark_agent_lock_released 会把持有者信息一起清掉）
-            if not lock_held:
-                state.agent_lock.release()
-                state.mark_agent_lock_released()
         await _sleep_backoff(attempt)
     raise RuntimeError("agent invoke retries exhausted")
+
+
+async def invoke_agent_locked(target_agent, payload, config=None):
+    """调用主 Agent（获取主 Agent 锁后再调用）。
+
+    调度器回合内 ``acquire_agent_lock`` 是 no-op：锁已由 worker 为本回合持有，
+    因此同一条链路既能被独立调用，也能安全地跑在调度器里。
+    """
+    log.debug("等待 Agent 锁")
+    await acquire_agent_lock("invoke_agent_locked")
+    try:
+        return await _invoke_agent_unlocked(target_agent, payload, config)
+    finally:
+        release_agent_lock()
 
 
 class _StreamFailed:
@@ -248,6 +290,7 @@ async def _stream_agent_producer(
     """持有主 Agent 锁的流式生产任务：只负责推进 astream_events 并把解析后的
     事件推入队列。锁的持有时间只覆盖 LLM 会话本身，与消费者（websocket 发送）
     的节拍无关——修复前端停止读取或插件 hook 阻塞时全局锁被无限期持有的问题。"""
+    from faust_backend.runtime import scheduler
     from faust_backend.runtime.compact import COMPACT_TAG
 
     max_attempts = 3
@@ -291,6 +334,8 @@ async def _stream_agent_producer(
             ):
                 if not isinstance(event, dict):
                     continue
+                # 执行位"有产出"的心跳（惰性僵死判定用，D7）
+                scheduler.touch()
                 if abort_event and abort_event.is_set():
                     log.info("Agent stream aborted by user")
                     raise asyncio.CancelledError("User interrupted")
@@ -370,8 +415,7 @@ async def _stream_agent_producer(
                 await _finish(_StreamFailed(e))
                 return
         finally:
-            state.agent_lock.release()
-            state.mark_agent_lock_released()
+            release_llm_stream_lock()
         await _sleep_backoff(attempt)
     await _finish(_StreamFailed(RuntimeError("agent stream retries exhausted")))
 
@@ -379,13 +423,17 @@ async def _stream_agent_producer(
 async def stream_chat_agent_events(
     target_agent, payload, config=None, *, abort_event: asyncio.Event | None = None
 ):
+    """流式产出主 Agent 的事件（归一化后的 dict）。
+
+    由调度器回合内的消费者驱动（``chat._run_agent_stream``）；生产者在
+    "锁已由调度器持有"时不会二次获取锁。等待主 Agent 锁的排队反馈不再由这里
+    发出——排队发生在调度器队列里，入口在提交时自行告知前端。
+    """
     if config is None:
         config = {
             "configurable": {"thread_id": state.THREAD_ID},
             "recursion_limit": 300,
         }
-    # 立即向消费者反馈"等待锁/排队中"，前端可据此显示排队状态
-    yield {"type": "waiting_lock"}
     queue: asyncio.Queue = asyncio.Queue()
     stream_state = _StreamState()
     producer = asyncio.create_task(
@@ -421,6 +469,22 @@ async def stream_chat_agent_events(
             await producer
         except asyncio.CancelledError:
             pass
+
+
+async def stream_silent_reply(payload: dict, config=None) -> str:
+    """silent sink：驱动一次 Agent 调用并只收文本（不推前端、不写记忆）。
+
+    与 ``invoke_agent_locked`` 的区别是它走 ``astream_events``：事件流让执行位
+    持续有产出（惰性僵死判定 D7 依赖它），也顺带统一了错误语义（锁超时/429
+    重试都在生产者的重试循环里）。调用方是调度器 worker 的回合，锁已持有。
+    """
+    reply = ""
+    async for event in stream_chat_agent_events(state.agent, payload, config=config):
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "delta":
+            reply += state.message_content_to_text(event.get("content"))
+    return reply
 
 
 def _collect_runtime_tools() -> list:
@@ -601,9 +665,7 @@ async def _create_agent_with_extensions(*, model_name: str, checkpointer):
     return create_agent(**kwargs)
 
 
-async def rebuild_runtime(
-    *, reset_dialog: bool = False, no_initial_chat: bool = False, lock_held: bool = False
-):
+async def rebuild_runtime(*, reset_dialog: bool = False, no_initial_chat: bool = False):
     """重建运行时；拿不到主 Agent 锁时返回 busy 结果，绝不无限期等待。
 
     修复前这里是裸 `async with state.agent_lock`（全工程唯一一处无超时获取）：
@@ -611,14 +673,13 @@ async def rebuild_runtime(
     整个输入循环（连同 interrupt 控制消息）一起冻住，管理接口同样挂起且无诊断。
     锁忙不等于运行时损坏：这里只报告状态，不清空 state.agent。
 
-    lock_held=True 表示调用方已经持有主 Agent 锁（如 /clear：清数据与重建必须
-    在同一个临界区里完成），此时不再重复获取——asyncio.Lock 不可重入。
+    调用位置决定锁的归属：斜杠命令/管理路由把它放在调度器的 exclusive 回合里
+    （锁已由 worker 持有，取锁是 no-op），启动期与独立重建则在回合外自己取锁。
     """
     try:
         return await _rebuild_runtime_locked(
             reset_dialog=reset_dialog,
             no_initial_chat=no_initial_chat,
-            lock_held=lock_held,
         )
     except AgentLockBusy as e:
         log.error("重建运行时未取得主 Agent 锁: %s", e)
@@ -633,7 +694,7 @@ async def rebuild_runtime(
 
 
 async def _rebuild_runtime_locked(
-    *, reset_dialog: bool = False, no_initial_chat: bool = False, lock_held: bool = False
+    *, reset_dialog: bool = False, no_initial_chat: bool = False
 ):  # TODO: 让逻辑更加清晰
     log.info(
         "正在重建运行时，reset_dialog=%s, no_initial_chat=%s",
@@ -641,7 +702,7 @@ async def _rebuild_runtime_locked(
         no_initial_chat,
     )
     _needs_initial_chat = False
-    async with (nullcontext() if lock_held else TimedAgentLock("rebuild_runtime")):
+    async with TimedAgentLock("rebuild_runtime"):
         try:
             conf.reload_configs()
             from faust_backend.runtime import state as runtime_state
@@ -758,13 +819,12 @@ async def _rebuild_runtime_locked(
     if _needs_initial_chat:
         try:
             if reset_dialog:
-                await invoke_agent_locked(
+                await _invoke_agent_unlocked(
                     state.agent,
                     {"messages": [{"role": "system", "content": state.PROMPT}]},
-                    lock_held=lock_held,
                 )
             else:
-                await invoke_agent_locked(
+                await _invoke_agent_unlocked(
                     state.agent,
                     {
                         "messages": [
@@ -778,7 +838,6 @@ async def _rebuild_runtime_locked(
                             }
                         ]
                     },
-                    lock_held=lock_held,
                 )
             log.info("运行时重建完成")
             state.set_runtime_state(ready=True, status="ready")
@@ -897,6 +956,11 @@ async def lifespan(app: FastAPI):
 
     # ── shutdown ──
     log.info("开始关闭 Agent...")
+    from faust_backend.runtime import scheduler as scheduler_module
+
+    # 调度器 worker：cancel + 有界等待，不 drain（未执行的回合直接终结）
+    with contextlib_suppress(Exception):
+        await scheduler_module.get_scheduler().shutdown()
     if state.subagent_manager is not None:
         try:
             await state.subagent_manager.aclose()

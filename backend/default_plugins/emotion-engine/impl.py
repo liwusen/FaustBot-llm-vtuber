@@ -192,34 +192,27 @@ def _build_proactive_content(tier: str) -> str:
 
 
 def _schedule_proactive_chat(content: str) -> bool:
-    """契约第3条模式：后台触发 Agent 主动说话（chat.py 后台触发器同款）。"""
+    """契约第3条模式：后台触发 Agent 主动说话（走调度器，sink=silent + droppable）。
+
+    与 chat.py 的后台触发器同款：提交给唯一调度器而不是自己起 task 抢主 Agent，
+    这样它才排在 trigger 档、拥塞时可被硬丢（D2：`droppable` 是唯一允许硬丢者）。
+    """
     from faust_backend.runtime import state
-    from faust_backend.runtime.lifecycle import invoke_agent_locked
+    from faust_backend.runtime import scheduler
 
     if state.agent is None:
         log.warning("emotion-engine: agent 未就绪，跳过主动寒暄")
         return False
     try:
-        task = asyncio.create_task(
-            invoke_agent_locked(
-                state.agent,
-                {"messages": [{"role": "user", "content": content}]},
-            )
+        scheduler.submit_silent_call(
+            {"messages": [{"role": "user", "content": content}]},
+            kind=scheduler.TurnKind.TRIGGER,
+            droppable=True,
+            label="proactive",
         )
     except RuntimeError:
         log.error("emotion-engine: 无运行中的事件循环，跳过主动寒暄")
         return False
-
-    def _on_done(t: asyncio.Task) -> None:
-        if t.cancelled():
-            return
-        error = t.exception()
-        if error is not None:
-            # 后台主动寒暄失败必须留痕：不取一次 exception() 只会得到
-            # asyncio 的 "Task exception was never retrieved"，无从定位。
-            log.error("emotion-engine: 主动寒暄调用失败: %s", error)
-
-    task.add_done_callback(_on_done)
     return True
 
 

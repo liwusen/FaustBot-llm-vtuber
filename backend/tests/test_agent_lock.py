@@ -3,7 +3,8 @@
 覆盖 Fix Plan（锁死锁与等待反馈）的关键契约：
 1. 流式锁解耦：消费者暂停/停止读取时，锁只覆盖 LLM 会话本身，不被前端节拍劫持。
 2. 锁超时兜底：不可重入二次获取/持锁方阻塞时，按 AGENT_LOCK_TIMEOUT 报错并可恢复。
-3. waiting_lock 事件：流式消费第一项即排队反馈。
+3. 排队反馈：等待发生在**调度器队列**里（提交时下发 pending），生产者不再自报
+   waiting_lock（见 tests/test_agent_scheduler.py 的准入用例）。
 4. 中断/错误传播后锁必然释放。
 """
 import asyncio
@@ -80,12 +81,10 @@ def lock_timeout_env():
     state.mark_agent_lock_released()
 
 
-async def test_waiting_lock_event_emitted_first():
-    """流式消费第一项必须是 waiting_lock（前端排队反馈的契约）。"""
+async def test_stream_starts_with_lock_acquired():
+    """流式消费第一项是 lock_acquired（前端据此清除"排队等待中"）。"""
     agen = lifecycle.stream_chat_agent_events(FakeStreamAgent(texts=("你好",)), {"messages": []})
     try:
-        first = await _next(agen)
-        assert first == {"type": "waiting_lock"}
         acquired = await _next(agen)
         assert acquired == {"type": "lock_acquired"}
         delta = await _next(agen)
@@ -102,7 +101,6 @@ async def test_consumer_pause_does_not_hold_lock():
         FakeStreamAgent(texts=("一", "二", "三")), {"messages": []}
     )
     try:
-        assert (await _next(agen))["type"] == "waiting_lock"
         assert (await _next(agen))["type"] == "lock_acquired"
         delta = await _next(agen)
         assert delta["type"] == "delta"
@@ -117,7 +115,7 @@ async def test_consumer_pause_does_not_hold_lock():
 async def test_invoke_agent_locked_timeout_and_recovery(lock_timeout_env, hold_agent_lock):
     """锁被别人占着时按超时报错并报告持有者；释放后可正常恢复调用。
 
-    持有者必须是**另一个任务**：同一任务二次获取现在会被可重入守卫立刻拒绝
+    持有者必须是**另一个任务**：同一任务二次获取会被可重入守卫立刻拒绝
     （那条路径由 test_agent_call_control 覆盖）。
     """
     async with hold_agent_lock("test_holder"):
@@ -133,12 +131,11 @@ async def test_invoke_agent_locked_timeout_and_recovery(lock_timeout_env, hold_a
 
 
 async def test_stream_timeout_when_lock_held(lock_timeout_env):
-    """流式路径等待锁超时：先收到 waiting_lock，随后 RuntimeError，锁不被破坏。"""
+    """流式路径等待锁超时：RuntimeError 经队列重抛给消费者，锁不被破坏。"""
     await state.agent_lock.acquire()
     state.mark_agent_lock_acquired("test_holder")
     agen = lifecycle.stream_chat_agent_events(FakeStreamAgent(), {"messages": []})
     try:
-        assert (await _next(agen))["type"] == "waiting_lock"
         with pytest.raises(RuntimeError) as exc_info:
             await _next(agen)
         assert "等待主 Agent 锁超时" in str(exc_info.value)
@@ -155,7 +152,6 @@ async def test_stream_error_propagates_and_releases_lock():
         FakeStreamAgent(error=ValueError("boom")), {"messages": []}
     )
     try:
-        assert (await _next(agen))["type"] == "waiting_lock"
         assert (await _next(agen))["type"] == "lock_acquired"
         with pytest.raises(ValueError, match="boom"):
             await _next(agen)
@@ -172,7 +168,6 @@ async def test_stream_abort_propagates_cancelled():
         FakeStreamAgent(gate=gate, texts=("一", "二")), {"messages": []}, abort_event=abort
     )
     try:
-        assert (await _next(agen))["type"] == "waiting_lock"
         assert (await _next(agen))["type"] == "lock_acquired"
         assert (await _next(agen))["type"] == "delta"
         abort.set()

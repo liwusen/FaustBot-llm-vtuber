@@ -20,6 +20,7 @@ import faust_backend.events as events
 import faust_backend.routes.chat as chat
 import faust_backend.trigger_manager as tm
 import faust_backend.turn_gate as tg
+from faust_backend.runtime import frontend_presence
 from faust_backend.runtime import state
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -35,6 +36,10 @@ class _FakeWs:
     async def send_text(self, raw: str):
         self.sent.append(raw)
 
+    async def receive_text(self):
+        """command WS 是只发不收的：读端一直挂着，只有断开才结束。"""
+        await asyncio.sleep(3600)
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
@@ -47,12 +52,15 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "agent", object())
     events.ignore_trigger_event.clear()
     tg.reset()
+    frontend_presence.reset()
+    frontend_presence.mark_online()  # D19：本文件测的是“在线”时的消费行为
     for q in (tm.trigger_queue, tm.batched_queue):
         with q.mutex:
             q.queue.clear()
     yield
     events.ignore_trigger_event.clear()
     tg.reset()
+    frontend_presence.reset()
     for q in (tm.trigger_queue, tm.batched_queue):
         with q.mutex:
             q.queue.clear()
@@ -103,7 +111,11 @@ async def test_normal_trigger_is_held_until_ack(monkeypatch, caplog):
 
 
 async def test_interrupt_trigger_bypasses_hold(monkeypatch):
-    """队头阻塞回归：队首是 normal、后面是 interrupt 时，告警必须能单独放行。"""
+    """队头阻塞回归：队首是 normal、后面是 interrupt 时，告警必须能单独放行。
+
+    触发器已从 inbox 搬进调度器队列（S2-2）：被压住的 normal 现在表现为
+    "调度器队列里挂着一个 trigger 档请求"，而不是"还留在 trigger_queue 里"。
+    """
     calls: list[str] = []
     task = await _run_loop(monkeypatch, calls)
     try:
@@ -114,7 +126,8 @@ async def test_interrupt_trigger_bypasses_hold(monkeypatch):
 
         assert len(calls) == 1, "interrupt 级应当被放行"
         assert "i::1" in calls[0]
-        assert tm.peek_next_trigger()["id"] == "n::1", "normal 触发器仍应留在队列里等 ack"
+        queued = chat._scheduler().snapshot()["queue"]
+        assert [q["kind"] for q in queued] == ["trigger"], "normal 触发器仍应等 ack"
     finally:
         await _stop(task)
 

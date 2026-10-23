@@ -15,6 +15,7 @@ from faust_backend.runtime import state
 import sys
 from faust_backend.tools.vfs import get_faustbot_vfs
 from faust_backend.config_loader import CONFIG_ROOT
+from faust_backend.runtime import frontend_presence
 import faust_backend.trigger_manager as trigger_manager
 log = get_logger("faust.debugging")
 
@@ -45,6 +46,12 @@ async def status_get():
     active_triggers = trigger_manager.get_trigger_information()
     return {"active_tasks": tasks, "active_triggers": active_triggers}
 
+
+def _scheduler_snapshot() -> dict:
+    from faust_backend.runtime import scheduler
+
+    return scheduler.get_scheduler().snapshot()
+
 @router.get("/faust/debugging/snapshot")
 async def snapshot():
     """调试接口：获取当前状态快照"""
@@ -68,8 +75,15 @@ async def snapshot():
         "private_config_auto_created": bool(state.conf.PRIVATE_CONFIG_AUTO_CREATED),
         "skills": list_skills(),
         "async_tasks": (await status_get())["active_tasks"],
-        "active_triggers": (await status_get())["active_triggers"]
+        "active_triggers": (await status_get())["active_triggers"],
+        "agent_scheduler": _scheduler_snapshot(),
     }
+
+
+@router.get("/faust/debugging/agent-scheduler")
+async def agent_scheduler():
+    """调试接口：主 Agent 调度器快照（执行位 + 队列 + 常量，S1-5）。"""
+    return _scheduler_snapshot()
 
 
 @router.get("/faust/debugging/trigger-queue")
@@ -79,4 +93,6 @@ async def trigger_queue():
     return {
         "queue_size": len(items),
         "triggers": items,
+        # D19：离线期间被拒绝的触发只进日志 + 计数（不写 fire 留痕）
+        "frontend_presence": frontend_presence.snapshot(),
     }

@@ -10,7 +10,6 @@ import faust_backend.nimble as nimble
 import faust_backend.araya_runtime as araya_runtime
 import faust_backend.trigger_manager as trigger_manager
 import faust_backend.turn_gate as turn_gate
-import faust_backend.live_mode as live_mode
 import faust_backend.admin_runtime as admin_runtime
 import faust_backend.config_loader as conf
 import faust_backend.service_manager as service_manager
@@ -18,9 +17,11 @@ import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state
 from faust_backend.runtime import subagent_events
 from faust_backend.runtime import turn_state
+from faust_backend.runtime import frontend_presence
+from faust_backend.runtime import scheduler as agent_scheduler
 from faust_backend.runtime.lifecycle import (
-    invoke_agent_locked, stream_chat_agent_events, schedule_memory_record_sync,
-    rebuild_runtime, _build_chat_model, TimedAgentLock, AgentLockBusy,
+    stream_chat_agent_events, stream_silent_reply,
+    schedule_memory_record_sync, rebuild_runtime, _build_chat_model,
 )
 from faust_backend.runtime.session_stats import collect_session_stats, get_checkpoint_messages
 from faust_backend.mcp_manager import get_mcp_manager
@@ -142,7 +143,7 @@ async def _session_token_summary() -> str:
 
 
 async def _clear_session_locked() -> str:
-    """在已持有主 Agent 锁的前提下清空会话并重建运行时。"""
+    """在调度器 exclusive 回合内（锁已持有）清空会话并重建运行时。"""
     if state.checkpointer is not None and hasattr(state.checkpointer, "adelete_thread"):
         await state.checkpointer.adelete_thread(str(state.THREAD_ID))
     if state.subagent_manager is not None:
@@ -151,22 +152,18 @@ async def _clear_session_locked() -> str:
     pm = getattr(state, 'plugin_manager', None)
     if pm:
         pm.reset_all_plugin_sessions()
-    info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False, lock_held=True)
+    info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
     return f"已清空当前会话并重建运行时。ready={info.get('ready')} status={info.get('status')}"
 
 
 async def _clear_current_session() -> str:
     """清空当前会话。
 
-    整个「清数据 + 重建」必须在锁内完成：先删 checkpoint 再发现拿不到锁，会得到
-    「会话已清掉、运行时没重建」的半成品状态。
+    整个「清数据 + 重建」在**同一个调度器 exclusive 回合**里完成：先删 checkpoint
+    再发现拿不到锁，会得到「会话已清掉、运行时没重建」的半成品状态。拿不到执行位
+    由 ``run_exclusive`` 统一报"主 Agent 正忙"。
     """
-    try:
-        async with TimedAgentLock("slash_clear"):
-            return await _clear_session_locked()
-    except AgentLockBusy as e:
-        log.warning("清空会话前未取得主 Agent 锁: %s", e)
-        return "主 Agent 正忙（可能有回合正在执行），已放弃清空会话，请稍后重试。"
+    return await _clear_session_locked()
 
 
 async def _compact_session_stream(websocket: WebSocket) -> str:
@@ -175,9 +172,9 @@ async def _compact_session_stream(websocket: WebSocket) -> str:
     与 auto compact 的唯一区别是「无视阈值强制压一次」；压缩逻辑、提示词、
     缓存策略完全共用，避免两套实现漂移。
 
-    全程持有主 Agent 锁：手动压缩改写的是同一份 checkpoint，而 auto compact 是
-    在持锁的 graph run 内跑的；修复前手动路径完全不加锁，会与进行中的 turn
-    并发改写同一 thread。
+    本函数只在调度器的 exclusive 回合里被调用（``_run_compact_command``），
+    锁由 worker 持有；修复前手动路径完全不加锁，会与进行中的 turn 并发改写
+    同一 thread。
     """
     middleware = state.compact_middleware
     if middleware is None:
@@ -194,33 +191,32 @@ async def _compact_session_stream(websocket: WebSocket) -> str:
         # force_compact 冒出去，让已经推送的压缩卡片停在无终态的状态。
         await _safe_send(websocket, _main_event_payload("compact_delta", content=text))
 
-    async with TimedAgentLock("slash_compact"):
-        messages = await get_checkpoint_messages()
-        if not messages:
-            await _notice("当前会话没有可压缩的上下文。")
-            return "当前会话没有可压缩的上下文。"
+    messages = await get_checkpoint_messages()
+    if not messages:
+        await _notice("当前会话没有可压缩的上下文。")
+        return "当前会话没有可压缩的上下文。"
 
-        await _safe_send(websocket, _main_event_payload("compact_start"))
+    await _safe_send(websocket, _main_event_payload("compact_start"))
 
-        update = await middleware.force_compact(messages, on_delta=_on_delta)
-        if not update:
-            await _safe_send(
-                websocket,
-                _main_event_payload(
-                    "compact_delta", content="当前会话没有可压缩的历史轮次。"
-                ),
-            )
-            await _safe_send(websocket, _main_event_payload("compact_done"))
-            return "当前会话没有可压缩的历史轮次。"
-
-        # 通过 graph 的 aupdate_state 应用更新：它会走 add_messages reducer，
-        # 因此 RemoveMessage(REMOVE_ALL_MESSAGES) 与顺序重排都能被正确执行。
-        # as_node 必须显式指定：create_agent 编译出的图有 model/tools 两个节点，
-        # 不指定时 langgraph 无法判断该写入归属哪个节点（Ambiguous update）。
-        config = {"configurable": {"thread_id": str(state.THREAD_ID)}}
-        await state.agent.aupdate_state(config, update, as_node="model")
+    update = await middleware.force_compact(messages, on_delta=_on_delta)
+    if not update:
+        await _safe_send(
+            websocket,
+            _main_event_payload(
+                "compact_delta", content="当前会话没有可压缩的历史轮次。"
+            ),
+        )
         await _safe_send(websocket, _main_event_payload("compact_done"))
-        return "对话压缩完成。"
+        return "当前会话没有可压缩的历史轮次。"
+
+    # 通过 graph 的 aupdate_state 应用更新：它会走 add_messages reducer，
+    # 因此 RemoveMessage(REMOVE_ALL_MESSAGES) 与顺序重排都能被正确执行。
+    # as_node 必须显式指定：create_agent 编译出的图有 model/tools 两个节点，
+    # 不指定时 langgraph 无法判断该写入归属哪个节点（Ambiguous update）。
+    config = {"configurable": {"thread_id": str(state.THREAD_ID)}}
+    await state.agent.aupdate_state(config, update, as_node="model")
+    await _safe_send(websocket, _main_event_payload("compact_done"))
+    return "对话压缩完成。"
 
 
 async def _run_slash_command_stream(websocket: WebSocket, factory) -> None:
@@ -228,6 +224,8 @@ async def _run_slash_command_stream(websocket: WebSocket, factory) -> None:
 
     修复前这些命令在 WS 接收循环里内联 await：一旦要等主 Agent 锁（/clear
     /thinking /effort 都会重建运行时），整个输入循环连 interrupt 一起冻住。
+    现在它作为 ``exclusive`` 档回合提交给调度器（与 user 同档、不可被抢占），
+    由调度器统一排队并持锁——重建运行时不再是"锁外插队"。
     """
     turn_id = turn_gate.new_turn_id()
     if state.subagent_manager and state.subagent_manager.consume_status_dirty():
@@ -236,7 +234,11 @@ async def _run_slash_command_stream(websocket: WebSocket, factory) -> None:
         websocket, _main_event_payload("start", turn_id=turn_id, origin="command")
     )
     try:
-        reply = await factory()
+        reply = await _scheduler().run_exclusive(factory, label="exclusive")
+    except agent_scheduler.LockBusyError:
+        # 主 Agent 被外部持锁方（管理路由的 rebuild）占着：给出人话而不是错误事件
+        log.warning("斜杠命令未取得主 Agent 锁（正忙）")
+        reply = "主 Agent 正忙（可能有回合正在执行），已放弃该命令，请稍后重试。"
     except Exception as e:  # noqa: BLE001
         log.error("斜杠命令后台执行失败: %s", e, exc_info=True)
         # 前端在 error 分支即释放 currentChatRequest；此时再补 done 反而会另开一个空会话
@@ -254,7 +256,9 @@ async def _run_slash_command_stream(websocket: WebSocket, factory) -> None:
 async def _run_compact_command(websocket: WebSocket) -> None:
     """后台执行 /compact：压缩卡片自带 compact_start/done，这里只补终结事件。"""
     try:
-        await _compact_session_stream(websocket)
+        await _scheduler().run_exclusive(
+            lambda: _compact_session_stream(websocket), label="exclusive:compact"
+        )
     except Exception as e:  # noqa: BLE001
         log.error("手动会话压缩失败: %s", e, exc_info=True)
         reason = state.format_chat_error(e)
@@ -270,9 +274,13 @@ async def _run_compact_command(websocket: WebSocket) -> None:
 
 
 async def _dispatch_runtime_command(websocket: WebSocket | None, factory) -> tuple[bool, str | None]:
-    """会重建运行时的命令：有前端连接时转后台任务，没有连接（POST 接口）时同步返回文本。"""
+    """会重建运行时的命令：有前端连接时转后台任务，没有连接（POST 接口）时同步返回文本。
+
+    两条路径都在调度器里以 ``exclusive`` 档执行（与 user 同档、不可被抢占）：
+    重建运行时改写的正是主 Agent 的同一份状态，不能绕过唯一执行位。
+    """
     if websocket is None:
-        return True, await factory()
+        return True, await _scheduler().run_exclusive(factory, label="exclusive")
     asyncio.create_task(_run_slash_command_stream(websocket, factory))
     return True, None
 
@@ -347,56 +355,91 @@ async def _safe_send(websocket: WebSocket, payload: dict) -> bool:
 # 修复前 next(iter(set)) 在多连接时是随机挑一条。
 _active_chat_websockets: dict = {}
 
-# 取消并等待任务退出的上限（秒）。必须有上限：被取消方卡在不可取消区时，调用方
-# （WS 接收循环）会一直等下去，用户下一条消息也发不出去。锁本身另有超时兜底。
-TASK_CANCEL_TIMEOUT_SEC = 3.0
+
+def _scheduler():
+    """主 Agent 调度器（唯一仲裁执行权的组件，S1）。"""
+    return agent_scheduler.get_scheduler()
 
 
-async def _cancel_tasks_bounded(tasks: list[asyncio.Task], *, reason: str) -> None:
-    """取消给定任务并限时等待退出；超时只记错误，不阻塞调用方。"""
-    pending = [task for task in tasks if task is not None and not task.done()]
-    if not pending:
-        return
-    for task in pending:
-        task.cancel()
-    _done, still_pending = await asyncio.wait(pending, timeout=TASK_CANCEL_TIMEOUT_SEC)
-    for task in still_pending:
-        log.error(
-            "任务在 %.1fs 内未响应取消（%s），放弃等待，改由主 Agent 锁超时兜底: %r",
-            TASK_CANCEL_TIMEOUT_SEC,
-            reason,
-            task,
-        )
+_KIND_INTERRUPT = agent_scheduler.TurnKind.INTERRUPT
+_KIND_BATCH = agent_scheduler.TurnKind.BATCH
 
 
-def _register_trigger_task(task: asyncio.Task, owner=None) -> None:
-    """登记占用了主 Agent 的触发器任务；owner 为前台触发器流式推送的目标连接。"""
-    turn_state.register_trigger_task(task, owner)
+def _trigger_kind(item) -> "agent_scheduler.TurnKind":
+    """触发器 payload → 档位（§1.1：静默由 sink 决定，不再是档位）。"""
+    priority = str((item or {}).get("priority") or "normal") if isinstance(item, dict) else "normal"
+    if priority == "interrupt":
+        return agent_scheduler.TurnKind.INTERRUPT
+    if priority == "batched":
+        return agent_scheduler.TurnKind.BATCH
+    return agent_scheduler.TurnKind.TRIGGER
 
 
-def _clear_trigger_task(task: asyncio.Task, owner=None) -> None:
-    turn_state.clear_trigger_task(task, owner)
+def _trigger_label(kind) -> str:
+    """档位名（快照里的 ``kind``）：trigger / batch / interrupt。"""
+    return str(agent_scheduler.TurnKind(kind).name.lower())
+
+
+def _submit_trigger_request(
+    trigger_text: str,
+    chat_ws,
+    *,
+    origin: str,
+    label: str,
+    kind,
+    merge_key: str | None = None,
+    gate: str = "playback",
+) -> None:
+    """把一个触发器请求非阻塞地交给调度器（入口不再 await 执行）。
+
+    ``owner=None``：触发器回合**不绑定任何一个连接**（D19-b）——一旦开跑就跑完，
+    不因 chat 连接断开被停；这也正是与用户回合（D21）刻意不对称的地方。
+    没有 chat 连接时 sink 降级为 silent（既有行为，只是从"执行前判断"变成标志）。
+    """
+    if chat_ws is not None:
+        async def _run() -> None:
+            await _run_trigger_stream_frontend(chat_ws, trigger_text)
+    else:
+        async def _run() -> None:
+            await _run_trigger_silent(trigger_text, origin=origin)
+
+    _scheduler().submit(agent_scheduler.AgentRequest(
+        kind,
+        _run,
+        label=label,
+        sink="chat" if chat_ws is not None else "silent",
+        gate=gate,
+        merge_key=merge_key,
+    ))
+
+
+def _latest_chat_ws():
+    """前台触发器流式推送的目标连接（最新接入的那条）。"""
+    return next(reversed(_active_chat_websockets), None)
 
 
 async def _force_interrupt_trigger(websocket) -> bool:
-    """用户插话：强制取消占用主 Agent 的触发器任务并等待其退出（确保主 Agent 锁释放）。
+    """用户插话：抢占正在占用执行位的触发器/批量回合（AUTO_FORCE_INTERRUPT）。
 
-    只打断「本连接的前台触发器 + 未绑定连接的后台触发器」：修复前只有一个全局
-    登记槽位，插话可能打到别的连接正在跑的触发器上。
+    ``AUTO_FORCE_INTERRUPT`` 是既有、已测、用户可见的行为，粒度沿用现状：
+    用 ``abort_event`` + ``task.cancel()``，只升级"谁来仲裁"（调度器）。
+    抢占标记打在**触发器流的目标连接**上——前台触发器流读的正是它的
+    ``force_interrupting``，据此把终态从 ``interrupted`` 换成 ``done(forced)``。
+    """
+    from faust_backend.runtime import scheduler as agent_scheduler
 
-    返回是否实际发生了打断。"""
-    tasks = turn_state.active_trigger_tasks(websocket)
-    if not tasks:
+    scheduler = _scheduler()
+    kinds = {agent_scheduler.TurnKind.TRIGGER, agent_scheduler.TurnKind.BATCH}
+    if not scheduler.has_running_kinds(kinds):
         return False
-    log.info("用户插话：强制打断 %d 个触发器任务", len(tasks))
-    turn = turn_state.get_turn_state(websocket)
+    target = _latest_chat_ws() or websocket
+    log.info("用户插话：抢占正在占用执行位的触发器回合")
+    turn = turn_state.get_turn_state(target)
     turn.force_interrupting = True
     try:
-        await _cancel_tasks_bounded(tasks, reason="user_interjection")
+        await scheduler.cancel_running_kinds(kinds, reason="user_interjection")
     finally:
         turn.force_interrupting = False
-        for task in tasks:
-            _clear_trigger_task(task, websocket)
     return True
 
 
@@ -411,7 +454,7 @@ async def _apply_user_interjection(text: str, websocket) -> str:
 
 
 async def _run_trigger_stream_frontend(chat_ws, trigger_text: str) -> None:
-    """前台触发器流式推送；失败时降级为后台执行。"""
+    """前台触发器（sink=chat）流式推送；推送失败时降级为静默执行。"""
     turn_id = turn_gate.new_turn_id()
     try:
         await chat_ws.send_text(json.dumps(
@@ -421,12 +464,21 @@ async def _run_trigger_stream_frontend(chat_ws, trigger_text: str) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        log.error("触发器流式推送失败，降级为后台执行: %s", e)
-        fallback_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
-        if fallback_text == "__IGNORED__":
-            log.info("触发器消息已被插件拦截，跳过降级执行")
-            return
-        await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": fallback_text}]})
+        log.error("触发器流式推送失败，降级为静默执行: %s", e)
+        await _run_trigger_silent(trigger_text, origin='trigger_background')
+
+
+async def _run_trigger_silent(trigger_text: str, origin: str = 'trigger_background') -> str:
+    """silent sink（后台触发器 / batched 批量）：只执行，不推前端。
+
+    插件钩子（记忆检索/情绪向量）与 Agent 调用都可能失败（如 LLM 传输层异常），
+    由调度器统一落成该回合的 error 终态，不再炸掉命令 WS 循环。
+    """
+    text = await _apply_plugin_message_hooks(trigger_text, origin=origin)
+    if text == "__IGNORED__":
+        log.info('触发器消息已被插件拦截，跳过执行: %s', trigger_text[:80])
+        return ""
+    return await stream_silent_reply({"messages": [{"role": "user", "content": text}]})
 
 
 async def _apply_plugin_message_hooks(text: str, origin: str = 'user') -> str:
@@ -469,10 +521,6 @@ async def _run_agent_stream(websocket: WebSocket, text: str, agent=None, origin:
         try:
             async for event in agen:
                 if not isinstance(event, dict):
-                    continue
-                if event.get("type") == "waiting_lock":
-                    # 主 Agent 忙/排队中：立即向前端反馈，避免无提示转圈
-                    await websocket.send_text(json.dumps(_main_event_payload("pending", reason="waiting_lock"), ensure_ascii=False))
                     continue
                 if event.get("type") == "lock_acquired":
                     # 已获取主 Agent 锁：清除前端"排队等待中"状态
@@ -602,8 +650,18 @@ async def chat_post(payload: dict):
             events.ignore_trigger_event.clear()
             log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
             return {"reply": "", "suppressed": True}
+        from faust_backend.runtime import scheduler as agent_scheduler
+
+        handle = _scheduler().submit(agent_scheduler.AgentRequest(
+            agent_scheduler.TurnKind.USER,
+            lambda: stream_silent_reply({"messages": [{"role": "user", "content": text}]}),
+            label="user",
+            sink="silent",          # 没有连接可推：POST 只回文本
+            gate="exempt",
+            on_terminal=lambda _h: events.ignore_trigger_event.clear(),
+        ))
         try:
-            resp = await invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": text}]})
+            reply = await handle.wait()
         except RuntimeError as e:
             if "等待主 Agent 锁超时" in str(e):
                 log.error("Chat POST 获取主 Agent 锁超时: %s", e)
@@ -612,14 +670,13 @@ async def chat_post(payload: dict):
                     content={"error": str(e), "busy": True},
                 )
             raise
-        if not resp:
+        if not reply:
             raise RuntimeError()
-        reply = state.message_content_to_text(resp["messages"][-1].content)
         schedule_memory_record_sync(text, reply)
         log.info('Chat POST 回复完成')
-        events.ignore_trigger_event.clear()
         return {"reply": reply, "warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
     except Exception as e:
+        events.ignore_trigger_event.clear()
         log.error("Chat POST 错误: %s", e)
         return {"error": state.format_chat_error(e), "warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
 
@@ -628,7 +685,6 @@ async def chat_post(payload: dict):
 async def chat_websocket(websocket: WebSocket):
     await websocket.accept()
     _active_chat_websockets[websocket] = None
-    agent_task: asyncio.Task | None = None
 
     # ── WS 连接级别的 Subagent 事件转发 ──
     # 队列取自进程级广播器，而不是 state.subagent_manager：manager 会在每次
@@ -755,37 +811,42 @@ async def chat_websocket(websocket: WebSocket):
                 continue
 
             # 用户插话: 触发器占用主 Agent 时强制打断并标记消息 (AUTO_FORCE_INTERRUPT)。
-            # 放在 ignore_trigger_event 置位之后，确保插话瞬间消费循环不再捡起
-            # 队列中的下一个触发器抢在用户消息前获取锁。
+            # 放在 ignore_trigger_event 置位之后，确保插话瞬间调度器不再放行触发器
+            # 抢在用户消息前执行。
             try:
+                from faust_backend.runtime import scheduler as agent_scheduler
+
                 araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
                 events.ignore_trigger_event.set()
                 turn = turn_state.get_turn_state(websocket)
                 text = await _apply_user_interjection(text, websocket)
 
-                # Cancel any running agent task before starting a new one
-                if agent_task is not None and not agent_task.done():
-                    # 让正在跑的前台触发器（若有）在下一个事件处停下
-                    turn.abort_event.set()
-                    await _cancel_tasks_bounded([agent_task], reason="new_user_message")
+                # 新用户消息抢占本连接上一条消息（既有语义：abort_event + 撤单/停跑）
+                turn.abort_event.set()
+                await _scheduler().cancel_owner(
+                    websocket, reason="superseded_by_new_user_message"
+                )
 
                 user_turn_id = turn_gate.new_turn_id()
                 await websocket.send_text(json.dumps(
                     _main_event_payload("start", turn_id=user_turn_id, origin="user"),
                     ensure_ascii=False))
                 log.info("收到聊天消息: %s", text[:100])
-                agent_task = asyncio.create_task(
-                    _run_agent_stream(websocket, text, turn_id=user_turn_id))
-                turn.active_task = agent_task
-
-                def _on_agent_task_done(t: asyncio.Task):
-                    events.ignore_trigger_event.clear()
-                    if turn.active_task is t:
-                        turn.active_task = None
-                    if not t.cancelled() and t.exception() is not None:
-                        log.error("agent_task 未处理异常: %s", t.exception(), exc_info=t.exception())
-
-                agent_task.add_done_callback(_on_agent_task_done)
+                if not _scheduler().is_idle():
+                    # 主 Agent 忙/排队中：立即向前端反馈，避免无提示转圈
+                    await _safe_send(
+                        websocket, _main_event_payload("pending", reason="waiting_lock")
+                    )
+                turn.turn_handle = _scheduler().submit(agent_scheduler.AgentRequest(
+                    agent_scheduler.TurnKind.USER,
+                    lambda: _run_agent_stream(websocket, text, turn_id=user_turn_id),
+                    label="user",
+                    sink="chat",
+                    gate="exempt",          # 用户消息不适用播放闸门
+                    preemptible=True,
+                    owner=websocket,        # D21：用户回合随连接生死
+                    on_terminal=lambda _h: events.ignore_trigger_event.clear(),
+                ))
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
@@ -798,26 +859,49 @@ async def chat_websocket(websocket: WebSocket):
         if turn_gate.release_for_websocket(websocket):
             log.info("Chat WebSocket 断开，触发器闸门已释放")
             events.backend2frontendQueue_event.set()
-        if agent_task is not None and not agent_task.done():
-            await _cancel_tasks_bounded([agent_task], reason="chat_ws_disconnect")
+        # D21：用户回合随连接生死——撤掉本连接未开始的请求 + 停掉它在跑的回合。
+        # 刻意不对称：触发器回合不绑定任何连接（D19-b），不在这里被停。
+        await _scheduler().cancel_owner(websocket, reason="chat_ws_disconnect")
         turn_state.drop_turn_state(websocket)
         await _stop_forward_task()
 
 @router.websocket("/faust/command")
 async def command_websocket(websocket: WebSocket):
     await websocket.accept()
+    # 在线信号由传输层写、由触发器域读（D19）：本连接是触发器唯一的消费通道，
+    # 因此"前端在线"== 本连接在线，两者不可能漂移。
+    frontend_presence.mark_online(websocket)
     backend2frontend.FrontEndSay("Hello World! 你好,世界!")
     nimble.push_persistent_sessions_to_frontend()
+
+    # 断线探测：本循环是**只发不收**的（前端在 command WS 上从不发消息），因此
+    # Starlette 永远不会从 receive 侧发现对端消失——进程被杀/网络断掉时连接会一直
+    # 挂着，presence 停在"在线"，于是离线禁触（D19）失效、唤醒静默丢失。
+    # 这里单独跑一个读任务，只为把断开变成可观测事件。
+    disconnected = asyncio.Event()
+
+    async def _watch_disconnect() -> None:
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        except Exception as exc:  # noqa: BLE001 - 断开/异常都按断开处理
+            log.debug("command WS 读端结束: %s", exc)
+        finally:
+            disconnected.set()
+
+    watcher = asyncio.create_task(_watch_disconnect(), name="command_ws_disconnect_watch")
+
     try:
         batch_buffer: list[tuple[float, dict]] = []  # (first_ts, item)
-        gate_wait_since: float | None = None  # 被播放闸门压住的起始时刻（仅用于日志）
-        while True:
+        while not disconnected.is_set():
             if backend2frontend.hasFrontEndTask():
                 task = await backend2frontend.popFrontEndTask()
                 log.debug("从 backend2frontend 队列发送前端任务: %s", task[:80] if isinstance(task, str) else str(task)[:80])
                 if task:
                     await websocket.send_text(task)
-            # 消费侧 batched 聚合：忙时积压，窗口到期或空闲时打包注入
+            # 消费侧 batched 聚合：忙时积压，窗口到期或调度器空闲时打包提交
             for it in trigger_manager.drain_batched():
                 batch_buffer.append((time.time(), it))
             if batch_buffer:
@@ -825,161 +909,48 @@ async def command_websocket(websocket: WebSocket):
                 window_due = time.time() - first_ts >= trigger_manager.BATCH_WINDOW_SEC
                 idle_now = (
                     not backend2frontend.hasFrontEndTask()
-                    and not trigger_manager.has_queue_task()
-                    and not events.ignore_trigger_event.is_set()
+                    and _scheduler().is_idle()
                 )
                 if (
                     (window_due or idle_now)
-                    and not events.ignore_trigger_event.is_set()
-                    and not turn_gate.should_hold("batched")
                     and state.RUNTIME_READY and state.agent is not None
                 ):
                     items = [it for _, it in batch_buffer]
                     batch_buffer = []
                     trigger_text = trigger_manager.format_batch_injection(items, first_ts)
                     log.info('批量触发器注入 %d 条: %s', len(items), trigger_text[:120])
-                    # 插件钩子（记忆检索/情绪向量）与 Agent 调用都可能失败（如 LLM
-                    # 传输层异常），任一失败都不得炸掉整个命令 WS 循环——与后台/前台
-                    # 触发器分支保持一致的容错语义。
-                    batch_task: asyncio.Task | None = None
-                    try:
-                        batch_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
-                        if batch_text == "__IGNORED__":
-                            log.info('批量触发器消息已被插件拦截，跳过本次注入')
-                        else:
-                            batch_task = asyncio.create_task(
-                                invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": batch_text}]})
-                            )
-                            _register_trigger_task(batch_task)
-                            await batch_task
-                    except asyncio.CancelledError:
-                        # 批量任务被用户插话取消属正常流程；自身被取消则继续向上抛
-                        if batch_task is None or not batch_task.cancelled():
-                            raise
-                        log.info('批量触发器被用户插话打断')
-                    except Exception as e:
-                        log.error('批量触发器 Agent 调用失败: %s', e)
-                    finally:
-                        if batch_task is not None:
-                            _clear_trigger_task(batch_task)
-            if trigger_manager.has_queue_task() and not events.ignore_trigger_event.is_set():
-                if not state.RUNTIME_READY or state.agent is None:
-                    await asyncio.sleep(0.1)
-                    continue
-                # 播放闸门：上一轮回复还没播完时，普通触发器先不唤醒；
-                # interrupt 级单独捞出来放行，避免被队首的 normal 挡住（队头阻塞）。
-                head_priority = str((trigger_manager.peek_next_trigger() or {}).get("priority") or "normal")
-                if turn_gate.should_hold(head_priority):
-                    if gate_wait_since is None:
-                        gate_wait_since = time.time()
-                    task = trigger_manager.take_interrupt_trigger()
-                    if task is None:
-                        # 队列非空会让本循环末尾的等待分支条件为假，这里必须自己等：
-                        # ack / chat 连接断开都会 set 这个事件把我们叫醒，避免空转烧 CPU。
-                        try:
-                            await asyncio.wait_for(
-                                events.backend2frontendQueue_event.wait(),
-                                timeout=min(0.2, max(0.05, turn_gate.hold_remaining())),
-                            )
-                        except asyncio.TimeoutError:
-                            pass
-                        events.backend2frontendQueue_event.clear()
-                        continue
-                else:
-                    if gate_wait_since is not None:
-                        log.info("触发器闸门等待 %.2fs 后放行", time.time() - gate_wait_since)
-                        gate_wait_since = None
-                    task = trigger_manager.get_next_trigger()
-                if task is None:
-                    continue
-                trigger_text = f"<Trigger>触发器唤醒了你，请根据触发器内容执行相应操作。{str(task)}"
-                if isinstance(task, dict):
-                    ttype = task.get("type")
-                    callback_id = task.get("callback_id")
-                    if ttype == "event" and task.get("event_name") == "nimble_message" and callback_id:
-                        msg_payload = (task.get("payload") or {}).get("payload")
-                        if isinstance(msg_payload, dict) and msg_payload.get("type") == "window-closed":
-                            # 关闭时 console 节点已随会话销毁，不能再让 Agent 去读
-                            trigger_text = (
-                                f"<Trigger>灵动交互窗口 {callback_id} 已被用户关闭"
-                                f"（reason={msg_payload.get('reason')}）。窗口与 console 节点已销毁，"
-                                f"不要再读写 faustbot://nimble/{callback_id}/console；如需继续互动请重新创建窗口。"
-                            )
-                        else:
-                            trigger_text = (
-                                f"<Trigger>灵动交互窗口消息。callback_id={callback_id}，"
-                                f"payload={json.dumps(msg_payload, ensure_ascii=False)}。"
-                                f"完整对话记录在 faustbot://nimble/{callback_id}/console，"
-                                f"如需回复请用 write 工具向该 console 路径写入消息。"
-                            )
-                    elif ttype == "event" and task.get("event_name") == "blive_danmaku":
-                        payload = task.get("payload") or {}
-                        uname = payload.get("uname", "匿名")
-                        msg = payload.get("msg", "")
-                        if live_mode.is_tts_blacklisted(msg):
-                            continue
-                        trigger_text = f"<Trigger>直播间弹幕: {uname}: {msg}"
-                    elif ttype == "event" and task.get("event_name") == "mc_event":
-                        payload = task.get("payload") or {}
-                        trigger_text = (
-                            "<Trigger>Minecraft事件唤醒了你。"
-                            f"事件类型={payload.get('mc_event_type')}，"
-                            f"事件详情={json.dumps(payload, ensure_ascii=False)}。"
-                            "请结合当前游戏状态，决定是否调用 Minecraft 工具继续操作。"
-                        )
-                    elif ttype == "nimble-expire" and callback_id:
-                        await nimble.finalize_close(callback_id, reason="expired")
-                        trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
-                log.info('触发器激活，正在调用 Agent: %s', trigger_text[:120])
-                run_background = bool(task.get("run_background")) if isinstance(task, dict) else False
-                chat_ws = next(reversed(_active_chat_websockets), None)
-                if run_background or chat_ws is None:
-                    # 后台触发器（或无前端连接时降级）：仅执行，不推送前端
-                    # 前台流式路径在 _run_agent_stream 内部做插件处理，这里不能重复处理
-                    bg_task: asyncio.Task | None = None
-                    try:
-                        bg_text = await _apply_plugin_message_hooks(trigger_text, origin='trigger_background')
-                        if bg_text == "__IGNORED__":
-                            log.info('触发器消息已被插件拦截，跳过后台执行: %s', trigger_text[:80])
-                            continue
-                        bg_task = asyncio.create_task(
-                            invoke_agent_locked(state.agent, {"messages": [{"role": "user", "content": bg_text}]})
-                        )
-                        _register_trigger_task(bg_task)
-                        await bg_task
-                        log.debug('后台触发器执行完成: %s', trigger_text[:80])
-                    except asyncio.CancelledError:
-                        # 后台任务被用户插话取消属正常流程；自身被取消则继续向上抛
-                        if bg_task is None or not bg_task.cancelled():
-                            raise
-                        log.info('后台触发器被用户插话打断: %s', trigger_text[:80])
-                    except Exception as e:
-                        # 插件钩子/Agent 调用失败（如 LLM 连接错误）不应炸掉整个命令 WS 循环
-                        log.error('后台触发器执行失败: %s', e)
-                    finally:
-                        if bg_task is not None:
-                            _clear_trigger_task(bg_task)
-                else:
-                    # 前台触发器：通过 chat websocket 流式推送
-                    fg_task = asyncio.create_task(_run_trigger_stream_frontend(chat_ws, trigger_text))
-                    _register_trigger_task(fg_task, chat_ws)
-                    try:
-                        await fg_task
-                    except asyncio.CancelledError:
-                        if not fg_task.cancelled():
-                            raise
-                        log.info('前台触发器被用户插话打断: %s', trigger_text[:80])
-                    except Exception as e:
-                        # Agent 流式调用失败（如 LLM 连接错误）不应炸掉整个命令 WS 循环
-                        log.error('前台触发器流式调用失败: %s', e)
-                    finally:
-                        _clear_trigger_task(fg_task, chat_ws)
+                    _submit_trigger_request(trigger_text, None, origin='trigger_background',
+                                            label=_trigger_label(_KIND_BATCH), kind=_KIND_BATCH)
+            while state.RUNTIME_READY and state.agent is not None:
+                # 非阻塞取用：准入（播放闸门 / ignore_trigger_event / 优先级）全部交给
+                # 调度器，本循环只负责"把 inbox 里的 payload 变成一条请求"。
+                item = trigger_manager.pop_next_trigger()
+                if item is None:
+                    break
+                trigger_text = await trigger_manager.render_trigger_text(item)
+                if trigger_text is None:
+                    continue    # TTS 黑名单等"判定为不注入"
+                is_dict = isinstance(item, dict)
+                run_background = bool(item.get("run_background")) if is_dict else False
+                kind = _trigger_kind(item)
+                chat_ws = None if run_background else _latest_chat_ws()
+                _submit_trigger_request(
+                    trigger_text,
+                    chat_ws,
+                    origin='trigger_foreground' if chat_ws is not None else 'trigger_background',
+                    label=_trigger_label(kind),
+                    kind=kind,
+                    merge_key=str(item.get("id")) if is_dict and item.get("id") else None,
+                    gate="exempt" if kind == _KIND_INTERRUPT else "playback",
+                )
             if not state.forward_queue.empty():
                 command = await state.forward_queue.get()
                 log.debug("从队列转发命令: %s", command[:80])
                 await websocket.send_text(f"{command}")
                 continue
-            if not backend2frontend.hasFrontEndTask() and (events.ignore_trigger_event.is_set() or not trigger_manager.has_queue_task()):
+            # inbox 已在上面被取空：这里等唤醒即可（触发器到达会 set 这个事件；
+            # 超时 0.5s 也让"没有事件通知"的路径（定时触发器）照样被轮询到）。
+            if not backend2frontend.hasFrontEndTask():
                 try:
                     await asyncio.wait_for(events.backend2frontendQueue_event.wait(), timeout=0.5)
                     events.backend2frontendQueue_event.clear()
@@ -992,6 +963,17 @@ async def command_websocket(websocket: WebSocket):
         # Faust 的台词朗读（frontend/app.js 的 SAY 分支）。这里只记录完整栈，
         # 连接关闭后 Electron 主进程会自动重连。
         log.exception("Command WebSocket 循环致命错误，连接即将关闭")
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        frontend_presence.mark_offline(websocket)
+        # D19-c：断开瞬间 inbox 里尚未消费的唤醒逐条记为 refused 后清空，
+        # 否则回连时会冒出"断开前残留的几条"。
+        trigger_manager.drain_inbox_as_refused()
+        events.backend2frontendQueue_event.set()
 
 
 @router.post("/faust/command/forward")

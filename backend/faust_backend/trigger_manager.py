@@ -11,12 +11,27 @@ import os
 
 import faust_backend.config_loader as conf
 import faust_backend.nimble as nimble
+from faust_backend.runtime import frontend_presence
 from pydantic import BaseModel, Field, field_validator
 from faust_backend.logger import get_logger
 
 # 惰性解析 triggers 文件路径 — 不在 import 时读取文件
 _store_lock = threading.RLock()
 log = get_logger("faust.trigger")
+
+
+class TriggerRefused(RuntimeError):
+    """触发被拒绝（D19：前端离线时禁止一切触发）。
+
+    只在**产生侧**抛出：只有产生侧能对调用者说话。``reason`` 供 HTTP 层映射成
+    409 响应体 / 插件调用者判断原因。
+    """
+
+    def __init__(self, reason: str = "no_frontend", *, source: str = "") -> None:
+        self.reason = str(reason or "no_frontend")
+        self.source = str(source or "")
+        detail = f"source={self.source}" if self.source else "source=unknown"
+        super().__init__(f"触发被拒绝（{self.reason}，{detail}）")
 
 
 def _get_triggers_path() -> Path:
@@ -80,6 +95,26 @@ def _source_from_id(trigger_id: str) -> str:
     return tid.split("::", 1)[0] if "::" in tid else ""
 
 
+def _refusal_source(payload: dict) -> str:
+    """拒绝计数/日志用的来源标识：优先触发器 id 的来源前缀，其次事件名/类型。"""
+    src = _source_from_id(payload.get("id"))
+    if src:
+        return src
+    return str(payload.get("event_name") or payload.get("type") or "unknown")
+
+
+def _refuse_trigger(payload: dict, *, reason: str = "no_frontend") -> None:
+    """记录一次被拒绝的触发：日志 + 计数（不写 fire 留痕、不入队）。"""
+    source = _refusal_source(payload)
+    frontend_presence.note_refused(source=source, reason=reason)
+    log.warning(
+        "前端离线，拒绝触发（%s）：id=%s source=%s",
+        reason,
+        payload.get("id"),
+        source,
+    )
+
+
 def _log_event_csv(payload: dict):
     """事件留痕：任何触发器 fire 时追加一行 CSV。失败只记日志，不阻断主链路。"""
     try:
@@ -103,6 +138,11 @@ def _log_event_csv(payload: dict):
 
 
 def _emit_trigger(trigger_payload: dict):
+    # D19 离线禁触：所有 fire 的必经之路，在 fire filters **之前**判定。
+    # 不入队、不写 fire 留痕、不动 store（到点即弃，回连时不存在积压补发）。
+    if not frontend_presence.is_online():
+        _refuse_trigger(trigger_payload or {})
+        return False
     log.debug("触发 trigger: %s", trigger_payload)
     payload = _apply_fire_filters(trigger_payload)
     if payload is None:
@@ -238,58 +278,70 @@ def _ensure_store_loaded() -> TriggerStore:
 _store: TriggerStore | None = None
 
 
-def trigger_watchdog_thread_main(poll_interval: float = 0.5):
-    ensure_store = _ensure_store_loaded()  # 在线程中安全加载
-    while True:
-        if exitflag:
-            return  # exit thread
-        now = datetime.datetime.now()
-        with _store_lock:
-            for trig in list(ensure_store.watchdog):
-                try:
-                    if trig.lifespan is not None and trig.created_at + trig.lifespan <= time.time():
+def _poll_watchdog_once(ensure_store: TriggerStore) -> None:
+    """轮询一轮定时/事件触发器（watchdog 线程与单测共用）。
+
+    前端离线时整轮跳过（D19）：不 fire、不改 store。定时触发器因此保持"到期"
+    状态，回连后最多补一次——**不是**把离线期间错过的每一次都补发（离线期间
+    没有任何唤醒进入 inbox，不存在积压）。
+    """
+    if not frontend_presence.is_online():
+        return
+    now = datetime.datetime.now()
+    with _store_lock:
+        for trig in list(ensure_store.watchdog):
+            try:
+                if trig.lifespan is not None and trig.created_at + trig.lifespan <= time.time():
+                    try:
+                        ensure_store.watchdog.remove(trig)
+                        ensure_store.save()
+                    except Exception:
+                        pass
+                    continue
+                if trig.type == "datetime":
+                    if now >= trig.target:
+                        _emit_trigger(trig.model_dump())
                         try:
                             ensure_store.watchdog.remove(trig)
                             ensure_store.save()
                         except Exception:
                             pass
-                        continue
-                    if trig.type == "datetime":
-                        if now >= trig.target:
-                            _emit_trigger(trig.model_dump())
-                            try:
-                                ensure_store.watchdog.remove(trig)
-                                ensure_store.save()
-                            except Exception:
-                                pass
-                    elif trig.type == "interval":
-                        if time.time() - trig.last_triggered >= trig.interval_seconds:
-                            _emit_trigger(trig.model_dump())
-                            trig.last_triggered = time.time()
-                            ensure_store.save()
-                    elif trig.type == "py-eval":
-                        try:
-                            if eval(trig.eval_code, {"__builtins__": builtins}, _pyeval_context()):
-                                _emit_trigger(trig.model_dump())
-                        except Exception as e:
-                            log.error("评估 trigger %s 时出错: %s", trig.id, e)
-                    elif trig.type == "event":
-                        log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
+                elif trig.type == "interval":
+                    if time.time() - trig.last_triggered >= trig.interval_seconds:
                         _emit_trigger(trig.model_dump())
-                        ensure_store.watchdog.remove(trig)
+                        trig.last_triggered = time.time()
                         ensure_store.save()
-                    elif trig.type == "nimble-expire":
-                        if now >= trig.target:
+                elif trig.type == "py-eval":
+                    try:
+                        if eval(trig.eval_code, {"__builtins__": builtins}, _pyeval_context()):
                             _emit_trigger(trig.model_dump())
-                            try:
-                                ensure_store.watchdog.remove(trig)
-                                ensure_store.save()
-                            except Exception:
-                                pass
-                    else:
+                    except Exception as e:
+                        log.error("评估 trigger %s 时出错: %s", trig.id, e)
+                elif trig.type == "event":
+                    log.info("Event trigger fired: %s with payload: %s", trig.event_name, trig.payload)
+                    _emit_trigger(trig.model_dump())
+                    ensure_store.watchdog.remove(trig)
+                    ensure_store.save()
+                elif trig.type == "nimble-expire":
+                    if now >= trig.target:
                         _emit_trigger(trig.model_dump())
-                except Exception as e:
-                    log.error("Watchdog 循环错误 %s: %s", getattr(trig, 'id', None), e)
+                        try:
+                            ensure_store.watchdog.remove(trig)
+                            ensure_store.save()
+                        except Exception:
+                            pass
+                else:
+                    _emit_trigger(trig.model_dump())
+            except Exception as e:
+                log.error("Watchdog 循环错误 %s: %s", getattr(trig, 'id', None), e)
+
+
+def trigger_watchdog_thread_main(poll_interval: float = 0.5):
+    ensure_store = _ensure_store_loaded()  # 在线程中安全加载
+    while True:
+        if exitflag:
+            return  # exit thread
+        _poll_watchdog_once(ensure_store)
         time.sleep(poll_interval)
 _thread=None
 def start_trigger_watchdog_thread():
@@ -302,38 +354,16 @@ def stop_trigger_watchdog_thread():
     if _thread is not None:
         _thread.join()
 
-def get_next_trigger(timeout: Optional[float] = None):
+def pop_next_trigger():
+    """非阻塞取一条触发器（紧急与普通共用一个 inbox，优先级由调度器裁定）。
+
+    取用规则（播放闸门 / interrupt 越过排队中的 normal / 优先级）全部在
+    ``runtime/scheduler.py``：这里只做"从 inbox 拿一条"，拿不到就返回 None。
+    """
     try:
-        return trigger_queue.get(timeout=timeout)
+        return trigger_queue.get_nowait()
     except queue.Empty:
         return None
-
-
-def peek_next_trigger():
-    """读取普通触发器队列的队首（不消费）。
-
-    播放闸门需要先看队首的 priority 再决定是否消费：不能为了等一条 normal
-    就把排在它后面的 interrupt 告警一起压住。
-    """
-    with trigger_queue.mutex:
-        if not trigger_queue.queue:
-            return None
-        return trigger_queue.queue[0]
-
-
-def take_interrupt_trigger():
-    """取走队列中第一个 interrupt 级触发器（不按 FIFO）。
-
-    hold 期间若队首是 normal，直接不消费会把后面的告警一起挡住（队头阻塞）；
-    这里单独把告警捞出来放行，其余顺序不变。
-    """
-    with trigger_queue.mutex:
-        for idx, item in enumerate(trigger_queue.queue):
-            if isinstance(item, dict) and item.get("priority") == "interrupt":
-                del trigger_queue.queue[idx]
-                trigger_queue.unfinished_tasks = max(0, trigger_queue.unfinished_tasks - 1)
-                return item
-    return None
 
 
 BATCH_WINDOW_SEC: float = 30.0  # batched 级事件合并窗口（秒）；修改此值调整打扰频率
@@ -364,6 +394,57 @@ def format_batch_injection(items: list[dict], first_ts: float) -> str:
         f"<Trigger>触发器唤醒了你。以下 {len(items)} 条 batched 级事件已合并"
         f"（自 {first_hms} 起），请统一处理：\n{summaries}"
     )
+
+
+async def render_trigger_text(task: dict) -> str | None:
+    """把触发器 payload 渲染成注入 Agent 的文本；返回 None = 判定为不注入。
+
+    渲染（``<Trigger>`` 模板）与黑名单判断属于**触发器域**：这些规则只对触发器
+    成立，放在消费循环里会让"怎么描述一条触发"散落在路由层。消费侧（命令 WS）
+    只负责把 payload 变成一条请求交给调度器。
+    """
+    from faust_backend import live_mode
+
+    trigger_text = f"<Trigger>触发器唤醒了你，请根据触发器内容执行相应操作。{str(task)}"
+    if not isinstance(task, dict):
+        return trigger_text
+    ttype = task.get("type")
+    callback_id = task.get("callback_id")
+    if ttype == "event" and task.get("event_name") == "nimble_message" and callback_id:
+        msg_payload = (task.get("payload") or {}).get("payload")
+        if isinstance(msg_payload, dict) and msg_payload.get("type") == "window-closed":
+            # 关闭时 console 节点已随会话销毁，不能再让 Agent 去读
+            trigger_text = (
+                f"<Trigger>灵动交互窗口 {callback_id} 已被用户关闭"
+                f"（reason={msg_payload.get('reason')}）。窗口与 console 节点已销毁，"
+                f"不要再读写 faustbot://nimble/{callback_id}/console；如需继续互动请重新创建窗口。"
+            )
+        else:
+            trigger_text = (
+                f"<Trigger>灵动交互窗口消息。callback_id={callback_id}，"
+                f"payload={json.dumps(msg_payload, ensure_ascii=False)}。"
+                f"完整对话记录在 faustbot://nimble/{callback_id}/console，"
+                f"如需回复请用 write 工具向该 console 路径写入消息。"
+            )
+    elif ttype == "event" and task.get("event_name") == "blive_danmaku":
+        payload = task.get("payload") or {}
+        uname = payload.get("uname", "匿名")
+        msg = payload.get("msg", "")
+        if live_mode.is_tts_blacklisted(msg):
+            return None
+        trigger_text = f"<Trigger>直播间弹幕: {uname}: {msg}"
+    elif ttype == "event" and task.get("event_name") == "mc_event":
+        payload = task.get("payload") or {}
+        trigger_text = (
+            "<Trigger>Minecraft事件唤醒了你。"
+            f"事件类型={payload.get('mc_event_type')}，"
+            f"事件详情={json.dumps(payload, ensure_ascii=False)}。"
+            "请结合当前游戏状态，决定是否调用 Minecraft 工具继续操作。"
+        )
+    elif ttype == "nimble-expire" and callback_id:
+        await nimble.finalize_close(callback_id, reason="expired")
+        trigger_text = f"<Trigger>灵动交互窗口已过期关闭。callback_id={callback_id}。如有必要，请重新创建更明确的新窗口。"
+    return trigger_text
 
 
 def note_user_interaction():
@@ -428,6 +509,17 @@ async def append_trigger(trigger_dict_or_str: dict | str):
             raise
     else:
         trigger = trigger_dict_or_str
+    # D19：`event` 型触发器是"立刻 fire 一次"的请求（watchdog 每个轮询周期就把它
+    # fire 掉），离线时必须让调用者立刻看到拒绝，而不是"写入成功、永远不 fire"。
+    # 定时类（interval/datetime/py-eval/nimble-expire）是"排期"而非"触发"，
+    # 允许先入 store，由 watchdog 在到期时按同一条规则拒绝。
+    if isinstance(trigger, dict) and str(trigger.get("type") or "") == "event":
+        if not frontend_presence.is_online():
+            refused = TriggerRefused(
+                "no_frontend", source=str(trigger.get("id") or trigger.get("event_name") or "")
+            )
+            _refuse_trigger(trigger, reason=refused.reason)
+            raise refused
     trigger = _apply_append_filters(trigger)
     from faust_backend.runtime import state
     pm = getattr(state, 'plugin_manager', None)
@@ -481,6 +573,36 @@ def delete_trigger(trigger_id: str):
                 store.save()
             except Exception as e:
                 log.error("保存后触发失败: %s", e)
+    drop_pending_wakeups(trigger_id)
+
+
+def drop_pending_wakeups(trigger_id: str) -> int:
+    """删除触发器时两处都查：inbox（两个队列）+ 调度器队列（D10）。
+
+    ``trigger_id`` 作为 merge_key 贯穿"还没被消费的唤醒"；不查这一处，删除后
+    那些已经进入 inbox/调度器队列的唤醒仍会打印一次。
+    """
+    removed = 0
+    for q in (trigger_queue, batched_queue):
+        with q.mutex:
+            kept = [
+                item
+                for item in q.queue
+                if not (isinstance(item, dict) and item.get("id") == trigger_id)
+            ]
+            removed += len(q.queue) - len(kept)
+            if len(kept) != len(q.queue):
+                q.queue.clear()
+                q.queue.extend(kept)
+    try:
+        from faust_backend.runtime import scheduler
+
+        removed += scheduler.get_scheduler().cancel_merge_key(trigger_id, reason="trigger_deleted")
+    except Exception as e:  # noqa: BLE001 - 删除触发器不得因调度器异常而失败
+        log.warning("清理调度器队列中的触发器失败: %s", e)
+    if removed:
+        log.info("删除触发器 %s：同时撤掉 %d 条未执行的唤醒", trigger_id, removed)
+    return removed
 
 
 def list_triggers() -> list[dict]:
@@ -539,8 +661,27 @@ def clear_triggers():
             store.save()
         except Exception as e:
             log.error("清理后保存失败: %s", e)
-def has_queue_task():
-    return not trigger_queue.empty()
+def drain_inbox_as_refused(reason: str = "frontend_disconnected") -> int:
+    """连接断开时把 inbox 里尚未消费的唤醒逐条记为 refused 并清空（D19-c）。
+
+    否则回连时会冒出"断开前残留的几条"——它们既不属于离线期间的合法触发，
+    也不该在无人消费时静默留着。返回被清空的条数。
+    """
+    dropped = 0
+    for q in (trigger_queue, batched_queue):
+        while True:
+            try:
+                item = q.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(item, dict):
+                frontend_presence.note_refused(
+                    source=_refusal_source(item), reason=reason
+                )
+            dropped += 1
+    if dropped:
+        log.info("前端断开：清空 %d 条未消费的唤醒并记为 refused（%s）", dropped, reason)
+    return dropped
 
 
 def get_trigger_queue_snapshot() -> list[dict]:

@@ -128,8 +128,12 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 [MUST] 任何 interval 触发器的间隔**不得低于 90s**。
 
-**当被触发器唤醒后**:
+[NOTE] 触发器由**前端连接**驱动：用户没打开 FaustBot 界面时，触发器不会被触发，
+创建 `event` 型触发器会直接失败（`triggerAddTool` 会返回"前端未连接"）。这不是
+故障，不要为此反复重试；用户回到界面后触发器恢复正常。
+（定时类 interval/datetime 触发器仍可创建，但同样要等前端在线才会被触发。）
 
+**当被触发器唤醒后**:
 1. [MUST] 先确认当前状态:用 Desktop-mood VFS 节点(`faustbot://desktop-mood/overview.md` 是总入口,
    天气/媒体/事件时间线等按组读 `faustbot://desktop-mood/<组>/<组>.md`)等方式读取用户桌面环境、天气、RSS 等信息。
    - 若触发器是事件 Trigger(type=`event`):用其他信源验证 payload 是否仍正确(它可能已过时)。

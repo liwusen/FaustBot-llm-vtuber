@@ -1,13 +1,13 @@
 """用户插话 (AUTO_FORCE_INTERRUPT) 行为测试。
 
 覆盖:
-1. 触发器任务被注册后, 用户插话强制取消并给消息加"(用户插话)"前缀
+1. 触发器回合占用执行位时, 用户插话抢占它并给消息加"(用户插话)"前缀
 2. AUTO_FORCE_INTERRUPT 关闭时保持旧行为
 3. 无触发器忙状态时消息不变
-4. _run_agent_stream 被强制取消时: 锁释放 + 补发 done(forced) 而非 interrupted
+4. _run_agent_stream 被强制取消时: 补发 done(forced) 而非 interrupted
 5. 常规取消仍发 interrupted
-6. 插话只命中"本连接 + 未绑定连接"的触发器任务, 不动其它连接的任务
-7. 被取消方不响应取消时, 插话按 TASK_CANCEL_TIMEOUT_SEC 放弃等待, 不永久挂住
+6. 插话只抢占"触发器/批量"档, 不动正在跑的用户回合
+7. 被取消方不响应取消时, 插话按调度器的取消上限放弃等待, 不永久挂住
 """
 import asyncio
 import json
@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import faust_backend.config_loader as conf
 import faust_backend.routes.chat as chat
+from faust_backend.runtime import scheduler as agent_scheduler
 from faust_backend.runtime import state
 from faust_backend.runtime import turn_state
 from langchain_core.messages import AIMessageChunk
@@ -46,40 +47,62 @@ def reset_trigger_registry():
     state.mark_agent_lock_released()
 
 
-async def test_interjection_cancels_busy_trigger(reset_trigger_registry):
-    """触发器占锁时用户插话: 取消任务、注销登记、消息加前缀。"""
-    gate = asyncio.Event()
-    ws = FakeWebSocket()
-    task = asyncio.create_task(gate.wait())
-    chat._register_trigger_task(task, ws)
+async def _start_trigger_turn(scheduler, block: asyncio.Event) -> agent_scheduler.TurnHandle:
+    """在调度器上起一个"正在跑"的触发器回合（阻塞在事件上）。"""
+
+    async def _run():
+        await block.wait()
+
+    handle = scheduler.submit(
+        agent_scheduler.AgentRequest(
+            agent_scheduler.TurnKind.TRIGGER, _run, label="trigger", gate="exempt"
+        )
+    )
+    for _ in range(200):
+        if handle.status == agent_scheduler.TurnStatus.RUNNING and handle.task is not None:
+            return handle
+        await asyncio.sleep(0.01)
+    raise AssertionError("触发器回合没有跑起来")
+
+
+async def test_interjection_cancels_busy_trigger(reset_trigger_registry, monkeypatch):
+    """触发器占用执行位时用户插话: 抢占该回合、消息加前缀。"""
+    from faust_backend.runtime import frontend_presence
+
+    frontend_presence.mark_online("conn")
+    scheduler = agent_scheduler.AgentScheduler()
+    monkeypatch.setattr(agent_scheduler, "get_scheduler", lambda: scheduler)
+    block = asyncio.Event()
+    handle = await _start_trigger_turn(scheduler, block)
     original = conf.AUTO_FORCE_INTERRUPT
     conf.AUTO_FORCE_INTERRUPT = True
     try:
-        text = await chat._apply_user_interjection("你好", ws)
+        text = await chat._apply_user_interjection("你好", FakeWebSocket())
         assert text == "(用户插话)你好"
-        assert task.cancelled()
-        assert turn_state.active_trigger_tasks(ws) == []
+        assert handle.status == agent_scheduler.TurnStatus.INTERRUPTED
+        assert handle.forced is True
     finally:
         conf.AUTO_FORCE_INTERRUPT = original
-        gate.set()
+        block.set()
+        await scheduler.shutdown(timeout=1.0)
+        frontend_presence.reset()
 
 
-async def test_interjection_disabled_keeps_old_behavior(reset_trigger_registry):
-    """AUTO_FORCE_INTERRUPT=False: 不取消触发器, 消息不变。"""
-    gate = asyncio.Event()
-    ws = FakeWebSocket()
-    task = asyncio.create_task(gate.wait())
-    chat._register_trigger_task(task, ws)
+async def test_interjection_disabled_keeps_old_behavior(reset_trigger_registry, monkeypatch):
+    """AUTO_FORCE_INTERRUPT=False: 不抢占触发器, 消息不变。"""
+    scheduler = agent_scheduler.AgentScheduler()
+    monkeypatch.setattr(agent_scheduler, "get_scheduler", lambda: scheduler)
+    block = asyncio.Event()
+    handle = await _start_trigger_turn(scheduler, block)
     original = conf.AUTO_FORCE_INTERRUPT
     conf.AUTO_FORCE_INTERRUPT = False
     try:
-        text = await chat._apply_user_interjection("你好", ws)
-        assert text == "你好"
-        assert not task.done()
+        assert await chat._apply_user_interjection("你好", FakeWebSocket()) == "你好"
+        assert handle.status == agent_scheduler.TurnStatus.RUNNING
     finally:
         conf.AUTO_FORCE_INTERRUPT = original
-        gate.set()
-        await asyncio.gather(task, return_exceptions=True)
+        block.set()
+        await scheduler.shutdown(timeout=1.0)
 
 
 async def test_interjection_no_busy_unchanged(reset_trigger_registry):
@@ -92,30 +115,42 @@ async def test_interjection_no_busy_unchanged(reset_trigger_registry):
         conf.AUTO_FORCE_INTERRUPT = original
 
 
-async def test_interjection_ignores_other_connection_trigger(reset_trigger_registry):
-    """插话不能打断别的连接正在跑的触发器（修复前只有一个全局登记槽位）。"""
-    gate = asyncio.Event()
-    ws_a, ws_b = FakeWebSocket(), FakeWebSocket()
-    other = asyncio.create_task(gate.wait())
-    chat._register_trigger_task(other, ws_b)
+async def test_interjection_does_not_touch_running_user_turn(reset_trigger_registry, monkeypatch):
+    """插话只抢占触发器/批量档：正在跑的用户回合不受影响。"""
+    scheduler = agent_scheduler.AgentScheduler()
+    monkeypatch.setattr(agent_scheduler, "get_scheduler", lambda: scheduler)
+    block = asyncio.Event()
+
+    async def _run():
+        await block.wait()
+
+    user = scheduler.submit(
+        agent_scheduler.AgentRequest(
+            agent_scheduler.TurnKind.USER, _run, label="user", gate="exempt"
+        )
+    )
+    for _ in range(200):
+        if user.status == agent_scheduler.TurnStatus.RUNNING and user.task is not None:
+            break
+        await asyncio.sleep(0.01)
     original = conf.AUTO_FORCE_INTERRUPT
     conf.AUTO_FORCE_INTERRUPT = True
     try:
-        text = await chat._apply_user_interjection("你好", ws_a)
-        assert text == "你好"
-        assert not other.done()
-        assert turn_state.active_trigger_tasks(ws_b) == [other]
+        assert await chat._apply_user_interjection("你好", FakeWebSocket()) == "你好"
+        assert user.status == agent_scheduler.TurnStatus.RUNNING
     finally:
         conf.AUTO_FORCE_INTERRUPT = original
-        gate.set()
-        await asyncio.gather(other, return_exceptions=True)
+        block.set()
+        await scheduler.shutdown(timeout=1.0)
 
 
 async def test_interjection_bounded_when_target_swallows_cancel(
     reset_trigger_registry, monkeypatch
 ):
-    """被取消方吞掉取消时插话不无限等待，按 TASK_CANCEL_TIMEOUT_SEC 放弃。"""
-    monkeypatch.setattr(chat, "TASK_CANCEL_TIMEOUT_SEC", 0.1)
+    """被取消方吞掉取消时插话不无限等待，按调度器的取消上限放弃。"""
+    monkeypatch.setattr(agent_scheduler, "TASK_CANCEL_TIMEOUT_SEC", 0.1)
+    scheduler = agent_scheduler.AgentScheduler()
+    monkeypatch.setattr(agent_scheduler, "get_scheduler", lambda: scheduler)
 
     async def stubborn():
         try:
@@ -124,19 +159,26 @@ async def test_interjection_bounded_when_target_swallows_cancel(
             await asyncio.sleep(0.4)  # 吞掉取消：模拟卡在不可取消区
             raise
 
-    ws = FakeWebSocket()
-    task = asyncio.create_task(stubborn())
-    chat._register_trigger_task(task, ws)
+    handle = scheduler.submit(
+        agent_scheduler.AgentRequest(
+            agent_scheduler.TurnKind.TRIGGER, stubborn, label="stubborn", gate="exempt"
+        )
+    )
+    for _ in range(200):
+        if handle.task is not None:
+            break
+        await asyncio.sleep(0.01)
     original = conf.AUTO_FORCE_INTERRUPT
     conf.AUTO_FORCE_INTERRUPT = True
     try:
         started = time.monotonic()
-        assert await chat._apply_user_interjection("你好", ws) == "(用户插话)你好"
+        assert await chat._apply_user_interjection("你好", FakeWebSocket()) == "(用户插话)你好"
         assert time.monotonic() - started < 1.0
     finally:
         conf.AUTO_FORCE_INTERRUPT = original
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        if handle.task is not None:
+            handle.task.cancel()
+        await scheduler.shutdown(timeout=1.0)
 
 
 class GateAgent:
@@ -158,7 +200,6 @@ async def test_force_cancelled_stream_sends_done_forced(reset_trigger_registry):
     ws = FakeWebSocket()
     gate = asyncio.Event()
     task = asyncio.create_task(chat._run_agent_stream(ws, "触发任务", agent=GateAgent(gate)))
-    chat._register_trigger_task(task, ws)
     await asyncio.sleep(0.3)  # 等生产者获锁并停在 gate（持锁）
     assert state.agent_lock.locked()
     # 插话标记在"发起方连接"的回合状态上，前台触发器的流读的正是同一份
@@ -196,8 +237,8 @@ async def test_interrupt_of_one_connection_does_not_abort_another(reset_trigger_
     task_b = asyncio.create_task(
         chat._run_agent_stream(ws_b, "B任务", agent=GateAgent(gate_b))
     )
-    turn_state.get_turn_state(ws_a).active_task = task_a
-    turn_state.get_turn_state(ws_b).active_task = task_b
+    turn_state.get_turn_state(ws_a).turn_handle = _TaskHandle(task_a)
+    turn_state.get_turn_state(ws_b).turn_handle = _TaskHandle(task_b)
     await asyncio.sleep(0.4)
     try:
         # A 的中断：只取消 A 的任务与 A 的 abort event
@@ -210,6 +251,20 @@ async def test_interrupt_of_one_connection_does_not_abort_another(reset_trigger_
         gate_a.set()
         gate_b.set()
         await asyncio.gather(task_a, task_b, return_exceptions=True)
+
+
+class _TaskHandle:
+    """最小的调度器句柄替身：把 interrupt 映射到某个任务上（无调度器路径用）。"""
+
+    def __init__(self, task: asyncio.Task):
+        self.task = task
+
+    def is_terminal(self) -> bool:
+        return self.task.done()
+
+    def cancel(self, reason: str = "") -> bool:
+        self.task.cancel()
+        return True
 
 
 async def _lock_released() -> bool:

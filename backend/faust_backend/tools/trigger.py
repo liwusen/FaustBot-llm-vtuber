@@ -40,6 +40,8 @@ async def triggerAddTool(trigger_json: str) -> str:
         run_background=true 时触发器在后台运行，你被触发时输出的内容/工具调用不会被推送给用户，只有你知道；
         HEARTBEAT 触发器应该是 run_background=false 的
         false 时结果会通过聊天窗口流式展示给用户。
+        注意: 触发器由前端连接驱动。用户没打开 FaustBot 界面时，event 型触发器会被
+        直接拒绝（返回"前端未连接"），定时类触发器也不会被触发——这是设计，不要反复重试。
         类型专属字段: interval → interval_seconds; datetime → target("YYYY-MM-DD HH:MM:SS");
         py-eval → eval_code。
         例子:
