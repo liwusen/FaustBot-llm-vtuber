@@ -770,6 +770,19 @@ def test_fetch_provider_model_entries_normalizes(monkeypatch):
                     {"id": "with-ctx", "context_length": 1000},
                     {"id": "no-ctx", "object": "model"},
                     {"id": "with-window", "context_window": 2000},
+                    {
+                        "id": "with-output",
+                        "context_length": 1_000_000,
+                        "max_output_tokens": 64_000,
+                        "api_capabilities": {
+                            "anthropic_messages": {"beta": ["x"]},
+                            "unknown_format": {"ignored": True},
+                        },
+                    },
+                    {
+                        "id": "openrouter-style",
+                        "top_provider": {"max_completion_tokens": 32000},
+                    },
                     "not-a-dict",
                     {"no_id": True},
                 ]
@@ -778,9 +791,37 @@ def test_fetch_provider_model_entries_normalizes(monkeypatch):
     )
     entries = asyncio.run(fetch_provider_model_entries(make_providers().providers[0]))
     assert entries == [
-        {"id": "with-ctx", "context_length": 1000},
-        {"id": "no-ctx", "context_length": None},
-        {"id": "with-window", "context_length": 2000},
+        {
+            "id": "with-ctx",
+            "context_length": 1000,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+        },
+        {
+            "id": "no-ctx",
+            "context_length": None,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+        },
+        {
+            "id": "with-window",
+            "context_length": 2000,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+        },
+        {
+            "id": "with-output",
+            "context_length": 1_000_000,
+            "max_output_tokens": 64_000,
+            # 未知格式键会被丢弃：没有消费方，留着只会让配置膨胀
+            "api_capabilities": {"anthropic_messages": {"beta": ["x"]}},
+        },
+        {
+            "id": "openrouter-style",
+            "context_length": None,
+            "max_output_tokens": 32000,
+            "api_capabilities": {},
+        },
     ]
 
 
@@ -791,8 +832,18 @@ def test_fetch_provider_model_entries_bare_list_has_no_metadata(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _fake_models_client(["a", "b"]))
     entries = asyncio.run(fetch_provider_model_entries(make_providers().providers[0]))
     assert entries == [
-        {"id": "a", "context_length": None},
-        {"id": "b", "context_length": None},
+        {
+            "id": "a",
+            "context_length": None,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+        },
+        {
+            "id": "b",
+            "context_length": None,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+        },
     ]
 
 

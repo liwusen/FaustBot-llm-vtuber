@@ -12,10 +12,16 @@ os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import faust_backend.config_loader as conf
 # API 配置（惰性获取，基于 main_model 对应 provider）
 def _provider_credentials():
+    """返回 (api_key, base_url)。
+
+    本模块直接拼 OpenAI Chat Completions 请求，因此必须用**OpenAI 兼容**凭据：
+    主模型是 Anthropic/Gemini/Responses 格式时这里会抛出明确错误，
+    而不是把请求发到一个必然 404 的路径上。
+    """
     from faust_backend.runtime import state as runtime_state
-    from faust_backend.provider import get_main_credentials
+    from faust_backend.provider import get_main_openai_credentials
     providers = runtime_state.get_model_providers()
-    _, api_key, base_url = get_main_credentials(providers)
+    _, api_key, base_url = get_main_openai_credentials(providers)
     return api_key, base_url
 
 
@@ -210,8 +216,10 @@ def get_response(image_url: str, instruction: str) -> str:
         str: 模型返回的内容。
     """
     from faust_backend.runtime import state as runtime_state
-    from faust_backend.provider import get_main_credentials
-    _model_name, _, _ = get_main_credentials(runtime_state.get_model_providers())
+    from faust_backend.provider import get_main_openai_credentials
+    _model_name, _, _ = get_main_openai_credentials(
+        runtime_state.get_model_providers()
+    )
     data = {
         "model": _model_name,
         "messages": [

@@ -218,6 +218,59 @@ def message_content_to_text(content) -> str:
     return str(content)
 
 
+#: 可能承载「推理文本」的 content block 类型（四种格式各不同）
+_REASONING_BLOCK_TYPES = {"reasoning", "thinking", "reasoning_content", "thought"}
+
+
+def extract_reasoning_text(chunk) -> str:
+    """从模型分片/消息里提取推理（thinking）文本，兼容四种 API 格式。
+
+    各格式的落点完全不同，必须同时看两处：
+
+    - `additional_kwargs`：OpenAI Chat 兼容网关（DeepSeek R1、Qwen、
+      `reasoning_content`）以及部分自定义实现；
+    - `content` 块：OpenAI Responses（`{"type": "reasoning", "summary": [...]}`）、
+      Anthropic（`{"type": "thinking", "thinking": ...}`）、
+      Gemini（`{"type": "thinking", "thinking": ...}`）。
+
+    找不到时返回空串（不猜、不伪造）。
+    """
+    if chunk is None:
+        return ""
+    additional = getattr(chunk, "additional_kwargs", None)
+    if isinstance(additional, dict):
+        for key in ("reasoning_content", "reasoning", "think"):
+            value = additional.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+    content = getattr(chunk, "content", None)
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type") or "").strip().lower()
+        if block_type not in _REASONING_BLOCK_TYPES:
+            continue
+        for key in ("reasoning", "thinking", "text"):
+            value = block.get(key)
+            if isinstance(value, str) and value:
+                parts.append(value)
+                break
+        else:
+            summary = block.get("summary")
+            if isinstance(summary, list):
+                for item in summary:
+                    if isinstance(item, dict) and item.get("text"):
+                        parts.append(str(item["text"]))
+                    elif isinstance(item, str):
+                        parts.append(item)
+    return "".join(parts)
+
+
+
 def is_ai_message_chunk(message_chunk) -> bool:
     msg_type = str(message_chunk.type).strip().lower()
     if msg_type == "ai":

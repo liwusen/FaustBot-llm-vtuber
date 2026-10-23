@@ -218,6 +218,7 @@ def test_session_token_summary_text_shape(monkeypatch):
 
     assert text.splitlines() == [
         "模型: ds::chat",
+        "API 格式: openai_chat",
         "messages=2",
         "prompt_tokens=11000",
         "completion_tokens=1000",
@@ -236,6 +237,7 @@ def test_session_token_summary_without_usage(monkeypatch):
 
     assert text.splitlines() == [
         "模型: ds::chat",
+        "API 格式: openai_chat",
         "messages=1",
         "tokens: 暂无 API 计数（本会话尚无 LLM 响应上报 usage）",
     ]

@@ -3,11 +3,8 @@ import uuid
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from langchain_openai import ChatOpenAI
-from faust_backend.thinking import (
-            ReasoningChatOpenAI,
-            get_thinking_params,
-            THINKING_PRESETS
-        )
+from faust_backend.llm_formats import API_FORMATS
+from faust_backend.thinking import ReasoningChatOpenAI
 
 # 对外统一标识本客户端（FaustBot v3，langchain 栈）。不设置时 openai-python /
 # httpx 会以自身 UA 发请求（AsyncOpenAI/Python x.y.z、python-httpx/x.y），部分
@@ -49,6 +46,31 @@ class ModelProvider(BaseModel):
     thinking_type: str = "qwen"  # Default thinking type (qwen/deepseek/openai/none/mimo/glm/minimax)
     opencode_go: bool = False  # OpenCode Go 订阅适配: 自动附带 x-opencode-session 会话头
 
+    # ── models.dev 目录（持久化缓存，构建模型时无需联网） ──
+    #: 匹配到的 models.dev provider id；None = 由程序自动匹配，用户可 pin
+    catalog_provider_id: Optional[str] = None
+    #: model → {format, base_url, host_matched, npm, shape}；刷新目录时整表重算
+    model_catalog_routes: Dict[str, dict] = {}
+    #: 上次用目录刷新本 Provider 的时间（epoch 秒）
+    catalog_synced_at: Optional[float] = None
+
+    # ── 用户覆盖与能力 ──
+    #: Provider 级默认格式：auto / openai_chat / openai_responses /
+    #: anthropic_messages / google_gemini
+    api_format: str = "auto"
+    #: 单模型显式覆盖（只存用户显式设置，自动推断结果不落盘到这里）
+    model_api_formats: Dict[str, str] = {}
+    #: 格式 → SDK 根地址；覆盖目录与推导结果
+    format_base_urls: Dict[str, str] = {}
+    #: 模型 → 最大输出 token（用户 > /models > models.dev，只填空缺）
+    model_max_output_tokens: Dict[str, int] = {}
+    #: 模型 → /models 上报的能力声明（规范化后，如 anthropic_messages）
+    model_api_capabilities: Dict[str, dict] = {}
+    #: 模型 → 用户显式启用的服务端工具名（web_search）
+    model_server_tools: Dict[str, List[str]] = {}
+    #: 流式是否请求用量统计；None = 按格式默认
+    stream_usage: Optional[bool] = None
+
 ModelProvider.model_rebuild()  # Rebuild the model to resolve forward references
 ModelProviders.model_rebuild()  # Rebuild the model to resolve forward references
 
@@ -58,7 +80,8 @@ async def fetch_provider_model_entries(provider: ModelProvider) -> List[dict]:
     带 10s 超时；对非 OpenAI 兼容的响应结构做容错解析，
     任何异常都会抛出明确的 ValueError（前端向导据此提示用户）。
 
-    返回 `[{"id": str, "context_length": int | None}]`。
+    返回 `[{"id": str, "context_length": int | None, "max_output_tokens": int | None,
+    "api_capabilities": dict}]`。
 
     各 Provider 的元数据丰富程度差异很大（实测）：
       - deepseek : context_window / max_output_tokens / input_modalities /
@@ -66,7 +89,8 @@ async def fetch_provider_model_entries(provider: ModelProvider) -> List[dict]:
       - OpenRouter: context_length / architecture / pricing / top_provider /
                    supported_parameters / knowledge_cutoff / reasoning / benchmarks
       - aliyun / OpenCode Go: 只有 id / object / created / owned_by
-    目前只消费「上下文长度」（其余字段暂无使用方，故不解析，避免死代码）。
+    只解析本项目真正消费的字段（上下文长度、最大输出、能力声明）；其余字段
+    暂无使用方，解析它们只会变成死代码。
     """
     import httpx
     headers = {"User-Agent": FAUSTBOT_USER_AGENT}
@@ -95,19 +119,59 @@ async def fetch_provider_model_entries(provider: ModelProvider) -> List[dict]:
             mid = item.get("id")
             if not mid:
                 continue
-            entries.append(
-                {"id": str(mid), "context_length": _extract_context_length(item)}
-            )
+            entries.append(_model_entry(str(mid), item))
     # 兜底: 直接是字符串数组（无元数据）
     elif isinstance(models_data, list):
         entries = [
-            {"id": str(m), "context_length": None}
-            for m in models_data
-            if str(m).strip()
+            _model_entry(str(m), None) for m in models_data if str(m).strip()
         ]
     if not entries:
         raise ValueError(f"无法从 {provider.base_url}/models 解析模型列表")
     return entries
+
+
+def _model_entry(model_id: str, item: dict | None) -> dict:
+    """把 /models 的一条记录规范成本项目消费的模型条目。"""
+    source = item or {}
+    return {
+        "id": model_id,
+        "context_length": _extract_context_length(source),
+        "max_output_tokens": _extract_max_output_tokens(source),
+        "api_capabilities": _extract_api_capabilities(source),
+    }
+
+
+def _extract_api_capabilities(item: dict) -> dict:
+    """从 /models 条目里提取「该模型支持哪些 API 格式」的能力声明。
+
+    只保留已知格式键（未知键没有消费方，留着只会让配置持续膨胀）；值保持
+    原始 dict，这样上游新增的约束字段（如 anthropic_messages 的 beta 列表）
+    不需要改代码就能被前端展示。
+    """
+    caps = item.get("api_capabilities")
+    if not isinstance(caps, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in caps.items()
+        if str(key) in API_FORMATS and isinstance(value, dict)
+    }
+
+
+def _extract_max_output_tokens(item: dict) -> Optional[int]:
+    """从 /models 条目里提取最大输出 token（字段名随 Provider 而异）。"""
+    for key in ("max_output_tokens", "max_completion_tokens"):
+        value = item.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    top_provider = item.get("top_provider")
+    if isinstance(top_provider, dict):
+        value = top_provider.get("max_completion_tokens")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return int(value)
+    return None
 
 
 def _extract_context_length(item: dict) -> Optional[int]:
@@ -147,7 +211,8 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
     force=True（前端「自动加载模型」按钮）：丢弃已有 models 后重新拉取，保证
     列表与 Provider 端一致；拉取失败时抛错，旧列表不被清空。
 
-    同时用 API 返回的元数据**自动填充 `model_context_lengths`**：
+    同时用 API 返回的元数据**自动填充**：`model_context_lengths`、
+    `model_max_output_tokens`、`model_api_capabilities`：
       - 只填空缺项，**不覆盖用户手工配置的值**（用户配置优先）；
       - force=True 时顺带清理已不在模型列表中的陈旧条目。
     """
@@ -158,19 +223,30 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
     provider.models = [entry["id"] for entry in entries]
 
     lengths = dict(provider.model_context_lengths or {})
+    outputs = dict(provider.model_max_output_tokens or {})
+    capabilities = dict(provider.model_api_capabilities or {})
     if force:
-        # 显式刷新：丢弃已不在列表中的模型（其上下文长度也就无从生效）
-        lengths = {k: v for k, v in lengths.items() if k in provider.models}
+        # 显式刷新：丢弃已不在列表中的模型（其元数据也就无从生效）
+        keep = set(provider.models)
+        lengths = {k: v for k, v in lengths.items() if k in keep}
+        outputs = {k: v for k, v in outputs.items() if k in keep}
+        capabilities = {k: v for k, v in capabilities.items() if k in keep}
     filled = 0
     for entry in entries:
+        model_id = entry["id"]
         reported = entry.get("context_length")
-        if reported is None:
-            continue
-        if lengths.get(entry["id"]):
-            continue  # 用户已配置，不覆盖
-        lengths[entry["id"]] = reported
-        filled += 1
+        if reported is not None and not lengths.get(model_id):
+            lengths[model_id] = reported
+            filled += 1
+        reported_output = entry.get("max_output_tokens")
+        if reported_output is not None and not outputs.get(model_id):
+            outputs[model_id] = reported_output
+        reported_caps = entry.get("api_capabilities")
+        if reported_caps and not capabilities.get(model_id):
+            capabilities[model_id] = reported_caps
     provider.model_context_lengths = lengths
+    provider.model_max_output_tokens = outputs
+    provider.model_api_capabilities = capabilities
     if filled:
         print(
             f"[provider] 已从 /models 元数据自动填充 {filled} 个模型的上下文长度"
@@ -178,60 +254,32 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
         )
     return provider.models
 
-async def build_ReasoningChatOpenAI_from_spec(providers: ModelProviders, spec:str="deepseek::deepseek-v4-pro",intensity:str|None = "medium")-> ReasoningChatOpenAI|ChatOpenAI:
-    """Build a ReasoningChatOpenAI instance from a model specification string.
+async def build_ReasoningChatOpenAI_from_spec(
+    providers: ModelProviders,
+    spec: str = "deepseek::deepseek-v4-pro",
+    intensity: str | None = "medium",
+) -> ReasoningChatOpenAI | ChatOpenAI:
+    """按模型 spec 构建对应 API 格式的 LangChain Chat 模型（兼容入口）。
+
+    真正的格式解析与构建在 `faust_backend.llm_formats.build_chat_model_from_spec`：
+    一个 Provider 可能同时提供 OpenAI Chat / OpenAI Responses / Anthropic
+    Messages / Gemini 四种格式的模型（如聚合网关），必须按模型分别构建。
+    本函数保留旧名字，避免大量既有调用点与测试被迫改动。
 
     Args:
-        providers (ModelProviders): The model providers instance.
-        spec (str, optional): The model specification string, format 'provider::model'.
-        intensity (str | None, optional): Thinking intensity preset; None disables thinking.
+        providers: 模型 provider 集合。
+        spec: `provider::model`。
+        intensity: thinking 强度；None 关闭思考。
 
     Raises:
-        ValueError: If the provider or model is not found, or spec is malformed.
-
-    Returns:
-        ReasoningChatOpenAI: The model instance built from the specification.
+        ValueError: provider/model 不存在，或无法为该模型确定可用端点。
     """
-    provider_name, model_name = parse_spec(spec)
-    provider = resolve_provider(providers, provider_name)
-    await auto_load_model_for_provider(provider)
-    # [R3] 容忍 main_model 不在已加载 models 列表（迁移/离线场景）：
-    # 仅当 models 列表非空且模型不在其中时才报错；models 为空（加载失败）
-    # 时直接使用用户显式指定的模型名，避免启动即崩。
-    if provider.models and model_name not in provider.models:
-        raise ValueError(f"Model '{model_name}' not found for provider '{provider_name}'.")
+    from faust_backend.llm_formats import build_chat_model_from_spec
 
-    kwargs = dict(
-            model=model_name,
-            api_key=provider.key,
-            base_url=provider.base_url,
-            request_timeout=60,
-            max_retries=1,
+    return await build_chat_model_from_spec(
+        providers, spec=spec, intensity=intensity, purpose="chat"
     )
-    default_headers = {"User-Agent": FAUSTBOT_USER_AGENT}
-    if provider.opencode_go:
-        default_headers = opencode_headers(default_headers)
-    kwargs["default_headers"] = default_headers
-    # [R5] thinking 开关语义：provider.thinking_type == "none" 时强制关闭思考
-    # （无论 intensity 传什么），与旧 THINKING_ENABLED=False 默认行为保持一致，
-    # 避免重构后所有对话意外开启推理。
-    if intensity is not None and provider.thinking_type != "none":
-        # provider.thinking_type 是 thinking 预设名（qwen/deepseek/openai/none/mimo/glm/minimax），
-        # 与 thinking.THINKING_PRESETS 的 key 对应；intensity 是低/中/高。
-        thinking_params = get_thinking_params(provider.thinking_type, intensity)
-        if "reasoning_effort" in thinking_params:
-            kwargs["reasoning_effort"] = thinking_params.pop("reasoning_effort")
-        model_kw = thinking_params.pop("model_kwargs", {})
-        extra = {
-            **thinking_params.pop("extra_body", {}),
-            **kwargs.get("extra_body", {}),#type: ignore
-        }
-        if extra:
-            kwargs["extra_body"] = extra#type: ignore
-        kwargs["model_kwargs"] = {**kwargs.get("model_kwargs", {}), **model_kw}#type: ignore
-        return ReasoningChatOpenAI(**kwargs)#type: ignore
-    else:
-        return ChatOpenAI(**kwargs)#type: ignore
+
 
 async def build_main_chat_model(
     providers: ModelProviders, intensity: str | None = None
@@ -380,6 +428,91 @@ def get_context_length(providers: ModelProviders, spec: str) -> int:
     if isinstance(configured, int) and configured > 0:
         return configured
     return DEFAULT_CONTEXT_LENGTH
+
+
+def try_main_openai_credentials(providers: ModelProviders) -> tuple[str, str, str] | None:
+    """返回 main_model 的 OpenAI **Chat 兼容**端点；不是该格式时返回 None。
+
+    很多内部功能（GUI 操作模型、QA eval、rerank、embedding、语音）仍假定
+    OpenAI Chat Completions 协议。主模型若是 Anthropic/Gemini/Responses
+    格式，这些功能**不能**拿 base_url 直接拼 `/chat/completions`——必须让
+    调用方明确知道不可用，而不是发一个必然 404/400 的请求。
+    """
+    from faust_backend.llm_formats import resolve_route
+
+    if not providers or not providers.main_model:
+        return None
+    try:
+        provider_name, model_name = parse_spec(providers.main_model)
+    except ValueError:
+        return None
+    provider = next(
+        (p for p in (getattr(providers, "providers", None) or []) if p.name == provider_name),
+        None,
+    )
+    if provider is None:
+        return None
+    try:
+        decision = resolve_route(provider, model_name)
+    except ValueError:
+        return None
+    if decision.api_format not in ("openai_chat", "openai_responses"):
+        return None
+    # 显式配置的 openai_chat 端点优先：主模型走 Responses/Anthropic 时，
+    # 内部功能仍可指向同一 Provider 的 Chat Completions 路径。
+    explicit_chat = (provider.format_base_urls or {}).get("openai_chat")
+    if explicit_chat:
+        from faust_backend.llm_formats import normalize_format_base_url
+
+        normalized = normalize_format_base_url("openai_chat", explicit_chat)
+        if normalized:
+            return model_name, provider.key or "", normalized
+    return model_name, provider.key or "", decision.base_url or provider.base_url
+
+
+def get_main_openai_credentials(providers: ModelProviders) -> tuple[str, str, str]:
+    """同 `try_main_openai_credentials`，但不可用时抛明确的 RuntimeError。
+
+    错误信息直接告诉用户该怎么修：给该 Provider 配置一个 OpenAI 兼容端点，
+    或把对应的内部功能指向一个独立的 OpenAI 兼容 Provider。
+    """
+    credentials = try_main_openai_credentials(providers)
+    if credentials is None:
+        spec = getattr(providers, "main_model", "") or "(未配置)"
+        raise RuntimeError(
+            f"主模型 {spec} 不是 OpenAI Chat 兼容格式，当前功能需要 OpenAI 兼容端点。"
+            "请在配置器中为该 Provider 设置 format_base_urls['openai_chat']，"
+            "或把主模型指向一个 OpenAI 兼容的 Provider。"
+        )
+    return credentials
+
+
+def get_provider_decisions(providers: ModelProviders) -> dict[str, dict[str, dict]]:
+    """返回 `{provider: {model: 格式决策}}`，供管理接口/前端展示。"""
+    from faust_backend.llm_formats import describe_all_formats
+
+    return describe_all_formats(providers)
+
+
+def get_model_api_format(providers: ModelProviders, spec: str) -> str:
+    """返回 spec 对应的 API 格式；无法解析时按 openai_chat 处理。"""
+    from faust_backend.llm_formats import resolve_route
+
+    try:
+        provider_name, model_name = parse_spec(spec)
+    except ValueError:
+        return "openai_chat"
+    provider = next(
+        (p for p in (getattr(providers, "providers", None) or []) if p.name == provider_name),
+        None,
+    )
+    if provider is None:
+        return "openai_chat"
+    try:
+        return resolve_route(provider, model_name).api_format
+    except ValueError:
+        return "openai_chat"
+
 
 
 def get_default_subagent_model(providers: ModelProviders) -> str:

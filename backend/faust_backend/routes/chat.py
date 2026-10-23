@@ -125,6 +125,7 @@ async def _session_token_summary() -> str:
         return "当前会话没有可统计的上下文。"
     lines = [
         f"模型: {stats['model']}",
+        f"API 格式: {stats.get('api_format') or 'openai_chat'}",
         f"messages={stats['messages']}",
     ]
     if not stats["has_api_usage"]:
@@ -135,6 +136,10 @@ async def _session_token_summary() -> str:
         lines.append(f"total_tokens={_usage_field(stats['total_tokens'])}")
         if stats["cache_read_tokens"] is not None:
             lines.append(f"缓存命中(cache_read)={stats['cache_read_tokens']}")
+        if stats.get("cache_creation_tokens"):
+            lines.append(f"缓存写入(cache_creation)={stats['cache_creation_tokens']}")
+        if stats.get("reasoning_tokens"):
+            lines.append(f"推理(reasoning)={stats['reasoning_tokens']}")
         lines.append(
             f"上下文长度={stats['context_length']} 触发阈值={stats['threshold_tokens']} "
             f"({stats['compact_threshold_ratio']:.0%}) 当前占用={stats['percent']:.1f}%"

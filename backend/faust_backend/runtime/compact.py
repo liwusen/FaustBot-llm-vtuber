@@ -48,7 +48,9 @@ from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from typing_extensions import override
 
+from faust_backend.llm_formats import forced_no_tool_choice
 from faust_backend.logger import get_logger
+from faust_backend.runtime import usage as usage_mod
 from faust_backend.runtime.tool_call_repair import repair_dangling_tool_calls
 
 log = get_logger("faust.compact")
@@ -145,24 +147,19 @@ def _wrap_summary(prompt_text: str, summary: str) -> str:
     )
 
 
-def _reported_tokens(messages: Sequence[AnyMessage]) -> int:
-    """取最近一条**带 API 用量**的 AIMessage 的 token 数（无 API 数据时返回 0）。
+def _reported_tokens(messages: Sequence[AnyMessage], api_format: str = "openai_chat") -> int:
+    """取最近一条**带 API 用量**的 AIMessage 的真实上下文占用（无数据时返回 0）。
 
     不能"遇到第一条 AIMessage 就定论"：该条可能没有 `usage_metadata`
     （本地构造的消息、插件注入的消息等）。那样 `_should_summarize` 会永远判定为
     "未超阈值"，自动压缩静默失效，会话一路涨到必须手动 /compact —— 而手动压缩
     要对整段历史跑一次完整模型调用，正是最贵的那条路径。
 
-    依然不本地估算：只是继续往前找真实上报值，找不到才返回 0。
+    口径来自 `runtime.usage`：Anthropic 的缓存读写必须计入输入（否则 prompt 缓存
+    命中率高的长会话永远不触发压缩），OpenAI/Gemini 的 cached 是输入子集
+    （重复相加会虚高）。依然不本地估算：找不到真实上报值就返回 0。
     """
-    for message in reversed(messages):
-        if isinstance(message, AIMessage):
-            usage = message.usage_metadata
-            if usage:
-                total = usage.get("total_tokens")
-                if isinstance(total, int) and total > 0:
-                    return total
-    return 0
+    return usage_mod.context_tokens(messages, api_format)
 
 
 def _is_compact_summary(message: Any) -> bool:
@@ -189,6 +186,9 @@ class CompactMiddleware(SummarizationMiddleware):
         context_length: int,
         threshold_ratio: float = 0.8,
         keep_rounds: int = 3,
+        api_format: str = "openai_chat",
+        server_tool_specs: Sequence[dict[str, Any]] | None = None,
+        summary_max_tokens: int = 0,
     ) -> None:
         """
         Args:
@@ -198,6 +198,11 @@ class CompactMiddleware(SummarizationMiddleware):
             context_length: 当前模型的上下文长度（token）。
             threshold_ratio: 触发阈值比例，默认 0.8（留 20% 给指令与摘要输出）。
             keep_rounds: 压缩后保留最近多少轮对话。
+            api_format: 主模型的 API 格式（决定用量口径与工具参数写法）。
+            server_tool_specs: 主请求里启用的服务端工具规格；压缩请求必须带上
+                同样的 specs，否则 tools 前缀与主请求不一致，前缀缓存整段失效。
+            summary_max_tokens: 压缩模型自身的输出上限（Anthropic 构造时已设定）。
+                用于判定"摘要是否被这个上限截断"。
         """
         threshold = max(1, int(context_length * float(threshold_ratio)))
         super().__init__(
@@ -216,9 +221,14 @@ class CompactMiddleware(SummarizationMiddleware):
         self.threshold_ratio = float(threshold_ratio)
         self.threshold_tokens = threshold
         self.keep_rounds = max(1, int(keep_rounds))
+        self.api_format = str(api_format or "openai_chat")
+        self.server_tool_specs = [dict(spec) for spec in (server_tool_specs or [])]
+        self.summary_max_tokens = int(summary_max_tokens or 0)
         # 输出上限曾导致摘要被截断时置位：本次进程内不再施加成本上限。
         # 目的是自愈——否则每回合都会用过小的上限压缩失败、白烧一整轮调用。
         self._cost_cap_bypassed = False
+        self._tool_choice_warned = False
+        self._warned_no_usage = False
 
     # ── 触发与边界 ──
 
@@ -295,13 +305,12 @@ class CompactMiddleware(SummarizationMiddleware):
             *repair_dangling_tool_calls(list(messages)),
             HumanMessage(content=COMPACT_INSTRUCTION),
         ]
-        runnable = (
-            self.compact_model.bind_tools(self.mock_tools)
-            if self.mock_tools
-            else self.compact_model
-        )
-        # 摘要输出上限：结构化摘要不需要很长。仅在成本控制开启时施加，
-        # 默认关闭则完全不设上限（摘要不可能被截断）。
+        # 工具前缀必须与主请求一致（客户端工具的 mock + 同样的服务端工具 specs），
+        # 否则 tools 定义不同 → 前缀缓存整段失效。`tool_choice` 用于阻止摘要
+        # 调用真的去执行服务端搜索。
+        tool_specs: list[Any] = [*self.mock_tools, *self.server_tool_specs]
+        runnable = self._bind_compact_tools(self.compact_model, tool_specs)
+        # 摘要输出上限：结构化摘要不需要很长。仅在成本控制开启时施加。
         # 自定义模型/测试替身可能不支持 bind，失败时退化为不设上限而不是让压缩失败。
         max_out = conf.COMPACT_MAX_OUTPUT_TOKENS if cost_control else 0
         if max_out > 0:
@@ -310,6 +319,8 @@ class CompactMiddleware(SummarizationMiddleware):
             except Exception as exc:  # noqa: BLE001
                 log.debug("压缩模型不支持 bind(max_tokens)，跳过输出上限: %s", exc)
                 max_out = 0
+        # 实际生效的输出上限：成本上限 > 构造时的上限（Anthropic 必须显式给）
+        effective_max = max_out or self.summary_max_tokens
         # 瞬时故障在进程内重试（q27：先重试，再降级）
         runnable = runnable.with_retry()
         chunks: list[str] = []
@@ -326,8 +337,11 @@ class CompactMiddleware(SummarizationMiddleware):
             if reported:
                 usage = reported
             meta = getattr(chunk, "response_metadata", None) or {}
+            # OpenAI 用 finish_reason，Anthropic 用 stop_reason（max_tokens）
             if meta.get("finish_reason"):
                 finish_reason = meta["finish_reason"]
+            elif meta.get("stop_reason"):
+                finish_reason = meta["stop_reason"]
             text = _content_to_text(getattr(chunk, "content", ""))
             if text:
                 chunks.append(text)
@@ -335,21 +349,67 @@ class CompactMiddleware(SummarizationMiddleware):
                     result = on_delta(text)
                     if hasattr(result, "__await__"):
                         await result
-        self._log_usage(usage)
+        self._log_usage(usage, self.api_format)
         summary = "".join(chunks).strip()
-        if self._is_truncated(max_out, finish_reason, usage):
+        if self._is_truncated(effective_max, finish_reason, usage):
             # 摘要被截断 → 写回去就等于永久丢掉摘要没覆盖到的历史（原文会被
             # _build_replacement 删掉）。这里按「压缩失败」处理：不写回 checkpoint，
             # 把原因抛给调用方（自动压缩降级为不压缩；手动 /compact 显示失败卡片）。
-            # 同时放弃输出上限自愈，避免下一回合再用过小的上限白烧一次调用。
-            self._cost_cap_bypassed = True
+            # 同时放弃成本上限自愈，避免下一回合再用过小的上限白烧一次调用。
+            self._cost_cap_bypassed = max_out > 0
             raise RuntimeError(
-                f"摘要被 COMPACT_MAX_OUTPUT_TOKENS={max_out} 截断"
-                f"（finish_reason={finish_reason}），本次不写回 checkpoint 以免丢失"
-                "摘要未覆盖的历史；已自动放弃输出上限，请调大该值或关闭 "
-                "COMPACT_COST_CONTROL_ENABLED"
+                f"摘要被输出上限 {effective_max} 截断"
+                f"（finish_reason={finish_reason}，api_format={self.api_format}），"
+                "本次不写回 checkpoint 以免丢失摘要未覆盖的历史"
+                + (
+                    "；已自动放弃 COMPACT_MAX_OUTPUT_TOKENS，请调大该值或关闭 "
+                    "COMPACT_COST_CONTROL_ENABLED"
+                    if max_out > 0
+                    else "；该上限来自模型自身 max_tokens，请调大模型的"
+                    " model_max_output_tokens"
+                )
             )
         return summary
+
+    def _bind_compact_tools(self, model: Any, tool_specs: list[Any]) -> Any:
+        """把工具绑定到压缩模型，并禁止本次调用真正使用工具。
+
+        `tool_choice` 的写法**随格式不同**，写错会静默变成"必须调用某个工具"：
+
+        - OpenAI Chat / Responses：字符串 `"none"`
+        - Anthropic：必须传 dict `{"type": "none"}`；传字符串 `"none"` 会被
+          解释成「调用名为 none 的工具」（SDK 的字符串只支持 any/auto/工具名）
+        - Gemini：字符串 `"none"`
+
+        绑定失败（测试替身、网关不支持工具）时逐级降级：先去掉 tool_choice，
+        再去掉服务端 specs，最后不绑工具——压缩本身不能因此失败。
+        """
+        if not tool_specs:
+            return model
+        choice = forced_no_tool_choice(self.api_format)
+        try:
+            return model.bind_tools(tool_specs, tool_choice=choice)
+        except Exception as exc:  # noqa: BLE001
+            if not self._tool_choice_warned:
+                self._tool_choice_warned = True
+                log.warning(
+                    "压缩请求无法绑定 tool_choice=%r（%s），改用无 tool_choice 的工具前缀："
+                    "摘要阶段可能调用工具，前缀缓存仍保持一致",
+                    choice,
+                    exc,
+                )
+        try:
+            return model.bind_tools(tool_specs)
+        except Exception as exc:  # noqa: BLE001
+            if self.server_tool_specs:
+                log.warning(
+                    "压缩请求无法绑定服务端工具规格（%s），本次省略："
+                    "前缀缓存可能不完整",
+                    exc,
+                )
+        if self.mock_tools:
+            return model.bind_tools(self.mock_tools)
+        return model
 
     def _cost_control_active(self) -> bool:
         """成本控制（输入/输出上限）当前是否生效。
@@ -367,13 +427,15 @@ class CompactMiddleware(SummarizationMiddleware):
     def _is_truncated(max_out: int, finish_reason: Any, usage: Any) -> bool:
         """摘要输出是否被上限截断。
 
-        优先看 provider 上报的 `finish_reason == "length"`；部分 provider 不返回
-        它，退化为比较上报的 output_tokens 是否已触顶。两者都拿不到时无法判断，
+        各格式的上限信号不同：OpenAI 用 `finish_reason == "length"`，
+        Anthropic 用 `stop_reason == "max_tokens"`。部分 provider 都不返回，
+        退化为比较上报的 output_tokens 是否已触顶。三者都拿不到时无法判断，
         按未截断处理（不额外制造假失败）。
         """
         if max_out <= 0:
             return False
-        if str(finish_reason or "").lower() == "length":
+        reason = str(finish_reason or "").strip().lower()
+        if reason in ("length", "max_tokens"):
             return True
         if isinstance(usage, dict):
             output = usage.get("output_tokens")
@@ -382,21 +444,28 @@ class CompactMiddleware(SummarizationMiddleware):
         return False
 
     @staticmethod
-    def _log_usage(usage: Any) -> None:
+    def _log_usage(usage: Any, api_format: str = "openai_chat") -> None:
         """记录压缩调用真实用量，让压缩成本可审计。
 
         `cache_read` 是判断"前缀缓存有没有命中"的唯一依据：它若远小于
         `input_tokens`，说明前缀没对齐，整段历史都在按全价计费。
+        Anthropic 另外会上报 `cache_creation`（本回合写入缓存的量），
+        把它单独打印出来，才能区分"写缓存"和"读缓存"。
         """
         if not usage:
             log.info("压缩调用用量: 提供商未返回 usage_metadata（无法核算成本）")
             return
         details = usage.get("input_token_details") or {}
+        output_details = usage.get("output_token_details") or {}
         log.info(
-            "压缩调用用量: input=%s output=%s cache_read=%s total=%s",
+            "压缩调用用量(%s): input=%s output=%s cache_read=%s cache_creation=%s "
+            "reasoning=%s total=%s",
+            api_format,
             usage.get("input_tokens"),
             usage.get("output_tokens"),
             details.get("cache_read"),
+            details.get("cache_creation"),
+            output_details.get("reasoning"),
             usage.get("total_tokens"),
         )
 
@@ -450,18 +519,32 @@ class CompactMiddleware(SummarizationMiddleware):
     def _build_replacement(
         self, messages: list[AnyMessage], summary: str
     ) -> list[AnyMessage]:
-        """构造压缩后的消息列表：System（并入摘要）+ 保留消息。
+        """构造压缩后的消息列表：唯一 System（并入摘要）+ 保留消息。
 
         使用 `RemoveMessage(REMOVE_ALL_MESSAGES)` 清空后按目标顺序重排，
         因此摘要可以精确落在「System 之后、保留消息之前」。
+
+        **多条 SystemMessage 必须合并成一条**：Gemini 只认第一条 system
+        instruction，其余会被丢弃；Anthropic 也要求 system 是单独参数。
+        合并时保留原有顺序与内容（各自剥掉上一轮的摘要段），摘要追加在末尾。
         """
         system_messages = [m for m in messages if isinstance(m, SystemMessage)]
         if system_messages:
             head = system_messages[0]
+            if len(system_messages) == 1:
+                merged_text = _strip_summary(head.content)
+            else:
+                merged_text = "\n\n".join(
+                    text
+                    for text in (
+                        _strip_summary(message.content) for message in system_messages
+                    )
+                    if text
+                )
             merged = head.model_copy(
-                update={"content": _wrap_summary(_strip_summary(head.content), summary)}
+                update={"content": _wrap_summary(merged_text, summary)}
             )
-            return [merged, *system_messages[1:]]
+            return [merged]
         # Subagent：system prompt 由 create_agent 在模型调用时注入，不在 state 中。
         # 此时没有可并入的 System，退化为把摘要作为首条 HumanMessage。
         return [
@@ -482,8 +565,18 @@ class CompactMiddleware(SummarizationMiddleware):
         self._ensure_message_ids(messages)
 
         # 判定一律基于 API 上报值；没有 API 数据时不猜、不压缩。
-        reported = _reported_tokens(messages)
+        reported = _reported_tokens(messages, self.api_format)
         if reported <= 0:
+            if not self._warned_no_usage and any(
+                isinstance(message, AIMessage) for message in messages
+            ):
+                self._warned_no_usage = True
+                log.warning(
+                    "模型未上报 token 用量（api_format=%s）：自动压缩不会触发。"
+                    "若该网关需要 stream_options.include_usage，请检查 Provider 的"
+                    " stream_usage 设置；否则请手动 /compact",
+                    self.api_format,
+                )
             return None
         if not self._should_summarize(messages, reported):
             return None
@@ -578,15 +671,17 @@ async def build_compact_middleware(
     前缀（前缀 = System + tools schema + messages），因此关掉思考不破缓存，
     同时避免思考 token 吃掉留给摘要输出的余量。
 
+    `purpose="compact"` 让 builder 给需要显式输出上限的格式（Anthropic）设置
+    合适的摘要上限，而不是沿用 SDK 默认的 1024（会把摘要截断成半句话）。
+
     构建失败（如 provider 配置缺失）时返回 None，而不是抛错——auto compact
     是保命机制，不应因为自身构建失败就阻断整个 Agent 启动。
     """
     import faust_backend.config_loader as conf
-    from faust_backend.provider import (
-        build_ReasoningChatOpenAI_from_spec,
-        get_context_length,
-    )
+    from faust_backend.llm_formats import build_chat_model_from_spec
+    from faust_backend.provider import get_context_length, get_model_api_format
     from faust_backend.runtime import state as runtime_state
+    from faust_backend.runtime.server_tools import resolve_server_tool_specs
 
     if not model_spec:
         log.warning("未配置模型 spec，auto compact 未启用")
@@ -594,12 +689,25 @@ async def build_compact_middleware(
     providers = runtime_state.get_model_providers()
     context_length = get_context_length(providers, model_spec)
     try:
-        compact_model = await build_ReasoningChatOpenAI_from_spec(
-            providers, spec=model_spec, intensity=None
+        compact_model = await build_chat_model_from_spec(
+            providers, spec=model_spec, intensity=None, purpose="compact"
         )
     except Exception as exc:  # noqa: BLE001
         log.error("构建压缩模型失败，auto compact 未启用: %s", exc)
         return None
+    api_format = get_model_api_format(providers, model_spec)
+    try:
+        server_tool_specs = resolve_server_tool_specs(providers, model_spec)
+    except ValueError as exc:
+        # 服务端工具配置非法不应该让压缩整体失效：省略 specs，缓存前缀受损但能压
+        log.error("压缩请求无法解析服务端工具规格（本次省略）: %s", exc)
+        server_tool_specs = []
+    # Anthropic 的 max_tokens 在构造时就已确定；读回来用于「摘要是否被截断」判定
+    summary_max_tokens = (
+        int(getattr(compact_model, "max_tokens", 0) or 0)
+        if api_format == "anthropic_messages"
+        else 0
+    )
     return CompactMiddleware(
         model=model,
         compact_model=compact_model,
@@ -607,4 +715,7 @@ async def build_compact_middleware(
         context_length=context_length,
         threshold_ratio=conf.COMPACT_THRESHOLD_RATIO,
         keep_rounds=conf.COMPACT_KEEP_ROUNDS,
+        api_format=api_format,
+        server_tool_specs=server_tool_specs,
+        summary_max_tokens=summary_max_tokens,
     )

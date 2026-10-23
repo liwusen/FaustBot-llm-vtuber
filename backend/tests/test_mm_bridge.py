@@ -154,3 +154,48 @@ def test_bridge_injects_only_unbridged_sources(isolated_output_store):
     assert out is not None
     assert len(out["messages"]) == 1
     assert _image_urls(out["messages"])
+
+# ── 跨格式兼容：桥接产出的 image_url 块必须能被 Anthropic / Gemini 接受 ──
+# 桥接统一产出 OpenAI 风格的 {"type": "image_url"}；官方 SDK 会各自转换
+# （Anthropic -> image/source，Gemini -> inline_data）。这里锁住这个假设，
+# 避免以后有人「按格式手写图片块」反而引入不兼容结构。
+
+
+def test_bridge_message_converts_to_anthropic_image_block(isolated_output_store, monkeypatch):
+    from langchain_anthropic import ChatAnthropic
+
+    monkeypatch.setattr(conf, "MM_BRIDGE_MAX_SCAN", 6)
+    store = isolated_output_store
+    artifact_id = _put_image(store)
+    state = _state(artifact_id)
+    messages = MultimodalBridgeMiddleware().before_model(state, None)["messages"]
+
+    model = ChatAnthropic(model="claude-x", api_key="k", max_tokens=64)
+    payload = model._get_request_payload(messages)
+
+    content = payload["messages"][0]["content"]
+    image_blocks = [block for block in content if block.get("type") == "image"]
+    assert image_blocks, content
+    assert image_blocks[0]["source"]["type"] == "base64"
+    assert image_blocks[0]["source"]["media_type"] == "image/png"
+
+
+def test_bridge_message_converts_to_gemini_inline_data(isolated_output_store, monkeypatch):
+    import langchain_google_genai.chat_models as google_chat_models
+
+    monkeypatch.setattr(conf, "MM_BRIDGE_MAX_SCAN", 6)
+    store = isolated_output_store
+    artifact_id = _put_image(store)
+    state = _state(artifact_id)
+    messages = MultimodalBridgeMiddleware().before_model(state, None)["messages"]
+
+    _system, history = google_chat_models._parse_chat_history(
+        messages, model="gemini-2.5-pro"
+    )
+    parts = [
+        part
+        for content in history
+        if content is not None
+        for part in (content.parts or [])
+    ]
+    assert any(getattr(part, "inline_data", None) for part in parts), parts

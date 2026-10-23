@@ -37,6 +37,10 @@ networkx>=3.0
 # ModelRetryMiddleware 需要 >=1.3
 langchain>=1.3
 langchain-openai
+# 多 API 格式：Anthropic Messages / Google Gemini 官方集成
+# （同一个 Provider 可能同时提供 OpenAI Chat / Responses / Anthropic / Gemini 格式的模型）
+langchain-anthropic
+langchain-google-genai
 langchain-deepseek==1.0.1
 langchain-community
 wikipedia==1.4.0

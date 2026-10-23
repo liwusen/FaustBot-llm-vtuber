@@ -83,6 +83,149 @@ function _setModelContextLength(providers, providerName, modelName, length) {
   else target.model_context_lengths[modelName] = length;
 }
 
+// ── API 格式（多格式 Provider） ──
+// 真实决策（含端点路径/模型族回退）在后端 llm_formats.resolve_route；这里只展示
+// 「用户显式覆盖 / Provider 默认 / models.dev 目录」这三层前端已知的信息，
+// 都没有时显示「自动」，表示由后端推断。
+function _modelFormatInfo(provider, model) {
+  if (!provider) return { format: "auto", source: "" };
+  const manual = (provider.model_api_formats || {})[model];
+  if (manual) return { format: manual, source: "manual" };
+  if (provider.api_format && provider.api_format !== "auto") {
+    return { format: provider.api_format, source: "provider_default" };
+  }
+  const route = (provider.model_catalog_routes || {})[model];
+  if (route && route.format) return { format: route.format, source: "catalog" };
+  return { format: "auto", source: "" };
+}
+
+function _formatText(format, source) {
+  if (format === "auto") return "自动";
+  const label = (window.API_FORMAT_LABELS || {})[format] || format;
+  const sourceLabel = (window.FORMAT_SOURCE_LABELS || {})[source] || "";
+  return sourceLabel ? `${label} · ${sourceLabel}` : label;
+}
+
+// 模型级字段（格式覆盖 / 最大输出 / 服务端工具）统一写入
+function _setModelField(providers, providerName, modelName, field, value) {
+  const target = providers.find((p) => p.name === providerName);
+  if (!target) return;
+  if (!target[field]) target[field] = {};
+  if (value === null || value === undefined || value === "") delete target[field][modelName];
+  else target[field][modelName] = value;
+}
+
+// 模型重命名时把所有「按模型名索引」的配置一起迁移
+function _renameModelConfig(providers, providerName, oldName, newName) {
+  const target = providers.find((p) => p.name === providerName);
+  if (!target) return;
+  for (const field of [
+    "model_context_lengths", "model_max_output_tokens",
+    "model_api_formats", "model_server_tools", "model_api_capabilities",
+  ]) {
+    const map = target[field];
+    if (!map || !(oldName in map)) continue;
+    const value = map[oldName];
+    delete map[oldName];
+    if (newName) map[newName] = value;
+  }
+}
+
+// 把 Provider 编辑表单写进 provider 对象（新增与编辑共用，避免字段漏掉）
+function _applyProviderForm(target, form) {
+  target.base_url = form.base_url;
+  if (form.key) target.key = form.key;
+  target.thinking_type = form.thinking_type;
+  target.opencode_go = form.opencode_go;
+  target.api_format = form.api_format || "auto";
+  target.stream_usage = form.stream_usage;
+  target.format_base_urls = form.format_base_urls || {};
+  if (form.catalog_provider_id !== undefined) {
+    target.catalog_provider_id = form.catalog_provider_id;
+  }
+  return target;
+}
+
+// 新建 Provider 的完整默认结构（后端 ModelProvider 也有同样的默认值）
+function _newProviderRecord(name, form) {
+  return _applyProviderForm({
+    name,
+    base_url: "",
+    key: null,
+    models: [],
+    model_context_lengths: {},
+    thinking_type: "qwen",
+    opencode_go: false,
+    catalog_provider_id: null,
+    model_catalog_routes: {},
+    catalog_synced_at: null,
+    api_format: "auto",
+    model_api_formats: {},
+    format_base_urls: {},
+    model_max_output_tokens: {},
+    model_api_capabilities: {},
+    model_server_tools: {},
+    stream_usage: null,
+  }, form);
+}
+
+// 目录匹配状态的一行摘要（Modal 内展示）
+function _catalogSummary(provider) {
+  if (!provider) {
+    return "尚未匹配 models.dev 目录。保存后点「重新匹配目录」，或直接指定 API 格式。";
+  }
+  const routes = provider.model_catalog_routes || {};
+  const count = Object.keys(routes).length;
+  const providerId = provider.catalog_provider_id;
+  if (!providerId) {
+    return count
+      ? `已按模型名匹配到目录（${count} 个模型有路由），但未记录目录 Provider ID。`
+      : "尚未匹配 models.dev 目录（需要 Provider 已保存且目录已加载）。";
+  }
+  const counts = {};
+  for (const route of Object.values(routes)) {
+    const format = route && route.format;
+    if (format) counts[format] = (counts[format] || 0) + 1;
+  }
+  const parts = Object.entries(counts)
+    .map(([format, n]) => `${(window.API_FORMAT_LABELS || {})[format] || format} ${n}`)
+    .join(" / ");
+  return `目录 Provider: ${providerId}${parts ? `；路由: ${parts}` : ""}`
+    + (count ? `（共 ${count} 个模型）` : "（该 Provider 还没有模型）");
+}
+
+// 目录匹配接口返回后的摘要
+function _catalogResultText(result) {
+  if (!result) return "目录匹配未返回结果";
+  if (!result.provider_id) {
+    const missing = (result.missing || []).length;
+    return `未匹配到目录条目${missing ? `（${missing} 个模型无目录信息）` : ""}；`
+      + "可手动填写目录 Provider ID 后重试，或直接指定 API 格式。";
+  }
+  const parts = [
+    `目录 Provider: ${result.provider_id}`
+      + (result.host_matched ? "" : "（host 不同，仅采用格式，端点仍用 Base URL）"),
+    `路由模型: ${result.routed || 0}`,
+  ];
+  if ((result.missing || []).length) parts.push(`目录缺失: ${result.missing.length}`);
+  const candidates = result.candidates || [];
+  if (candidates.length > 1) {
+    parts.push(`候选: ${candidates.slice(0, 3).map((c) => c.provider_id).join(", ")}`);
+  }
+  return parts.join("；");
+}
+
+// 只重新拉取并替换「当前 Provider」的派生字段，保留其它 Provider 的未保存改动
+async function _reloadProviderFromBackend(name) {
+  const payload = await cfgApi("GET", "/faust/admin/providers");
+  const fresh = (payload.providers || []).find((p) => p.name === name);
+  if (!fresh) return null;
+  state.providers = (state.providers || []).map((p) => (p.name === name ? fresh : p));
+  _markProvidersDirty();
+  return fresh;
+}
+
+
 // ── Provider 添加/编辑 Modal ──
 
 function openProviderModal(existing) {
@@ -121,6 +264,57 @@ function openProviderModal(existing) {
   const ogRow = el("div", "switch-row");
   ogRow.append(ogText, ogLabel);
 
+  // API 格式：Provider 级默认。auto = 由 models.dev 目录 / 端点 / 模型族推断。
+  const apiFormatSelect = el("select", "select");
+  for (const opt of (window.API_FORMAT_OPTIONS || [{ value: "auto", label: "自动" }])) {
+    const node = el("option", "", opt.label);
+    node.value = opt.value;
+    apiFormatSelect.append(node);
+  }
+  apiFormatSelect.value = (existing && existing.api_format) || "auto";
+
+  // 流式 token 用量：部分网关拒绝 stream_options/include_usage，需要能关掉
+  const streamSelect = el("select", "select");
+  for (const opt of [
+    { value: "auto", label: "自动（按格式默认）" },
+    { value: "on", label: "开启（统计用量，可触发自动压缩）" },
+    { value: "off", label: "关闭（网关不支持 stream_options 时）" },
+  ]) {
+    const node = el("option", "", opt.label);
+    node.value = opt.value;
+    streamSelect.append(node);
+  }
+  const existingStreamUsage = existing ? existing.stream_usage : null;
+  streamSelect.value = existingStreamUsage === true ? "on"
+    : existingStreamUsage === false ? "off" : "auto";
+
+  // 格式端点（高级）：留空 = 用目录推导 / Provider Base URL
+  const formatBaseInputs = {};
+  const formatBaseRows = el("div", "format-base-rows");
+  for (const opt of (window.API_FORMAT_OPTIONS || []).filter((o) => o.value !== "auto")) {
+    const input = el("input", "input");
+    input.placeholder = "默认：models.dev 目录或 Base URL";
+    input.value = (existing && existing.format_base_urls && existing.format_base_urls[opt.value]) || "";
+    formatBaseInputs[opt.value] = input;
+    const row = el("div", "form-field");
+    row.append(el("label", "form-field-label", API_FORMAT_LABELS[opt.value] || opt.value));
+    const control = el("div", "form-field-control");
+    control.append(input);
+    row.append(control);
+    formatBaseRows.append(row);
+  }
+  const formatBaseHelp = el(
+    "p", "card-help",
+    "格式端点用于目录缺失或需要单独指定路径的网关。留空时：host 与 models.dev 条目一致则用目录端点，否则用上面的 Base URL。"
+  );
+
+  // models.dev 目录：展示匹配结果 + 手动 pin / 重新匹配
+  const catalogPinInput = el("input", "input");
+  catalogPinInput.placeholder = "目录 Provider ID（留空 = 自动匹配，如 opencode-go）";
+  catalogPinInput.value = (existing && existing.catalog_provider_id) || "";
+  const catalogSummary = el("div", "card-help", _catalogSummary(existing));
+  const catalogBar = el("div", "toolbar");
+
   const field = (label, node) => {
     const box = el("div", "form-field");
     box.append(el("label", "form-field-label", label));
@@ -130,27 +324,108 @@ function openProviderModal(existing) {
     return box;
   };
 
+  // 读取表单 → Provider 字段（新增/编辑/先保存再操作 都走这一份）
+  const readForm = () => {
+    const formatBaseUrls = {};
+    for (const [format, input] of Object.entries(formatBaseInputs)) {
+      const value = String(input.value || "").trim();
+      if (value) formatBaseUrls[format] = value;
+    }
+    const rawKey = keyInput.value && keyInput.value !== "********" ? keyInput.value : "";
+    return {
+      base_url: String(urlInput.value || "").trim(),
+      key: rawKey || null,
+      thinking_type: thinkingSelect.value,
+      opencode_go: ogCheckbox.checked,
+      api_format: apiFormatSelect.value,
+      stream_usage: streamSelect.value === "auto" ? null : streamSelect.value === "on",
+      format_base_urls: formatBaseUrls,
+      catalog_provider_id: String(catalogPinInput.value || "").trim() || null,
+    };
+  };
+
+  // 把当前表单提交到后端（目录匹配 / 加载模型都要求 provider 已存在于后端）
+  const persistForm = async () => {
+    const name = isEdit ? existing.name : String(nameInput.value || "").trim();
+    const form = readForm();
+    if (!name || !form.base_url) {
+      showBanner("error", "请填写名称与 Base URL");
+      return null;
+    }
+    const providers = JSON.parse(JSON.stringify(state.providers || []));
+    let target = providers.find((p) => p.name === name);
+    if (!target) {
+      target = _newProviderRecord(name, form);
+      providers.push(target);
+    } else {
+      _applyProviderForm(target, form);
+    }
+    state.providers = providers;
+    await cfgApi("POST", "/faust/admin/config", {
+      providers: state.providers,
+      main_model: state.mainModel,
+      subagent_models: state.subagentModels,
+    });
+    return name;
+  };
+
+  const rematchCatalog = makeButton("重新匹配目录", async () => {
+    try {
+      const name = await persistForm();
+      if (!name) return;
+      const r = await cfgApi(
+        "POST",
+        `/faust/admin/providers/${encodeURIComponent(name)}/catalog-match`,
+        { provider_id: String(catalogPinInput.value || "").trim() || null },
+      );
+      await _reloadProviderFromBackend(name);
+      const result = r.result || {};
+      catalogSummary.textContent = _catalogResultText(result);
+      showBanner(
+        "success",
+        result.provider_id
+          ? `已匹配 models.dev 目录: ${result.provider_id}（${result.routed || 0} 个模型有路由）`
+          : "未匹配到目录条目：可手动填写目录 Provider ID 后重试，或直接指定 API 格式",
+      );
+    } catch (e) {
+      showBanner("error", "目录匹配失败: " + (e && e.detail ? e.detail : String(e)));
+    }
+  }, "btn btn-secondary");
+
+  const refreshCatalog = makeButton("刷新 models.dev 目录", async () => {
+    try {
+      const r = await cfgApi("POST", "/faust/admin/models-dev/refresh");
+      // 刷新会影响全部 Provider：整表重拉（目录刷新本就要求先保存，本地不会有未保存改动）
+      const payload = await cfgApi("GET", "/faust/admin/providers");
+      state.providers = payload.providers || [];
+      _markProvidersDirty();
+      const name = isEdit ? existing.name : String(nameInput.value || "").trim();
+      catalogSummary.textContent = _catalogSummary(_findProvider(name));
+      showBanner(
+        "success",
+        `目录已刷新: ${r.providers || 0} 个 Provider，匹配 ${r.matched || 0} 个（保存后生效）`,
+      );
+    } catch (e) {
+      showBanner("error", "刷新目录失败: " + (e && e.detail ? e.detail : String(e)));
+    }
+  }, "btn btn-ghost");
+
+  catalogBar.append(catalogPinInput, rematchCatalog, refreshCatalog);
+
   // 手动添加模型（Modal 内）
   const modelInput = el("input", "input");
   modelInput.placeholder = "模型名（如 deepseek-chat）";
   const addModelBtn = makeButton("添加模型", () => {
     const m = String(modelInput.value || "").trim();
     if (!m) { showBanner("error", "请输入模型名"); return; }
+    const form = readForm();
     const providers = JSON.parse(JSON.stringify(state.providers || []));
     const pname = (existing ? existing.name : String(nameInput.value || "").trim());
     let target = providers.find((p) => p.name === pname);
     if (!target) {
       // 新增场景：表单里的 provider 尚未进入 state，先按表单值占位
-      const base = String(urlInput.value || "").trim();
-      if (!pname || !base) { showBanner("error", "请先填写名称与 Base URL"); return; }
-      target = {
-        name: pname,
-        base_url: base,
-        key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null,
-        models: [],
-        thinking_type: thinkingSelect.value,
-        opencode_go: ogCheckbox.checked,
-      };
+      if (!pname || !form.base_url) { showBanner("error", "请先填写名称与 Base URL"); return; }
+      target = _newProviderRecord(pname, form);
       providers.push(target);
       _saveProvidersToState(providers);
     }
@@ -166,45 +441,33 @@ function openProviderModal(existing) {
 
   // 自动加载模型：先保存（统一保存接口，确保后端已有该 provider），再拉取模型列表
   const loadBtn = makeButton("自动加载模型", async () => {
-    const name = isEdit ? existing.name : String(nameInput.value || "").trim();
-    const base = String(urlInput.value || "").trim();
-    if (!name || !base) { showBanner("error", "请填写名称与 Base URL"); return; }
-    const key = keyInput.value && keyInput.value !== "********" ? keyInput.value : (existing ? existing.key : null);
     try {
       // 1) 先保存：把当前表单（含新 provider）提交到后端统一保存接口
-      const providers = JSON.parse(JSON.stringify(state.providers || []));
-      let target = providers.find((p) => p.name === name);
-      if (!target) {
-        providers.push({ name, base_url: base, key: key || null, models: [], thinking_type: thinkingSelect.value, opencode_go: ogCheckbox.checked });
-      } else {
-        target.base_url = base;
-        if (key) target.key = key;
-        target.thinking_type = thinkingSelect.value;
-        target.opencode_go = ogCheckbox.checked;
-      }
-      state.providers = providers;
-      await cfgApi("POST", "/faust/admin/config", {
-        providers: state.providers,
-        main_model: state.mainModel,
-        subagent_models: state.subagentModels,
-      });
-      // 2) 再加载模型（后端会清空该 provider 已有模型后重新拉取）
+      const name = await persistForm();
+      if (!name) return;
+      // 2) 再加载模型（后端会清空该 provider 已有模型后重新拉取，
+      //    并用 models.dev 目录补全格式路由与缺失的上下文/输出长度）
       const r = await cfgApi("POST", `/faust/admin/providers/${encodeURIComponent(name)}/load-models`,
         null, null);
-      // 3) 用最新列表覆盖该 provider 的 models（不覆盖其它 provider 的未保存改动）；
-      //    同时接收后端从 /models 元数据自动填充的上下文长度
+      // 3) 用最新结果覆盖该 provider 的派生字段（不覆盖其它 provider 的未保存改动）
       const next = JSON.parse(JSON.stringify(state.providers || []));
       const t = next.find((p) => p.name === name);
       if (t) {
         t.models = (r.models || []).slice();
         if (r.model_context_lengths) t.model_context_lengths = { ...r.model_context_lengths };
+        if (r.model_max_output_tokens) t.model_max_output_tokens = { ...r.model_max_output_tokens };
+        if (r.model_api_capabilities) t.model_api_capabilities = { ...r.model_api_capabilities };
+        if (r.catalog && r.catalog.provider_id) t.catalog_provider_id = r.catalog.provider_id;
+        if (r.catalog) catalogSummary.textContent = _catalogResultText(r.catalog, r.formats);
       }
       _saveProvidersToState(next);
       const filled = Object.keys(r.model_context_lengths || {}).length;
+      const routed = (r.catalog && r.catalog.routed) || 0;
       showBanner(
         "success",
         `模型加载成功: ${(r.models || []).length} 个`
-          + (filled ? `，其中 ${filled} 个模型的上下文长度由 /models 自动填充` : "")
+          + (routed ? `，${routed} 个已按 models.dev 目录确定 API 格式` : "")
+          + (filled ? `，${filled} 个模型有上下文长度` : "")
           + "（保存后生效）",
       );
     } catch (e) {
@@ -216,20 +479,15 @@ function openProviderModal(existing) {
   bar.append(
     makeButton("保存 Provider", () => {
       const name = String(nameInput.value || "").trim();
-      const base = String(urlInput.value || "").trim();
-      if (!name || !base) { showBanner("error", "名称与 Base URL 必填"); return; }
+      const form = readForm();
+      if (!name || !form.base_url) { showBanner("error", "名称与 Base URL 必填"); return; }
       const providers = JSON.parse(JSON.stringify(state.providers || []));
       if (isEdit) {
         const target = providers.find((p) => p.name === name);
-        if (target) {
-          target.base_url = base;
-          if (keyInput.value && keyInput.value !== "********") target.key = keyInput.value;
-          target.thinking_type = thinkingSelect.value;
-          target.opencode_go = ogCheckbox.checked;
-        }
+        if (target) _applyProviderForm(target, form);
       } else {
         if (providers.some((p) => p.name === name)) { showBanner("error", "Provider 已存在"); return; }
-        providers.push({ name, base_url: base, key: (keyInput.value && keyInput.value !== "********") ? keyInput.value : null, models: [], thinking_type: thinkingSelect.value, opencode_go: ogCheckbox.checked });
+        providers.push(_newProviderRecord(name, form));
       }
       _saveProvidersToState(providers);
       closeModal();
@@ -239,13 +497,21 @@ function openProviderModal(existing) {
     makeButton("关闭", closeModal)
   );
 
-  const tip = el("p", "card-help", "新增 Provider 后可在下方 Models 列表勾选主模型与 Subagent 模型；所有改动随顶部「保存」统一生效。「Opencode Go 适配头」适用于 OpenCode Go 订阅端点：启用后每个请求自动附带 x-opencode-session 会话头（用于路由优化与提示缓存）。");
+  const tip = el("p", "card-help", "新增 Provider 后可在下方 Models 列表勾选主模型与 Subagent 模型；所有改动随顶部「保存」统一生效。「API 格式」默认自动：优先用 models.dev 目录为每个模型选择 OpenAI Chat / OpenAI Responses / Anthropic / Gemini，同一个 Provider 可以同时提供多种格式。清空「目录 Provider ID」再保存即恢复自动匹配；填了 ID 则锁定该目录条目。「Opencode Go 适配头」适用于 OpenCode Go 订阅端点：启用后每个请求自动附带 x-opencode-session 会话头。");
   openModal(isEdit ? `编辑 Provider - ${existing.name}` : "添加 AI Provider", [
     field("名称", nameInput),
     field("Base URL", urlInput),
     field("API Key", keyInput),
     field("Thinking 格式", thinkingSelect),
+    field("API 格式", apiFormatSelect),
+    field("流式 Token 用量", streamSelect),
     field("Opencode Go 适配头", ogRow),
+    el("h4", "card-title", "models.dev 目录"),
+    catalogSummary,
+    catalogBar,
+    el("h4", "card-title", "格式端点（高级）"),
+    formatBaseRows,
+    formatBaseHelp,
     loadBtn,
     el("h4", "card-title", "模型管理"),
     modelRow,
@@ -271,6 +537,60 @@ function openModelModal(entry) {
   ctxControl.append(ctxInput);
   ctxField.append(ctxControl);
 
+  // 最大输出 token：留空 = 由 /models 或 models.dev 目录自动填充
+  const maxOutInput = el("input", "input");
+  maxOutInput.type = "number";
+  maxOutInput.min = "1";
+  maxOutInput.placeholder = "自动（/models 或 models.dev）";
+  const configuredMaxOut = entryProvider && entryProvider.model_max_output_tokens
+    ? entryProvider.model_max_output_tokens[entry.model]
+    : undefined;
+  maxOutInput.value = configuredMaxOut ? String(configuredMaxOut) : "";
+  const maxOutField = el("div", "form-field");
+  maxOutField.append(el("label", "form-field-label", "最大输出 Token"));
+  const maxOutControl = el("div", "form-field-control");
+  maxOutControl.append(maxOutInput);
+  maxOutField.append(maxOutControl);
+
+  // API 格式覆盖：留空 = 跟随 Provider / 目录 / 推断
+  const formatSelect = el("select", "select");
+  for (const opt of (window.API_FORMAT_OPTIONS || [{ value: "auto", label: "自动" }])) {
+    const node = el("option", "", opt.label);
+    node.value = opt.value;
+    formatSelect.append(node);
+  }
+  const formatInfo = _modelFormatInfo(entryProvider, entry.model);
+  formatSelect.value = formatInfo.source === "manual" ? formatInfo.format : "auto";
+  const formatField = el("div", "form-field");
+  formatField.append(el("label", "form-field-label", "API 格式（覆盖）"));
+  const formatControl = el("div", "form-field-control");
+  formatControl.append(formatSelect);
+  formatField.append(formatControl);
+
+  // 服务端工具：勾选后由服务商在服务端执行（openai_chat 不支持）
+  const toolWrap = el("div", "form-field");
+  toolWrap.append(el("label", "form-field-label", "服务端工具"));
+  const toolControl = el("div", "form-field-control");
+  const enabledTools = new Set(
+    (entryProvider && entryProvider.model_server_tools
+      ? entryProvider.model_server_tools[entry.model]
+      : []) || []
+  );
+  const toolCheckboxes = {};
+  for (const tool of (window.SERVER_TOOL_OPTIONS || [])) {
+    const row = el("label", "switch-row");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = enabledTools.has(tool.value);
+    checkbox.title = tool.help || "";
+    toolCheckboxes[tool.value] = checkbox;
+    row.append(checkbox, el("span", "switch-text", tool.label));
+    toolControl.append(row);
+  }
+  const toolHelp = el("p", "card-help", "服务端工具由服务商执行（如联网搜索），不会出现在本地工具列表；OpenAI Chat 格式不支持。");
+  toolControl.append(toolHelp);
+  toolWrap.append(toolControl);
+
   const bar = el("div", "toolbar");
   bar.append(
     makeButton("保存", () => {
@@ -281,9 +601,19 @@ function openModelModal(entry) {
       if (!target) { closeModal(); return; }
       const oldSpec = entry.spec;
       target.models = (target.models || []).map((m) => (m === entry.model ? newName : m));
-      // 上下文长度随重命名从旧模型名迁移到新模型名
-      _setModelContextLength(providers, entry.provider, entry.model, null);
+      // 所有「按模型名索引」的配置随重命名一起迁移
+      _renameModelConfig(providers, entry.provider, entry.model, newName);
+      // 上下文长度 / 最大输出 / 格式覆盖 按表单写入
       _setModelContextLength(providers, entry.provider, newName, _parseContextLength(ctxInput.value));
+      _setModelField(providers, entry.provider, newName, "model_max_output_tokens",
+        _parseContextLength(maxOutInput.value));
+      _setModelField(providers, entry.provider, newName, "model_api_formats",
+        formatSelect.value === "auto" ? null : formatSelect.value);
+      const tools = Object.entries(toolCheckboxes)
+        .filter(([, node]) => node.checked)
+        .map(([value]) => value);
+      _setModelField(providers, entry.provider, newName, "model_server_tools",
+        tools.length ? tools : null);
       // 同步主/Subagent 选择里的 spec 引用
       if (state.mainModel === oldSpec) state.mainModel = `${entry.provider}::${newName}`;
       state.subagentModels = (state.subagentModels || []).map((s) => (s === oldSpec ? `${entry.provider}::${newName}` : s));
@@ -291,15 +621,15 @@ function openModelModal(entry) {
       _markModelsDirty();
       closeModal();
       rerenderAiModule();
-      showBanner("success", "模型已重命名（保存后生效）");
+      showBanner("success", "模型已保存（保存后生效）");
     }, "btn btn-primary"),
     makeButton("删除模型", () => {
       const providers = JSON.parse(JSON.stringify(state.providers || []));
       const target = providers.find((p) => p.name === entry.provider);
       if (target) {
         target.models = (target.models || []).filter((m) => m !== entry.model);
-        // 同步删除该模型名的上下文长度配置
-        _setModelContextLength(providers, entry.provider, entry.model, null);
+        // 同步删除该模型名的所有派生配置
+        _renameModelConfig(providers, entry.provider, entry.model, null);
       }
       if (state.mainModel === entry.spec) state.mainModel = "";
       state.subagentModels = (state.subagentModels || []).filter((s) => s !== entry.spec);
@@ -311,7 +641,9 @@ function openModelModal(entry) {
     }, "btn btn-ghost"),
     makeButton("关闭", closeModal)
   );
-  openModal(`编辑模型 - ${entry.spec}`, [nameInput, ctxField, bar]);
+  openModal(`编辑模型 - ${entry.spec}`, [
+    nameInput, ctxField, maxOutField, formatField, toolWrap, bar,
+  ]);
 }
 
 // ── 模块渲染入口 ──
@@ -322,6 +654,8 @@ function renderProviderWizard() {
     p.name,
     p.base_url,
     p.thinking_type || "qwen",
+    // models.dev 目录匹配结果（未匹配时提示可 pin）
+    p.catalog_provider_id || "未匹配",
     String((p.models || []).length),
     (() => {
       const wrap = el("div", "toolbar compact");
@@ -341,7 +675,7 @@ function renderProviderWizard() {
       return wrap;
     })(),
   ]);
-  const providersCard = makeSimpleTableCard("AI Providers", ["名称", "Base URL", "Thinking", "模型数", "操作"], providerRows);
+  const providersCard = makeSimpleTableCard("AI Providers", ["名称", "Base URL", "Thinking", "目录", "模型数", "操作"], providerRows);
 
   // ── Models 列表（主模型单选 / Subagent 多选） ──
   const modelEntries = _allModelEntries();
@@ -402,9 +736,16 @@ function renderProviderWizard() {
     const ops = el("div", "toolbar compact");
     ops.append(makeButton("编辑", () => openModelModal(entry), "btn btn-ghost"));
 
-    return [entry.provider, entry.model, ctxWrap, radioWrap, subWrap, ops];
+    // API 格式：前端展示用户覆盖 / Provider 默认 / 目录三层；「自动」由后端推断
+    const formatInfo = _modelFormatInfo(providerEntry, entry.model);
+    const formatCell = el("span", "format-badge", _formatText(formatInfo.format, formatInfo.source));
+    formatCell.title = formatInfo.source === "catalog"
+      ? "来自 models.dev 目录；可在「编辑」里覆盖"
+      : "自动：后端按 models.dev 目录 / 端点 / 模型族推断";
+
+    return [entry.provider, entry.model, formatCell, ctxWrap, radioWrap, subWrap, ops];
   });
-  const modelsCard = makeSimpleTableCard("Models", ["Provider", "模型", "上下文长度", "主模型", "Subagent", "操作"], modelRows, {
+  const modelsCard = makeSimpleTableCard("Models", ["Provider", "模型", "API 格式", "上下文长度", "主模型", "Subagent", "操作"], modelRows, {
     pageSize: 10,
     searchKey: 1,
   });
@@ -463,7 +804,27 @@ function renderProviderWizard() {
         `上下文长度同步完成: 成功 ${ok} 个 Provider, 失败 ${fail} 个；`
           + `当前共 ${filled} 个模型有明确上下文长度（保存后生效）`,
       );
-    }, "btn btn-secondary")
+    }, "btn btn-secondary"),
+    makeButton("刷新 models.dev 目录", async () => {
+      // 拉取最新的 models.dev 目录，并把每个 Provider 的模型重新路由到正确格式
+      // （这条会写入配置文件；随后整表重拉以反映新的目录/格式/上下文长度）
+      try {
+        const r = await cfgApi("POST", "/faust/admin/models-dev/refresh");
+        const pr = await cfgApi("GET", "/faust/admin/providers");
+        state.providers = pr.providers || [];
+        state.mainModel = pr.main_model || "";
+        state.subagentModels = pr.subagent_models || [];
+        _markProvidersDirty();
+        rerenderAiModule();
+        showBanner(
+          (r.status === "ok") ? "success" : "error",
+          `models.dev 目录刷新: ${r.providers || 0} 个 Provider，`
+            + `匹配 ${r.matched || 0} 个` + (r.error ? `；错误: ${r.error}` : ""),
+        );
+      } catch (e) {
+        showBanner("error", "刷新目录失败: " + (e && e.detail ? e.detail : String(e)));
+      }
+    }, "btn btn-ghost")
   );
 
   addSection("", [addBar]);

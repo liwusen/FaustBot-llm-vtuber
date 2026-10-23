@@ -51,6 +51,11 @@ log = get_logger("faust.tool_call_repair")
 
 PLACEHOLDER_CONTENT = "[工具调用结果缺失，已由 FaustBot 自动补全]"
 
+#: content 里代表「模型发起工具调用」的块类型（Anthropic / Responses / v1 标准）。
+#: `server_tool_use` / `web_search_call` 是 provider 托管的服务端工具，没有
+#: tool_call_id，也**不需要**客户端响应，绝不能在这里被清掉。
+_TOOL_CALL_BLOCK_TYPES = frozenset({"tool_use", "function_call", "tool_call"})
+
 
 def repair_dangling_tool_calls(messages: list[AnyMessage]) -> list[AnyMessage]:
     """修复消息序列里悬空的 assistant tool_calls，返回新列表（不改动入参）。
@@ -177,7 +182,13 @@ def _all_tool_calls(message: AIMessage) -> list[Any]:
 
 
 def _without_tool_call(message: AIMessage, tool_call_id: str) -> AIMessage:
-    """返回清空了指定 tool_call 的 AIMessage 副本（两类列表同步清理）。"""
+    """返回清空了指定 tool_call 的 AIMessage 副本（结构化列表 + content 块同步清理）。
+
+    只清 `tool_calls` 是不够的：Anthropic 的 `tool_use`、OpenAI Responses 的
+    `function_call` 是 **content block**，序列化时会重新变成上游的工具调用声明。
+    若只删结构化列表，content 里仍留着调用却没有对应结果，Anthropic/Responses
+    照样 400（"tool_use ids were found without tool_result blocks"）。
+    """
     cleared = message.model_copy(deep=True)
     cleared.tool_calls = [
         tool_call
@@ -189,6 +200,16 @@ def _without_tool_call(message: AIMessage, tool_call_id: str) -> AIMessage:
         for tool_call in (getattr(cleared, "invalid_tool_calls", None) or [])
         if _tool_call_id(tool_call) != tool_call_id
     ]
+    if isinstance(cleared.content, list):
+        cleared.content = [
+            block
+            for block in cleared.content
+            if not (
+                isinstance(block, dict)
+                and str(block.get("type") or "") in _TOOL_CALL_BLOCK_TYPES
+                and str(block.get("id") or "") == tool_call_id
+            )
+        ]
     return cleared
 
 

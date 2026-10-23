@@ -19,6 +19,7 @@ nav:
     - 配置说明: configuration.md
   - 概念:
     - Agent 基础: agent-basics.md
+    - 多 API 格式的 LLM Provider: llm-api-formats.md
   - 进阶:
     - MCP: mcp.md
     - 开发者环境: devinstall.md

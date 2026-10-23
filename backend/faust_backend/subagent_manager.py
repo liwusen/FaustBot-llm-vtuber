@@ -197,8 +197,26 @@ class SubagentManager:
             CompactMiddleware,
             build_compact_middleware,
         )
+        from faust_backend.runtime.server_tools import (
+            ServerToolMiddleware,
+            build_server_tool_middleware,
+        )
 
         middlewares = list(base if base is not None else self.middlewares)
+        # 服务端工具规格必须按**本 Subagent 自己的模型**重新解析：
+        # 共享中间件栈可能带着主 Agent（或默认 Subagent 模型）的 specs，
+        # 那个规格属于另一种 API 格式，直接复用会发出错误的 tools 定义。
+        middlewares = [
+            m for m in middlewares if not isinstance(m, ServerToolMiddleware)
+        ]
+        if model_spec:
+            from faust_backend.runtime import state as runtime_state
+
+            server_tool_middleware = build_server_tool_middleware(
+                runtime_state.get_model_providers(), model_spec
+            )
+            if server_tool_middleware is not None:
+                middlewares.append(server_tool_middleware)
         compact_middleware = await build_compact_middleware(
             model=chat_model if chat_model is not None else self.chatModel,
             tools=tools,
@@ -777,13 +795,11 @@ class SubagentManager:
                 if compact_active:
                     compact_active = False
                     yield {"type": "compact_done"}
-                # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
-                additional_kwargs = chunk.additional_kwargs or {}
-                reasoning = (
-                    additional_kwargs.get("reasoning_content")
-                    or additional_kwargs.get("reasoning")
-                    or additional_kwargs.get("think")
-                )
+                # 推理增量：四种 API 格式落点不同（additional_kwargs / content 块），
+                # 统一交给 runtime.state.extract_reasoning_text 提取。
+                from faust_backend.runtime import state as runtime_state
+
+                reasoning = runtime_state.extract_reasoning_text(chunk)
                 if reasoning:
                     yield {"type": "reasoning_delta", "content": reasoning}
                 delta_text = SubagentManager._message_content_to_text(chunk.content)

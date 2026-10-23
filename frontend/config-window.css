@@ -1657,6 +1657,24 @@ body {
 	font-weight: 600;
 	color: var(--text, #1a2433);
 }
+/* 多格式 Provider：四个「格式端点」输入纵向排列，保持同宽 */
+.format-base-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+/* Models 表格里的 API 格式徽标（亮色、无紫黑） */
+.format-badge {
+	display: inline-block;
+	padding: 3px 10px;
+	border-radius: 999px;
+	border: 1px solid rgba(120, 158, 202, 0.45);
+	background: rgba(232, 242, 253, 0.9);
+	color: #2c4a6b;
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
 .form-hint {
 	margin: 0 0 2px;
 	color: var(--muted);

@@ -70,6 +70,44 @@ def get_thinking_params(preset_name: str, intensity: str = "medium") -> dict:
     return dict(preset)
 
 
+# Anthropic thinking budget / Gemini thinking budget 的强度映射。
+# 这四个格式的思考参数**结构完全不同**，不能把 ChatOpenAI 的
+# `reasoning_effort` / `extra_body` 直接塞过去：
+#
+# - OpenAI Chat      : `reasoning_effort` / `extra_body.enable_thinking`（按预设）
+# - OpenAI Responses : `reasoning={"effort": ...}`
+# - Anthropic        : `thinking={"type": "enabled", "budget_tokens": N}`
+# - Gemini           : `thinking_budget=N` + `include_thoughts`
+THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 8192}
+
+
+def get_format_thinking_params(
+    api_format: str, preset_name: str, intensity: str = "medium"
+) -> dict:
+    """按 API 格式翻译思考参数。
+
+    `preset_name == "none"` 时恒为空（该 Provider 强制关闭思考）。
+    `openai_chat` 沿用历史预设（qwen/deepseek/mimo/glm/minimax…），其余三种
+    格式只使用强度 → 各自的官方参数结构：预设名对它们是 OpenAI 兼容网关的
+    方言，套上去会直接 400。
+    """
+    if str(preset_name or "") == "none":
+        return {}
+    if api_format == "openai_chat":
+        return get_thinking_params(preset_name, intensity)
+
+    effort = intensity if intensity in THINKING_BUDGETS else "medium"
+    budget = THINKING_BUDGETS[effort]
+    if api_format == "openai_responses":
+        return {"reasoning": {"effort": effort}}
+    if api_format == "anthropic_messages":
+        return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+    if api_format == "google_gemini":
+        # include_thoughts 让 Gemini 返回思考摘要，前端才能显示 reasoning_delta
+        return {"thinking_budget": budget, "include_thoughts": True}
+    return {}
+
+
 class ReasoningChatOpenAI(ChatOpenAI):
     """ChatOpenAI subclass that preserves ``reasoning_content`` from the
     raw streaming response in ``additional_kwargs``.

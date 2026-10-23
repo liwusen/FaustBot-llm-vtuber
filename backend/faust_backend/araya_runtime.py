@@ -667,44 +667,44 @@ class ArayaRuntime:
         from faust_backend.provider import build_main_chat_model
         from faust_backend.runtime.middleware import wrap_tools
         from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
+        from faust_backend.runtime.server_tools import build_server_tool_middleware
         from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
         self._chat_model = await build_main_chat_model(
             runtime_state.get_model_providers(), intensity=None
         )
         log.info("Creating Araya agent with model: %s", self._chat_model.model_name)
+        # Araya 用 main_model：服务端工具按同一 model spec 解析
+        _providers = runtime_state.get_model_providers()
+        server_tool_middleware = build_server_tool_middleware(
+            _providers, str(getattr(_providers, "main_model", "") or "")
+        )
+        middlewares = [
+            MultimodalBridgeMiddleware(),
+            ToolCallRepairMiddleware(),
+        ]
+        if server_tool_middleware is not None:
+            middlewares.append(server_tool_middleware)
         self._agent = create_agent(
             model=self._chat_model,
             # 与主 Agent 同一套输出管线：工具输出进 OutputStore，图片经桥接注入
             tools=wrap_tools(self._build_tools()),
             # 与主 Agent 同一套兜底：工具执行被中断等遗留的悬空 tool_calls
             # 必须在模型调用前修复，否则上游直接 400 invalid_request_error
-            middleware=with_model_retry([
-                MultimodalBridgeMiddleware(),
-                ToolCallRepairMiddleware(),
-            ]),
+            middleware=with_model_retry(middlewares),
         )
 
     async def _close_model(self) -> None:
+        """关闭模型持有的 HTTP 客户端（格式无关，统一交给 llm_formats）。"""
         if self._chat_model is None:
             return
+        from faust_backend.llm_formats import close_chat_model
+
         try:
-            async_client = getattr(self._chat_model, 'async_client', None)
-            if async_client is not None:
-                # async_client 是 openai 的 AsyncCompletions 资源对象，
-                # 底层真实客户端在 _client（AsyncOpenAI）上
-                openai_client = getattr(async_client, '_client', None)
-                if openai_client is not None and not openai_client.is_closed():
-                    await openai_client.close()
-            client = getattr(self._chat_model, 'client', None)
-            if client is not None:
-                openai_sync = getattr(client, '_client', None)
-                if openai_sync is not None and not openai_sync.is_closed():
-                    openai_sync.close()
+            await close_chat_model(self._chat_model)
+        finally:
             # 置 None 防止 GC 时 openai SDK 的 __del__ 对已关闭的 AsyncClient
             # 再次 create_task(aclose())，导致 "Event loop is closed" 警告
             self._chat_model = None
-        except Exception:
-            pass
 
     async def trigger_run(self, reason: str = "manual") -> dict[str, Any]:
         """Legacy trigger - schedules a background task. Prefer stream_once_async for SSE."""

@@ -139,17 +139,20 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         if doc_path:
             m.register_extraction(doc_path)
 
-        # 统一走 provider 配置的 ChatOpenAI（opencode_go 头等兼容逻辑一致生效）
+        # 统一走 provider 配置的模型（opencode_go 头、格式分发、thinking 等一致生效）
+        from faust_backend.llm_formats import ainvoke_json
+        from faust_backend.provider import get_model_api_format
+
         llm = await build_main_chat_model(providers, intensity=None)
-        response = await llm.bind(
-            temperature=0.1, response_format={"type": "json_object"}
-        ).ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=text),
-        ])
-        raw = runtime_state.message_content_to_text(getattr(response, "content", ""))
-        log.info("_bg_extract_and_save raw=%s", raw)
-        result = json.loads(raw)
+        api_format = get_model_api_format(providers, str(providers.main_model or ""))
+        result = await ainvoke_json(
+            llm,
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=text),
+            ],
+            api_format,
+        )
         log.info("_bg_extract_and_save result=%s", result)
         entities = result.get("entities", [])
         relations = result.get("relations", [])

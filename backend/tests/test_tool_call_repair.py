@@ -27,6 +27,57 @@ def _tool(tool_call_id: str, content: str = "ok") -> ToolMessage:
     return ToolMessage(content=content, tool_call_id=tool_call_id)
 
 
+def test_dropped_call_also_removes_content_block():
+    """被打断的调用必须同时删掉 content 里的 tool_use/function_call 块。
+
+    只清 `tool_calls` 时，Anthropic 的 tool_use / Responses 的 function_call
+    仍会作为 content block 序列化上去，上游照样报
+    "tool_use ids were found without tool_result blocks"。
+    """
+    ai = AIMessage(
+        content=[
+            {"type": "text", "text": "我来读一下"},
+            {"type": "tool_use", "id": "t1", "name": "read", "input": {"path": "/tmp"}},
+        ],
+        tool_calls=[{"id": "t1", "name": "read", "args": {"path": "/tmp"}}],
+    )
+
+    repaired = repair_dangling_tool_calls([HumanMessage(content="q"), ai, HumanMessage(content="停")])
+
+    repaired_ai = next(m for m in repaired if isinstance(m, AIMessage))
+    assert repaired_ai.tool_calls == []
+    assert [block["type"] for block in repaired_ai.content] == ["text"]
+
+
+def test_dropped_function_call_block_for_responses():
+    ai = AIMessage(
+        content=[
+            {"type": "function_call", "id": "call_1", "name": "read", "arguments": "{}"},
+        ],
+        tool_calls=[{"id": "call_1", "name": "read", "args": {}}],
+    )
+
+    repaired = repair_dangling_tool_calls([HumanMessage(content="q"), ai, HumanMessage(content="停")])
+
+    repaired_ai = next(m for m in repaired if isinstance(m, AIMessage))
+    assert repaired_ai.content == []
+
+
+def test_server_tool_blocks_are_never_removed():
+    ai = AIMessage(
+        content=[
+            {"type": "server_tool_use", "id": "srv1", "name": "web_search"},
+            {"type": "web_search_call", "id": "srv1", "status": "completed"},
+        ]
+    )
+
+    repaired = repair_dangling_tool_calls([HumanMessage(content="q"), ai])
+
+    # 服务端工具没有 tool_call_id、也不需要客户端响应 → 原样保留且不注入占位
+    assert repaired[1].content == ai.content
+    assert len(repaired) == 2
+
+
 def _tool_ids(messages: list) -> set[str]:
     return {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
 

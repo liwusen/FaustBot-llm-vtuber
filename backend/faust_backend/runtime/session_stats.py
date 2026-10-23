@@ -13,13 +13,17 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AnyMessage
 
 import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
-from faust_backend.provider import DEFAULT_CONTEXT_LENGTH, get_context_length
+from faust_backend.provider import (
+    DEFAULT_CONTEXT_LENGTH,
+    get_context_length,
+    get_model_api_format,
+)
 from faust_backend.runtime import state
-from faust_backend.runtime.compact import _reported_tokens
+from faust_backend.runtime import usage as usage_mod
 
 log = get_logger("faust.session")
 
@@ -78,49 +82,54 @@ def format_tokens(value: int) -> str:
     return _format_millions(number)
 
 
-def _last_usage(messages: Sequence[AnyMessage]) -> Optional[dict]:
-    """取最近一条**带用量**的 AIMessage 的 usage_metadata。
+def _last_usage(messages: Sequence[AnyMessage], api_format: str = "openai_chat") -> Optional[dict]:
+    """取最近一条**带用量**的 AIMessage 的归一化用量（原始 dict 形式）。
 
     与 `compact._reported_tokens` 保持一致：遇到没有 `usage_metadata` 的
     AIMessage 要继续往前找，而不是就地定论返回 None —— 否则本地构造/插件注入的
     消息会让面板与自动压缩同时失去 API 口径，显示"—"且永不触发压缩。
     仍然不本地估算：找不到真实上报值就返回 None。
     """
-    for message in reversed(messages):
-        if isinstance(message, AIMessage):
-            usage = getattr(message, "usage_metadata", None)
-            if usage:
-                return dict(usage)
-    return None
+    snapshot = usage_mod.last_usage(messages, api_format)
+    if snapshot is None:
+        return None
+    return {
+        "input_tokens": snapshot.input_tokens,
+        "output_tokens": snapshot.output_tokens,
+        "total_tokens": snapshot.total_tokens,
+        "cache_read_tokens": snapshot.cache_read_tokens,
+        "cache_creation_tokens": snapshot.cache_creation_tokens,
+        "reasoning_tokens": snapshot.reasoning_tokens,
+    }
 
 
 async def collect_session_stats() -> dict[str, Any]:
     """当前会话的上下文占用快照。
 
-    `used_tokens` 语义：最近一次 LLM 请求由 API 上报的 `total_tokens`
-    （即该次请求的真实上下文占用，见 `compact._reported_tokens`）。
-    无 API 计数时为 0，并且 `has_api_usage=False`、`used_tokens_text="—"`。
+    `used_tokens` 语义：最近一次 LLM 请求由 API 上报的**真实上下文占用**
+    （口径见 `runtime/usage.py`：Anthropic 计入缓存读写，OpenAI/Gemini 的
+    cached 只作展示、不重复相加）。无 API 计数时 `used_tokens_text="—"`。
     """
     messages = await get_checkpoint_messages()
     providers = state.get_model_providers()
     model_spec = str(getattr(providers, "main_model", "") or "")
     if providers is None:
         context_length = DEFAULT_CONTEXT_LENGTH
+        api_format = "openai_chat"
     else:
         context_length = get_context_length(providers, model_spec)
+        api_format = get_model_api_format(providers, model_spec)
     threshold_tokens = max(1, int(context_length * conf.COMPACT_THRESHOLD_RATIO))
 
-    usage = _last_usage(messages)
-    used_tokens = _reported_tokens(messages)
+    usage = _last_usage(messages, api_format)
+    snapshot = usage_mod.last_usage(messages, api_format)
+    used_tokens = snapshot.context_tokens if snapshot else 0
     ratio = (used_tokens / context_length) if context_length else 0.0
-    cache_read = None
-    if usage:
-        details = usage.get("input_token_details") or {}
-        cache_read = details.get("cache_read")
 
     return {
         "status": "ok",
         "model": model_spec,
+        "api_format": api_format,
         "messages": len(messages),
         "has_api_usage": usage is not None,
         "used_tokens": used_tokens,
@@ -133,6 +142,10 @@ async def collect_session_stats() -> dict[str, Any]:
         "input_tokens": usage.get("input_tokens") if usage else None,
         "output_tokens": usage.get("output_tokens") if usage else None,
         "total_tokens": usage.get("total_tokens") if usage else None,
-        "cache_read_tokens": cache_read,
+        "cache_read_tokens": usage.get("cache_read_tokens") if usage else None,
+        "cache_creation_tokens": (
+            usage.get("cache_creation_tokens") if usage else None
+        ),
+        "reasoning_tokens": usage.get("reasoning_tokens") if usage else None,
         "compact_threshold_ratio": float(conf.COMPACT_THRESHOLD_RATIO),
     }

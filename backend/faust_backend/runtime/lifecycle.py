@@ -359,15 +359,9 @@ async def _stream_agent_producer(
                         continue
                     # 主模型开始输出 => 压缩阶段已结束（成功或失败降级都走这里）
                     await _close_compact()
-                    # Extract reasoning/thinking delta (OpenAI o1/o3, DeepSeek R1, etc.)
-                    additional_kwargs = (
-                        getattr(chunk, "additional_kwargs", {}) or {}
-                    )
-                    reasoning = (
-                        additional_kwargs.get("reasoning_content")
-                        or additional_kwargs.get("reasoning")
-                        or additional_kwargs.get("think")
-                    )
+                    # 推理增量：四种格式落点不同（additional_kwargs / content 块），
+                    # 统一交给 state.extract_reasoning_text 提取。
+                    reasoning = state.extract_reasoning_text(chunk)
                     if reasoning:
                         await queue.put({"type": "reasoning_delta", "content": reasoning})
                     delta_text = state.message_content_to_text(chunk.content)
@@ -501,15 +495,16 @@ def _collect_runtime_tools() -> list:
     return base_tools
 
 
-def _compose_runtime_middlewares(*, compact_middleware=None) -> list:
+def _compose_runtime_middlewares(*, compact_middleware=None, server_tool_middleware=None) -> list:
     """组装中间件栈。
 
     compact_middleware 会插在 ModelRetryMiddleware 之前（重试始终是最内层，
     只重放模型请求本身），并且始终排在最外层之后，保证判定基于未修复/未桥接
-    的原始消息。
+    的原始消息。server_tool_middleware 只负责往请求里追加 provider 托管工具规格。
     """
     from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
     from faust_backend.runtime.model_retry import with_model_retry
+    from faust_backend.runtime.server_tools import ServerToolMiddleware
     from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
 
     pm = state.plugin_manager
@@ -524,6 +519,12 @@ def _compose_runtime_middlewares(*, compact_middleware=None) -> list:
         m for m in middlewares if not isinstance(m, ToolCallRepairMiddleware)
     ]
     middlewares.append(ToolCallRepairMiddleware())
+    # 服务端（provider 托管）工具：仅在模型显式启用时存在
+    middlewares = [
+        m for m in middlewares if not isinstance(m, ServerToolMiddleware)
+    ]
+    if server_tool_middleware is not None:
+        middlewares.append(server_tool_middleware)
     # Always-on 会话压缩：保命机制，不依赖插件开关
     if compact_middleware is not None:
         from faust_backend.runtime.compact import CompactMiddleware
@@ -536,10 +537,13 @@ def _compose_runtime_middlewares(*, compact_middleware=None) -> list:
     return with_model_retry(middlewares)
 
 
-def _compose_runtime_extensions(*, compact_middleware=None):
+def _compose_runtime_extensions(*, compact_middleware=None, server_tool_middleware=None):
     return (
         _collect_runtime_tools(),
-        _compose_runtime_middlewares(compact_middleware=compact_middleware),
+        _compose_runtime_middlewares(
+            compact_middleware=compact_middleware,
+            server_tool_middleware=server_tool_middleware,
+        ),
     )
 
 
@@ -591,6 +595,8 @@ def _build_subagent_toolsets() -> dict[str, list]:
 
 
 async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
+    from faust_backend.runtime.server_tools import build_server_tool_middleware
+
     subagent_db_path = os.path.join(state.AGENT_ROOT, "subagents.db")
     if state.subagent_manager is not None:
         try:
@@ -599,7 +605,11 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
             log.warning("关闭旧 SubagentManager 失败: %s", exc)
     manager = SubagentManager(checkpointerPath=subagent_db_path)
     manager.setChatModel(await _build_chat_model(model_name=model_name), spec=model_name)
-    _tools, middlewares = _compose_runtime_extensions()
+    _tools, middlewares = _compose_runtime_extensions(
+        server_tool_middleware=build_server_tool_middleware(
+            state.get_model_providers(), model_name
+        )
+    )
     manager.setMiddlewares(middlewares)
     for name, toolset in _build_subagent_toolsets().items():
         # Subagent 与主 Agent 共用 _registry 里的工具对象；不包装的话
@@ -642,6 +652,7 @@ async def _build_chat_model(*, model_name: str):
 
 async def _create_agent_with_extensions(*, model_name: str, checkpointer):
     from faust_backend.runtime.compact import build_compact_middleware
+    from faust_backend.runtime.server_tools import build_server_tool_middleware
 
     tools = _collect_runtime_tools()
     chat_model = await _build_chat_model(model_name=model_name)
@@ -650,9 +661,13 @@ async def _create_agent_with_extensions(*, model_name: str, checkpointer):
     compact_middleware = await build_compact_middleware(
         model=chat_model, tools=tools, model_spec=model_name
     )
+    server_tool_middleware = build_server_tool_middleware(
+        state.get_model_providers(), model_name
+    )
     tools = middleware.wrap_tools(tools)
     mgmt_middlewares = _compose_runtime_middlewares(
-        compact_middleware=compact_middleware
+        compact_middleware=compact_middleware,
+        server_tool_middleware=server_tool_middleware,
     )
     state.compact_middleware = compact_middleware
     kwargs = {
@@ -706,12 +721,38 @@ async def _rebuild_runtime_locked(
         try:
             conf.reload_configs()
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import get_main_credentials
-            _model_name, _api_key, _api_base = get_main_credentials(runtime_state.get_model_providers())
+            from faust_backend.provider import (
+                get_main_credentials,
+                try_main_openai_credentials,
+            )
+
+            # models.dev 目录：后台刷新 + 重新路由，不阻塞启动。
+            # 失败只记日志（继续用陈旧缓存），绝不阻断 Agent 启动。
+            asyncio.create_task(
+                refresh_models_dev_catalog(), name="models_dev_refresh"
+            )
+
+            _model_name, _api_key, _api_base = get_main_credentials(
+                runtime_state.get_model_providers()
+            )
             os.environ["DEEPSEEK_API_KEY"] = _api_key
             os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
-            os.environ["OPENAI_API_KEY"] = _api_key
-            os.environ["OPENAI_BASE_URL"] = _api_base
+            # OPENAI_* 环境变量只服务于「仍假定 OpenAI 协议」的第三方库。
+            # 主模型是 Anthropic/Gemini 格式时不能把它的 base_url 冒充成 OpenAI
+            # 端点（会让这些库打到必然 404 的路径），此时宁可不设置并要求调用方
+            # 显式使用 get_main_openai_credentials()。
+            _openai_creds = try_main_openai_credentials(
+                runtime_state.get_model_providers()
+            )
+            if _openai_creds is not None:
+                _oa_model, _oa_key, _oa_base = _openai_creds
+                os.environ["OPENAI_API_KEY"] = _oa_key
+                os.environ["OPENAI_BASE_URL"] = _oa_base
+            else:
+                log.info(
+                    "主模型不是 OpenAI Chat 兼容格式，未设置 OPENAI_BASE_URL"
+                    "（依赖 OpenAI 协议的内部功能会明确报错）"
+                )
             state.AGENT_NAME = conf.AGENT_NAME
             state.AGENT_ROOT = os.path.join(
                 conf.CONFIG_ROOT, "agents", f"{state.AGENT_NAME}"
@@ -871,6 +912,56 @@ async def _rebuild_runtime_locked(
         "ready": True,
         "status": state.RUNTIME_STATUS,
         "error": "",
+    }
+
+
+async def refresh_models_dev_catalog(*, force: bool = False) -> dict:
+    """后台刷新 models.dev 目录并把结果应用到所有 Provider（不阻塞启动）。
+
+    只有配置真的变化时才写回 `provider.private.json`，避免无谓的磁盘写入。
+    任何异常都只记日志：目录缺失时格式会回退到通用启发式，Agent 照常工作。
+    """
+    import faust_backend.models_dev as models_dev
+
+    providers = state.get_model_providers()
+    snapshot = None
+    try:
+        snapshot = providers.model_dump()
+    except Exception:  # noqa: BLE001 - 测试替身/受限对象没有 model_dump
+        snapshot = None
+    try:
+        catalog = (
+            await models_dev.refresh_catalog()
+            if force
+            else await models_dev.refresh_if_stale()
+        )
+    except Exception as exc:  # noqa: BLE001 - 后台任务不能把异常抛给事件循环
+        log.warning("刷新 models.dev 目录失败（继续使用已有缓存）: %s", exc)
+        return {"status": "error", "error": str(exc)}
+    if not catalog:
+        log.info("models.dev 目录不可用，API 格式将回退到通用启发式")
+        return {"status": "empty", "providers": 0}
+    if not getattr(providers, "providers", None):
+        return {"status": "ok", "providers": 0, "matched": 0, "results": []}
+    results = models_dev.enrich_all(providers, catalog)
+    after = providers.model_dump()
+    if after != snapshot:
+        try:
+            conf.save_model_providers()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("保存 models.dev 路由结果失败: %s", exc)
+    matched = [item for item in results if item.get("provider_id")]
+    log.info(
+        "models.dev 目录已应用: %d 个 Provider 完成匹配（共 %d 个），路由模型 %d 个",
+        len(matched),
+        len(results),
+        sum(int(item.get("routed") or 0) for item in results),
+    )
+    return {
+        "status": "ok",
+        "providers": len(results),
+        "matched": len(matched),
+        "results": results,
     }
 
 

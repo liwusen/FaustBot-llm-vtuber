@@ -147,6 +147,41 @@ META.COMPACT_KEEP_ROUNDS = { label: "压缩后保留轮数", help: "与成本控
 META.PTT_MODE = { label: "按住说话(PTT)", help: "开启后平时麦克风关闭，长按 Ctrl+Alt+A 说话，松开自动识别并发送。按住期间若 VAD 命中帧占比低于 10%（整段几乎没人声）则丢弃该段、不上传识别，右上角状态显示 \"(已忽略)\"。关闭则恢复普通监听模式。保存后立即生效（前端热重载）。" };
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"];
+
+// ── LLM API 格式（一个 Provider 可以同时提供多种格式的模型） ──
+// 顺序 = 后端 API_FORMATS 的顺序；auto 表示交给 models.dev 目录 + 端点推断。
+var API_FORMAT_OPTIONS = [
+  { value: "auto", label: "自动（models.dev 目录 / 端点推断）" },
+  { value: "openai_chat", label: "OpenAI Chat Completions" },
+  { value: "openai_responses", label: "OpenAI Responses" },
+  { value: "anthropic_messages", label: "Anthropic Messages" },
+  { value: "google_gemini", label: "Google Gemini" },
+];
+var API_FORMAT_LABELS = {
+  openai_chat: "OpenAI Chat",
+  openai_responses: "OpenAI Responses",
+  anthropic_messages: "Anthropic",
+  google_gemini: "Gemini",
+};
+// 格式决策来源（与后端 FormatDecision.source 对应）
+var FORMAT_SOURCE_LABELS = {
+  manual: "手动",
+  provider_default: "Provider 默认",
+  catalog: "models.dev",
+  url_path: "端点推断",
+  family: "模型族",
+  fallback: "回退",
+};
+// 服务端（provider 托管）工具：由服务商执行，不进本地 ToolNode
+var SERVER_TOOL_OPTIONS = [
+  {
+    value: "web_search",
+    label: "联网搜索（服务端执行）",
+    help: "由服务商在服务端联网检索后直接作答，不占用本地工具；openai_chat 格式不支持。",
+    formats: ["openai_responses", "anthropic_messages", "google_gemini"],
+  },
+];
+
 var MODULES = [
   { id: "overview", title: "概览", desc: "当前角色、模型、状态概览。" },
   { id: "ai", title: "AI 服务商", desc: "模型、接口地址与密钥配置。" },

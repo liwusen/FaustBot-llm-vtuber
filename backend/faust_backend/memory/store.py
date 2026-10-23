@@ -2208,8 +2208,12 @@ class GraphStore:
         try:
             import httpx
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import get_main_credentials
-            _rmodel, _rkey, _rbase = get_main_credentials(runtime_state.get_model_providers())
+            from faust_backend.provider import try_main_openai_credentials
+            _creds = try_main_openai_credentials(runtime_state.get_model_providers())
+            if _creds is None:
+                # 主模型不是 OpenAI 兼容格式：rerank 端点无处可发，保持原顺序
+                return items
+            _rmodel, _rkey, _rbase = _creds
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     f"{_rbase}/rerank",

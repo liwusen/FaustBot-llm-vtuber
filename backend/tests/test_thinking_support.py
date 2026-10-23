@@ -329,3 +329,87 @@ class TestStreamReasoningDelta:
         delta_events = [e for e in results if e["type"] == "delta"]
         assert len(delta_events) == 1
         assert delta_events[0]["content"] == "safe"
+
+# ── 四种格式的思考参数翻译 + 推理文本提取 ──
+
+
+def test_get_format_thinking_params_per_format():
+    from faust_backend.thinking import get_format_thinking_params
+
+    # Chat：沿用历史预设（OpenAI 兼容网关方言）
+    assert get_format_thinking_params("openai_chat", "openai", "high") == {
+        "reasoning_effort": "high"
+    }
+    assert "extra_body" in get_format_thinking_params("openai_chat", "deepseek", "medium")
+
+    # Responses
+    assert get_format_thinking_params("openai_responses", "qwen", "low") == {
+        "reasoning": {"effort": "low"}
+    }
+
+    # Anthropic
+    assert get_format_thinking_params("anthropic_messages", "qwen", "medium") == {
+        "thinking": {"type": "enabled", "budget_tokens": 4096}
+    }
+
+    # Gemini
+    gemini = get_format_thinking_params("google_gemini", "qwen", "high")
+    assert gemini["thinking_budget"] == 8192
+    assert gemini["include_thoughts"] is True
+
+    # none 预设恒为空（不看格式）
+    for api_format in ("openai_chat", "openai_responses", "anthropic_messages", "google_gemini"):
+        assert get_format_thinking_params(api_format, "none", "high") == {}
+
+
+def test_extract_reasoning_from_additional_kwargs():
+    from langchain_core.messages import AIMessage
+
+    from faust_backend.runtime.state import extract_reasoning_text
+
+    message = AIMessage(content="answer", additional_kwargs={"reasoning_content": "想一想"})
+    assert extract_reasoning_text(message) == "想一想"
+
+    # 非流式消息没有 additional_kwargs 时返回空串（不伪造）
+    assert extract_reasoning_text(AIMessage(content="answer")) == ""
+
+
+def test_extract_reasoning_from_content_blocks():
+    from langchain_core.messages import AIMessage
+
+    from faust_backend.runtime.state import extract_reasoning_text
+
+    # Anthropic / Gemini：thinking 块
+    anthropic = AIMessage(
+        content=[
+            {"type": "thinking", "thinking": "先分析"},
+            {"type": "text", "text": "答案"},
+        ]
+    )
+    assert extract_reasoning_text(anthropic) == "先分析"
+
+    # OpenAI Responses：reasoning 块（summary 列表）
+    responses = AIMessage(
+        content=[
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "推理摘要"}],
+            },
+            {"type": "text", "text": "答案"},
+        ]
+    )
+    assert extract_reasoning_text(responses) == "推理摘要"
+
+
+def test_message_content_to_text_ignores_reasoning_blocks():
+    from langchain_core.messages import AIMessage
+
+    from faust_backend.runtime.state import message_content_to_text
+
+    message = AIMessage(
+        content=[
+            {"type": "thinking", "thinking": "内部推理"},
+            {"type": "text", "text": "正文"},
+        ]
+    )
+    assert message_content_to_text(message.content) == "正文"
