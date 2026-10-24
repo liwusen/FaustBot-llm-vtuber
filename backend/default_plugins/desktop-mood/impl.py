@@ -784,6 +784,9 @@ class Plugin(FaustPlugin):
         if not candidates:
             self.store.set_kv(ATTACH_QUEUE_KV, queue)
             return ''
+        # compose 可能把超预算的单行截断；去重基线与去重环必须记录原始文本，
+        # 否则下一轮「完整原文」与已存的「截断文本」不相等，会在预算边缘反复推同一行。
+        original_text = {item.key: item.text for item in candidates}
         block, chosen = dm_attach.compose(candidates, budget)
         consumed_rules = {item.key for item in chosen if item.kind == 'rule'}
         remaining = [item for item in queue
@@ -794,9 +797,10 @@ class Plugin(FaustPlugin):
             return ''
         for item in chosen:
             if item.kind == 'field':
-                pushed[item.key] = item.text
+                pushed[item.key] = original_text.get(item.key, item.text)
         self.store.set_kv(ATTACH_PUSHED_KV, pushed)
-        self.store.set_kv(ATTACH_RING_KV, dm_attach.update_ring(ring_entries, [item.text for item in chosen], now))
+        self.store.set_kv(ATTACH_RING_KV, dm_attach.update_ring(
+            ring_entries, [original_text.get(item.key, item.text) for item in chosen], now))
         self.store.set_kv(ATTACH_LAST_KV, {'at': now, 'text': block,
                                            'sent_total': int(last.get('sent_total') or 0) + 1})
         self.store.set_kv(ATTACH_ERROR_KV, None)

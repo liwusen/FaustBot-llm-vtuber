@@ -404,3 +404,75 @@ def test_araya_agent_mounts_tool_call_repair_middleware(monkeypatch, tmp_path):
     assert MultimodalBridgeMiddleware in kinds
     # 重试必须最贴近真实模型调用（链尾），只重放模型请求本身
     assert isinstance(middlewares[-1], ModelRetryMiddleware)
+
+
+def test_init_agent_accepts_model_without_model_name(monkeypatch, tmp_path):
+    """Gemini / Anthropic 格式的模型对象只有 model，没有 model_name。
+
+    修复前 `_init_agent` 里 `log.info(..., self._chat_model.model_name)` 会抛
+    AttributeError，异常一路冒到 lifespan 的启动 try 里，导致后面的
+    rebuild_runtime（插件加载就在里面）根本没执行——现象就是"所有插件未加载"。
+    """
+    _prepare_araya_prompt(tmp_path)
+    monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(araya_runtime.conf, "AGENT_NAME", "faust")
+
+    class FakeGeminiModel:
+        # 刻意不提供 model_name：ChatGoogleGenerativeAI 只有 model
+        def __init__(self, model):
+            self.model = model
+
+    class FakeProviders:
+        main_model = "Go::gemini-4-argon-contributor"
+        providers: list = []
+        subagent_models: list = []
+
+    import faust_backend.provider as provider_mod
+    import faust_backend.runtime.state as runtime_state
+    import asyncio
+
+    async def _fake_build_main_chat_model(providers, intensity=None):
+        return FakeGeminiModel("gemini-4-argon-contributor")
+
+    monkeypatch.setattr(provider_mod, "build_main_chat_model", _fake_build_main_chat_model)
+    monkeypatch.setattr(runtime_state, "get_model_providers", lambda: FakeProviders())
+    monkeypatch.setattr(araya_runtime, "create_agent", lambda **kwargs: object())
+    monkeypatch.setattr(araya_runtime.ArayaRuntime, "_build_tools", lambda self: [])
+
+    runtime = araya_runtime.ArayaRuntime()
+    asyncio.run(runtime._init_agent())
+
+    assert isinstance(runtime._chat_model, FakeGeminiModel)
+
+
+def test_start_araya_runtime_degrades_without_raising(monkeypatch):
+    """Araya 启动失败只降级 Araya：返回 False，不把异常抛给 lifespan。"""
+    import asyncio
+
+    from faust_backend.runtime import lifecycle
+
+    class BoomRuntime:
+        async def startup(self):
+            raise AttributeError("'ChatGoogleGenerativeAI' object has no attribute 'model_name'")
+
+    monkeypatch.setattr(
+        lifecycle.araya_runtime, "get_araya_runtime", lambda refresh=False: BoomRuntime()
+    )
+
+    assert asyncio.run(lifecycle._start_araya_runtime()) is False
+
+
+def test_start_araya_runtime_reports_success(monkeypatch):
+    import asyncio
+
+    from faust_backend.runtime import lifecycle
+
+    class OkRuntime:
+        async def startup(self):
+            return None
+
+    monkeypatch.setattr(
+        lifecycle.araya_runtime, "get_araya_runtime", lambda refresh=False: OkRuntime()
+    )
+
+    assert asyncio.run(lifecycle._start_araya_runtime()) is True

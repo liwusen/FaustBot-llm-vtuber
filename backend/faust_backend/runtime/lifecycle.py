@@ -708,11 +708,13 @@ async def _rebuild_subagent_manager(*, model_name: str) -> SubagentManager:
 
 
 async def _build_chat_model(*, model_name: str):
-    """Build a ChatOpenAI instance for the main agent from the ModelProviders.
+    """Build the main agent's chat model from the ModelProviders.
 
-    model_name 是 'provider::model' spec。thinking 参数由全局 REASONING_CONFIG
-    驱动（off/low/medium/high）：REASONING_CONFIG == "off" 或 provider 的
-    thinking_type == "none" 时不思考（返回 ChatOpenAI），否则按全局强度。
+    model_name 是 'provider::model' spec。返回的模型格式由该 spec 的路由决定
+    （OpenAI Chat / OpenAI Responses / Anthropic / Gemini），所以只能依赖
+    BaseChatModel 的公共接口——不要假设 ChatOpenAI 专有属性（如 `model_name`）。
+    thinking 参数由全局 REASONING_CONFIG 驱动（off/low/medium/high）：
+    REASONING_CONFIG == "off" 或 provider 的 thinking_type == "none" 时不传思考参数。
     """
     from faust_backend.provider import build_ReasoningChatOpenAI_from_spec
     from faust_backend.runtime import state as runtime_state
@@ -1081,6 +1083,22 @@ async def _graceful_shutdown_task():
         log.info("Uvicorn 关闭标志已设置")
 
 
+async def _start_araya_runtime() -> bool:
+    """启动 Araya 运行时；失败只降级 Araya 自己。
+
+    Araya 是辅助 Agent（空闲时整理记忆）。它的模型构建 / 模板同步 / 状态读写
+    出错，不应该连带跳过主 Agent 与插件的初始化：插件加载在 rebuild_runtime
+    里，一旦被跳过，插件工具、hook、中间件、前端资源会整体缺席，界面上看起来
+    就是"所有插件都没被加载"。
+    """
+    try:
+        await araya_runtime.get_araya_runtime(refresh=True).startup()
+        return True
+    except Exception as e:
+        log.warning("Araya 运行时启动失败（主 Agent 与插件继续启动）: %s", e)
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_plugin_manager()
@@ -1093,11 +1111,12 @@ async def lifespan(app: FastAPI):
     # Processor 的 worker 控制通道绑在主循环上：登记后插件/Agile 模块可从自己的循环调用
     get_processor_manager().bind_loop()
     araya_runtime.get_araya_runtime(refresh=True)
+    # Araya 是辅助 Agent：它失败只降级自身，不能把下面的主运行时（含插件加载）带走
+    await _start_araya_runtime()
     try:
         from faust_backend.memory import get_memory
 
         get_memory(refresh=True)
-        await araya_runtime.get_araya_runtime(refresh=True).startup()
         startup_info = await rebuild_runtime(
             reset_dialog=False, no_initial_chat=bool(args.no_startup_chat)
         )

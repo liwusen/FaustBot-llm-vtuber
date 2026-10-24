@@ -2,9 +2,8 @@ import json
 import uuid
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models import BaseChatModel
 from faust_backend.llm_formats import API_FORMATS
-from faust_backend.thinking import ReasoningChatOpenAI
 
 # 对外统一标识本客户端（FaustBot v3，langchain 栈）。不设置时 openai-python /
 # httpx 会以自身 UA 发请求（AsyncOpenAI/Python x.y.z、python-httpx/x.y），部分
@@ -258,7 +257,7 @@ async def build_ReasoningChatOpenAI_from_spec(
     providers: ModelProviders,
     spec: str = "deepseek::deepseek-v4-pro",
     intensity: str | None = "medium",
-) -> ReasoningChatOpenAI | ChatOpenAI:
+) -> BaseChatModel:
     """按模型 spec 构建对应 API 格式的 LangChain Chat 模型（兼容入口）。
 
     真正的格式解析与构建在 `faust_backend.llm_formats.build_chat_model_from_spec`：
@@ -283,11 +282,16 @@ async def build_ReasoningChatOpenAI_from_spec(
 
 async def build_main_chat_model(
     providers: ModelProviders, intensity: str | None = None
-) -> ReasoningChatOpenAI | ChatOpenAI:
+) -> BaseChatModel:
     """按 main_model 构建统一配置的 LLM（含 opencode_go 头、thinking 参数）。
 
     供主 Agent 之外的内部功能（Araya、安全审核等）复用，确保所有基于
     main_model 的功能都走同一套 provider 配置逻辑，不各自拼装 ChatOpenAI。
+
+    返回的是**格式无关**的 LangChain 聊天模型：可能是 ChatOpenAI（OpenAI Chat /
+    Responses）、ChatAnthropic 或 ChatGoogleGenerativeAI。调用方只能用
+    BaseChatModel 的公共接口（invoke/ainvoke/astream/bind_tools 等），
+    不要假设 ChatOpenAI 专有属性（如 `model_name`，其余两种格式只有 `model`）。
 
     Args:
         providers: 模型 provider 集合。

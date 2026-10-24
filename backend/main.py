@@ -79,8 +79,8 @@ _t.end("external_routes")
 app = FastAPI(
     title="FaustBot Backend Main Service",
     lifespan=lifespan,
-    version="2.0",
-    description="FaustBot 后端主服务，提供核心功能和 API 接口。",
+    version="3",
+    description="FaustBot 后端主服务",
 )
 state.fastapi_app = app
 

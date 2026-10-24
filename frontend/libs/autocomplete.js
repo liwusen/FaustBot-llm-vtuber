@@ -55,26 +55,29 @@ function acRender(items, inputEl) {
   acItems = items;
   acIndex = -1;
   const rect = inputEl.getBoundingClientRect();
+  const width = Math.min(390, Math.max(280, rect.width));
   acDropdown = document.createElement('div');
   acDropdown.className = 'autocomplete-dropdown';
-  acDropdown.style.cssText =
-    `position:fixed;left:${rect.left}px;top:${rect.bottom + 4}px;` +
-    `width:${rect.width}px;max-height:200px;overflow-y:auto;` +
-    `background:rgba(30,30,40,0.92);border:1px solid rgba(255,255,255,0.15);` +
-    `border-radius:8px;z-index:9999;padding:4px 0;font-size:13px;`;
+  acDropdown.style.width = width + 'px';
+  acDropdown.style.left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))) + 'px';
+  acDropdown.style.top = Math.round(rect.bottom + 4) + 'px';
+
+  const title = document.createElement('div');
+  title.className = 'ac-title';
+  title.textContent = '命令补全';
+  acDropdown.append(title);
+
   items.forEach((item, i) => {
     const div = document.createElement('div');
     div.className = 'ac-item';
     div.dataset.index = i;
-    div.style.cssText =
-      `padding:6px 12px;cursor:pointer;color:#ccc;display:flex;align-items:center;gap:8px;`;
     const labelSpan = document.createElement('span');
-    labelSpan.style.cssText = 'color:#e8e8e8;font-weight:600;flex-shrink:0;';
+    labelSpan.className = 'ac-key';
     labelSpan.textContent = item.label;
     div.appendChild(labelSpan);
     if (item.detail) {
       const detailSpan = document.createElement('span');
-      detailSpan.style.cssText = 'color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      detailSpan.className = 'ac-desc';
       detailSpan.textContent = item.detail;
       div.appendChild(detailSpan);
     }
@@ -82,7 +85,16 @@ function acRender(items, inputEl) {
     div.addEventListener('mousedown', (e) => e.preventDefault());
     acDropdown.appendChild(div);
   });
+
   document.body.appendChild(acDropdown);
+
+  // 输入栏贴近窗口底部时向上弹，避免下拉被裁掉
+  const height = acDropdown.offsetHeight;
+  const spaceBelow = window.innerHeight - rect.bottom - 8;
+  if (height > spaceBelow && rect.top > height + 8) {
+    acDropdown.style.top = Math.round(rect.top - height - 6) + 'px';
+  }
+
   acHighlight(0);
 }
 
@@ -90,7 +102,7 @@ function acHighlight(idx) {
   if (!acDropdown) return;
   const items = acDropdown.querySelectorAll('.ac-item');
   items.forEach((el, i) => {
-    el.style.background = i === idx ? 'rgba(100,140,255,0.25)' : 'transparent';
+    el.classList.toggle('is-on', i === idx);
   });
   acIndex = idx;
   if (idx >= 0 && items[idx]) items[idx].scrollIntoView({ block: 'nearest' });

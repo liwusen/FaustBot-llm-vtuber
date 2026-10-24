@@ -159,6 +159,13 @@ async def test_araya_agent_gets_retry_middleware(monkeypatch):
     class _DummyModel:
         model_name = "dummy"
 
+    class _DummyProviders:
+        # _init_agent 会按 main_model 打日志并解析服务端工具，需要一个真实的
+        # ModelProviders 形状（而不是裸 object()）
+        main_model = "test::dummy"
+        providers: list = []
+        subagent_models: list = []
+
     async def fake_build_main_chat_model(*args, **kwargs):
         return _DummyModel()
 
@@ -167,7 +174,7 @@ async def test_araya_agent_gets_retry_middleware(monkeypatch):
         return _DummyModel()
 
     monkeypatch.setattr(provider_mod, "build_main_chat_model", fake_build_main_chat_model)
-    monkeypatch.setattr(runtime_state, "get_model_providers", lambda: object())
+    monkeypatch.setattr(runtime_state, "get_model_providers", lambda: _DummyProviders())
     monkeypatch.setattr(araya_runtime, "create_agent", fake_create_agent)
     monkeypatch.setattr(araya_runtime.ArayaRuntime, "_build_tools", lambda self: [])
 

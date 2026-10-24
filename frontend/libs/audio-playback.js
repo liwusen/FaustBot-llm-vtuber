@@ -26,11 +26,11 @@ export function initAudioPlayback({
   function showTtsSkipNotice() {
     const el = document.getElementById('ttsStatus');
     if (!el) return;
-    el.textContent = '部分 TTS 分段合成失败，已跳过错误片段';
+    el.textContent = '部分语音未合成';
     clearTimeout(ttsSkipNoticeTimer);
     ttsSkipNoticeTimer = setTimeout(() => {
       const cur = document.getElementById('ttsStatus');
-      if (cur) cur.textContent = '已完成';
+      if (cur) cur.textContent = '完成';
     }, 2500);
   }
 
@@ -184,7 +184,7 @@ export function initAudioPlayback({
     const ttsBtn = document.getElementById('ttsBtn');
     const ttsStatus = document.getElementById('ttsStatus');
     if (ttsBtn) ttsBtn.disabled = true;
-    if (ttsStatus) ttsStatus.textContent = '合成中...';
+    if (ttsStatus) ttsStatus.textContent = '合成中';
 
     let fetchesPending = chunks.length;
     let fetchHadError = false;
@@ -223,7 +223,7 @@ export function initAudioPlayback({
     } catch (e) { console.warn('TTS allDone err', e); }
     finally {
       if (ttsBtn) ttsBtn.disabled = false;
-      if (ttsStatus) ttsStatus.textContent = '已完成';
+      if (ttsStatus) ttsStatus.textContent = '完成';
       // 提示必须在状态复位之后写入，否则会被 "已完成" 覆盖
       if (fetchHadError) showTtsSkipNotice();
     }

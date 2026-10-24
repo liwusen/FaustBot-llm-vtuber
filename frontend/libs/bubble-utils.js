@@ -4,7 +4,7 @@ export function formatResultBubbleText(source, text) {
   const raw = String(text || '').trim();
   if (!raw) return '';
   if (source === 'user') return `用户：${raw}`;
-  if (source === 'error') return `!错误!:${raw}`;
+  if (source === 'error') return raw;
   return `${raw}`;
 }
 

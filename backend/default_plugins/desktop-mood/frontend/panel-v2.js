@@ -40,6 +40,14 @@
     return Math.floor(total / 3600) + ' 小时 ' + Math.floor((total % 3600) / 60) + ' 分钟';
   }
 
+  function cadenceText(seconds){
+    const total = Math.max(1, Math.floor(Number(seconds) || 10));
+    if (total < 60) return total + ' 秒';
+    if (total % 3600 === 0) return (total / 3600) + ' 小时';
+    if (total % 60 === 0) return (total / 60) + ' 分钟';
+    return total + ' 秒';
+  }
+
   function tierBadge(tier, short){
     const label = short ? (TIER_LABELS[tier] || tier) : ((TIER_LABELS[tier] || tier) + (TIER_HINTS[tier] ? ' · ' + TIER_HINTS[tier] : ''));
     return '<span class="desktop-tier-badge desktop-tier-' + esc(tier) + '">' + esc(label) + '</span>';
@@ -54,27 +62,69 @@
     return (value < 10 ? '0' : '') + value;
   }
 
+  function renderTierSummary(perception){
+    const tiers = perception.tiers || [];
+    const sources = perception.sources || [];
+    const tierOn = {};
+    tiers.forEach(function(tier){ tierOn[tier.id] = !!tier.enabled; });
+    const active = sources.filter(function(source){ return source.enabled && tierOn[source.tier]; }).length;
+    const onTiers = tiers.filter(function(tier){ return tier.enabled; }).length;
+    const offTiers = tiers.length - onTiers;
+    return '<div class="desktop-source-summary">'
+      + '<div class="desktop-source-summary-count"><strong data-summary-active>' + active + '</strong>'
+      + '<span>/ ' + sources.length + ' 个数据源生效</span></div>'
+      + '<div class="desktop-source-summary-chips">'
+      + '<span class="desktop-status desktop-status-on" data-summary-tier-on' + (onTiers ? '' : ' hidden') + '>' + onTiers + ' 个分级开启</span>'
+      + '<span class="desktop-status desktop-status-off" data-summary-tier-off' + (offTiers ? '' : ' hidden') + '>' + offTiers + ' 个分级关闭</span>'
+      + '</div></div>';
+  }
+
   function renderTierGroups(perception){
     const tiers = perception.tiers || [];
     const sources = perception.sources || [];
     return tiers.map(function(tier){
       const sourcesOfTier = sources.filter(function(source){ return source.tier === tier.id; });
+      const enabledCount = sourcesOfTier.filter(function(source){ return source.enabled; }).length;
+      const countText = tier.enabled
+        ? enabledCount + '/' + sourcesOfTier.length + ' 个源已开启'
+        : enabledCount + '/' + sourcesOfTier.length + ' 个源配置保留';
       const sourceRows = sourcesOfTier.map(function(source){
-        const disabled = tier.enabled ? '' : ' disabled';
-        return '<label class="desktop-source-row' + (tier.enabled ? '' : ' is-muted') + '">'
-          + '<input type="checkbox" data-source-toggle="' + esc(source.id) + '"' + (source.enabled ? ' checked' : '') + disabled + ' />'
-          + '<span class="desktop-source-name">' + esc(source.label) + '</span>'
-          + '<span class="card-help">' + esc(source.note) + '（每 ' + String(source.cadence || 10) + 's）</span>'
-          + '</label>';
-      }).join('') || '<p class="card-help">该分级下暂无感知源</p>';
-      return '<div class="desktop-tier-group" data-tier="' + esc(tier.id) + '">'
-        + '<label class="desktop-tier-head">'
-        + '<input type="checkbox" data-tier-toggle="' + esc(tier.id) + '"' + (tier.enabled ? ' checked' : '') + ' />'
-        + tierBadge(tier.id)
-        + '</label>'
-        + '<p class="card-help">' + esc(tier.note) + '</p>'
+        const tierOn = !!tier.enabled;
+        const stateText = tierOn ? (source.enabled ? '已开启' : '已关闭') : '分级关闭';
+        const rowClass = 'desktop-source-row'
+          + (tierOn ? '' : ' is-tier-off')
+          + (tierOn && source.enabled ? '' : ' is-off');
+        const statusNote = source.status
+          ? '<span class="desktop-source-status-note">' + esc(source.status) + '</span>'
+          : '';
+        return '<div class="' + rowClass + '" data-source-row="' + esc(source.id) + '">'
+          + '<div class="desktop-source-main">'
+          + '<div class="desktop-source-name">' + esc(source.label) + '</div>'
+          + '<div class="desktop-source-note">' + esc(source.note) + '</div>'
+          + statusNote
+          + '</div>'
+          + '<div class="desktop-source-side">'
+          + '<span class="desktop-source-cadence" title="采样间隔">' + esc(cadenceText(source.cadence)) + '</span>'
+          + '<span class="desktop-source-state" data-source-state>' + esc(stateText) + '</span>'
+          + '<label class="desktop-switch"><input type="checkbox" data-source-toggle="' + esc(source.id) + '" aria-label="数据源 ' + esc(source.label) + '"'
+          + (source.enabled ? ' checked' : '') + (tierOn ? '' : ' disabled') + ' />'
+          + '<span class="desktop-switch-track"></span></label>'
+          + '</div></div>';
+      }).join('') || '<p class="card-help">该分级下暂无数据源</p>';
+      return '<section class="desktop-tier-group' + (tier.enabled ? '' : ' is-muted') + '" data-tier="' + esc(tier.id) + '">'
+        + '<div class="desktop-tier-head">'
+        + '<div class="desktop-tier-title">'
+        + '<div class="desktop-tier-title-row">' + tierBadge(tier.id)
+        + '<span class="desktop-tier-count" data-tier-count>' + esc(countText) + '</span></div>'
+        + '<p class="desktop-tier-note">' + esc(tier.note) + '</p>'
+        + '</div>'
+        + '<div class="desktop-tier-toggle">'
+        + '<span class="desktop-tier-state" data-tier-state>' + (tier.enabled ? '已开启' : '已关闭') + '</span>'
+        + '<label class="desktop-switch"><input type="checkbox" data-tier-toggle="' + esc(tier.id) + '" aria-label="分级 ' + esc(TIER_LABELS[tier.id] || tier.id) + '"'
+        + (tier.enabled ? ' checked' : '') + ' /><span class="desktop-switch-track"></span></label>'
+        + '</div></div>'
         + '<div class="desktop-source-list">' + sourceRows + '</div>'
-        + '</div>';
+        + '</section>';
     }).join('');
   }
 
@@ -85,7 +135,7 @@
       const status = source.collecting
         ? '<span class="desktop-status desktop-status-on">采集中</span>'
         : (source.enabled
-          ? '<span class="desktop-status desktop-status-off">分级已关</span>'
+          ? '<span class="desktop-status desktop-status-off">分级关闭</span>'
           : '<span class="desktop-status desktop-status-off">已关闭</span>');
       const note = source.status ? '<div class="desktop-field-row"><span class="desktop-field-label">不可用</span><span class="desktop-field-value">' + esc(source.status) + '</span></div>' : '';
       const values = (source.fields || []).map(function(field){
@@ -96,7 +146,7 @@
         + '<td>' + esc(source.label) + '</td>'
         + '<td>' + tierBadge(source.tier, true) + '</td>'
         + '<td>' + status + '</td>'
-        + '<td>' + String(source.cadence || 10) + 's</td>'
+        + '<td>' + esc(cadenceText(source.cadence)) + '</td>'
         + '<td>' + values + note + '</td>'
         + '</tr>';
     }).join('');
@@ -222,14 +272,15 @@
     function $(selector){ return container.querySelector(selector); }
 
     container.innerHTML = ''
-      + '<article class="card full-span"><h3 class="card-title">感知引擎 · 桌宠能看什么</h3>'
-      + '<p class="card-help">三级隐私开关决定允许采集的范围；每个感知源还能单独关闭。被关闭的源不会写进 faustbot://desktop-mood/（总览见 overview.md），依赖它的规则不会触发。修改后按右上角「保存」，下一个心跳周期（≤10 秒）生效。</p>'
+      + '<article class="card full-span"><h3 class="card-title">采集范围与数据源</h3>'
+      + '<p class="card-help">三级隐私开关决定允许采集的范围；每个数据源还能单独关闭。只有分级与来源同时开启才会采集。分级关闭时，该级下的开关会保留但暂停采集。修改后按右上角「保存」，下一个心跳周期（≤10 秒）生效。</p>'
       + '<div id="desktop-tier-list" class="desktop-tier-list">加载中...</div>'
       + '</article>'
       + '<article class="card full-span"><h3 class="card-title">场景与时间线</h3><div id="desktop-narrative-box">加载中...</div></article>'
       + '<article class="card full-span"><h3 class="card-title">今日节律</h3><div id="desktop-rhythm-box" class="desktop-metric-row">加载中...</div></article>'
-      + '<article class="card full-span"><h3 class="card-title">数据采集</h3>'
-      + '<div class="toolbar"><span id="desktop-perception-stamp" class="card-help">尚未采集</span>'
+      + '<article class="card full-span"><h3 class="card-title">采集结果</h3>'
+      + '<p class="card-help">每个数据源最近一次采集到的值与状态。关闭的来源不会进入 Agent 的桌宠上下文。</p>'
+      + '<div class="toolbar desktop-result-head"><span id="desktop-perception-stamp" class="card-help">尚未采集</span>'
       + '<button id="desktop-perception-refresh" class="btn btn-secondary">立即采集</button></div>'
       + '<table class="simple-table"><thead><tr><th>来源</th><th>分级</th><th>状态</th><th>间隔</th><th>采集到的数据</th></tr></thead>'
       + '<tbody id="desktop-perception-rows"></tbody></table>'
@@ -240,10 +291,11 @@
       + '<p class="card-help">附加随你的下一条消息或前台触发器出现，后台触发器不附加；只放相对上次附加发生变化的内容，整段硬上限 100 字、最多 6 行，且不受免打扰闸门拦截。'
       + '补充内容就在「规则」卡片里加一条 kind 为 attach 的规则。</p></article>'
       + '<article class="card full-span"><h3 class="card-title">其他配置</h3>'
-      + '<div class="toolbar"><label>当前情绪 <select id="desktop-mood-select"><option value="auto">自动</option><option value="rainy">雨天</option><option value="warm">温暖</option><option value="dark">低沉</option></select></label>'
-      + '<label>全局冷却 <input id="desktop-global-cooldown" type="number" min="0" style="width:80px" /></label>'
-      + '<label>天气城市 <input id="desktop-weather-city" type="text" style="width:100px" /></label>'
-      + '<label>编码监视目录 <input id="desktop-code-dir" type="text" style="width:220px" placeholder="D:\\some\\git\\repo" /></label>'
+      + '<div class="desktop-config-grid">'
+      + '<label class="desktop-config-field"><span>当前情绪</span><select id="desktop-mood-select" class="select"><option value="auto">自动</option><option value="rainy">雨天</option><option value="warm">温暖</option><option value="dark">低沉</option></select></label>'
+      + '<label class="desktop-config-field"><span>全局冷却（秒）</span><input id="desktop-global-cooldown" class="input" type="number" min="0" /></label>'
+      + '<label class="desktop-config-field"><span>天气城市</span><input id="desktop-weather-city" class="input" type="text" /></label>'
+      + '<label class="desktop-config-field"><span>编码监视目录</span><input id="desktop-code-dir" class="input" type="text" placeholder="D:\\some\\git\\repo" /></label>'
       + '</div>'
       + '<p class="card-help">规则开关、当前情绪与这里的配置都在右上角「保存」时一并提交。规则文件位于 ~/.faustbot/desktop-mood.rules.json（由 faustbot://plugins/desktop-mood/reload 提交写入）。</p></article>';
 
@@ -326,20 +378,87 @@
 
     function bindPerceptionPanel(perception){
       const tierList = $('#desktop-tier-list');
-      if (tierList) tierList.innerHTML = renderTierGroups(perception);
+      if (tierList) tierList.innerHTML = renderTierSummary(perception) + renderTierGroups(perception);
+
+      function syncSourceRow(toggle){
+        const row = toggle.closest('.desktop-source-row');
+        if (!row) return;
+        const tierOff = !!toggle.disabled;
+        const on = !!toggle.checked;
+        row.classList.toggle('is-tier-off', tierOff);
+        row.classList.toggle('is-off', tierOff || !on);
+        const state = row.querySelector('[data-source-state]');
+        if (state) state.textContent = tierOff ? '分级关闭' : (on ? '已开启' : '已关闭');
+      }
+
+      function syncSummary(){
+        const activeEl = container.querySelector('[data-summary-active]');
+        if (!activeEl) return;
+        let active = 0;
+        let onTiers = 0;
+        let offTiers = 0;
+        Array.prototype.forEach.call(container.querySelectorAll('.desktop-tier-group'), function(group){
+          const master = group.querySelector('input[data-tier-toggle]');
+          const tierOn = !!(master && master.checked);
+          if (tierOn) onTiers++; else offTiers++;
+          if (!tierOn) return;
+          Array.prototype.forEach.call(group.querySelectorAll('input[data-source-toggle]'), function(input){
+            if (input.checked) active++;
+          });
+        });
+        activeEl.textContent = String(active);
+        const onEl = container.querySelector('[data-summary-tier-on]');
+        const offEl = container.querySelector('[data-summary-tier-off]');
+        if (onEl) {
+          onEl.textContent = onTiers + ' 个分级开启';
+          onEl.hidden = !onTiers;
+        }
+        if (offEl) {
+          offEl.textContent = offTiers + ' 个分级关闭';
+          offEl.hidden = !offTiers;
+        }
+      }
+
+      function syncTierGroup(group){
+        if (!group) return;
+        const master = group.querySelector('input[data-tier-toggle]');
+        if (!master) return;
+        const tierOn = !!master.checked;
+        group.classList.toggle('is-muted', !tierOn);
+        const state = group.querySelector('[data-tier-state]');
+        if (state) state.textContent = tierOn ? '已开启' : '已关闭';
+        let total = 0;
+        let checked = 0;
+        Array.prototype.forEach.call(group.querySelectorAll('input[data-source-toggle]'), function(input){
+          total++;
+          if (input.checked) checked++;
+          input.disabled = !tierOn;
+          syncSourceRow(input);
+        });
+        const count = group.querySelector('[data-tier-count]');
+        if (count) {
+          count.textContent = tierOn
+            ? checked + '/' + total + ' 个源已开启'
+            : checked + '/' + total + ' 个源配置保留';
+        }
+        syncSummary();
+      }
+
       Array.prototype.forEach.call(container.querySelectorAll('input[data-tier-toggle]'), function(toggle){
         toggle.onchange = function(){
-          const group = toggle.closest('.desktop-tier-group');
-          const sourceToggles = group ? group.querySelectorAll('input[data-source-toggle]') : [];
-          Array.prototype.forEach.call(sourceToggles, function(item){ item.disabled = !toggle.checked; });
-          if (group) group.classList.toggle('is-muted', !toggle.checked);
           tierDirty = true;
+          syncTierGroup(toggle.closest('.desktop-tier-group'));
           syncDirty();
         };
       });
       Array.prototype.forEach.call(container.querySelectorAll('input[data-source-toggle]'), function(toggle){
-        toggle.onchange = function(){ tierDirty = true; syncDirty(); };
+        toggle.onchange = function(){
+          tierDirty = true;
+          syncTierGroup(toggle.closest('.desktop-tier-group'));
+          syncDirty();
+        };
       });
+      Array.prototype.forEach.call(container.querySelectorAll('.desktop-tier-group'), syncTierGroup);
     }
 
     function bindRulesPanel(){
@@ -436,7 +555,7 @@
     }, 5000);
   }
 
-  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '感知分级、场景时间线与规则管理（数据按域暴露在 faustbot://desktop-mood/）', plugin: 'desktop-mood', render: render });
+  api.addPage({ id: 'desktop-mood', label: '感知引擎', desc: '采集范围、数据源开关、场景时间线与规则管理', plugin: 'desktop-mood', render: render });
   api.addCard('plugins', {
     title: '感知引擎',
     priority: 17,

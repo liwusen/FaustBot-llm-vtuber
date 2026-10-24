@@ -1,38 +1,230 @@
-/* Desktop Mood 面板（亮色简约风，配合 Configer 主题） */
+/* Desktop Mood 面板（纸面风，配合 Configer 主题） */
 .desktop-overlay-v2 { position:fixed; z-index:1400; pointer-events:auto; }
 .desktop-overlay-static { top:18px; right:18px; }
 .desktop-overlay-hidden { display:none; }
-.desktop-widget-v2 { display:inline-flex; gap:10px; align-items:center; padding:8px 12px; border-radius:12px; background:rgba(33,26,15,0.86); color:#fff4cf; border:1px solid rgba(255,255,255,0.1); }
+.desktop-widget-v2 {
+  display:inline-flex;
+  gap:8px;
+  align-items:center;
+  padding:7px 10px;
+  border-radius:var(--radius-sm, 8px);
+  background:rgba(255,255,255,0.94);
+  color:var(--text, #17212f);
+  border:1px solid var(--line, #d9e2ed);
+  box-shadow:var(--shadow-soft, 0 8px 20px -14px rgba(20,33,53,0.28));
+  font:600 11.5px/1 var(--font-ui, "Segoe UI", sans-serif);
+  backdrop-filter:blur(8px);
+}
+.desktop-weather-v2 { font-family:var(--font-mono, Consolas, monospace); font-variant-numeric:tabular-nums; }
+.desktop-idle-v2 { color:var(--muted, #5e6e85); }
 
-/* 感知分级开关 */
-.desktop-tier-list { display:grid; gap:14px; }
-.desktop-tier-group { border:1px solid var(--border, #e4e6eb); border-radius:12px; padding:12px 14px; background:var(--surface, #fff); }
-.desktop-tier-group.is-muted { opacity:.62; }
-.desktop-tier-head { display:flex; gap:8px; align-items:center; font-weight:600; cursor:pointer; }
-.desktop-tier-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; border:1px solid transparent; white-space:nowrap; }
-.desktop-tier-green { background:#e7f6ec; color:#1d7a44; border-color:#bfe3cd; }
-.desktop-tier-yellow { background:#fdf6e3; color:#8a6100; border-color:#f0dfae; }
-.desktop-tier-red { background:#fdecea; color:#a32f28; border-color:#f3c9c5; }
-.desktop-source-list { display:grid; gap:6px; margin-top:10px; }
-.desktop-source-row { display:grid; grid-template-columns:auto minmax(96px, max-content) 1fr; gap:8px; align-items:center; }
-.desktop-source-name { font-weight:500; }
+/* ── 采集范围：总览 ── */
+.desktop-tier-list { display:grid; gap:10px; }
+.desktop-source-summary {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  padding:10px 12px;
+  border:1px solid var(--line, #d9e2ed);
+  border-radius:var(--radius-md, 10px);
+  background:#fbfdff;
+}
+.desktop-source-summary-count { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.desktop-source-summary-count strong {
+  font:650 22px/1 var(--font-mono, Consolas, monospace);
+  letter-spacing:-0.02em;
+  color:var(--text, #17212f);
+}
+.desktop-source-summary-count span { color:var(--muted, #5e6e85); font-size:11.5px; }
+.desktop-source-summary-chips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 
-/* 场景摘要 / 事件时间线 / 节律指标 */
-.desktop-narrative { margin:0 0 8px; font-size:13px; line-height:1.6; }
-.desktop-event-list { margin:6px 0 0; padding-left:0; list-style:none; display:grid; gap:4px; font-size:13px; }
-.desktop-event-list li { display:flex; gap:8px; }
-.desktop-metric-row { display:flex; flex-wrap:wrap; gap:14px; }
-.desktop-metric { display:flex; flex-direction:column; gap:2px; min-width:96px; padding:8px 10px; border:1px solid var(--border, #e4e6eb); border-radius:10px; }
-.desktop-metric-label { color:#6b7280; font-size:12px; }
-.desktop-metric-value { font-size:15px; font-weight:600; }
+/* ── 采集范围：分级 ── */
+.desktop-tier-group {
+  border:1px solid var(--line, #d9e2ed);
+  border-radius:var(--radius-md, 10px);
+  background:#fff;
+  overflow:hidden;
+  transition:opacity .15s ease;
+}
+.desktop-tier-group.is-muted .desktop-tier-head { background:#f2f5fa; }
+.desktop-tier-group.is-muted .desktop-tier-badge { opacity:.8; }
+.desktop-tier-head {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding:12px 14px;
+  background:var(--bg2, #f7fafe);
+  border-bottom:1px solid var(--line, #d9e2ed);
+}
+.desktop-tier-title { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.desktop-tier-title-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.desktop-tier-count { color:var(--muted, #5e6e85); font-size:11.5px; white-space:nowrap; }
+.desktop-tier-badge {
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:2px 8px;
+  border-radius:999px;
+  font:600 11px/1.6 var(--font-ui, "Segoe UI", sans-serif);
+  border:1px solid transparent;
+  white-space:nowrap;
+}
+.desktop-tier-green { background:var(--ok-soft, #e9f7ef); color:var(--ok, #237a4b); border-color:#c4e5d2; }
+.desktop-tier-yellow { background:#fdf5e6; color:#96631a; border-color:#f2e0bd; }
+.desktop-tier-red { background:var(--accent-soft, #fdefef); color:var(--accent, #d63a3e); border-color:#f2c9cb; }
+.desktop-tier-note {
+  margin:0;
+  padding:0;
+  color:var(--muted, #5e6e85);
+  font-size:11.5px;
+  line-height:1.6;
+}
+.desktop-tier-toggle {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex:none;
+  min-height:22px;
+}
+.desktop-tier-state {
+  color:var(--muted, #5e6e85);
+  font-size:11.5px;
+  min-width:34px;
+  text-align:right;
+}
 
-/* 数据采集视图 */
-.desktop-status { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; white-space:nowrap; }
-#desktop-perception-rows td:nth-child(2), #desktop-perception-rows td:nth-child(3), #desktop-perception-rows td:nth-child(4) { white-space:nowrap; }
-.desktop-status-on { background:#e7f6ec; color:#1d7a44; }
-.desktop-status-off { background:#f1f2f4; color:#6b7280; }
-.desktop-field-row { display:flex; gap:8px; }
-.desktop-field-label { color:#6b7280; min-width:78px; }
-.desktop-field-value { word-break:break-all; }
-.desktop-value-missing { color:#9aa1aa; }
-.desktop-attach-error { color:#a32f28; }
+/* 开关：与配置中心共用同一套手感，但面板自带一份，避免依赖宿主 CSS */
+.desktop-switch { position:relative; width:38px; height:22px; flex:none; display:inline-flex; }
+.desktop-switch input { position:absolute; inset:0; margin:0; opacity:0; cursor:pointer; }
+.desktop-switch-track {
+  position:absolute;
+  inset:0;
+  border-radius:999px;
+  background:#cfd9e8;
+  transition:background .18s ease;
+  pointer-events:none;
+}
+.desktop-switch-track::after {
+  content:"";
+  position:absolute;
+  left:3px;
+  top:3px;
+  width:16px;
+  height:16px;
+  border-radius:50%;
+  background:#fff;
+  box-shadow:0 1px 3px rgba(23,33,47,0.2);
+  transition:transform .18s ease;
+}
+.desktop-switch input:checked + .desktop-switch-track { background:var(--ok, #237a4b); }
+.desktop-switch input:checked + .desktop-switch-track::after { transform:translateX(16px); }
+.desktop-switch input:disabled { cursor:not-allowed; }
+.desktop-switch input:disabled + .desktop-switch-track { opacity:.45; }
+
+/* ── 采集范围：数据源 ── */
+.desktop-source-list { display:grid; gap:0; padding:2px 14px 6px; }
+.desktop-source-row {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:9px 0;
+  border-bottom:1px solid #e9eef5;
+}
+.desktop-source-row:last-child { border-bottom:0; }
+.desktop-source-row.is-off .desktop-source-name { color:var(--muted, #5e6e85); font-weight:500; }
+.desktop-source-row.is-tier-off { opacity:.62; }
+.desktop-source-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.desktop-source-name {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  color:var(--text, #17212f);
+  font:600 12.5px/1.4 var(--font-ui, "Segoe UI", sans-serif);
+  overflow-wrap:anywhere;
+}
+.desktop-source-note {
+  color:var(--muted, #5e6e85);
+  font-size:11.5px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}
+.desktop-source-status-note { color:var(--danger, #c2343a); font-size:11px; line-height:1.5; }
+.desktop-source-side { display:flex; align-items:center; gap:10px; flex:none; }
+.desktop-source-cadence {
+  padding:2px 6px;
+  border:1px solid var(--line, #d9e2ed);
+  border-radius:999px;
+  background:#eef3f9;
+  color:#61728a;
+  font:600 10px/1.5 var(--font-mono, Consolas, monospace);
+  white-space:nowrap;
+}
+.desktop-source-state {
+  min-width:46px;
+  text-align:right;
+  color:var(--muted, #5e6e85);
+  font-size:11px;
+  white-space:nowrap;
+}
+
+/* ── 场景摘要 / 事件时间线 / 节律指标 ── */
+.desktop-narrative { margin:0 0 8px; font-size:12.5px; line-height:1.65; color:var(--text, #17212f); }
+.desktop-event-list { margin:6px 0 0; padding-left:0; list-style:none; display:grid; gap:4px; font-size:12px; }
+.desktop-event-list li { display:flex; gap:8px; align-items:baseline; }
+.desktop-metric-row { display:flex; flex-wrap:wrap; gap:10px; }
+.desktop-metric {
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:108px;
+  padding:9px 11px;
+  border:1px solid var(--line, #d9e2ed);
+  border-radius:var(--radius-md, 10px);
+  background:var(--bg2, #f7fafe);
+}
+.desktop-metric-label { color:var(--muted, #5e6e85); font-size:11px; }
+.desktop-metric-value {
+  color:var(--text, #17212f);
+  font:650 16px/1.25 var(--font-mono, Consolas, monospace);
+  letter-spacing:-0.01em;
+}
+
+/* ── 采集结果 ── */
+.desktop-result-head { justify-content:space-between; }
+.desktop-status {
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:1px 8px;
+  border:1px solid transparent;
+  border-radius:999px;
+  font:600 10.5px/1.7 var(--font-ui, "Segoe UI", sans-serif);
+  white-space:nowrap;
+}
+.desktop-status::before { content:""; width:5px; height:5px; border-radius:50%; background:currentColor; }
+.desktop-status[hidden] { display:none; }
+.desktop-status-on { background:var(--ok-soft, #e9f7ef); color:var(--ok, #237a4b); border-color:#c4e5d2; }
+.desktop-status-off { background:#eef2f7; color:var(--muted, #5e6e85); border-color:#dfe6ef; }
+#desktop-perception-rows td:nth-child(2),
+#desktop-perception-rows td:nth-child(3),
+#desktop-perception-rows td:nth-child(4) { white-space:nowrap; }
+.desktop-field-row { display:flex; gap:8px; font-size:12px; line-height:1.55; }
+.desktop-field-label { color:var(--muted, #5e6e85); min-width:78px; flex:none; }
+.desktop-field-value { color:var(--text, #17212f); word-break:break-all; }
+.desktop-value-missing { color:#8a99ad; }
+.desktop-attach-error { color:var(--danger, #c2343a); }
+
+/* ── 其他配置 ── */
+.desktop-config-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));
+  gap:12px;
+}
+.desktop-config-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.desktop-config-field > span { color:var(--muted, #5e6e85); font-size:11.5px; font-weight:600; }
+.desktop-config-field .input,
+.desktop-config-field .select { width:100%; }

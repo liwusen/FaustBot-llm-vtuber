@@ -94,18 +94,23 @@ export function initChatComposer(opts) {
       chip.className = 'composer-chip' + (a.isImage ? ' is-image' : '');
       if (highlight && i === attachments.length - 1) chip.classList.add('just-added');
       const name = a.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+      const icon = document.createElement('span');
+      icon.className = 'composer-chip-icon';
+      icon.innerHTML = window.FaustIcons
+        ? window.FaustIcons.svg(a.isImage ? 'image' : 'doc', { size: 12 })
+        : '';
       const label = document.createElement('span');
       label.className = 'composer-chip-label';
-      label.textContent = (a.isImage ? '🖼 ' : '📄 ') + name;
+      label.textContent = name;
       label.title = a.path;
       const x = document.createElement('span');
       x.className = 'composer-chip-x';
-      x.textContent = '✕';
+      x.innerHTML = window.FaustIcons ? window.FaustIcons.svg('close', { size: 11 }) : '×';
       x.addEventListener('click', () => {
         attachments.splice(i, 1);
         renderChips(false);
       });
-      chip.append(label, x);
+      chip.append(icon, label, x);
       chipContainer.appendChild(chip);
     });
     chipContainer.style.display = attachments.length ? 'flex' : 'none';

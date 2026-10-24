@@ -30,6 +30,12 @@
   flex-shrink: 0;
 }
 
+.log-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .log-controls {
   display: flex;
   align-items: center;
@@ -52,12 +58,15 @@
 }
 
 #logClearBtn, #logCloseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: rgba(255,255,255,0.54);
   cursor: pointer;
   font-size: 15px;
-  padding: 2px 5px;
+  padding: 3px 5px;
   border-radius: 4px;
 }
 #logClearBtn:hover, #logCloseBtn:hover {

@@ -16,23 +16,23 @@ FaustBot 内部实现了一个Agent.
 
 OpenAI API是一套简单的程序使用大模型的规范。
 
-FaustBot 使用 OpenAI 兼容的 API 接口 (即`Openai Chat Completions`)。你只需要一个 API Key ，模型id,和对应的 Base URL。
+FaustBot 支持四种接口格式：`OpenAI Chat Completions`、`OpenAI Responses`、`Anthropic Messages`、`Google Gemini`，并会按模型自动判断该用哪一种。多数服务商仍然是 OpenAI Chat 兼容的，所以下面按最常见的写法说明；换个服务商时你只需要密钥、模型 ID 和接口地址。
 
 ### API Key
 
 API Key 是你的身份凭证，类似"密码"。从 LLM 服务商获取后填入配置文件：
 
-在 FaustBot 的 **配置中心（Configer）→ AI 服务商 → 添加 Provider → API Key** 中填入即可。
+在 FaustBot 的 **配置中心（Configer）→ AI 服务商 → 添加服务商 → 密钥** 中填入即可。
 
 格式基本上是`sk-{一大串随机字符}`
 
-### Base URL
+### 接口地址（Base URL）
 
 不同服务商的 API 地址不同：
 
 这一项应该是一个https://开头的**链接**
 
-在 Configer 的 **AI 服务商 → 添加 Provider → Base URL** 中填入。
+在 Configer 的 **AI 服务商 → 添加服务商 → 接口地址** 中填入。
 
 常见服务商的 Base URL：
 

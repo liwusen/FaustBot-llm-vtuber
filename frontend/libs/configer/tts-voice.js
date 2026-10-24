@@ -21,17 +21,9 @@ async function openEdgeTTSVoiceModal() {
 
   // 语音列表容器
   const voiceList = el("div", "voice-list");
-  voiceList.style.maxHeight = "400px";
-  voiceList.style.overflowY = "auto";
-  voiceList.style.border = "1px solid #ddd";
-  voiceList.style.padding = "10px";
 
   // 选中信息
   const selectedInfo = el("div", "selected-info");
-  selectedInfo.style.marginTop = "10px";
-  selectedInfo.style.padding = "10px";
-  selectedInfo.style.backgroundColor = "#f5f5f5";
-  selectedInfo.style.borderRadius = "4px";
 
   // 加载语言和性别选项
   async function loadFilters() {
@@ -62,7 +54,7 @@ async function openEdgeTTSVoiceModal() {
   // 加载语音列表
   async function loadEdgeTTSVoices(searchQuery = "", forceRefresh = false) {
     try {
-      voiceList.innerHTML = '<div style="text-align: center; padding: 20px;">加载中...</div>';
+      voiceList.innerHTML = '<div class="voice-empty">加载中...</div>';
 
       const language = languageSelect.value;
       const gender = genderSelect.value;
@@ -80,23 +72,18 @@ async function openEdgeTTSVoiceModal() {
       voiceList.innerHTML = '';
 
       if (data.voices.length === 0) {
-        voiceList.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">未找到匹配的语音</div>';
+        voiceList.innerHTML = '<div class="voice-empty">未找到匹配的语音</div>';
         return;
       }
 
       data.voices.forEach(voice => {
         const voiceItem = el("div", "voice-item");
-        voiceItem.style.padding = "10px";
-        voiceItem.style.border = "1px solid #eee";
-        voiceItem.style.marginBottom = "5px";
-        voiceItem.style.cursor = "pointer";
-        voiceItem.style.borderRadius = "4px";
 
         voiceItem.innerHTML = `
-          <div style="font-weight: bold;">${voice.name}</div>
-          <div style="color: #666; font-size: 0.9em;">标识：${voice.voice_id}</div>
-          <div style="color: #666; font-size: 0.9em;">语言：${voice.language} | 性别：${voice.gender}</div>
-          <div style="color: #888; font-size: 0.8em;">特征: ${voice.voice_personalities}</div>
+          <div class="voice-name">${voice.name}</div>
+          <div class="voice-meta">标识：${voice.voice_id}</div>
+          <div class="voice-meta">语言：${voice.language} | 性别：${voice.gender}</div>
+          <div class="voice-meta dim">特征: ${voice.voice_personalities}</div>
         `;
 
         voiceItem.addEventListener('click', () => selectVoice(voice, voiceItem));
@@ -105,27 +92,24 @@ async function openEdgeTTSVoiceModal() {
 
     } catch (error) {
       console.error('加载语音列表失败:', error);
-      voiceList.innerHTML = '<div style="text-align: center; padding: 20px; color: red;">加载失败</div>';
+      voiceList.innerHTML = '<div class="voice-empty is-error">加载失败</div>';
     }
   }
 
   // 选择语音
   function selectVoice(voice, voiceItem) {
     voiceList.querySelectorAll('.voice-item').forEach(item => {
-      item.style.backgroundColor = '';
-      item.style.border = '1px solid #eee';
+      item.classList.remove('is-selected');
     });
 
-    voiceItem.style.backgroundColor = '#e3f2fd';
-    voiceItem.style.border = '2px solid #2196f3';
+    voiceItem.classList.add('is-selected');
 
     selectedInfo.innerHTML = `
-      <div style="font-weight: bold;">已选择: ${voice.name}</div>
+      <div><strong>已选择: ${voice.name}</strong></div>
       <div>语音标识：${voice.voice_id}</div>
       <div>语言：${voice.language} | 性别：${voice.gender}</div>
       <div>特征: ${voice.voice_personalities}</div>
-      <button onclick="confirmEdgeTTSVoice('${voice.voice_id}', '${voice.name.replace(/'/g, "\\'")}')"
-              style="margin-top: 10px; padding: 5px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+      <button onclick="confirmEdgeTTSVoice('${voice.voice_id}', '${voice.name.replace(/'/g, "\\'")}')">
         确认选择
       </button>
     `;

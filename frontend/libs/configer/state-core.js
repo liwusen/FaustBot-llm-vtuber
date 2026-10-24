@@ -44,6 +44,10 @@ const state = {
   providers: [],
   mainModel: "",
   subagentModels: [],
+  // AI 页展示用：后端解析出的每个模型真实接口格式，以及每个服务商的目录识别结果
+  resolvedFormats: {},
+  providerCatalog: {},
+  aiTable: { page: 1, query: "" },  // 模型表的分页与搜索（重渲染后保留）
   plugins: [],
   selectedPluginId: "",
   pluginConfigDraft: {},

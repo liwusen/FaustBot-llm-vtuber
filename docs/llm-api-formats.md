@@ -17,8 +17,8 @@ FaustBot 会**按模型**自动选择格式，而不是按 Provider 一刀切。
 
 优先级从高到低：
 
-1. `model_api_formats[模型]` —— 用户在「编辑模型」里显式指定（配置器里叫「API 格式（覆盖）」）；
-2. `api_format` —— Provider 级声明（配置器里的「API 格式」下拉，默认 `auto`）；
+1. `model_api_formats[模型]` —— 用户在「模型 › 设置 › 高级 › 接口格式」里显式指定；
+2. `api_format` —— 服务商级声明（「编辑服务商 › 高级 › 默认接口格式」，默认 `auto`）；
 3. `model_catalog_routes[模型].format` —— **models.dev 目录**推断出的格式；
 4. `base_url` 路径启发式：`/anthropic`、`/messages` → Anthropic；`/google`、`/v1beta` → Gemini；
    `/responses` → Responses；
@@ -37,7 +37,7 @@ FaustBot 会**按模型**自动选择格式，而不是按 Provider 一刀切。
 - 缓存位置：`~/.faustbot/cache/models_dev/api.json`，TTL 24 小时，原子写入，上限 32MB；
 - 启动时后台刷新（`refresh_models_dev_catalog`），**不阻塞启动**；失败时继续用陈旧缓存，
   没有缓存则退回通用启发式；
-- 手动刷新：配置器 AI 服务商页的「刷新 models.dev 目录」，或
+- 手动刷新：配置器 AI 服务商页的「更新模型目录」（在「对话模型服务商 › 高级操作」或「编辑服务商 › 高级设置」里），或
   `POST /faust/admin/models-dev/refresh`；状态见 `GET /faust/admin/models-dev/status`。
 
 ### Provider 匹配
@@ -53,8 +53,8 @@ Jaccard 会因为目录条目很大而把重合度压到 0.1 以下。
 这一类（`host_matched = false`）**只采用目录推断出的格式，端点仍用你的 `base_url`**，
 避免把请求发到没有配置密钥的主机上。
 
-匹配结果不对时可以手动 **pin**：在 Provider 编辑框里填「目录 Provider ID」再点「重新匹配目录」，
-或调用 `POST /faust/admin/providers/{name}/catalog-match`，body `{"provider_id": "..."}`。
+匹配结果不对时可以手动指定条目：在「编辑服务商 › 高级设置 › 模型目录」里填目录条目名，
+再点「自动识别服务商」，或调用 `POST /faust/admin/providers/{name}/catalog-match`，body `{"provider_id": "..."}`。
 
 ### 模型路由字段
 
@@ -98,7 +98,7 @@ Jaccard 会因为目录条目很大而把重合度压到 0.1 以下。
 ## 服务端工具（Provider 托管）
 
 服务端工具由**服务商自己执行**（例如联网搜索），不需要本地 ToolNode，也不会产生
-`tool_calls`。在「编辑模型」里勾选后生效：
+`tool_calls`。在「模型 › 设置 › 高级 › 服务端工具」里勾选后生效：
 
 | 格式 | 请求里的工具规格 |
 |---|---|
@@ -136,8 +136,8 @@ Token 用量一律取 API 上报值（`runtime/usage.py`），不做本地估算
 
 | 现象 | 原因与处理 |
 |---|---|
-| 某模型 400 `invalid_request_error` | 格式选错。在「编辑模型」里手动指定 API 格式，或检查目录匹配是否 pin 到了错误的 provider |
+| 某模型 400 `invalid_request_error` | 格式选错。在「模型 › 设置 › 高级」里手动指定接口格式，或检查目录识别是否指到了错误的条目 |
 | 请求打到了错误主机 | `host_matched=false` 时不会用目录端点；检查 `format_base_urls` 是否填错 |
 | 上下文占用一直很小、从不压缩 | 网关没返回 usage（`stream_usage` 关闭/不支持），或 Anthropic 缓存口径问题（已修复） |
-| 目录加载失败 | 手动点「刷新 models.dev 目录」；无网络时只能手动指定格式与端点 |
+| 目录加载失败 | 手动点「更新模型目录」；无网络时只能手动指定格式与端点 |
 | Gemini 报工具 schema 非法 | 该模型不支持服务端工具，取消勾选即可 |

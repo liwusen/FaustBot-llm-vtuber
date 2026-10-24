@@ -873,7 +873,7 @@ function createConfigWindow() {
     minWidth: 1080,
     minHeight: 700,
     title: 'FaustBot 配置中心',
-    backgroundColor: '#edf1f6',
+    backgroundColor: '#f6f9fd',
     frame: true,
     show: false,
     autoHideMenuBar: true,

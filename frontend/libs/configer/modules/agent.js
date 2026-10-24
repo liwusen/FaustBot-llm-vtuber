@@ -26,6 +26,9 @@ async function ensureModuleData(moduleId) {
     state.providers = pr.providers || [];
     state.mainModel = pr.main_model || "";
     state.subagentModels = pr.subagent_models || [];
+    // 后端解析出的真实格式（含端点推断/模型类型回退）与目录识别结果，供 AI 页展示
+    state.resolvedFormats = pr.resolved_formats || {};
+    state.providerCatalog = pr.catalog || {};
   }
   if (moduleId === "agent") {
     const a = await cfgApi("GET", "/faust/admin/agents");

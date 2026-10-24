@@ -160,15 +160,19 @@ function refreshDirtyUI() {
   }
 }
 
-function makeFieldCard(scope, key, value) {
-  const meta = getMeta(key);
-  const card = el("article", `card full-span ${state.dirty[scope].has(key) ? "dirty" : ""}`.trim());
-  card.classList.add("field-card");
-  const header = createFieldHeader(meta, key);
-  const help = el("p", "card-help", meta.help || "");
+// ── 字段控件构造（各模块共用） ──
+// 「字段卡」（其它模块）与「字段行」（AI 服务商页）都从这里取控件，保证同一个键
+// 在两种布局下的编辑与脏标记语义完全一致。
+// opts: { onDirty?: () => void, rerender?: () => void }
+//   onDirty  就地标记未保存（文本框输入时不整页重渲染，避免丢焦点）
+//   rerender 需要随值联动的控件（开关 / 下拉）改完后重渲染
+function buildFieldControl(scope, key, value, opts = {}) {
+  const onDirty = typeof opts.onDirty === "function" ? opts.onDirty : () => {};
+  const rerender = typeof opts.rerender === "function" ? opts.rerender : () => {};
   const controlWrap = el("div", "field-wrap");
   const currentValue = state.config[scope][key];
   const options = FIELD_OPTIONS[key] || null;
+  const optionLabels = FIELD_OPTION_LABELS[key] || null;
 
   if (typeof value === "boolean") {
     const row = el("div", "switch-row");
@@ -182,7 +186,7 @@ function makeFieldCard(scope, key, value) {
       const next = Boolean(input.checked);
       txt.textContent = next ? "已启用" : "已禁用";
       updateValue(scope, key, next);
-      renderModule();
+      rerender();
     });
     label.append(input, slider);
     row.append(txt, label);
@@ -192,13 +196,13 @@ function makeFieldCard(scope, key, value) {
     for (const opt of options) {
       const item = document.createElement("option");
       item.value = opt;
-      item.textContent = opt;
+      item.textContent = (optionLabels && optionLabels[opt]) || opt;
       if (String(currentValue || "") === String(opt)) item.selected = true;
       select.append(item);
     }
     select.addEventListener("change", () => {
       updateValue(scope, key, select.value);
-      renderModule();
+      rerender();
     });
     controlWrap.append(select);
   } else if (TEXTAREA_KEYS.has(key)) {
@@ -206,7 +210,7 @@ function makeFieldCard(scope, key, value) {
     area.value = String(currentValue ?? "");
     area.addEventListener("input", () => {
       updateValue(scope, key, area.value);
-      card.classList.add("dirty");
+      onDirty();
     });
     controlWrap.append(area);
   } else if (SECRET_KEYS.has(key)) {
@@ -218,7 +222,7 @@ function makeFieldCard(scope, key, value) {
     input.autocomplete = "off";
     input.addEventListener("input", () => {
       updateValue(scope, key, input.value);
-      card.classList.toggle("dirty", input.value.length > 0);
+      if (input.value.length > 0) onDirty();
     });
     controlWrap.append(input);
   } else if (typeof value === "number") {
@@ -267,7 +271,7 @@ function makeFieldCard(scope, key, value) {
         const parsed = normalizeNumberInput(input.value, value);
         syncSlider();
         updateValue(scope, key, parsed);
-        card.classList.add("dirty");
+        onDirty();
       });
       sliderWrap.append(input, meter);
       controlWrap.append(sliderWrap);
@@ -280,7 +284,7 @@ function makeFieldCard(scope, key, value) {
       input.addEventListener("input", () => {
         const parsed = normalizeNumberInput(input.value, value);
         updateValue(scope, key, parsed);
-        card.classList.add("dirty");
+        onDirty();
       });
       controlWrap.append(input);
     }
@@ -292,7 +296,7 @@ function makeFieldCard(scope, key, value) {
     input.placeholder = "选择或输入参考音频文件路径";
     input.addEventListener("input", () => {
       updateValue(scope, key, input.value);
-      card.classList.add("dirty");
+      onDirty();
     });
     const pickButton = makeButton("选择文件", async () => {
       const filePath = await window.api.configOpenFile({
@@ -305,7 +309,7 @@ function makeFieldCard(scope, key, value) {
       if (!filePath) return;
       input.value = filePath;
       updateValue(scope, key, filePath);
-      card.classList.add("dirty");
+      onDirty();
     }, "btn btn-secondary");
     row.append(input, pickButton);
     controlWrap.append(row);
@@ -316,31 +320,154 @@ function makeFieldCard(scope, key, value) {
     input.value = currentValue === null || currentValue === undefined ? "" : String(currentValue);
     input.addEventListener("input", () => {
       updateValue(scope, key, input.value);
-      card.classList.add("dirty");
+      onDirty();
     });
     controlWrap.append(input);
   }
+  return controlWrap;
+}
 
+function makeFieldCard(scope, key, value) {
+  const meta = getMeta(key);
+  const card = el("article", `card full-span ${state.dirty[scope].has(key) ? "dirty" : ""}`.trim());
+  card.classList.add("field-card");
+  const header = createFieldHeader(meta, key);
+  const help = el("p", "card-help", meta.help || "");
+  const controlWrap = buildFieldControl(scope, key, value, {
+    onDirty: () => card.classList.add("dirty"),
+    rerender: () => renderModule(),
+  });
   card.append(header, help, controlWrap);
   return card;
 }
+
+// ── 字段行与组卡片（AI 服务商页的布局单元） ──
+// 行：左栏读（标签 + 说明 + 徽标 + 复制键名），右栏改（控件右缘对齐）。
+// 原始键名不常驻界面，只留一个 ⧉ 复制入口（悬停可见完整键名）。
+function makeFieldRow(scope, key, opts = {}) {
+  const meta = getMeta(key);
+  const rerender = typeof opts.rerender === "function" ? opts.rerender : () => renderModule();
+  const row = el("div", "field-row");
+  const isDirty = state.dirty[scope].has(key);
+  if (isDirty) row.classList.add("dirty");
+
+  const info = el("div", "field-row-info");
+  const titleLine = el("div", "field-row-title");
+  titleLine.append(el("span", "field-row-label", meta.label || key));
+
+  const copy = el("button", "key-copy");
+  copy.type = "button";
+  copy.title = key;
+  copy.setAttribute("aria-label", `复制配置键名 ${key}`);
+  copy.textContent = "⧉";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(key);
+      showBanner("info", `已复制键名：${key}`);
+    } catch (_e) {
+      showBanner("error", `复制键名失败：${key}`);
+    }
+  });
+  titleLine.append(copy);
+
+  if (isMaskedSecret(state.config[scope][key])) {
+    titleLine.append(el("span", "row-flag ok", "已设置"));
+  }
+  const dirtyFlag = el("span", "row-flag dirty hidden", "已修改");
+  titleLine.append(dirtyFlag);
+  info.append(titleLine);
+  if (meta.help) info.append(el("p", "field-row-help", meta.help));
+
+  const control = el("div", "field-row-control");
+  const undoBtn = makeButton("撤销", () => {
+    state.config[scope][key] = state.original[scope][key];
+    state.dirty[scope].delete(key);
+    refreshDirtyUI();
+    rerender();
+  }, "btn btn-ghost row-undo");
+  undoBtn.classList.toggle("hidden", !isDirty);
+
+  if (opts.readonly) {
+    // 只读引用（如 AGENT_NAME）：只显示当前值，改它的入口在别的模块
+    const current = state.config[scope][key];
+    control.append(el("span", "field-row-static", current === null || current === undefined || current === "" ? "-" : String(current)));
+  } else {
+    control.append(buildFieldControl(scope, key, state.config[scope][key], {
+      onDirty: () => {
+        row.classList.add("dirty");
+        dirtyFlag.classList.remove("hidden");
+        undoBtn.classList.remove("hidden");
+      },
+      rerender,
+    }));
+    control.append(undoBtn);
+  }
+
+  row.append(info, control);
+  return row;
+}
+
+const groupFoldState = {};
+
+// 组内/整组折叠。点击展开状态按 stateKey 记住（重渲染不会自己合上）；
+// forceOpen 用于「里面有已修改项」时自动展开。
+function makeFieldFold(title, children, stateKey, options = {}) {
+  const wrap = el("div", "field-fold");
+  const open = options.forceOpen === true ? true : Boolean(groupFoldState[stateKey]);
+  const btn = el("button", "field-fold-btn");
+  btn.type = "button";
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.append(el("span", "field-fold-arrow", "▸"), el("span", "", title));
+  const body = el("div", `field-fold-body${open ? " open" : ""}`);
+  for (const child of children) body.append(child);
+  btn.addEventListener("click", () => {
+    const next = !body.classList.contains("open");
+    body.classList.toggle("open", next);
+    btn.setAttribute("aria-expanded", next ? "true" : "false");
+    groupFoldState[stateKey] = next;
+  });
+  wrap.append(btn, body);
+  return wrap;
+}
+
+// 组卡片：标题 + 一句话说明 + 右侧摘要/动作 + 内容。
+// opts: { id, title, desc, meta, actions, foot, folded, foldKey }
+function makeFieldGroup(opts, children) {
+  const card = el("article", "card full-span field-group");
+  if (opts.id) card.id = `group-${opts.id}`;
+  const head = el("div", "field-group-head");
+  const heading = el("div", "field-group-heading");
+  heading.append(el("h3", "card-title", opts.title));
+  if (opts.desc) heading.append(el("p", "card-help", opts.desc));
+  head.append(heading);
+  if (opts.meta) {
+    const meta = el("div", "field-group-meta");
+    if (opts.meta instanceof HTMLElement) meta.append(opts.meta);
+    else meta.textContent = String(opts.meta);
+    head.append(meta);
+  }
+  if (opts.actions && opts.actions.length) {
+    const bar = el("div", "toolbar");
+    for (const action of opts.actions) bar.append(action);
+    head.append(bar);
+  }
+  card.append(head);
+
+  const nodes = children.slice();
+  if (opts.foot) nodes.push(el("p", "field-group-foot", opts.foot));
+  if (opts.folded) {
+    card.append(makeFieldFold(opts.foldLabel || "展开", nodes, opts.foldKey || opts.id, {}));
+  } else {
+    for (const node of nodes) card.append(node);
+  }
+  return card;
+}
+
 
 function pickModuleFields(moduleId) {
   const publicKeys = Object.keys(state.config.public || {}).sort((a, b) => a.localeCompare(b));
   const privateKeys = Object.keys(state.config.private || {}).sort((a, b) => a.localeCompare(b));
 
-  if (moduleId === "ai") {
-    // 压缩成本控制的三个键是一组：总开关只控开关，两个上限只在开关打开时显示
-    // （与语音模块按模式隐藏字段同构，避免关着时摆一堆不生效的旋钮）。
-    const costControlOn = Boolean(state.config.public.COMPACT_COST_CONTROL_ENABLED);
-    return {
-      publicKeys: AI_PUBLIC_KEYS.filter((k) => {
-        if (!costControlOn && COMPACT_COST_KEYS.has(k)) return false;
-        return publicKeys.includes(k);
-      }),
-      privateKeys: AI_PRIVATE_KEYS.filter((k) => privateKeys.includes(k)),
-    };
-  }
   if (moduleId === "live2d") {
     const modelType = String(state.config.public.MODEL_TYPE || "live2d").toLowerCase();
     if (modelType === "vrm") {
@@ -398,12 +525,13 @@ function pickModuleFields(moduleId) {
 }
 
 function renderConfigModule(moduleId) {
+  // AI 服务商页有自己的分组布局（modules/ai.js），不再走通用字段卡流程
   if (moduleId === "ai") {
-    renderProviderWizard();  // 替代原 CHAT_* 字段（EMBED/KB 等保留在下方）
+    renderAiModule();
+    return;
   }
   const fields = pickModuleFields(moduleId);
   if (!fields.publicKeys.length && !fields.privateKeys.length) {
-    if (moduleId === "ai") return;  // 向导已渲染，无剩余字段
     addSection("提示", [el("div", "empty-state", "当前模块暂无可编辑字段。")]);
     return;
   }

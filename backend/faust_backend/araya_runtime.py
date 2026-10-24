@@ -669,14 +669,15 @@ class ArayaRuntime:
         from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
         from faust_backend.runtime.server_tools import build_server_tool_middleware
         from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
-        self._chat_model = await build_main_chat_model(
-            runtime_state.get_model_providers(), intensity=None
-        )
-        log.info("Creating Araya agent with model: %s", self._chat_model.model_name)
         # Araya 用 main_model：服务端工具按同一 model spec 解析
         _providers = runtime_state.get_model_providers()
+        self._chat_model = await build_main_chat_model(_providers, intensity=None)
+        # 只打 spec：模型对象是四种格式之一（ChatOpenAI / ChatAnthropic /
+        # ChatGoogleGenerativeAI），只有 ChatOpenAI 才有 model_name，其余只有
+        # model——按属性取名字会把「换个格式的主模型」变成启动期崩溃。
+        log.info("Creating Araya agent with model: %s", _providers.main_model or "(未设置)")
         server_tool_middleware = build_server_tool_middleware(
-            _providers, str(getattr(_providers, "main_model", "") or "")
+            _providers, str(_providers.main_model or "")
         )
         middlewares = [
             MultimodalBridgeMiddleware(),

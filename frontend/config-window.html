@@ -3,14 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
   <title>FaustBot 配置中心</title>
   <link rel="stylesheet" href="./config-window.css" />
+  <link rel="stylesheet" href="./libs/ui-icons.css" />
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
+        <span class="brand-eyebrow">FaustBot / Configer</span>
         <h1>配置</h1>
+        <p>模型、语音与记忆的本地设置</p>
       </div>
       <nav id="moduleNav" class="module-nav" aria-label="配置模块"></nav>
     </aside>
@@ -18,7 +22,7 @@
     <main class="main-panel">
       <header class="topbar">
         <div class="topbar-left">
-          <span id="validBadge" class="badge badge-valid">有效</span>
+          <span id="validBadge" class="badge badge-valid">配置有效</span>
           <span id="dirtyBadge" class="badge badge-dirty hidden">0 项配置已修改</span>
         </div>
         <div class="topbar-actions">
@@ -43,6 +47,7 @@
       </section>
     </main>
   </div>
+  <script src="./libs/ui-icons.js"></script>
   <script src="./libs/configer/constants.js"></script>
   <script src="./libs/configer/dom-utils.js"></script>
   <script src="./libs/configer/modal.js"></script>
@@ -54,6 +59,7 @@
   <script src="./libs/tts-splitter.js"></script>
   <script src="./libs/configer/field-render.js"></script>
   <script src="./libs/configer/providerWizard.js"></script>
+  <script src="./libs/configer/modules/ai.js"></script>
   <script src="./libs/configer/deeplink.js"></script>
   <script src="./libs/configer/kb-editor.js"></script>
   <script src="./libs/configer/tts-voice.js"></script>

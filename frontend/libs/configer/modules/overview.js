@@ -49,17 +49,19 @@ function renderOverviewModule() {
 
   // ── 统计卡片 ──
   const statData = [
-    { label: "插件", icon: "\u{1F9E9}", value: `${pluginsEnabled}/${pluginsTotal}`, desc: "已启用/总数" },
-    { label: "服务", icon: "\u2699\uFE0F", value: `${servicesRunning}/${servicesTotal}`, desc: "运行中/总数" },
-    { label: modelType === "vrm" ? "VRM" : "Live2D", icon: modelType === "vrm" ? "\u{1F9CA}" : "\u{1F5BC}", value: modelPath === "-" ? "未配置" : modelPath.split("/").pop(), desc: "当前模型" },
-    { label: "Agent", icon: "\u{1F916}", value: agent, desc: "当前角色" },
+    { label: "插件", icon: "grid", value: `${pluginsEnabled}/${pluginsTotal}`, desc: "已启用 / 总数" },
+    { label: "服务", icon: "server", value: `${servicesRunning}/${servicesTotal}`, desc: "运行中 / 总数" },
+    { label: "模型", icon: modelType === "vrm" ? "vr" : "image", value: modelPath === "-" ? "未配置" : modelPath.split("/").pop(), desc: "当前载入" },
+    { label: "Agent", icon: "user", value: agent, desc: "当前角色" },
   ];
   const statGrid = el("div", "stat-grid");
   for (const s of statData) {
     const card = el("article", "card");
-    card.style.textAlign = "center";
-    card.style.justifyContent = "center";
-    card.innerHTML = `<div style="font-size:28px;line-height:1.2">${s.icon}</div><div style="font-size:22px;font-weight:700;margin:4px 0">${s.value}</div><div style="font-size:12px;color:var(--muted)">${s.desc}</div>`;
+    const iconWrap = el("div", "stat-icon");
+    iconWrap.innerHTML = FaustIcons.svg(s.icon, { size: 20 });
+    const value = el("div", "stat-value", s.value);
+    const desc = el("div", "stat-label", `${s.label} · ${s.desc}`);
+    card.append(iconWrap, value, desc);
     statGrid.append(card);
   }
   addSection("系统状态", [statGrid]);
@@ -90,13 +92,11 @@ function renderOverviewModule() {
   const progressContainer = el("div");
   progressContainer.style.display = "none";
   progressContainer.style.marginTop = "8px";
-  const progressBar = el("div");
-  progressBar.style.cssText = "height:8px;background:var(--bg2);border-radius:4px;overflow:hidden";
-  const progressFill = el("div");
-  progressFill.style.cssText = "height:100%;width:0%;background:var(--accent);transition:width .3s";
+  const progressBar = el("div", "progress-track");
+  const progressFill = el("div", "progress-fill");
   progressBar.append(progressFill);
-  const progressLabel = el("div");
-  progressLabel.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
+  const progressLabel = el("div", "progress-note");
+  progressLabel.textContent = "";
   progressContainer.append(progressBar, progressLabel);
 
   function sseDownload(tag, assetName, useProxy) {
@@ -305,12 +305,7 @@ function renderOverviewModule() {
       const ts = item.timestamp || "";
       const msg = item.message || "";
       const name = item.name || "";
-      const row = el("div", "list-row");
-      row.style.fontSize = "12px";
-      row.style.fontFamily = "monospace";
-      row.style.color = "#c43";
-      row.style.borderBottom = "1px solid var(--line)";
-      row.style.padding = "4px 0";
+      const row = el("div", "error-log-line");
       row.textContent = `${ts} [${name}] ${msg}`;
       errCard.append(row);
     }

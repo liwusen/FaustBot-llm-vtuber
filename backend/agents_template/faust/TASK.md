@@ -161,12 +161,12 @@ RenderMarkdownBlock("# 本周计划\n\n| 日期 | 任务 |\n|---|---|\n| 周二 
 
 上下文压缩说明：
 - 会话占用达到模型上下文长度的 80%（`COMPACT_THRESHOLD_RATIO` 可配）时**自动**触发压缩，无需你或用户干预；压缩后保留最近 3 轮对话（`COMPACT_KEEP_ROUNDS` 可配）。
-- 每个模型的上下文长度在配置中心「AI 服务商」→ Models 表格或「编辑模型」中配置；未配置时默认按 128000 计。
+- 每个模型的上下文长度在配置中心「AI 服务商 › 对话模型服务商」的模型表「上下文」列可见，点该行「设置」可以改；未配置时默认按 128000 计（也可用「高级操作 › 补全上下文长度」批量填）。
 - 压缩调用复用你当前的上下文前缀（同样的 System 与工具定义），因此能命中上游前缀缓存；它不会调用任何工具。
 
 思考行为说明：
-- 每个 Provider 有自己的 **Thinking 格式**（`thinking_type`：qwen/deepseek/openai/none），决定思考参数的写法
-- **是否思考与强度由全局 REASONING_CONFIG 控制**（off/low/medium/high）；REASONING_CONFIG=off 或 Provider 格式为 none 时不思考
-- 在配置中心「AI 服务商」模块可编辑各 Provider 的 Thinking 格式，以及全局「思考强度」
+- 每个服务商有自己的 **思考参数格式**（`thinking_type`：qwen/deepseek/openai/none），决定思考参数的写法
+- **是否思考与强度由全局 REASONING_CONFIG 控制**（off/low/medium/high）；REASONING_CONFIG=off 或服务商格式为 none 时不思考
+- 在配置中心「AI 服务商 › 编辑服务商 › 高级设置」里改思考参数格式，「思考强度」组里改全局强度
 
 用户询问思考相关问题时，可参考本表引导。

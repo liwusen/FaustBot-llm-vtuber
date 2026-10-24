@@ -14,32 +14,40 @@ function renderComponentsModule() {
 
 // ── 工具函数 ──
 
-function _statusBadge(isRunning) {
-  const span = document.createElement("span");
-  span.style.cssText = `display:inline-block;width:10px;height:10px;border-radius:50%;
-    background:${isRunning ? "#4caf50" : "#f44336"};margin-right:6px;vertical-align:middle`;
-  return span;
+function _serviceStatusText(svc) {
+  if (svc?.status === "starting") return "启动中";
+  if (svc?.status === "stopping") return "关闭中";
+  if (svc?.is_running) return "运行中";
+  return "已停止";
+}
+
+function _serviceTone(svc) {
+  if (svc?.status === "starting") return "is-warn";
+  if (svc?.status === "stopping") return "is-busy";
+  if (svc?.is_running) return "is-ok";
+  return "is-stop";
+}
+
+function _cardTitle(icon, tone, text) {
+  const dot = tone ? `<span class="cfg-dot ${tone}"></span>` : "";
+  return `${dot}${FaustIcons.svg(icon, { size: 15 })}<span>${text}</span>`;
 }
 
 function _btn(label, onClick, opts) {
   const b = document.createElement("button");
-  b.textContent = label;
+  b.type = "button";
   b.onclick = onClick;
-  b.style.cssText = `margin:4px;padding:6px 14px;border:1px solid var(--border);border-radius:6px;
-    background:var(--bg1);color:var(--fg);cursor:pointer;font-size:13px;
-    ${opts?.danger ? "border-color:#f44336;color:#f44336;" : ""}
-    ${opts?.primary ? "border-color:var(--accent);background:var(--accent);color:#fff;" : ""}
-    ${opts?.disabled ? "opacity:0.5;cursor:not-allowed;" : ""}`;
+  b.className = `btn ${opts?.primary ? "btn-primary" : opts?.danger ? "btn-danger" : "btn-ghost"}`;
+  if (opts?.icon) b.insertAdjacentHTML("afterbegin", FaustIcons.svg(opts.icon, { size: 13 }));
+  b.append(document.createTextNode(label));
   b.disabled = !!opts?.disabled;
   return b;
 }
 
 function _card(titleHtml) {
-  const card = document.createElement("div");
-  card.style.cssText = "background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px";
+  const card = el("div", "card");
   if (titleHtml) {
-    const title = document.createElement("div");
-    title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:10px";
+    const title = el("div", "card-title-line");
     title.innerHTML = titleHtml;
     card.append(title);
   }
@@ -47,20 +55,14 @@ function _card(titleHtml) {
 }
 
 function _row(label, value) {
-  const row = document.createElement("div");
-  row.style.cssText = "display:flex;justify-content:space-between;padding:4px 0;font-size:13px";
-  const lbl = document.createElement("span");
-  lbl.style.cssText = "color:var(--muted)";
-  lbl.textContent = label;
-  const val = document.createElement("span");
-  val.textContent = value;
-  row.append(lbl, val);
+  const row = el("div", "service-row");
+  row.append(el("span", "k", label), el("span", "v", value));
   return row;
 }
 
 function _select(options, selected) {
   const sel = document.createElement("select");
-  sel.style.cssText = "padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--fg);font-size:13px";
+  sel.className = "select select-compact";
   options.forEach(o => {
     const opt = document.createElement("option");
     opt.value = o.value;
@@ -73,27 +75,17 @@ function _select(options, selected) {
 
 function _toggle(label, checked, onChange) {
   const wrapper = document.createElement("label");
-  wrapper.style.cssText = "display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-right:12px";
+  wrapper.className = "check-inline";
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.checked = !!checked;
   cb.onchange = () => onChange(cb.checked);
-  wrapper.append(cb, label);
+  wrapper.append(cb, document.createTextNode(label));
   return wrapper;
 }
 
-function _serviceStatusText(svc) {
-  if (svc?.status === "starting") return "🟡 启动中";
-  if (svc?.status === "stopping") return "🟠 关闭中";
-  if (svc?.is_running) return "🟢 运行中";
-  return "🔴 已停止";
-}
-
 function _hint(text) {
-  const p = document.createElement("div");
-  p.style.cssText = "color:var(--muted);font-size:12.5px;line-height:1.55;margin-bottom:8px";
-  p.textContent = text;
-  return p;
+  return el("div", "card-help", text);
 }
 // admin API 使用实际 service key，与组件状态显示 key 可能不同
 const _SERVICE_KEY_MAP = { minecraft: "mc_operator" };
@@ -136,25 +128,26 @@ function _clearServicePolling(serviceKey) {
 // ── 服务日志 ──
 
 function _showServiceLog(serviceKey) {
-  const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center";
+  const overlay = el("div", "cfg-modal-overlay");
 
-  const modal = document.createElement("div");
-  modal.style.cssText = "background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:20px;max-width:80vw;max-height:80vh;min-width:400px;display:flex;flex-direction:column";
+  const modal = el("div", "cfg-modal");
+  modal.style.width = "min(820px, 80vw)";
+  modal.style.minWidth = "400px";
 
-  const header = document.createElement("div");
-  header.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:12px";
-  header.innerHTML = `<strong>${serviceKey.toUpperCase()} 日志</strong>`;
+  const header = el("div", "cfg-modal-head");
+  header.innerHTML = `<strong class="cfg-modal-title">${serviceKey.toUpperCase()} 日志</strong>`;
 
   const closeBtn = document.createElement("button");
-  closeBtn.textContent = "✕";
-  closeBtn.style.cssText = "border:none;background:none;cursor:pointer;font-size:16px;color:var(--fg);padding:4px 8px";
+  closeBtn.type = "button";
+  closeBtn.className = "btn btn-ghost modal-close";
+  closeBtn.setAttribute("aria-label", "关闭日志");
+  closeBtn.innerHTML = FaustIcons.svg("close", { size: 15 });
   closeBtn.onclick = () => overlay.remove();
   header.append(closeBtn);
 
   const textarea = document.createElement("textarea");
   textarea.readOnly = true;
-  textarea.style.cssText = "width:100%;height:400px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:8px;font-size:12px;font-family:monospace;color:var(--fg);resize:vertical;box-sizing:border-box;white-space:pre;overflow:auto;tab-size:2";
+  textarea.className = "textarea service-log-area";
   textarea.value = "加载中...";
 
   modal.append(header, textarea);
@@ -187,7 +180,7 @@ function renderGpuCard(container) {
   const data = state.componentStatus?.gpu;
   if (!data) return;
 
-  const card = _card("🖥 GPU 信息");
+  const card = _card(_cardTitle("server", "", "GPU 信息"));
   if (!data.has_nvidia || data.gpus.length === 0) {
     card.append(_row("状态", "未检测到 NVIDIA GPU"));
   } else {
@@ -212,17 +205,17 @@ function renderAsrServiceCard(container) {
   const svc = state.componentStatus?.services?.asr;
   const svcStatus = _serviceStatusText(svc);
   const svcPort = svc?.port ? `端口 ${svc.port}` : "";
-  const statusIcon = svc?.is_running ? "🟢" : "🔴";
+  const svcTone = _serviceTone(svc);
 
-  const card = _card(`${statusIcon} ASR 服务`);
+  const card = _card(_cardTitle("mic", svcTone, "ASR 服务"));
   card.append(_hint("本地语音识别服务，Whisper 模式与 FunASR 模式共用。无论选择哪种 ASR 模式，都需要先启动此服务；切换模式无需重装，只需重启服务。"));
   card.append(_row("服务", `${svcStatus} ${svcPort}`));
 
   const actions = document.createElement("div");
-  actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
-  actions.append(_btn("▶ 启动服务", () => startService("asr"), { primary: true }));
-  actions.append(_btn("⏹ 停止服务", () => stopService("asr"), { danger: true }));
-  actions.append(_btn("📋 日志", () => _showServiceLog("asr")));
+  actions.className = "card-actions";
+  actions.append(_btn("启动服务", () => startService("asr"), { primary: true, icon: "play" }));
+  actions.append(_btn("停止服务", () => stopService("asr"), { danger: true, icon: "stop" }));
+  actions.append(_btn("日志", () => _showServiceLog("asr"), { icon: "doc" }));
   card.append(actions);
   container.append(card);
 }
@@ -233,17 +226,16 @@ function renderFunasrDepsCard(container) {
   if (!data) return;
 
   const installed = data.installed;
-  const statusIcon = installed ? "✅" : "🔴";
   const statusText = installed ? `已安装 (funasr ${data.version || ""})` : "未安装";
   const torchInfo = data.torch_version ? `${data.torch_version} (${data.torch_variant || "?"})` : "未检测";
 
-  const card = _card(`${statusIcon} FunASR / Torch 依赖`);
+  const card = _card(_cardTitle("package", installed ? "is-ok" : "is-stop", "FunASR / Torch 依赖"));
   card.append(_hint("仅「FunASR 模式」需要：下载安装 PyTorch 与 FunASR 模型（体积较大）。若使用「Whisper 模式」则无需安装此依赖，只需启动上方的 ASR 服务即可。"));
   card.append(_row("安装状态", statusText));
   card.append(_row("PyTorch 环境", torchInfo));
 
   const actions = document.createElement("div");
-  actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
+  actions.className = "card-actions";
 
   const variantSelect = _select(
     [{ value: "cu128", label: "cu128 (CUDA 12.8)" },
@@ -259,7 +251,7 @@ function renderFunasrDepsCard(container) {
   mirrorToggle.querySelector("input").id = "funasrMirrorCheck";
   actions.append(mirrorToggle);
 
-  actions.append(_btn("🔄 安装/重装", () => startComponentInstall("funasr"), { primary: true }));
+  actions.append(_btn("安装/重装", () => startComponentInstall("funasr"), { primary: true, icon: "refresh" }));
 
   card.append(actions);
   container.append(card);
@@ -273,19 +265,18 @@ function renderTtsCard(container) {
   if (!data) return;
 
   const installed = data.installed;
-  const statusIcon = installed ? "✅" : "🔴";
   const statusText = installed ? `已安装 (${data.path || ""})` : "未安装";
   const variantText = data.variant || "standard";
   const svcStatus = _serviceStatusText(svc);
   const svcPort = svc?.port ? `端口 ${svc.port}` : "";
 
-  const card = _card(`${statusIcon} TTS`);
+  const card = _card(_cardTitle("speaker", installed ? "is-ok" : "is-stop", "TTS"));
   card.append(_row("状态", statusText));
   card.append(_row("TTS GPU 类型", variantText));
   card.append(_row("服务", `${svcStatus} ${svcPort}`));
 
   const actions = document.createElement("div");
-  actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
+  actions.className = "card-actions";
 
   const ttsVariant = _select(
     [{ value: "standard", label: "Standard" },
@@ -295,10 +286,10 @@ function renderTtsCard(container) {
   ttsVariant.id = "ttsVariantSelect";
   actions.append(ttsVariant);
 
-  actions.append(_btn("🔄 重新下载", () => startComponentInstall("tts"), { primary: true }));
-  actions.append(_btn("▶ 启动服务", () => startService("tts")));
-  actions.append(_btn("⏹ 停止服务", () => stopService("tts"), { danger: true }));
-  actions.append(_btn("📋 日志", () => _showServiceLog("tts")));
+  actions.append(_btn("重新下载", () => startComponentInstall("tts"), { primary: true, icon: "refresh" }));
+  actions.append(_btn("启动服务", () => startService("tts"), { icon: "play" }));
+  actions.append(_btn("停止服务", () => stopService("tts"), { danger: true, icon: "stop" }));
+  actions.append(_btn("日志", () => _showServiceLog("tts"), { icon: "doc" }));
 
   card.append(actions);
   container.append(card);
@@ -314,19 +305,17 @@ function renderMinecraftCard(container) {
   const svcText = _serviceStatusText(svc);
   const portText = svc?.port ? `端口 ${svc.port}` : "";
 
-  const card = _card("🎮 Minecraft 操作桥");
+  const card = _card(_cardTitle("gamepad", _serviceTone(svc), "Minecraft 操作桥"));
   card.append(_row("状态", `${svcText} ${portText}`));
 
   const actions = document.createElement("div");
-  actions.style.cssText = "margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:6px";
+  actions.className = "card-actions";
 
-  actions.append(_btn("▶ 启动服务", () => startService("minecraft")));
-  actions.append(_btn("⏹ 停止服务", () => stopService("minecraft"), { danger: true }));
-  actions.append(_btn("📋 日志", () => _showServiceLog("minecraft")));
+  actions.append(_btn("启动服务", () => startService("minecraft"), { icon: "play" }));
+  actions.append(_btn("停止服务", () => stopService("minecraft"), { danger: true, icon: "stop" }));
+  actions.append(_btn("日志", () => _showServiceLog("minecraft"), { icon: "doc" }));
 
-  const note = document.createElement("div");
-  note.style.cssText = "font-size:11px;color:var(--muted);margin-top:6px";
-  note.textContent = "后端启动时自动运行，无需下载";
+  const note = el("div", "service-note", "后端启动时自动运行，无需下载");
   card.append(actions, note);
   container.append(card);
 }
@@ -349,26 +338,28 @@ function renderProgressArea(container) {
   area.style.cssText = "display:none;margin-top:8px";
 
   const progressBar = document.createElement("div");
-  progressBar.style.cssText = "height:8px;background:var(--bg2);border-radius:4px;overflow:hidden";
+  progressBar.className = "progress-track";
   const progressFill = document.createElement("div");
   progressFill.id = "componentProgressFill";
-  progressFill.style.cssText = "height:100%;width:0%;background:var(--accent);transition:width .3s";
+  progressFill.className = "progress-fill";
   progressBar.append(progressFill);
 
   const label = document.createElement("div");
   label.id = "componentProgressLabel";
-  label.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
+  label.className = "progress-note";
   label.textContent = "";
 
   const cancelBtn = document.createElement("button");
   cancelBtn.id = "componentCancelBtn";
+  cancelBtn.className = "btn btn-danger";
   cancelBtn.textContent = "终止";
-  cancelBtn.style.cssText = "display:none;margin-top:8px;padding:6px 12px;border:1px solid #f44336;border-radius:6px;background:transparent;color:#f44336;cursor:pointer;font-size:12px";
+  cancelBtn.style.display = "none";
+  cancelBtn.style.marginTop = "8px";
   cancelBtn.onclick = () => cancelComponentInstall();
 
   const logArea = document.createElement("div");
   logArea.id = "componentLogArea";
-  logArea.style.cssText = "margin-top:8px;max-height:200px;overflow-y:auto;background:var(--bg2);border-radius:4px;padding:8px;font-size:12px;font-family:monospace;white-space:pre-wrap;display:none";
+  logArea.className = "install-log";
 
   area.append(progressBar, label, cancelBtn, logArea);
   container.append(area);
@@ -389,7 +380,7 @@ function showProgress(stage, percent, message) {
     label.textContent = message;
   }
   if (stage === "pip_output" && logArea) {
-    logArea.style.display = "";
+    logArea.style.display = "block";
     logArea.append(message + "\n");
     logArea.scrollTop = logArea.scrollHeight;
   }

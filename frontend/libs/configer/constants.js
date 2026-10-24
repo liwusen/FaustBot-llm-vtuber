@@ -10,12 +10,12 @@
 */
 // Begin of constants
 var META = {
-  EMBED_MODEL: { label: "Embedding 模型", help: "知识库文本向量化使用的 embedding 模型名称。" },
-  EMBED_API_BASE: { label: "Embedding 接口地址", help: "知识库向量化使用的 API Base URL。" },
-  SECURITY_SYS_ENABLED: { label: "启用安全系统", help: "开启后，部分高风险调用会先经过安全审查。" },
-  KB_ENABLED: { label: "启用记忆", help: "开启后允许使用树形记忆库与向量检索能力。" },
-  ARAYA_ENABLED: { label: "启用 Araya", help: "开启后允许独立记忆维护 Agent 自动触发。" },
-  ARAYA_IDLE_MINUTES: { label: "Araya 空闲触发分钟", help: "主 Agent 连续空闲达到该值后允许自动运行。" },
+  EMBED_MODEL: { label: "向量模型", help: "把文字转成向量所用的模型名，需与下面的接口地址配套。" },
+  EMBED_API_BASE: { label: "向量接口地址", help: "向量服务的 API 地址，通常以 /v1 结尾。" },
+  SECURITY_SYS_ENABLED: { label: "启用安全审查", help: "执行命令、改文件等高风险操作先交给模型审查再执行。" },
+  KB_ENABLED: { label: "启用记忆", help: "开启后 AI 会写入与检索记忆库。" },
+  ARAYA_ENABLED: { label: "启用 Araya", help: "允许 Araya 在主对话空闲时自动整理记忆。" },
+  ARAYA_IDLE_MINUTES: { label: "空闲多久后触发", help: "主对话连续空闲达到该时长（分钟）后，Araya 才允许自动运行。" },
   MODEL_TYPE: { label: "模型类型", help: "选择 Live2D（2D）、VRM（3D）或 Images（图片）模型。" },
   LIVE2D_MODEL_PATH: { label: "Live2D 模型路径", help: "前端加载的 Live2D 模型文件路径。" },
   LIVE2D_MODEL_SCALE: { label: "模型缩放", help: "模型在前端画布中的整体缩放比例。" },
@@ -57,19 +57,19 @@ var META = {
   MIMO_TTS_REFER_WAV_PATH: { label: "MiMo 克隆参考音频", help: "3-10 秒 mp3/wav 参考音频路径（≤10MB）。配置后自动切换为语音克隆模式，用该音色说话；留空则使用内置音色。" },
   MIMO_ASR_MODEL: { label: "MiMo ASR 模型", help: "小米 MiMo 识别模型名称。" },
   MIMO_ASR_LANGUAGE: { label: "MiMo ASR 语言", help: "识别语言；auto 为自动检测。" },
-  SEARCH_API_KEY: { label: "搜索密钥", help: "联网搜索工具使用的 API Key。" },
-  EMBED_API_KEY: { label: "Embedding 密钥", help: "知识库 embedding 使用的 API Key。" },
+  SEARCH_API_KEY: { label: "联网搜索密钥", help: "AI 联网搜索工具使用的密钥。" },
+  EMBED_API_KEY: { label: "向量服务密钥", help: "调用向量接口使用的密钥。" },
   FAUSTBOT_CLOUD_SERVICE_KEY: { label: "FaustBot Cloud Service Key", help: "调用 FaustBot Cloud 所使用的 FSK- 前缀服务密钥。" },
-  AGENT_NAME: { label: "当前 Agent", help: "指定当前加载的角色目录名称。" },
+  AGENT_NAME: { label: "当前角色", help: "在「角色」模块切换，这里只显示。" },
   TTS_REFER_WAV_PATH: { label: "TTS 参考音频路径", help: "本地 TTS 的参考音频文件路径。" },
   TTS_PROMPT_TEXT: { label: "TTS 参考文本", help: "参考音频对应的文本内容。" },
   TTS_PROMPT_LANGUAGE: { label: "TTS 参考语言", help: "参考音频文本语言。" },
-  RERANK_ENABLED: { label: "启用 Reranker", help: "开启后对搜索结果进行重排序以提升相关性。" },
-  RERANK_TOP_K: { label: "Rerank 保留数", help: "重排序后保留的 top-k 结果数量。" },
-  BM25_ONLY: { label: "BM25 Only 模式", help: "开启后仅使用 BM25 关键词检索，不调用外部 Embedding API 和 Reranker。适用于离线/无 API Key 场景。" },
-  REASONING_CONFIG: { label: "思考强度", help: "全局思考配置：off 关闭思考，low/medium/high 为思考强度。每个 Provider 的思考格式（Thinking 类型）在下方 Provider 编辑中单独指定。" },
-  MM_BRIDGE_MAX_SCAN: { label: "多模态桥接扫描条数", help: "每轮对话从最近 ToolMessage 中扫描图片输出的最大条数。" },
-  MM_BRIDGE_MAX_PIXELS: { label: "图片最大像素数", help: "发送给模型前，若图片总像素数（宽×高）超过该值则自动等比缩放；0 表示不缩放。默认 2000000（约 1920×1080）。" },
+  RERANK_ENABLED: { label: "启用重排序", help: "检索后用模型重新打分，结果更准，每次检索多一次请求。" },
+  RERANK_TOP_K: { label: "重排序保留条数", help: "重排序后保留的结果数量，默认 5。" },
+  BM25_ONLY: { label: "只用关键词检索", help: "只走 BM25 关键词匹配，不调用向量接口——离线或没有密钥时使用。" },
+  REASONING_CONFIG: { label: "思考强度", help: "全局默认思考深度。每个服务商的思考参数格式在「编辑服务商 › 高级」里单独设置。" },
+  MM_BRIDGE_MAX_SCAN: { label: "每轮扫描消息数", help: "每轮对话从最近的工具结果里找图片时，最多回看多少条消息。" },
+  MM_BRIDGE_MAX_PIXELS: { label: "图片像素上限", help: "图片总像素（宽×高）超过该值时等比缩小再发给模型；0 表示不缩放。默认 2000000（约 1920×1080）。" },
   mcp_servers: { label: "MCP 服务器 配置", help: "通过 bundled Node.js 或 SSE 连接的 MCP server 配置。" },
 };
 
@@ -125,8 +125,6 @@ var ADVANCED_KEYS = new Set([
   "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG",
 ]);
 var AI_PUBLIC_KEYS = ["EMBED_MODEL", "EMBED_API_BASE", "SECURITY_SYS_ENABLED", "KB_ENABLED", "AGENT_NAME", "ARAYA_ENABLED", "ARAYA_IDLE_MINUTES", "RERANK_ENABLED", "RERANK_TOP_K", "BM25_ONLY", "MM_BRIDGE_MAX_SCAN", "MM_BRIDGE_MAX_PIXELS", "MD_BLOCK_ENABLED", "AUTO_FORCE_INTERRUPT", "REASONING_CONFIG", "COMPACT_COST_CONTROL_ENABLED", "COMPACT_MAX_INPUT_TOKENS", "COMPACT_MAX_OUTPUT_TOKENS", "COMPACT_THRESHOLD_RATIO", "COMPACT_KEEP_ROUNDS"];
-// 只在「压缩成本控制」打开后才在 AI 服务商页显示的项（关着时不显示，避免出现一堆无效旋钮）
-var COMPACT_COST_KEYS = new Set(["COMPACT_MAX_INPUT_TOKENS", "COMPACT_MAX_OUTPUT_TOKENS"]);
 var AI_PRIVATE_KEYS = ["SEARCH_API_KEY", "EMBED_API_KEY"];
 var LIVE2D_KEYS = ["MODEL_TYPE", "LIVE2D_MODEL_PATH", "VRM_MODEL_PATH", "IMAGE_MODEL_CONFIG", "LIVE2D_MODEL_SCALE", "LIVE2D_MODEL_X", "LIVE2D_MODEL_Y", "LIVE2D_MOUSE_TRACKING_STRENGTH", "AUTO_IMAGE_ATTACH_ENABLED", "TEXT_CHAT_BAR_Y_FACTOR", "FRONTEND_QUICK_CONTROLLER_X_OFFSET", "FRONTEND_CLICK_THROUGH", "FRONTEND_DEFAULT_TTS_LANG", "PTT_MODE"];
 var SPEECH_PUBLIC_KEYS = ["TTS_MODE", "TTS_CHUNK_IDEAL_TOKENS", "ASR_MODE", "WHISPER_MODEL", "WHISPER_LANGUAGE", "WHISPER_INITIAL_PROMPT", "FAUSTBOT_CLOUD_BASE_URL", "FAUSTBOT_CLOUD_TIMEOUT_SECONDS", "OPENAI_TTS_BASE_URL", "OPENAI_TTS_MODEL", "OPENAI_TTS_VOICE", "OPENAI_TTS_RESPONSE_FORMAT", "OPENAI_TTS_SPEED", "OPENAI_TTS_INSTRUCTIONS", "OPENAI_ASR_BASE_URL", "OPENAI_ASR_MODEL", "OPENAI_ASR_LANGUAGE", "OPENAI_ASR_PROMPT", "OPENAI_ASR_RESPONSE_FORMAT", "OPENAI_ASR_TEMPERATURE", "OPENAI_ASR_TIMESTAMP_GRANULARITIES", "MIMO_TTS_BASE_URL", "MIMO_TTS_MODEL", "MIMO_TTS_VOICE", "MIMO_TTS_STYLE_PROMPT", "MIMO_TTS_FORMAT", "MIMO_TTS_REFER_WAV_PATH", "MIMO_ASR_MODEL", "MIMO_ASR_LANGUAGE", "TTS_REFER_WAV_PATH", "TTS_PROMPT_TEXT", "TTS_PROMPT_LANGUAGE", "EDGE_TTS_VOICE", "EDGE_TTS_RATE", "EDGE_TTS_PITCH", "EDGE_TTS_TIMEOUT_SECONDS"];
@@ -137,13 +135,13 @@ META.EDGE_TTS_VOICE = { label: "Edge TTS 音色", help: "Microsoft Edge TTS 使�
 META.EDGE_TTS_RATE = { label: "Edge TTS 语速", help: "Edge TTS 的速率设置，例如 0% 或 -10% 或 20%。" };
 META.EDGE_TTS_PITCH = { label: "Edge TTS 音高", help: "Edge TTS 的音高设置，例如 0% 或 -5% 或 10%。" };
 META.EDGE_TTS_TIMEOUT_SECONDS = { label: "Edge TTS 超时(秒)", help: "调用 Edge TTS 的超时秒数。" };
-META.MD_BLOCK_ENABLED = { label: "启用 Markdown 内容块", help: "开启后主 Agent 可使用 RenderMarkdownBlock 工具向气泡推送 Markdown 内容块（支持 mermaid 图表），内容仅展示不朗读。保存后立即生效。" };
-META.AUTO_FORCE_INTERRUPT = { label: "自动强制打断", help: "开启后，用户发起对话时若主 Agent 正被前台/后台触发器占用，会立即强制打断该触发器（前台触发器补发 done），并把用户消息标记为\"(用户插话)\"交给 AI。关闭则不打断，用户消息排队等待锁。" };
-META.COMPACT_COST_CONTROL_ENABLED = { label: "压缩成本控制(省 Token)", help: "默认关闭。关闭时压缩调用与主请求前缀逐字节一致（完整命中上游前缀缓存），且不限制摘要输出长度（摘要不可能被截断）——最省心、最不容易丢历史。开启后才会应用下面两项「压缩摘要输出上限」「压缩输入上限」。保存后立即生效。" };
-META.COMPACT_MAX_OUTPUT_TOKENS = { label: "压缩摘要输出上限(Token)", help: "仅「压缩成本控制」开启时生效，默认 4000。摘要输出超过该值时：本次压缩结果不写回会话（避免摘要没覆盖到的历史被永久删掉），并在本进程内自动放弃该上限，请调大它或关闭成本控制。设为 0 = 不限制。" };
-META.COMPACT_MAX_INPUT_TOKENS = { label: "压缩输入上限(Token)", help: "仅「压缩成本控制」开启时生效，默认 0（不限制）。设为非 0 后，压缩调用会从最旧的消息开始丢弃超出部分——注意两个代价：①payload 不再与主请求前缀一致，前缀缓存只剩 System 与工具定义可用（总 token 变少，但单价升高）；②被丢掉的最旧历史不会进入摘要，却仍会被压缩删除，即永久丢失。建议保持 0。" };
-META.COMPACT_THRESHOLD_RATIO = { label: "压缩触发阈值(上下文占比)", help: "与成本控制开关无关，始终生效。会话占用达到模型上下文长度的该比例时自动压缩，默认 0.8（留 20% 余量给压缩指令与摘要输出，保证压缩调用本身不会先超限）。有效范围 0.1~0.95；超范围或非法值会回落到默认 0.8。保存后立即生效。" };
-META.COMPACT_KEEP_ROUNDS = { label: "压缩后保留轮数", help: "与成本控制开关无关，始终生效。压缩后保留最近多少轮对话，默认 3（1 轮 = 一条用户消息及其之后的全部消息，含工具调用）。小于 1 或非法值会回落到默认 3。注意：当真实轮数本身就 ≤ 该值时（例如刚压缩完又要再压），只会保留最后一轮——这是为了保证仍能压出空间。保存后立即生效。" };
+META.MD_BLOCK_ENABLED = { label: "启用 Markdown 内容块", help: "开启后 AI 可以用 RenderMarkdownBlock 工具往气泡推 Markdown 内容块（支持 mermaid 图表），只显示不朗读。保存后立即生效。" };
+META.AUTO_FORCE_INTERRUPT = { label: "允许插话打断", help: "AI 正被触发器占用时，你的消息立即打断它，而不是排队等待。" };
+META.COMPACT_COST_CONTROL_ENABLED = { label: "启用压缩成本控制", help: "默认关闭。关闭时压缩调用与主请求前缀完全一致（能命中上游缓存），也不限制摘要长度。开启后才会应用下面两个上限。" };
+META.COMPACT_MAX_OUTPUT_TOKENS = { label: "摘要输出上限（Token）", help: "超过该值时本次压缩不写回会话（避免摘要没覆盖到的历史被删掉），并在本进程内放弃该上限。设为 0 = 不限制。" };
+META.COMPACT_MAX_INPUT_TOKENS = { label: "压缩输入上限（Token）", help: "非 0 时从最旧的消息开始丢弃超出部分：前缀缓存只剩 System 与工具定义可用，被丢掉的最旧历史也不会进入摘要。建议保持 0。" };
+META.COMPACT_THRESHOLD_RATIO = { label: "触发阈值（上下文占比）", help: "会话占用达到模型上下文长度的该比例时自动压缩，默认 0.8（留 20% 余量给压缩指令与摘要）。有效范围 0.1~0.95，超出会回落到 0.8。保存后立即生效。" };
+META.COMPACT_KEEP_ROUNDS = { label: "压缩后保留轮数", help: "压缩后保留最近多少轮对话，默认 3（1 轮 = 一条用户消息及其之后的全部消息）。注意：真实轮数本来就 ≤ 该值时只会保留最后一轮，这样才能压出空间。保存后立即生效。" };
 META.PTT_MODE = { label: "按住说话(PTT)", help: "开启后平时麦克风关闭，长按 Ctrl+Alt+A 说话，松开自动识别并发送。按住期间若 VAD 命中帧占比低于 10%（整段几乎没人声）则丢弃该段、不上传识别，右上角状态显示 \"(已忽略)\"。关闭则恢复普通监听模式。保存后立即生效（前端热重载）。" };
 
 var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"];
@@ -151,10 +149,10 @@ var SPEECH_PRIVATE_KEYS = ["FAUSTBOT_CLOUD_SERVICE_KEY", "MIMO_API_KEY"];
 // ── LLM API 格式（一个 Provider 可以同时提供多种格式的模型） ──
 // 顺序 = 后端 API_FORMATS 的顺序；auto 表示交给 models.dev 目录 + 端点推断。
 var API_FORMAT_OPTIONS = [
-  { value: "auto", label: "自动（models.dev 目录 / 端点推断）" },
-  { value: "openai_chat", label: "OpenAI Chat Completions" },
-  { value: "openai_responses", label: "OpenAI Responses" },
-  { value: "anthropic_messages", label: "Anthropic Messages" },
+  { value: "auto", label: "自动识别" },
+  { value: "openai_chat", label: "OpenAI Chat（最通用）" },
+  { value: "openai_responses", label: "OpenAI Responses（支持服务端联网搜索）" },
+  { value: "anthropic_messages", label: "Anthropic（Claude）" },
   { value: "google_gemini", label: "Google Gemini" },
 ];
 var API_FORMAT_LABELS = {
@@ -165,39 +163,146 @@ var API_FORMAT_LABELS = {
 };
 // 格式决策来源（与后端 FormatDecision.source 对应）
 var FORMAT_SOURCE_LABELS = {
-  manual: "手动",
-  provider_default: "Provider 默认",
-  catalog: "models.dev",
-  url_path: "端点推断",
-  family: "模型族",
-  fallback: "回退",
+  manual: "手动指定",
+  provider_default: "服务商默认",
+  catalog: "目录识别",
+  url_path: "地址推断",
+  family: "模型类型",
+  fallback: "默认",
+  error: "格式异常",
+};
+// 下拉选项的友好文案（存盘值不变）：FIELD_OPTIONS 里的原始值 → 用户看到的说法
+var FIELD_OPTION_LABELS = {
+  REASONING_CONFIG: { off: "关闭", low: "低", medium: "中", high: "高" },
+  THINKING_TYPE: {
+    none: "不使用（关闭思考）",
+    openai: "OpenAI 格式（reasoning_effort）",
+    qwen: "Qwen 格式（enable_thinking）",
+    deepseek: "DeepSeek 格式（thinking）",
+    mimo: "MiMo 格式（enable_thinking）",
+    glm: "GLM 格式（enable_thinking）",
+    minimax: "MiniMax 格式（reasoning_effort）",
+  },
 };
 // 服务端（provider 托管）工具：由服务商执行，不进本地 ToolNode
 var SERVER_TOOL_OPTIONS = [
   {
     value: "web_search",
-    label: "联网搜索（服务端执行）",
-    help: "由服务商在服务端联网检索后直接作答，不占用本地工具；openai_chat 格式不支持。",
+    label: "联网搜索",
+    help: "由服务商在服务端联网检索后直接作答，不占用本地工具；OpenAI Chat 格式不支持。",
     formats: ["openai_responses", "anthropic_messages", "google_gemini"],
   },
 ];
 
+// ── AI 服务商页分组（页面由 modules/ai.js 渲染） ──
+// 一个组 = 页面上的一张卡：keys 是行的顺序；`advanced: true` 的行收进组内「高级」折叠；
+// `folded: true` 表示整组默认折叠（实现细节）；`gated: true` 表示该行只在开关打开时出现；
+// `custom: "providers"` 表示这一组由页面自定义渲染（服务商表 + 模型表）。
+// scope 缺省为 public。这张表就是 AI 页的渲染白名单——新增 AI 配置键必须在这里给它一个位置，
+// backend/tests/test_frontend_ai_groups.py 会校验它与 AI_PUBLIC_KEYS / AI_PRIVATE_KEYS 完全一致。
+// BEGIN:AI_GROUPS
+var AI_GROUPS = [
+  {
+    id: "providers",
+    title: "对话模型服务商",
+    desc: "AI 说话与干活用的模型来自这里；密钥只存在本地，不会写进公共配置。",
+    custom: "providers",
+    keys: [],
+  },
+  {
+    id: "reasoning",
+    title: "思考强度",
+    desc: "AI 默认想多深。调高会让它更慢一点，但想得更仔细。",
+    keys: [{ key: "REASONING_CONFIG" }],
+  },
+  {
+    id: "memory",
+    title: "记忆与检索",
+    desc: "AI 记住什么，又怎么把这些东西找回来。",
+    keys: [
+      { key: "KB_ENABLED" },
+      { key: "EMBED_MODEL" },
+      { key: "EMBED_API_BASE" },
+      { key: "EMBED_API_KEY", scope: "private" },
+      { key: "RERANK_ENABLED", advanced: true },
+      { key: "RERANK_TOP_K", advanced: true },
+      { key: "BM25_ONLY", advanced: true },
+    ],
+  },
+  {
+    id: "search",
+    title: "联网搜索",
+    desc: "让 AI 能查网上的资料。填好密钥后，本地搜索工具就能用。",
+    keys: [{ key: "SEARCH_API_KEY", scope: "private" }],
+    footer: "也可以直接用服务商自带的联网搜索：在「模型」表的「设置 › 高级」里给单个模型开启，由服务商在服务端检索。",
+  },
+  {
+    id: "safety",
+    title: "安全与输出",
+    desc: "高风险操作要不要先审一遍，能不能打断，以及内容怎么显示。",
+    keys: [
+      { key: "SECURITY_SYS_ENABLED" },
+      { key: "AUTO_FORCE_INTERRUPT" },
+      { key: "MD_BLOCK_ENABLED" },
+    ],
+  },
+  {
+    id: "compact",
+    title: "会话压缩",
+    desc: "聊得太长时自动总结旧消息，只保留最近几轮，避免超出模型上下文。",
+    keys: [
+      { key: "COMPACT_THRESHOLD_RATIO" },
+      { key: "COMPACT_KEEP_ROUNDS" },
+      { key: "COMPACT_COST_CONTROL_ENABLED" },
+      { key: "COMPACT_MAX_OUTPUT_TOKENS", gated: "COMPACT_COST_CONTROL_ENABLED" },
+      { key: "COMPACT_MAX_INPUT_TOKENS", gated: "COMPACT_COST_CONTROL_ENABLED" },
+    ],
+    footer: "压缩调用会复用与主对话相同的前缀，所以能命中上游缓存；触发阈值与保留轮数始终生效。",
+  },
+  {
+    id: "araya",
+    title: "Araya 自动维护",
+    desc: "空闲时由 Araya 自动整理记忆库。",
+    keys: [
+      { key: "ARAYA_ENABLED" },
+      { key: "ARAYA_IDLE_MINUTES", advanced: true },
+    ],
+  },
+  {
+    id: "agent",
+    title: "当前角色",
+    desc: "角色在「角色」模块切换，这里只显示当前用的是哪一个。",
+    keys: [{ key: "AGENT_NAME" }],
+  },
+  {
+    id: "multimodal",
+    title: "多模态桥接",
+    desc: "工具结果里的图片怎么交给模型——通常不用改。",
+    folded: true,
+    keys: [
+      { key: "MM_BRIDGE_MAX_SCAN" },
+      { key: "MM_BRIDGE_MAX_PIXELS" },
+    ],
+  },
+];
+// END:AI_GROUPS
+
 var MODULES = [
-  { id: "overview", title: "概览", desc: "当前角色、模型、状态概览。" },
-  { id: "ai", title: "AI 服务商", desc: "模型、接口地址与密钥配置。" },
-  { id: "live2d", title: "模型", desc: "模型切换与显示控制。" },
-  { id: "speech", title: "语音", desc: "ASR/TTS 模式与参数配置。" },
-  { id: "agent", title: "角色", desc: "角色文件编辑、切换与创建。" },
-  { id: "memory", title: "记忆", desc: "知识库一体化管理。" },
-  { id: "araya", title: "Araya", desc: "Araya 记忆库自动维护管理。" },
-  { id: "components", title: "组件", desc: "管理 ASR/TTS/MC控制器 组件。" },
-  { id: "mcp", title: "MCP 服务器", desc: "管理 MCP 服务器配置、启停与日志。" },
+  { id: "overview", title: "概览", desc: "当前角色、模型、状态概览。", nav: "角色、模型、状态" },
+  { id: "ai", title: "AI 服务商", desc: "选择对话模型、填写接口地址与密钥。", nav: "模型与密钥配置" },
+  { id: "live2d", title: "模型", desc: "模型切换与显示控制。", nav: "模型切换与显示" },
+  { id: "speech", title: "语音", desc: "ASR/TTS 模式与参数配置。", nav: "ASR / TTS 参数" },
+  { id: "agent", title: "角色", desc: "角色文件编辑、切换与创建。", nav: "角色文件与人设" },
+  { id: "memory", title: "记忆", desc: "知识库一体化管理。", nav: "知识库一体化管理" },
+  { id: "araya", title: "Araya", desc: "Araya 记忆库自动维护管理。", nav: "记忆库自动维护" },
+  { id: "components", title: "组件", desc: "管理 ASR/TTS/MC控制器 组件。", nav: "ASR / TTS / MC 控制器" },
+  { id: "mcp", title: "MCP 服务器", desc: "管理 MCP 服务器配置、启停与日志。", nav: "连接、启停与日志" },
   // runtime 从侧边栏移除，入口在高级页面
   // { id: "runtime", title: "运行时", desc: "服务状态与运行时控制。" },
-  { id: "triggers", title: "触发器", desc: "计划AI任务列表与编辑。" },
-  { id: "skills", title: "技能", desc: "Skill 安装与管理" },
-  { id: "plugins", title: "插件", desc: "FaustBot 插件" },
-  { id: "advanced", title: "高级", desc: "未归类项目与高级配置。" },
+  { id: "triggers", title: "触发器", desc: "计划AI任务列表与编辑。", nav: "计划 AI 任务" },
+  { id: "skills", title: "技能", desc: "Skill 安装与管理", nav: "Skill 安装与管理" },
+  { id: "plugins", title: "插件", desc: "FaustBot 插件", nav: "FaustBot 插件" },
+  { id: "advanced", title: "高级", desc: "未归类项目与高级配置。", nav: "未归类与高级配置" },
 ];
 
 // ── 图谱常量 ──
@@ -253,7 +358,7 @@ function onboardingActionOpenStage() {
 var CONFIG_ONBOARDING_STEPS = [
   { title: "欢迎使用配置中心", body: "这里是 FaustBot 的所有设置入口：模型、语音、记忆、插件都在这里配置。\n接下来带你认识核心功能，只需几步。" },
   { title: "配置模块", body: "左侧是全部配置模块：\nAI 服务商 · 模型 · 语音 · 角色 · 记忆 · Araya · 组件 · MCP · 触发器 · 技能 · 插件 · 高级\n点击模块即可切换到对应配置区。" , target: "#moduleNav" },
-  { title: "AI 服务商", body: "配置模型接口、API 密钥与主模型选择。", target: '[data-module="ai"]', action: onboardingActionSwitch("ai"), actionLabel: "切换到 AI 服务商", actionHint: "这里配置模型与密钥，改完记得点右上角保存。" },
+  { title: "AI 服务商", body: "选择对话模型、填写接口地址与密钥。", target: '[data-module="ai"]', action: onboardingActionSwitch("ai"), actionLabel: "切换到 AI 服务商", actionHint: "先「添加服务商」，再勾选主模型，改完记得点右上角保存。" },
   { title: "记忆", body: "知识库一体化管理：向量检索、图谱、文件都在这里。", target: '[data-module="memory"]', action: onboardingActionSwitch("memory"), actionLabel: "切换到记忆", actionHint: "这里是记忆模块，可以管理知识库与检索。" },
   { title: "Araya", body: "Araya 记忆库自动维护：空闲时自动整理记忆。", target: '[data-module="araya"]', action: onboardingActionSwitch("araya"), actionLabel: "切换到 Araya", actionHint: "这里是 Araya 模块，可以查看自动维护状态。" },
   { title: "插件", body: "FaustBot 插件：安装、启用与管理扩展能力。", target: '[data-module="plugins"]', action: onboardingActionSwitch("plugins"), actionLabel: "切换到插件", actionHint: "这里是插件模块，可以浏览已安装插件。" },

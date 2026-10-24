@@ -15,12 +15,43 @@ import {
   entryHash,
 } from './bubble-utils.js';
 
+// 状态展示与排序的唯一来源：摘要栏和详情面板共用，避免两处各写一套中文映射。
+const SUBAGENT_STATUS = {
+  idle: { label: '空闲', tone: 'idle' },
+  pending: { label: '排队中', tone: 'pending' },
+  running: { label: '运行中', tone: 'running' },
+  stopping: { label: '停止中', tone: 'stopping' },
+  stopped: { label: '已停止', tone: 'stopped' },
+  error: { label: '错误', tone: 'error' },
+  unknown: { label: '未知', tone: 'idle' },
+};
+
+const SUBAGENT_STATUS_ORDER = {
+  running: 0,
+  pending: 1,
+  stopping: 2,
+  error: 3,
+  idle: 4,
+  stopped: 5,
+  unknown: 6,
+};
+
+function normalizeSubagentStatus(raw) {
+  return String(raw || '').trim().toLowerCase();
+}
+
+function getSubagentStatus(raw) {
+  return SUBAGENT_STATUS[normalizeSubagentStatus(raw)] || { label: '未知', tone: 'idle' };
+}
+
 export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndpoint, deleteEndpoint }) {
   const subagentSummaryEl = document.getElementById('subagentSummary');
   const subagentPanel = document.getElementById('subagentPanel');
   const subagentPanelHeader = document.getElementById('subagentPanelHeader');
   const subagentPanelTitle = document.getElementById('subagentPanelTitle');
+  const subagentPanelStatus = document.getElementById('subagentPanelStatus');
   const subagentPanelBody = document.getElementById('subagentPanelBody');
+  const subagentRemoveBtn = document.getElementById('subagentRemoveBtn');
 
   let subagentStatuses = [];
   let subagentEventCache = {};
@@ -32,26 +63,53 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
   const reasoningExpandedState = new Map();
   const compactExpandedState = new Map();
 
+  // 最近事件只用于摘要行的 title 提示：优先错误详情，其次把工具事件转成可读短句，
+  // JSON 形式的状态事件做有限映射，避免把整段原始 JSON 塞进 tooltip。
   function formatSubagentEventSummary(item){
     if (!item) return '';
-    return String(item.last_event_summary || item.last_error || '').trim();
+    const error = String(item.last_error || '').trim();
+    if (error) return error;
+    const raw = String(item.last_event_summary || '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('tool_start:')) return '正在调用 ' + raw.slice('tool_start:'.length).trim();
+    if (raw.startsWith('tool_result:')) return '已完成 ' + raw.slice('tool_result:'.length).trim();
+    if (raw.startsWith('{')) {
+      try {
+        const event = JSON.parse(raw);
+        const eventType = String((event && event.type) || '');
+        if (eventType === 'queued') return '等待执行';
+        if (eventType === 'input') return '收到主 Agent 消息';
+        if (eventType === 'compact_start') return '正在压缩上下文';
+        if (eventType === 'compact_done') return '上下文压缩完成';
+        if (eventType === 'error') return '执行出错';
+        if (eventType === 'stopping') return '正在停止';
+        if (eventType === 'stopped') return '已停止';
+        if (eventType === 'final_result') return '已产出最终结果';
+        return '';
+      } catch (e) {
+        return '';
+      }
+    }
+    return raw;
   }
 
   function setSubagentStatuses(items){
     subagentStatuses = Array.isArray(items) ? items.map((item)=> ({ ...item })) : [];
     renderSubagentSummary();
-    if (selectedSubagentName) {
-      const next = subagentStatuses.find((item)=> String(item.name || '') === selectedSubagentName);
-      if (next) {
-        // WS 推送的 subagents_summary 是轻量状态（不含 recent_events），
-        // 直接用 next 渲染会把事件列表清空为"暂无事件"。
-        // 优先合并事件缓存，保留已显示的流式事件。
-        renderSubagentPanel({
-          ...next,
-          recent_events: subagentEventCache[selectedSubagentName] || next.recent_events || [],
-        });
-      }
+    if (!selectedSubagentName) return;
+    const next = subagentStatuses.find((item)=> String(item.name || '') === selectedSubagentName);
+    if (!next) {
+      // 子代理已被移除：继续显示旧标题会误导，直接关掉浮窗。
+      hideSubagentPanel();
+      return;
     }
+    // WS 推送的 subagents_summary 是轻量状态（不含 recent_events），
+    // 直接用 next 渲染会把事件列表清空为"暂无事件"。
+    // 优先合并事件缓存，保留已显示的流式事件。
+    renderSubagentPanel({
+      ...next,
+      recent_events: subagentEventCache[selectedSubagentName] || next.recent_events || [],
+    });
   }
 
   function renderSubagentSummary(){
@@ -62,10 +120,6 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
       subagentSummaryEl.innerHTML = '';
       return;
     }
-    const STATUS_CN= {
-      idle: '空闲', pending: '排队中', running: '运行中',
-      stopping: '停止中', stopped: '已停止', error: '错误',
-    };
     const visibleItems = Array.isArray(subagentStatuses) ? subagentStatuses : [];
     if (!visibleItems.length){
       subagentSummaryEl.style.display = 'none';
@@ -73,14 +127,50 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
       // #asrBubble 的显隐由 asr-bubble.js 统一负责（它观察本节点的变化并重算可见性）
       return;
     }
+
+    let activeCount = 0;
+    let pendingCount = 0;
+    let errorCount = 0;
+    const orderedItems = visibleItems.map((item, index) => {
+      const status = normalizeSubagentStatus(item && item.status);
+      if (status === 'running' || status === 'stopping') activeCount++;
+      if (status === 'pending') pendingCount++;
+      if (status === 'error') errorCount++;
+      return { item, index, status };
+    }).sort((a, b) => {
+      const rankA = Object.prototype.hasOwnProperty.call(SUBAGENT_STATUS_ORDER, a.status)
+        ? SUBAGENT_STATUS_ORDER[a.status] : 99;
+      const rankB = Object.prototype.hasOwnProperty.call(SUBAGENT_STATUS_ORDER, b.status)
+        ? SUBAGENT_STATUS_ORDER[b.status] : 99;
+      return rankA - rankB || a.index - b.index;
+    });
+
+    const countParts = [];
+    if (activeCount) countParts.push(`<span class="is-active">${activeCount} 运行中</span>`);
+    if (pendingCount) countParts.push(`<span class="is-pending">${pendingCount} 排队中</span>`);
+    if (errorCount) countParts.push(`<span class="is-error">${errorCount} 异常</span>`);
+    const countHtml = countParts.length
+      ? countParts.join('<span class="subagent-summary-count-sep"> · </span>')
+      : '<span>全部空闲</span>';
+
     subagentSummaryEl.style.display = 'flex';
-    subagentSummaryEl.innerHTML = visibleItems.map((item)=>{
-      const name = escapeHtml(String(item.name || 'Unnamed'));
-      const rawStatus = String(item.status || 'unknown').trim().toLowerCase();
-      const status = escapeHtml(STATUS_CN[rawStatus] || rawStatus);
-      const title = escapeHtml(formatSubagentEventSummary(item));
-      return `<div class="subagent-summary-item" data-subagent-name="${name}" title="${title}"><span class="subagent-summary-name">${name}:${status}</span></div>`;
-    }).join('');
+    subagentSummaryEl.innerHTML =
+      '<div class="subagent-summary-head">' +
+        '<span class="subagent-summary-label">子代理</span>' +
+        `<span class="subagent-summary-count">${countHtml}</span>` +
+      '</div>' +
+      '<div class="subagent-summary-list">' +
+        orderedItems.map(({ item })=>{
+          const name = escapeHtml(String(item.name || 'Unnamed'));
+          const status = getSubagentStatus(item.status);
+          const summary = formatSubagentEventSummary(item);
+          const title = summary || status.label;
+          return `<button type="button" class="subagent-summary-item" data-subagent-name="${name}" data-status="${status.tone}" title="${escapeHtml(title)}" aria-label="查看子代理 ${name}（${status.label}）">` +
+            `<span class="subagent-summary-name">${name}</span>` +
+            `<span class="subagent-status" data-status="${status.tone}"><i></i>${status.label}</span>` +
+          '</button>';
+        }).join('') +
+      '</div>';
   }
 
   function renderSubagentPanelFromCache(name){
@@ -182,19 +272,25 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
   function formatSubagentNote(event){
     const eventType = String(event.type || '').trim();
     const messageContent = (((event.message || {}).messages || [])[0] || {}).content || '';
-    if (eventType === 'queued') return { label: '排队中', body: String(messageContent) };
-    if (eventType === 'input') return { label: '主Agent消息', body: String(messageContent) };
-    if (eventType === 'error') return { label: '错误', body: String(event.content || event.error || '') };
-    if (eventType === 'stopping') return { label: '停止中', body: '已发送停止请求' };
-    if (eventType === 'stopped') return { label: '已停止', body: 'Subagent 已停止' };
-    return { label: eventType || 'event', body: JSON.stringify(event, null, 2) };
+    if (eventType === 'queued') return { label: '排队中', body: String(messageContent), tone: 'warn' };
+    if (eventType === 'input') return { label: '主 Agent 消息', body: String(messageContent), tone: 'info' };
+    if (eventType === 'error') return { label: '错误', body: String(event.content || event.error || ''), tone: 'error' };
+    if (eventType === 'stopping') return { label: '停止中', body: '已发送停止请求', tone: 'warn' };
+    if (eventType === 'stopped') return { label: '已停止', body: '子代理已停止', tone: 'muted' };
+    if (eventType === 'final_result') return { label: '最终结果', body: String(event.content || ''), tone: 'info' };
+    const content = String(event.content || event.error || '').trim();
+    return { label: '其他事件', body: content || '事件已记录', tone: 'info' };
   }
 
   // 条目正文：note 行为转义纯文本；其余条目与主 Agent 气泡共用折叠卡片渲染
   function subagentEntryInnerHtml(entry, index, reasoningIdx, compactIdx){
     if (entry && entry.type === 'note') {
+      const tone = String(entry.tone || 'info');
+      const toneClass = tone === 'error' ? ' is-error'
+        : tone === 'warn' ? ' is-warn'
+          : tone === 'muted' ? ' is-muted' : '';
       return '<div class="subagent-panel-note">' +
-        `<div class="subagent-panel-event-type">${escapeHtml(String(entry.label || 'event'))}</div>` +
+        `<div class="subagent-panel-event-type${toneClass}">${escapeHtml(String(entry.label || 'event'))}</div>` +
         `<div class="subagent-panel-event-body">${escapeHtml(String(entry.body || ''))}</div>` +
         '</div>';
     }
@@ -293,84 +389,154 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     }
   }
 
+  function updateSubagentPanelHeader(name, status){
+    if (subagentPanelTitle) subagentPanelTitle.textContent = name ? `子代理 · ${name}` : '子代理';
+    if (subagentPanelStatus) {
+      if (!name) {
+        subagentPanelStatus.hidden = true;
+      } else {
+        subagentPanelStatus.hidden = false;
+        subagentPanelStatus.dataset.status = status.tone;
+        subagentPanelStatus.innerHTML = '<i></i>' + escapeHtml(status.label);
+      }
+    }
+    if (subagentRemoveBtn) subagentRemoveBtn.disabled = !name;
+  }
+
+  function buildSubagentToolsetsHtml(toolsets){
+    const list = Array.isArray(toolsets)
+      ? toolsets.map((item)=> String(item || '').trim()).filter(Boolean)
+      : [];
+    if (!list.length) return '<span class="subagent-panel-empty-value">无</span>';
+    return '<div class="subagent-toolset-list">' +
+      list.map((item)=> `<span class="subagent-toolset">${escapeHtml(item)}</span>`).join('') +
+    '</div>';
+  }
+
+  function buildSubagentPanelInfoHtml(item){
+    const prompt = String(item.system_prompt_summary || '').trim();
+    const error = String(item.last_error || '').trim();
+    const countValue = Number(item.event_count);
+    const eventCount = Number.isFinite(countValue)
+      ? countValue
+      : (Array.isArray(item.recent_events) ? item.recent_events.length : 0);
+    const recentCount = Array.isArray(item.recent_events) ? item.recent_events.length : eventCount;
+    const rows = [
+      '<div class="subagent-panel-info">',
+      '<div class="subagent-panel-meta">',
+      '<div class="subagent-panel-meta-key">工具组</div>',
+      `<div class="subagent-panel-meta-value">${buildSubagentToolsetsHtml(item.toolsets)}</div>`,
+    ];
+    if (prompt) {
+      rows.push('<div class="subagent-panel-meta-key">系统提示</div>');
+      rows.push(`<div class="subagent-panel-meta-value subagent-panel-prompt" title="${escapeHtml(prompt)}">${escapeHtml(prompt)}</div>`);
+    }
+    if (error) {
+      rows.push('<div class="subagent-panel-meta-key is-error">错误</div>');
+      rows.push(`<div class="subagent-panel-meta-value is-error">${escapeHtml(error)}</div>`);
+    }
+    rows.push('</div>');
+    const countText = recentCount > 0 ? `最近 ${recentCount} 条` : '暂无';
+    rows.push(
+      '<div class="subagent-panel-events-head">' +
+        '<span>执行记录</span>' +
+        `<span class="subagent-panel-events-count">${escapeHtml(countText)}</span>` +
+      '</div>'
+    );
+    rows.push('</div>');
+    return rows.join('');
+  }
+
   function applySubagentPanelDiff(item, entries){
     if (!subagentPanelBody) return;
-    // ── meta 区全量刷新（字段少且低频） ──
-    const metaHtml = [
-      '<div class="subagent-panel-meta">',
-      `<div class="subagent-panel-meta-key">状态</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.status || 'unknown'))}</div>`,
-      `<div class="subagent-panel-meta-key">工具组</div><div class="subagent-panel-meta-value">${escapeHtml((item.toolsets || []).join(', ') || '(none)')}</div>`,
-      `<div class="subagent-panel-meta-key">Prompt</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.system_prompt_summary || ''))}</div>`,
-      `<div class="subagent-panel-meta-key">错误</div><div class="subagent-panel-meta-value">${escapeHtml(String(item.last_error || ''))}</div>`,
-      '</div>',
-    ].join('');
+    const infoHtml = buildSubagentPanelInfoHtml(item);
     let eventsEl = subagentPanelBody.querySelector('.subagent-panel-events');
     if (!eventsEl) {
-      subagentPanelBody.innerHTML = metaHtml + '<div class="subagent-panel-events"></div>';
+      subagentPanelBody.innerHTML = infoHtml + '<div class="subagent-panel-events"></div>';
       eventsEl = subagentPanelBody.querySelector('.subagent-panel-events');
     } else {
-      // 只替换 meta 容器（保留 events 容器与已渲染事件 DOM）
-      const existingMeta = subagentPanelBody.querySelector('.subagent-panel-meta');
-      if (existingMeta) existingMeta.outerHTML = metaHtml;
+      // 只替换信息容器（保留 events 容器与已渲染事件 DOM）
+      const existingInfo = subagentPanelBody.querySelector('.subagent-panel-info');
+      if (existingInfo) {
+        existingInfo.outerHTML = infoHtml;
+      } else {
+        const legacyMeta = subagentPanelBody.querySelector('.subagent-panel-meta');
+        if (legacyMeta) legacyMeta.remove();
+        subagentPanelBody.insertAdjacentHTML('afterbegin', infoHtml);
+      }
     }
-    // ── events 区 diff 更新 ──
     applySubagentEntriesDiff(entries, eventsEl);
     if (!entries.length) {
-      eventsEl.innerHTML = '<div class="subagent-panel-event"><div class="subagent-panel-note"><div class="subagent-panel-event-body">暂无事件</div></div></div>';
+      eventsEl.innerHTML = '<div class="subagent-panel-empty">' +
+        '<svg class="ui-icon" width="18" height="18" aria-hidden="true"><use href="#i-doc"/></svg>' +
+        '<span>还没有执行记录</span>' +
+      '</div>';
     }
   }
 
   function renderSubagentPanel(item){
     if (!subagentPanel || !subagentPanelBody || !item) return;
     selectedSubagentName = String(item.name || '');
-    if (subagentPanelTitle) subagentPanelTitle.textContent = `Subagent: ${selectedSubagentName}`;
+    updateSubagentPanelHeader(selectedSubagentName, getSubagentStatus(item.status));
     subagentPanelEntries = normalizeSubagentPanelEntries(item.recent_events);
-    applySubagentPanelDiff(item, subagentPanelEntries);
     subagentPanel.style.display = 'flex';
+    applySubagentPanelDiff(item, subagentPanelEntries);
     forceInteractive();
   }
 
   function hideSubagentPanel(){
-    if (!subagentPanel) return;
-    subagentPanel.style.display = 'none';
+    selectedSubagentName = '';
+    updateSubagentPanelHeader('', getSubagentStatus('idle'));
+    if (subagentPanel) subagentPanel.style.display = 'none';
   }
 
   async function openSubagentPanelByName(name){
-    if (subagentEventCache[name] && subagentEventCache[name].length > 0) {
-      renderSubagentPanelFromCache(name);
+    const targetName = String(name || '').trim();
+    if (!targetName) return;
+    if (subagentEventCache[targetName] && subagentEventCache[targetName].length > 0) {
+      renderSubagentPanelFromCache(targetName);
       return;
     }
     try {
       const r = await fetch(statusEndpoint);
       const j = await r.json();
-      console.info(":subagent status:",j)
       const items = Array.isArray(j.items) ? j.items : [];
-      const target = items.find(item => String(item.name || '') === name);
+      const target = items.find(item => String(item.name || '') === targetName);
       if (target) {
-        subagentEventCache[name] = Array.isArray(target.recent_events) ? target.recent_events.map(e => ({...e})) : [];
+        subagentEventCache[targetName] = Array.isArray(target.recent_events) ? target.recent_events.map(e => ({...e})) : [];
         renderSubagentPanel(target);
+      } else {
+        renderSubagentPanel({ name: targetName, status: 'unknown', recent_events: [] });
       }
     } catch(e) {
       console.warn('openSubagentPanelByName failed', e);
+      renderSubagentPanel({ name: targetName, status: 'unknown', recent_events: [] });
     }
   }
 
-  async function stopSelectedSubagent(){
-    if (!selectedSubagentName) return;
-    const r = await fetch(`${deleteEndpoint}/${encodeURIComponent(selectedSubagentName)}`, { method: 'DELETE' });
-    if (!r.ok){
-      const txt = await r.text();
-      throw new Error(txt || `HTTP ${r.status}`);
+  async function removeSelectedSubagent(){
+    const name = selectedSubagentName;
+    if (!name) return;
+    if (subagentRemoveBtn) subagentRemoveBtn.disabled = true;
+    try {
+      const r = await fetch(`${deleteEndpoint}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (!r.ok){
+        const txt = await r.text();
+        throw new Error(txt || `HTTP ${r.status}`);
+      }
+      delete subagentEventCache[name];
+      hideSubagentPanel();
+      await refreshSubagentStatuses();
+    } catch (e) {
+      if (subagentRemoveBtn) subagentRemoveBtn.disabled = false;
+      throw e;
     }
-    await refreshSubagentStatuses();
-    hideSubagentPanel();
   }
 
   async function refreshSubagentStatuses(){
     try{
       const r = await fetch(statusEndpoint);
       const j = await r.json().catch(()=>({}));
-      console.log(":subagent status:",j)
       setSubagentStatuses(Array.isArray(j.items) ? j.items : []);
     }catch(e){
       console.warn('refreshSubagentStatuses failed', e);
@@ -439,7 +605,7 @@ export function initSubagentPanel({ getBubbleProps, forceInteractive, statusEndp
     openByName: openSubagentPanelByName,
     hide: hideSubagentPanel,
     hideSummary,
-    stopSelected: stopSelectedSubagent,
+    removeSelected: removeSelectedSubagent,
     refresh: refreshSubagentStatuses,
   };
 }

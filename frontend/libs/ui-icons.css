@@ -1,0 +1,11 @@
+/* 共享线性图标基础样式（尺寸由 svg 的 width/height 属性决定） */
+.ui-icon {
+  display: block;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}

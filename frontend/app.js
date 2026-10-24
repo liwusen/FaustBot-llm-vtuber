@@ -68,7 +68,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   const subagentPanelTitle = document.getElementById('subagentPanelTitle');
   const subagentPanelBody = document.getElementById('subagentPanelBody');
   const subagentPanelCloseBtn = document.getElementById('subagentPanelCloseBtn');
-  const subagentStopBtn = document.getElementById('subagentStopBtn');
+  const subagentRemoveBtn = document.getElementById('subagentRemoveBtn');
   const quickController = document.getElementById('modelQuickController');
   const quickToggleAsrBtn = document.getElementById('quickToggleAsr');
   const quickStopBtn = document.getElementById('quickStopBtn');
@@ -209,7 +209,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
           whiteBackground: { type: 'boolean', label: '白色背景' },
           showReasoning: { type: 'boolean', label: '显示推理内容' },
           showTools: { type: 'boolean', label: '显示工具调用' },
-          showSubagents: { type: 'boolean', label: '显示 Subagents' },
+          showSubagents: { type: 'boolean', label: '显示子代理' },
           hideScrollbar: { type: 'boolean', label: '隐藏滚动条' },
         },
       },
@@ -763,7 +763,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   function updateQuickAsrButton(){
     if (!quickToggleAsrBtn) return;
     const labelEl = quickToggleAsrBtn.querySelector('.qc-label');
-    if (labelEl) labelEl.textContent = asrRunning ? '停听' : '语音识别';
+    if (labelEl) labelEl.textContent = asrRunning ? '停止识别' : '语音识别';
     quickToggleAsrBtn.classList.toggle('active', !!asrRunning);
     quickToggleAsrBtn.title = asrRunning ? '停止语音识别' : '启动语音识别';
   }
@@ -1745,10 +1745,10 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     speechFrameCnt = 0;
     if (ignored || !spokenEnough){
       uploadFrames = [];
-      asrStatusEl.textContent = ignored ? '(已忽略)' : '语音过短，已忽略';
+      asrStatusEl.textContent = ignored ? '(已忽略)' : '语音过短';
       return;
     }
-    asrStatusEl.textContent = '上传识别中...';
+    asrStatusEl.textContent = '识别中';
     if (uploadFrames.length > 0){
       const concat = concatFloat32Arrays(uploadFrames);
       uploadFrames = [];
@@ -1763,13 +1763,13 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     if (active){
       noVoiceCnt = 0;
       speechFrameCnt += 1;
-      asrStatusEl.textContent = '检测到语音...';
+      asrStatusEl.textContent = '识别中';
       if (!inSpeech){
         inSpeech = true;
         speechFrameCnt = 1;
         uploadFrames = preBufferFrames.slice();
         preBufferFrames = [];
-        asrStatusEl.textContent = '开始录音...';
+        asrStatusEl.textContent = '录音中';
         onUserSpeechStart();
       }
       if (vadEndTimer){ clearTimeout(vadEndTimer); vadEndTimer = null; }
@@ -1788,15 +1788,16 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       console.debug('Uploading WAV blob', { size: blob.size, sampleRate });
       const fd = new FormData();
       fd.append('file', blob, 'chunk.wav');
-      asrStatusEl.textContent = '上传识别中...';
+      asrStatusEl.textContent = '识别中';
       const r = await fetch(ASR_ENDPOINT, { method: 'POST', body: fd });
       const raw = await r.text();
       console.debug('ASR raw response text:', raw, 'status:', r.status);
       let j = null;
       try{ j = JSON.parse(raw); }catch(e){ j = null }
       if (!r.ok){
-        asrStatusEl.textContent = `识别服务错误 (${r.status})`;
-        bubble.showResultBubble('error', 'ASR服务返回错误: ' + raw);
+        asrStatusEl.textContent = '识别失败';
+        console.warn('[ASR] request failed', r.status, raw);
+        bubble.showResultBubble('error', '语音识别没有完成，请稍后重试。');
         return;
       }
       if (j && j.status === 'success'){
@@ -1807,23 +1808,25 @@ import { initAsrBubble } from './libs/asr-bubble.js';
           // send recognized text to chat websocket if available
           try{ sendToChat(text); }catch(e){}
         } else {
-          asrStatusEl.textContent = '识别成功但无文本';
-          bubble.showResultBubble('error', 'ASR返回但文本为空');
+          asrStatusEl.textContent = '未听清';
+          bubble.showResultBubble('error', '没有听清，请再说一遍。');
         }
       } else if (j && j.status === 'error'){
         asrStatusEl.textContent = '识别失败';
-        bubble.showResultBubble('error', 'ASR失败: ' + (j.message || JSON.stringify(j)));
+        console.warn('[ASR] service error', j.message || j);
+        bubble.showResultBubble('error', '语音识别没有完成，请稍后重试。');
       } else if (j && j.text){
         bubble.showResultBubble('user', j.text);
         asrStatusEl.textContent = '识别完成';
       } else {
-        asrStatusEl.textContent = '无返回或未知格式';
-        bubble.showResultBubble('error', 'ASR返回未知格式: ' + raw);
+        asrStatusEl.textContent = '没有结果';
+        console.warn('[ASR] unexpected response', raw);
+        bubble.showResultBubble('error', '语音识别没有完成，请重试。');
       }
     }catch(err){
       console.error('upload error', err);
-      asrStatusEl.textContent = '网络或服务错误';
-      bubble.showResultBubble('error', '上传或网络错误: ' + String(err));
+      asrStatusEl.textContent = '连接失败';
+      bubble.showResultBubble('error', '语音识别连接失败，请检查网络后重试。');
     }
   }
   //console.log("ASR Result:", asrResult);
@@ -2406,7 +2409,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       cancelPendingWaitingNotice();
       pendingWaitingTimer = setTimeout(() => {
         pendingWaitingTimer = null;
-        if (chatStatusEl) chatStatusEl.textContent = '主 Agent 正忙，排队等待中...';
+        if (chatStatusEl) chatStatusEl.textContent = '排队中';
       }, 1000);
       return;
     }
@@ -2414,7 +2417,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     // 已获取主 Agent 锁（lock_acquired → streaming）：清除"排队等待中"
     if (msg.type === 'streaming') {
       cancelPendingWaitingNotice();
-      if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
+      if (chatStatusEl) chatStatusEl.textContent = '生成中';
       return;
     }
 
@@ -2469,7 +2472,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       req.pendingMotions = [];
       req.visibleLen = 0;
       req.entries = [];
-      if (chatStatusEl) chatStatusEl.textContent = '聊天流式响应中...';
+      if (chatStatusEl) chatStatusEl.textContent = '生成中';
       // 被动流（后端主动推送）不代表用户在等待回复，不占用 processing 标志，
       // 避免影响用户主动发消息时的自动中断逻辑
       if (!req.passive) agentIsProcessing = true;
@@ -2564,8 +2567,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       // 一个 display:none 的气泡里 —— 表现为"点了 /compact 毫无反应"。
       // 压缩卡片属于「新消息」，这里自己 reveal，并把状态栏切成压缩态。
       bubble.reveal();
-      if (chatStatusEl) chatStatusEl.textContent = '正在压缩会话...';
-      if (textChatStatus) textChatStatus.textContent = '正在压缩会话...';
+      if (chatStatusEl) chatStatusEl.textContent = '整理中';
+      if (textChatStatus) textChatStatus.textContent = '整理中';
       if (!req.entries) req.entries = [];
       const lastEntry = req.entries[req.entries.length - 1];
       if (!lastEntry || lastEntry.type !== 'compact') {
@@ -2746,9 +2749,10 @@ import { initAsrBubble } from './libs/asr-bubble.js';
 
     if (msg.type === 'error'){
       cancelPendingWaitingNotice();
-      if (chatStatusEl) chatStatusEl.textContent = '聊天错误';
-      if (textChatStatus) textChatStatus.textContent = '聊天错误';
-      bubble.showResultBubble('error', msg.error || '未知聊天错误');
+      if (chatStatusEl) chatStatusEl.textContent = '错误';
+      if (textChatStatus) textChatStatus.textContent = '错误';
+      bubble.showResultBubble('error', '对话中断了，请重试。');
+      console.warn('[chat] stream error', msg.error);
       const reqE = currentChatRequest || passiveChatRequest;
       if (reqE && reqE.resumeAfter){
         resumeRecording();
@@ -2773,7 +2777,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     }
     try{
       if (textChatStatus) textChatStatus.textContent = '发送中...';
-      if (chatStatusEl) chatStatusEl.textContent = '正在连接聊天流...';
+      if (chatStatusEl) chatStatusEl.textContent = '连接中';
       await openChatWs();
       resetStreamTtsState();
       const resumeAfter = !!(asrRunning && !voiceBargeInEnabled);
@@ -2795,7 +2799,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       return reply;
     }catch(e){
       console.warn('sendToChat err', e);
-      chatStatusEl && (chatStatusEl.textContent = '聊天网络错误');
+      chatStatusEl && (chatStatusEl.textContent = '网络错误');
       if (textChatStatus) textChatStatus.textContent = '网络错误';
       throw e;
     }
@@ -3018,7 +3022,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       src.connect(scriptNode);
       scriptNode.connect(micAudioCtx.destination);
       asrRunning = true;
-      asrStatusEl.textContent = '正在监听...';
+      asrStatusEl.textContent = '监听中';
       startAsrBtn.disabled = true;
       stopAsrBtn.disabled = false;
   updateQuickAsrButton();
@@ -3028,7 +3032,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       try{
         vadWs = new WebSocket(getVadWsUrl());
         vadWs.binaryType = 'arraybuffer';
-        vadWs.onopen = ()=>{ asrStatusEl.textContent = '语音检测已连接'; useVAD=true; console.log('VAD ws opened'); };
+        vadWs.onopen = ()=>{ asrStatusEl.textContent = '监听中'; useVAD=true; console.log('VAD ws opened'); };
         vadWs.onmessage = (ev)=>{
           try{
             const msg = typeof ev.data === 'string' ? JSON.parse(ev.data) : JSON.parse(new TextDecoder().decode(ev.data));
@@ -3042,12 +3046,12 @@ import { initAsrBubble } from './libs/asr-bubble.js';
             handleSpeechActivity(isSpeech, p);
           }catch(err){ console.warn('VAD ws message parse err', err); }
         };
-        vadWs.onerror = (ev)=>{ console.warn('VAD ws error', ev); useVAD = false; asrStatusEl.textContent = '语音检测连接错误'; vadWs = null; };
-        vadWs.onclose = ()=>{ if (useVAD){ useVAD = false; asrStatusEl.textContent = '语音检测已断开'; vadWs = null; } };
-      }catch(e){ console.warn('open vad ws failed', e); useVAD = false; asrStatusEl.textContent = '无法连接语音检测'; }
+        vadWs.onerror = (ev)=>{ console.warn('VAD ws error', ev); useVAD = false; asrStatusEl.textContent = '连接失败'; vadWs = null; };
+        vadWs.onclose = ()=>{ if (useVAD){ useVAD = false; asrStatusEl.textContent = '监听断开'; vadWs = null; } };
+      }catch(e){ console.warn('open vad ws failed', e); useVAD = false; asrStatusEl.textContent = '无法监听'; }
     }catch(err){
       console.error('start mic failed', err);
-      asrStatusEl.textContent = '麦克风权限或错误';
+      asrStatusEl.textContent = '麦克风错误';
     }
   }
 
@@ -3114,7 +3118,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       pausedStopped = true;
       asrStatusEl.textContent = '已暂停';
     } else {
-      asrStatusEl.textContent = '已暂停（保留VAD）';
+      asrStatusEl.textContent = '已暂停';
     }
   }
 
@@ -3125,7 +3129,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       startMicAsr();
       pausedStopped = false;
     }
-    asrStatusEl.textContent = asrRunning ? '正在监听...' : '未启动';
+    asrStatusEl.textContent = asrRunning ? '监听中' : '未启动';
     updateQuickAsrButton();
   }
 
@@ -3191,7 +3195,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     inSpeech = true;
     speechFrameCnt = Math.max(speechFrameCnt, 1);
     if (uploadFrames.length === 0) { uploadFrames = preBufferFrames.slice(); preBufferFrames = []; }
-    asrStatusEl.textContent = '按住说话中...';
+    asrStatusEl.textContent = '录音中';
   }
 
   function endPttHold(){
@@ -4164,8 +4168,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     });
   }
   if (subagentPanelCloseBtn) subagentPanelCloseBtn.addEventListener('click', ()=>{ subagent.hide(); });
-  if (subagentStopBtn) subagentStopBtn.addEventListener('click', async ()=>{
-    try{ await subagent.stopSelected(); }catch(e){ bubble.showResultBubble('error', '停止 Subagent 失败: ' + String(e && e.message ? e.message : e)); }
+  if (subagentRemoveBtn) subagentRemoveBtn.addEventListener('click', async ()=>{
+    try{ await subagent.removeSelected(); }catch(e){ bubble.showResultBubble('error', '移除子代理失败: ' + String(e && e.message ? e.message : e)); }
   });
   subagent.init();
   subagent.refresh();
@@ -4286,7 +4290,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         '<label class="lsp-switch"><input type="checkbox" data-k="showReasoning"><span class="lsp-switch-slider"></span></label></div>' +
       '<div class="lsp-prop-row"><span>显示工具调用</span>' +
         '<label class="lsp-switch"><input type="checkbox" data-k="showTools"><span class="lsp-switch-slider"></span></label></div>' +
-      '<div class="lsp-prop-row"><span>显示 Subagents</span>' +
+      '<div class="lsp-prop-row"><span>显示子代理</span>' +
         '<label class="lsp-switch"><input type="checkbox" data-k="showSubagents"><span class="lsp-switch-slider"></span></label></div>' +
       '<div class="lsp-prop-row"><span title="隐藏后仍可用滚轮/键盘滚动">隐藏滚动条</span>' +
         '<label class="lsp-switch"><input type="checkbox" data-k="hideScrollbar"><span class="lsp-switch-slider"></span></label></div>';

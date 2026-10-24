@@ -83,11 +83,12 @@ function renderNav() {
     const btn = el("button", `nav-btn ${state.activeModule === mod.id ? "active" : ""}`.trim());
     btn.type = "button";
     btn.setAttribute("data-module", mod.id);
-    btn.innerHTML = `<span>${mod.title}</span><small>${mod.desc}</small>`;
+    btn.innerHTML = `<span>${mod.title}</span><small>${mod.nav || mod.desc}</small>`;
     btn.addEventListener("click", async () => {
       state.activeModule = mod.id;
       renderNav();
       await renderModule();
+      if (els.cardsRoot) els.cardsRoot.scrollTop = 0;
     });
     els.moduleNav.append(btn);
   }
