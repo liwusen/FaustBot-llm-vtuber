@@ -362,6 +362,83 @@ def test_get_format_thinking_params_per_format():
         assert get_format_thinking_params(api_format, "none", "high") == {}
 
 
+def test_gemini_effort_option_replaces_budget():
+    """回归：Gemini 3/4 只接受 thinking level，传 budget 会直接 400。"""
+    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.thinking_caps import ThinkingOption
+
+    params = get_format_thinking_params(
+        "google_gemini",
+        "qwen",
+        "medium",
+        option=ThinkingOption("effort", levels=("low", "medium", "high")),
+    )
+    assert params == {"reasoning_effort": "medium", "include_thoughts": True}
+    assert "thinking_budget" not in params
+
+
+def test_gemini_effort_maps_to_supported_level():
+    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.thinking_caps import ThinkingOption
+
+    params = get_format_thinking_params(
+        "google_gemini",
+        "glm",
+        "low",
+        option=ThinkingOption("effort", levels=("high", "max")),
+    )
+    assert params["reasoning_effort"] == "high"
+
+
+def test_gemini_budget_option_is_clamped():
+    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.thinking_caps import ThinkingOption
+
+    params = get_format_thinking_params(
+        "google_gemini",
+        "qwen",
+        "medium",
+        option=ThinkingOption("budget_tokens", min_budget=8192, max_budget=32768),
+    )
+    assert params == {"thinking_budget": 8192, "include_thoughts": True}
+
+
+def test_gemini_toggle_option_sends_thoughts_only():
+    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.thinking_caps import ThinkingOption
+
+    assert get_format_thinking_params(
+        "google_gemini", "qwen", "medium", option=ThinkingOption("toggle")
+    ) == {"include_thoughts": True}
+
+
+def test_responses_maps_effort_to_supported_level():
+    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.thinking_caps import ThinkingOption
+
+    params = get_format_thinking_params(
+        "openai_responses",
+        "openai",
+        "medium",
+        option=ThinkingOption("effort", levels=("high",)),
+    )
+    assert params == {"reasoning": {"effort": "high"}}
+
+
+def test_anthropic_budget_is_clamped_to_minimum():
+    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.thinking_caps import ThinkingOption
+
+    params = get_format_thinking_params(
+        "anthropic_messages",
+        "openai",
+        "low",
+        option=ThinkingOption("budget_tokens", max_budget=512),
+    )
+    # Anthropic 的 thinking budget 不能低于 1024，否则上游直接 400
+    assert params == {"thinking": {"type": "enabled", "budget_tokens": 1024}}
+
+
 def test_extract_reasoning_from_additional_kwargs():
     from langchain_core.messages import AIMessage
 

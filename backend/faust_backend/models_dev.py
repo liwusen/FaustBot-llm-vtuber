@@ -8,7 +8,8 @@
    超时/5xx/超大/非 JSON 一律保留旧缓存并记录错误，绝不阻塞启动；
 2. 用「host + 模型名重合度」把用户配置的 Provider 匹配到目录条目；
 3. 把目录里每个模型条目的 `provider.npm` / `provider.shape` / `provider.api`
-   按通用协议规则翻译成四种 API 格式之一（见 `llm_formats.detect_api_format`）；
+   按通用协议规则翻译成四种 API 格式之一（见 `llm_formats.detect_api_format`），
+   并把 `reasoning_options` 规范成思考能力（effort / budget_tokens / toggle）；
 4. 把结果写回 `ModelProvider.model_catalog_routes` 等字段，供构建模型时离线读取。
 
 `host_matched=False` 的语义：只按模型名重合匹配到目录，但 base_url 主机不同。
@@ -29,6 +30,7 @@ from urllib.parse import urlparse
 import faust_backend.config_loader as conf
 from faust_backend.llm_formats import API_FORMATS, detect_api_format, normalize_format_base_url
 from faust_backend.logger import get_logger
+from faust_backend.thinking_caps import capability_from_catalog_model
 
 log = get_logger("faust.models_dev")
 
@@ -462,6 +464,7 @@ def enrich_provider(provider: Any, catalog: dict[str, Any]) -> dict[str, Any]:
 
     - `catalog_provider_id`：匹配到的目录 id（匹配不到则保持原样）；
     - `model_catalog_routes`：**整表重算**，只保留当前 `provider.models` 中的模型；
+      每条路由带上 `thinking`（思考参数形状，来自 `reasoning_options`）；
     - `model_context_lengths` / `model_max_output_tokens`：只填空缺，不覆盖已有值；
     - `catalog_synced_at`：本次刷新时间。
 
@@ -527,6 +530,9 @@ def enrich_provider(provider: Any, catalog: dict[str, Any]) -> dict[str, Any]:
             # models.dev 明确标注不支持推理时（False），构建模型时不加思考参数，
             # 避免对非推理模型发 thinking 导致 400；未知（None）时保留用户设置。
             "reasoning": model_reasoning if isinstance(model_reasoning, bool) else None,
+            # 思考参数形状（effort / budget_tokens / toggle）：Gemini 3/4 只接受
+            # thinking level，2.5 只接受 thinking budget，必须由数据决定而不是猜。
+            "thinking": capability_from_catalog_model(model),
         }
         if match.host_matched or base_url:
             result["formats"][model_id] = route.api_format

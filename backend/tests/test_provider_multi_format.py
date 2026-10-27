@@ -182,6 +182,49 @@ def test_gemini_thinking_uses_budget_and_thoughts():
     assert model.include_thoughts is True
 
 
+def test_gemini_effort_capability_uses_reasoning_effort():
+    """models.dev 标注 effort 时改发 thinking level（Gemini 3/4 不接受 budget）。"""
+    providers, provider = _providers()
+    provider.thinking_type = "openai"
+    provider.model_catalog_routes["gemini-model"]["thinking"] = {
+        "reasoning": True,
+        "options": [{"type": "effort", "values": ["low", "medium", "high"]}],
+    }
+
+    model = _build(providers, "GW::gemini-model", intensity="medium")
+
+    assert model.reasoning_effort == "medium"
+    assert model.thinking_budget is None
+    assert model.include_thoughts is True
+
+
+def test_manual_thinking_mode_overrides_catalog():
+    providers, provider = _providers()
+    provider.thinking_type = "openai"
+    provider.model_catalog_routes["gemini-model"]["thinking"] = {
+        "reasoning": True,
+        "options": [{"type": "effort", "values": ["low", "medium", "high"]}],
+    }
+    provider.model_thinking_modes = {"gemini-model": "budget"}
+
+    model = _build(providers, "GW::gemini-model", intensity="medium")
+
+    assert model.thinking_budget == 4096
+    assert model.reasoning_effort is None
+
+
+def test_models_api_reasoning_false_disables_thinking():
+    providers, provider = _providers()
+    provider.thinking_type = "openai"
+    provider.model_thinking_caps = {"gemini-model": {"reasoning": False, "options": []}}
+
+    model = _build(providers, "GW::gemini-model", intensity="high")
+
+    assert model.thinking_budget is None
+    assert model.reasoning_effort is None
+    assert model.include_thoughts is None
+
+
 def test_thinking_disabled_by_provider_preset_none():
     providers, provider = _providers()
     provider.thinking_type = "none"

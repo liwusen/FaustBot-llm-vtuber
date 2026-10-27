@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Optional
 from langchain_core.language_models import BaseChatModel
 from faust_backend.llm_formats import API_FORMATS
+from faust_backend.thinking_caps import capability_from_models_entry
 
 # 对外统一标识本客户端（FaustBot v3，langchain 栈）。不设置时 openai-python /
 # httpx 会以自身 UA 发请求（AsyncOpenAI/Python x.y.z、python-httpx/x.y），部分
@@ -65,6 +66,11 @@ class ModelProvider(BaseModel):
     model_max_output_tokens: Dict[str, int] = {}
     #: 模型 → /models 上报的能力声明（规范化后，如 anthropic_messages）
     model_api_capabilities: Dict[str, dict] = {}
+    #: 模型 → /models 上报的思考能力（reasoning_options / effort.supported_levels），
+    #: 形状见 thinking_caps（effort / budget_tokens / toggle）
+    model_thinking_caps: Dict[str, dict] = {}
+    #: 模型 → 用户手动指定的思考格式覆盖：effort / budget / toggle / none
+    model_thinking_modes: Dict[str, str] = {}
     #: 模型 → 用户显式启用的服务端工具名（web_search）
     model_server_tools: Dict[str, List[str]] = {}
     #: 流式是否请求用量统计；None = 按格式默认
@@ -137,6 +143,9 @@ def _model_entry(model_id: str, item: dict | None) -> dict:
         "context_length": _extract_context_length(source),
         "max_output_tokens": _extract_max_output_tokens(source),
         "api_capabilities": _extract_api_capabilities(source),
+        # 思考能力（effort / budget_tokens / toggle）：Gemini 3/4 只认等级，
+        # 2.5 只认预算，构建模型前必须先知道该用哪种形状。
+        "thinking": capability_from_models_entry(source),
     }
 
 
@@ -211,7 +220,7 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
     列表与 Provider 端一致；拉取失败时抛错，旧列表不被清空。
 
     同时用 API 返回的元数据**自动填充**：`model_context_lengths`、
-    `model_max_output_tokens`、`model_api_capabilities`：
+    `model_max_output_tokens`、`model_api_capabilities`、`model_thinking_caps`：
       - 只填空缺项，**不覆盖用户手工配置的值**（用户配置优先）；
       - force=True 时顺带清理已不在模型列表中的陈旧条目。
     """
@@ -224,12 +233,14 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
     lengths = dict(provider.model_context_lengths or {})
     outputs = dict(provider.model_max_output_tokens or {})
     capabilities = dict(provider.model_api_capabilities or {})
+    thinking_caps = dict(provider.model_thinking_caps or {})
     if force:
         # 显式刷新：丢弃已不在列表中的模型（其元数据也就无从生效）
         keep = set(provider.models)
         lengths = {k: v for k, v in lengths.items() if k in keep}
         outputs = {k: v for k, v in outputs.items() if k in keep}
         capabilities = {k: v for k, v in capabilities.items() if k in keep}
+        thinking_caps = {k: v for k, v in thinking_caps.items() if k in keep}
     filled = 0
     for entry in entries:
         model_id = entry["id"]
@@ -243,9 +254,13 @@ async def auto_load_model_for_provider(provider: ModelProvider, force: bool = Fa
         reported_caps = entry.get("api_capabilities")
         if reported_caps and not capabilities.get(model_id):
             capabilities[model_id] = reported_caps
+        reported_thinking = entry.get("thinking")
+        if reported_thinking and not thinking_caps.get(model_id):
+            thinking_caps[model_id] = reported_thinking
     provider.model_context_lengths = lengths
     provider.model_max_output_tokens = outputs
     provider.model_api_capabilities = capabilities
+    provider.model_thinking_caps = thinking_caps
     if filled:
         print(
             f"[provider] 已从 /models 元数据自动填充 {filled} 个模型的上下文长度"

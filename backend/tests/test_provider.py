@@ -783,6 +783,20 @@ def test_fetch_provider_model_entries_normalizes(monkeypatch):
                         "id": "openrouter-style",
                         "top_provider": {"max_completion_tokens": 32000},
                     },
+                    {
+                        "id": "with-effort",
+                        "effort": {
+                            "supported_levels": ["low", "high", "max"],
+                            "default_level": "high",
+                        },
+                    },
+                    {
+                        "id": "with-budget",
+                        "reasoning": True,
+                        "reasoning_options": [
+                            {"type": "budget_tokens", "min": 128, "max": 32768}
+                        ],
+                    },
                     "not-a-dict",
                     {"no_id": True},
                 ]
@@ -796,18 +810,21 @@ def test_fetch_provider_model_entries_normalizes(monkeypatch):
             "context_length": 1000,
             "max_output_tokens": None,
             "api_capabilities": {},
+            "thinking": None,
         },
         {
             "id": "no-ctx",
             "context_length": None,
             "max_output_tokens": None,
             "api_capabilities": {},
+            "thinking": None,
         },
         {
             "id": "with-window",
             "context_length": 2000,
             "max_output_tokens": None,
             "api_capabilities": {},
+            "thinking": None,
         },
         {
             "id": "with-output",
@@ -815,12 +832,37 @@ def test_fetch_provider_model_entries_normalizes(monkeypatch):
             "max_output_tokens": 64_000,
             # 未知格式键会被丢弃：没有消费方，留着只会让配置膨胀
             "api_capabilities": {"anthropic_messages": {"beta": ["x"]}},
+            "thinking": None,
         },
         {
             "id": "openrouter-style",
             "context_length": None,
             "max_output_tokens": 32000,
             "api_capabilities": {},
+            "thinking": None,
+        },
+        {
+            "id": "with-effort",
+            "context_length": None,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+            # DeepSeek 风格 effort.supported_levels → 思考形状
+            "thinking": {
+                "reasoning": None,
+                "options": [
+                    {"type": "effort", "values": ["low", "high", "max"]}
+                ],
+            },
+        },
+        {
+            "id": "with-budget",
+            "context_length": None,
+            "max_output_tokens": None,
+            "api_capabilities": {},
+            "thinking": {
+                "reasoning": True,
+                "options": [{"type": "budget_tokens", "min": 128, "max": 32768}],
+            },
         },
     ]
 
@@ -837,12 +879,14 @@ def test_fetch_provider_model_entries_bare_list_has_no_metadata(monkeypatch):
             "context_length": None,
             "max_output_tokens": None,
             "api_capabilities": {},
+            "thinking": None,
         },
         {
             "id": "b",
             "context_length": None,
             "max_output_tokens": None,
             "api_capabilities": {},
+            "thinking": None,
         },
     ]
 
@@ -904,6 +948,74 @@ def test_auto_load_force_prunes_stale_context_lengths(monkeypatch):
     p.model_context_lengths = {"m1": 111, "removed-model": 222}
     asyncio.run(auto_load_model_for_provider(p, force=True))
     assert p.model_context_lengths == {"m1": 111}
+
+
+def test_auto_load_fills_thinking_caps_from_api(monkeypatch):
+    """API 报了思考形状就落盘：构建模型时不再靠模型名猜。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_models_client(
+            {
+                "data": [
+                    {
+                        "id": "m1",
+                        "reasoning": True,
+                        "reasoning_options": [
+                            {"type": "effort", "values": ["low", "high"]}
+                        ],
+                    },
+                    {"id": "m2"},  # 无思考元数据 → 不产生条目
+                ]
+            }
+        ),
+    )
+    p = make_providers().providers[0]
+    p.models = []
+    asyncio.run(auto_load_model_for_provider(p, force=True))
+    assert p.model_thinking_caps == {
+        "m1": {
+            "reasoning": True,
+            "options": [{"type": "effort", "values": ["low", "high"]}],
+        }
+    }
+
+
+def test_auto_load_thinking_caps_do_not_clobber_existing(monkeypatch):
+    """已有条目（用户/上一次拉取）优先，不被 /models 覆盖。"""
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_models_client(
+            {"data": [{"id": "m1", "reasoning_options": [{"type": "toggle"}]}]}
+        ),
+    )
+    p = make_providers().providers[0]
+    p.models = []
+    existing = {"reasoning": True, "options": [{"type": "budget_tokens"}]}
+    p.model_thinking_caps = {"m1": existing}
+    asyncio.run(auto_load_model_for_provider(p, force=True))
+    assert p.model_thinking_caps["m1"] == existing
+
+
+def test_auto_load_force_prunes_stale_thinking_caps(monkeypatch):
+    import httpx
+    from faust_backend.provider import auto_load_model_for_provider
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", _fake_models_client({"data": [{"id": "m1"}]})
+    )
+    p = make_providers().providers[0]
+    p.models = ["m1", "removed-model"]
+    p.model_thinking_caps = {"removed-model": {"reasoning": True, "options": []}}
+    asyncio.run(auto_load_model_for_provider(p, force=True))
+    assert p.model_thinking_caps == {}
 
 
 def test_auto_load_is_idempotent_when_models_present(monkeypatch):

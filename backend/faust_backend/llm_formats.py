@@ -19,6 +19,10 @@
 端点来源：`provider.format_base_urls[format]` > 目录路由（仅 host 相同时）>
 `provider.base_url`。显式指定了格式却没有可用端点时**报错**，绝不静默把请求
 发到别的主机。
+
+思考参数的形状（Gemini 的 `thinking_budget` vs `thinking_level`、Anthropic 的
+`budget_tokens`、Responses 的 `reasoning.effort`）由 `thinking_caps` 解析：
+手动覆盖 > Provider `/models` 自报 > models.dev 目录 > 模型名启发式。
 """
 
 from __future__ import annotations
@@ -30,6 +34,11 @@ from urllib.parse import urlparse
 
 from faust_backend.logger import get_logger
 from faust_backend.thinking import get_format_thinking_params
+from faust_backend.thinking_caps import (
+    ThinkingOption,
+    describe_thinking,
+    resolve_thinking_capability,
+)
 
 log = get_logger("faust.llm_formats")
 
@@ -343,7 +352,11 @@ def _resolve_base_url(
 
 
 def describe_provider_formats(provider: Any) -> dict[str, dict[str, Any]]:
-    """返回该 Provider 每个模型的格式决策（管理端/前端展示用）。"""
+    """返回该 Provider 每个模型的格式决策（管理端/前端展示用）。
+
+    同时给出思考参数形状的解析结果（`thinking`），前端据此显示「等级/预算 ·
+    来源」，也便于用户判断自动推断是否可靠。
+    """
     result: dict[str, dict[str, Any]] = {}
     for model in getattr(provider, "models", None) or []:
         try:
@@ -354,13 +367,22 @@ def describe_provider_formats(provider: Any) -> dict[str, dict[str, Any]]:
                 "source": "error",
                 "reason": str(exc),
                 "base_url": None,
+                "thinking": None,
             }
             continue
+        thinking = None
+        if str(getattr(provider, "thinking_type", "none")) != "none":
+            thinking = describe_thinking(
+                resolve_thinking_capability(provider, model),
+                decision.api_format,
+                model=model,
+            )
         result[model] = {
             "api_format": decision.api_format,
             "source": decision.source,
             "reason": decision.reason,
             "base_url": decision.base_url,
+            "thinking": thinking,
         }
     return result
 
@@ -472,25 +494,39 @@ async def build_chat_model_from_spec(
     thinking = intensity if purpose == "chat" else None
     if str(getattr(provider, "thinking_type", "none")) == "none":
         thinking = None
+    capability = None
+    option = None
     if thinking is not None:
-        # 目录明确标注该模型不支持推理 → 不加思考参数（否则多数上游直接 400）
-        catalog_route = (getattr(provider, "model_catalog_routes", None) or {}).get(
-            model_name
-        )
-        if isinstance(catalog_route, dict) and catalog_route.get("reasoning") is False:
+        # 思考参数形状来自手动覆盖 > /models > models.dev > 模型名启发式
+        # （例如 Gemini 3/4 只接受 thinking level，2.5 只接受 budget）。
+        capability = resolve_thinking_capability(provider, model_name)
+        if capability.reasoning is False:
             log.info(
-                "模型 '%s' 在目录中标注为不支持推理，本次不启用思考参数", model_name
+                "模型 '%s' 标注为不支持推理（来源: %s），本次不启用思考参数",
+                model_name,
+                capability.source or "unknown",
             )
             thinking = None
+        else:
+            option = capability.option_for(decision.api_format, model=model_name)
+            log.debug(
+                "模型 '%s' 思考参数: format=%s mode=%s source=%s",
+                model_name,
+                decision.api_format,
+                option.mode if option is not None else "preset",
+                capability.source or "none",
+            )
 
     if decision.api_format == "openai_responses":
         return _build_openai_responses(
-            provider, model_name, decision, thinking
+            provider, model_name, decision, thinking, option
         )
     if decision.api_format == "anthropic_messages":
-        return _build_anthropic(provider, model_name, decision, thinking, purpose)
+        return _build_anthropic(
+            provider, model_name, decision, thinking, purpose, option
+        )
     if decision.api_format == "google_gemini":
-        return _build_google(provider, model_name, decision, thinking)
+        return _build_google(provider, model_name, decision, thinking, option)
     return _build_openai_chat(provider, model_name, decision, thinking)
 
 
@@ -539,7 +575,9 @@ def _build_openai_chat(provider, model, decision, intensity):
     return ChatOpenAI(**kwargs)
 
 
-def _build_openai_responses(provider, model, decision, intensity):
+def _build_openai_responses(
+    provider, model, decision, intensity, option: ThinkingOption | None = None
+):
     from langchain_openai import ChatOpenAI
 
     kwargs: dict[str, Any] = {
@@ -560,7 +598,7 @@ def _build_openai_responses(provider, model, decision, intensity):
     if intensity is not None:
         kwargs.update(
             get_format_thinking_params(
-                "openai_responses", provider.thinking_type, intensity
+                "openai_responses", provider.thinking_type, intensity, option=option
             )
         )
     return ChatOpenAI(**kwargs)
@@ -576,14 +614,21 @@ def _anthropic_max_tokens(provider, model, *, purpose: str, budget: int) -> int:
     return cap
 
 
-def _build_anthropic(provider, model, decision, intensity, purpose):
+def _build_anthropic(
+    provider,
+    model,
+    decision,
+    intensity,
+    purpose,
+    option: ThinkingOption | None = None,
+):
     from langchain_anthropic import ChatAnthropic
 
     budget = 0
     thinking_params: dict[str, Any] = {}
     if intensity is not None:
         thinking_params = get_format_thinking_params(
-            "anthropic_messages", provider.thinking_type, intensity
+            "anthropic_messages", provider.thinking_type, intensity, option=option
         )
         thinking = thinking_params.get("thinking")
         if isinstance(thinking, dict):
@@ -604,7 +649,9 @@ def _build_anthropic(provider, model, decision, intensity, purpose):
     return ChatAnthropic(**kwargs)
 
 
-def _build_google(provider, model, decision, intensity):
+def _build_google(
+    provider, model, decision, intensity, option: ThinkingOption | None = None
+):
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     cap = int((getattr(provider, "model_max_output_tokens", None) or {}).get(model) or 8192)
@@ -621,7 +668,7 @@ def _build_google(provider, model, decision, intensity):
     if intensity is not None:
         kwargs.update(
             get_format_thinking_params(
-                "google_gemini", provider.thinking_type, intensity
+                "google_gemini", provider.thinking_type, intensity, option=option
             )
         )
     return ChatGoogleGenerativeAI(**kwargs)

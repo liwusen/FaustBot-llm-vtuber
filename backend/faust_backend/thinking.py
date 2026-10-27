@@ -13,6 +13,16 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages.ai import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
+from faust_backend.thinking_caps import (
+    GOOGLE_EFFORT_LEVELS,
+    MODE_BUDGET,
+    MODE_EFFORT,
+    MODE_TOGGLE,
+    ThinkingOption,
+    budget_for_intensity,
+    level_for_intensity,
+)
+
 THINKING_PRESETS = {
     "none": {},
     "openai": {#reasoning_effort only, no extra_body
@@ -77,19 +87,31 @@ def get_thinking_params(preset_name: str, intensity: str = "medium") -> dict:
 # - OpenAI Chat      : `reasoning_effort` / `extra_body.enable_thinking`（按预设）
 # - OpenAI Responses : `reasoning={"effort": ...}`
 # - Anthropic        : `thinking={"type": "enabled", "budget_tokens": N}`
-# - Gemini           : `thinking_budget=N` + `include_thoughts`
+# - Gemini           : `thinking_budget=N`（2.5）或 `reasoning_effort=<等级>`（3+）
+#                      + `include_thoughts`
 THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 8192}
+
+# Anthropic 的 thinking budget 下限（低于它上游直接 400）
+ANTHROPIC_MIN_THINKING_BUDGET = 1024
 
 
 def get_format_thinking_params(
-    api_format: str, preset_name: str, intensity: str = "medium"
+    api_format: str,
+    preset_name: str,
+    intensity: str = "medium",
+    *,
+    option: ThinkingOption | None = None,
 ) -> dict:
     """按 API 格式翻译思考参数。
 
+    `option` 来自 `thinking_caps` 的解析结果（手动覆盖 > `/models` >
+    models.dev > 模型名启发式），决定「用等级还是预算」以及支持哪些档位；
+    为 None 时保持历史行为（Gemini 恒用 `thinking_budget`）。
+
     `preset_name == "none"` 时恒为空（该 Provider 强制关闭思考）。
-    `openai_chat` 沿用历史预设（qwen/deepseek/mimo/glm/minimax…），其余三种
-    格式只使用强度 → 各自的官方参数结构：预设名对它们是 OpenAI 兼容网关的
-    方言，套上去会直接 400。
+    `openai_chat` 沿用历史预设（qwen/deepseek/mimo/glm/minimax…），其方言由
+    Provider 的 `thinking_type` 表达，不按目录数据改写；其余三种格式只使用
+    强度 → 各自的官方参数结构，预设名对它们是 OpenAI 兼容网关的方言。
     """
     if str(preset_name or "") == "none":
         return {}
@@ -99,12 +121,44 @@ def get_format_thinking_params(
     effort = intensity if intensity in THINKING_BUDGETS else "medium"
     budget = THINKING_BUDGETS[effort]
     if api_format == "openai_responses":
-        return {"reasoning": {"effort": effort}}
+        level = (
+            level_for_intensity(effort, option.levels)
+            if option is not None and option.mode == MODE_EFFORT
+            else effort
+        )
+        return {"reasoning": {"effort": level}}
     if api_format == "anthropic_messages":
+        if option is not None and option.mode == MODE_BUDGET:
+            budget = budget_for_intensity(
+                effort,
+                option,
+                THINKING_BUDGETS,
+                floor=ANTHROPIC_MIN_THINKING_BUDGET,
+            )
         return {"thinking": {"type": "enabled", "budget_tokens": budget}}
     if api_format == "google_gemini":
         # include_thoughts 让 Gemini 返回思考摘要，前端才能显示 reasoning_delta
-        return {"thinking_budget": budget, "include_thoughts": True}
+        if option is None:
+            return {"thinking_budget": budget, "include_thoughts": True}
+        if option.mode == MODE_EFFORT:
+            # Gemini 3/4 只接受 thinking level；ChatGoogleGenerativeAI 的
+            # reasoning_effort 是 Literal，先过滤掉目录里的 xhigh/max 等方言。
+            return {
+                "reasoning_effort": level_for_intensity(
+                    effort, option.levels, allowed=GOOGLE_EFFORT_LEVELS
+                ),
+                "include_thoughts": True,
+            }
+        if option.mode == MODE_BUDGET:
+            return {
+                "thinking_budget": budget_for_intensity(
+                    effort, option, THINKING_BUDGETS
+                ),
+                "include_thoughts": True,
+            }
+        if option.mode == MODE_TOGGLE:
+            return {"include_thoughts": True}
+        return {}
     return {}
 
 

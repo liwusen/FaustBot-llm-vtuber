@@ -90,6 +90,29 @@ function _formatText(format, source) {
   return sourceLabel ? `${label} · ${sourceLabel}` : label;
 }
 
+// ── 思考参数形状（后端 thinking_caps 推断结果）──
+// mode: effort / budget_tokens / toggle / none；source: manual / models_api /
+// models_dev / heuristic。模型设置里展示，推断不对时可手动覆盖。
+const THINKING_MODE_LABELS = {
+  effort: "思维等级",
+  budget_tokens: "思维预算",
+  toggle: "思考开关",
+  none: "不发送思考",
+};
+const THINKING_SOURCE_LABELS = {
+  manual: "手动",
+  models_api: "服务商",
+  models_dev: "模型目录",
+  heuristic: "模型名推断",
+};
+
+function _thinkingText(thinking) {
+  if (!thinking || !thinking.mode) return "未提供";
+  const mode = THINKING_MODE_LABELS[thinking.mode] || thinking.mode;
+  const source = THINKING_SOURCE_LABELS[thinking.source] || thinking.source || "";
+  return source ? `${mode} · ${source}` : mode;
+}
+
 // ── 上下文长度（token）工具 ──
 // provider.model_context_lengths: { [模型名]: int }；未配置的模型不在其中，
 // 由后端在使用时回退默认值 128000。
@@ -138,6 +161,7 @@ function _renameModelConfig(providers, providerName, oldName, newName) {
   for (const field of [
     "model_context_lengths", "model_max_output_tokens",
     "model_api_formats", "model_server_tools", "model_api_capabilities",
+    "model_thinking_caps", "model_thinking_modes",
   ]) {
     const map = target[field];
     if (!map || !(oldName in map)) continue;
@@ -180,6 +204,8 @@ function _newProviderRecord(name, form) {
     format_base_urls: {},
     model_max_output_tokens: {},
     model_api_capabilities: {},
+    model_thinking_caps: {},
+    model_thinking_modes: {},
     model_server_tools: {},
     stream_usage: null,
   }, form);
@@ -403,6 +429,7 @@ function openProviderModal(existing) {
         if (r.model_context_lengths) t.model_context_lengths = { ...r.model_context_lengths };
         if (r.model_max_output_tokens) t.model_max_output_tokens = { ...r.model_max_output_tokens };
         if (r.model_api_capabilities) t.model_api_capabilities = { ...r.model_api_capabilities };
+        if (r.model_thinking_caps) t.model_thinking_caps = { ...r.model_thinking_caps };
         if (r.catalog && r.catalog.provider_id) t.catalog_provider_id = r.catalog.provider_id;
       }
       _saveProvidersToState(next);
@@ -595,8 +622,10 @@ function openModelModal(entry) {
 
   const exactCtx = provider && provider.model_context_lengths
     ? provider.model_context_lengths[entry.model] : null;
+  const resolved = ((state.resolvedFormats || {})[entry.provider] || {})[entry.model] || {};
   const info = el("p", "form-hint",
     `当前格式：${_formatText(decision.format, decision.source)}`
+      + `｜思考：${_thinkingText(resolved.thinking)}`
       + `｜上下文：${exactCtx ? `${_formatContext(exactCtx)}（${exactCtx} token）` : "未配置，按默认 128K"}`
       + `｜服务商：${entry.provider}`);
 
@@ -608,6 +637,22 @@ function openModelModal(entry) {
     formatSelect.append(node);
   }
   formatSelect.value = decision.source === "manual" ? decision.format : "auto";
+
+  // 思考格式覆盖：自动 = 手动 > /models > 模型目录 > 模型名推断
+  const thinkingSelect = el("select", "select");
+  for (const opt of [
+    { value: "auto", label: "自动（按服务商 / 模型目录推断）" },
+    { value: "effort", label: "思维等级（thinking level）" },
+    { value: "budget", label: "思维预算（thinking budget）" },
+    { value: "toggle", label: "思考开关（toggle）" },
+    { value: "none", label: "不发送思考参数" },
+  ]) {
+    const node = el("option", "", opt.label);
+    node.value = opt.value;
+    thinkingSelect.append(node);
+  }
+  thinkingSelect.value =
+    (provider && provider.model_thinking_modes ? provider.model_thinking_modes[entry.model] : "") || "auto";
 
   // 服务端工具：勾选后由服务商在服务端执行（OpenAI Chat 不支持）
   const tools = [];
@@ -648,6 +693,8 @@ function openModelModal(entry) {
   const advanced = makeFieldFold("高级设置", [
     field("接口格式", formatSelect,
       "只在自动识别不对时才需要改；保存并应用后生效。"),
+    field("思考格式", thinkingSelect,
+      "自动时先看服务商 /models，再看模型目录，最后按模型名推断；推断不对时在这里强制指定。"),
     field("服务端工具", toolsWrap,
       "服务商自带的联网搜索：由服务商检索后直接作答，不占用本地工具。"),
   ], `model-advanced-${entry.spec}`, {});
@@ -670,6 +717,8 @@ function openModelModal(entry) {
         _parseContextLength(maxOutInput.value));
       _setModelField(providers, entry.provider, newName, "model_api_formats",
         formatSelect.value === "auto" ? null : formatSelect.value);
+      _setModelField(providers, entry.provider, newName, "model_thinking_modes",
+        thinkingSelect.value === "auto" ? null : thinkingSelect.value);
       const toolsOn = tools.filter((item) => item.checkbox.checked).map((item) => item.value);
       _setModelField(providers, entry.provider, newName, "model_server_tools",
         toolsOn.length ? toolsOn : null);

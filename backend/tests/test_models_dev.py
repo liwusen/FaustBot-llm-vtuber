@@ -36,6 +36,9 @@ def _catalog() -> dict:
                     },
                     "limit": {"context": 200000, "output": 32000},
                     "reasoning": True,
+                    "reasoning_options": [
+                        {"type": "budget_tokens", "min": 1024, "max": 32000}
+                    ],
                 },
                 "gemini-model": {
                     "provider": {
@@ -43,6 +46,10 @@ def _catalog() -> dict:
                         "api": "https://gateway.example.com/google",
                     },
                     "limit": {"context": 1000000, "output": 65536},
+                    "reasoning": True,
+                    "reasoning_options": [
+                        {"type": "effort", "values": ["low", "medium", "high"]}
+                    ],
                 },
                 "gpt-model": {
                     "provider": {
@@ -356,6 +363,16 @@ def test_enrich_provider_writes_routes_and_fills_missing_limits():
     assert provider.model_catalog_routes["claude-model"]["format"] == "anthropic_messages"
     assert provider.model_catalog_routes["chat-model"]["reasoning"] is None
     assert provider.model_catalog_routes["claude-model"]["reasoning"] is True
+    # 思考参数形状随路由一起落盘（构建模型时不再需要联网/猜模型名）
+    assert provider.model_catalog_routes["gemini-model"]["thinking"] == {
+        "reasoning": True,
+        "options": [{"type": "effort", "values": ["low", "medium", "high"]}],
+    }
+    assert provider.model_catalog_routes["claude-model"]["thinking"] == {
+        "reasoning": True,
+        "options": [{"type": "budget_tokens", "min": 1024, "max": 32000}],
+    }
+    assert provider.model_catalog_routes["chat-model"]["thinking"] is None
     # 用户值保留，其余从目录补齐
     assert provider.model_context_lengths["chat-model"] == 4096
     assert provider.model_context_lengths["gemini-model"] == 1000000

@@ -110,9 +110,9 @@ async def admin_auto_load_models(name: str):
     """自动调用 auto_load_model_for_provider 拉取模型列表（前端向导第 2 步）。
 
     一并返回该 provider 的 model_context_lengths / model_max_output_tokens /
-    model_api_capabilities：auto_load 会用 /models 元数据自动填充，前端需要立刻
-    反映这些值。随后用 models.dev 目录补全格式路由与缺失的上下文/输出长度
-    （目录不可用时只用 /models 与通用启发式，不报错）。
+    model_api_capabilities / model_thinking_caps：auto_load 会用 /models 元数据
+    自动填充，前端需要立刻反映这些值。随后用 models.dev 目录补全格式路由与
+    缺失的上下文/输出长度（目录不可用时只用 /models 与通用启发式，不报错）。
     """
     import faust_backend.models_dev as models_dev
     from faust_backend.provider import resolve_provider, auto_load_model_for_provider
@@ -146,6 +146,7 @@ async def admin_auto_load_models(name: str):
         "model_context_lengths": provider.model_context_lengths or {},
         "model_max_output_tokens": provider.model_max_output_tokens or {},
         "model_api_capabilities": provider.model_api_capabilities or {},
+        "model_thinking_caps": provider.model_thinking_caps or {},
         "formats": describe_provider_formats(provider),
         "catalog": catalog_info,
     }
