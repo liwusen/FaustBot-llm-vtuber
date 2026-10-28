@@ -48,8 +48,8 @@ FaustBot-llm-vtuber/
 ├── frontend/                   # Electron 前端
 │   ├── electron-main.js        # 主进程
 │   ├── app.js                  # 渲染进程（Live2D/VRM）
-│   ├── config-window.js        # 配置中心
-│   └── libs/configer/          # 配置中心常量
+│   ├── configer/               # 配置中心（Vue 3 + Vite + Pinia）
+│   └── configer-dist/          # 配置中心构建产物（CI 生成）
 ├── agents_template/            # Agent 角色模板
 ├── __dev__/                    # 开发文档/工具
 │   └── website/                # 项目网站
@@ -99,8 +99,12 @@ npm start
 
 ### 修改前端
 
-- `app.js` 是 ES module（`type="module"`），支持 `import`/`export`
-- 前端构建使用 `esbuild`
+- 主窗口 `app.js` 是 ES module（`type="module"`），使用 `esbuild` 构建
+- 配置中心在 `frontend/configer/`，使用 Vue 3 + TypeScript + Pinia + Vite：
+  - `npm run typecheck:configer`
+  - `npm run test:configer`
+  - `npm run build:configer`
+  - 开发模式：`npm run dev:configer`，再设置 `FAUST_CONFIGER_DEV_URL=http://127.0.0.1:5174` 启动 Electron
 - 与后端通信通过 WebSocket + `window.api` IPC（preload.js 暴露）
 
 ### 调试提示

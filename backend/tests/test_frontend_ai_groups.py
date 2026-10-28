@@ -1,6 +1,6 @@
 """AI 服务商页分组与配置键白名单的一致性守护。
 
-AI 页的渲染完全由 `frontend/libs/configer/constants.js` 里的 `AI_GROUPS` 驱动：
+AI 页的渲染完全由 `frontend/configer/src/config/constants.ts` 里的 `AI_GROUPS` 驱动：
 它必须恰好覆盖 `AI_PUBLIC_KEYS ∪ AI_PRIVATE_KEYS`。只要漏掉一个键，那个配置项
 就会从界面上悄悄消失（既不在 AI 页，也不在「高级」页——那两个键集本来就被排除）。
 这里用静态解析守住这条约束，不需要运行前端。
@@ -11,14 +11,18 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-CONFIGER = Path(__file__).resolve().parents[2] / "frontend" / "libs" / "configer"
-CONSTANTS_JS = CONFIGER / "constants.js"
-AI_PAGE_JS = CONFIGER / "modules" / "ai.js"
-FIELD_RENDER_JS = CONFIGER / "field-render.js"
+CONFIGER = Path(__file__).resolve().parents[2] / "frontend" / "configer" / "src"
+CONSTANTS_TS = CONFIGER / "config" / "constants.ts"
+AI_PAGE_VUE = CONFIGER / "modules" / "ai" / "AiModule.vue"
+REGISTRY_TS = CONFIGER / "modules" / "registry.ts"
 
 
 def _js_array_keys(text: str, var_name: str) -> list[str]:
-    match = re.search(rf"var {var_name} = \[(.*?)\];", text, re.S)
+    match = re.search(
+        rf"(?:export\s+)?const\s+{var_name}\b[^=]*=\s*\[(.*?)\];",
+        text,
+        re.S,
+    )
     assert match is not None, f"{var_name} 数组没找到"
     return re.findall(r'"([A-Za-z0-9_]+)"', match.group(1))
 
@@ -41,7 +45,7 @@ def _row_objects(group_src: str) -> list[str]:
 
 
 def test_ai_groups_covers_whitelist_exactly() -> None:
-    text = CONSTANTS_JS.read_text(encoding="utf-8")
+    text = CONSTANTS_TS.read_text(encoding="utf-8")
     public_keys = _js_array_keys(text, "AI_PUBLIC_KEYS")
     private_keys = _js_array_keys(text, "AI_PRIVATE_KEYS")
     whitelist = set(public_keys) | set(private_keys)
@@ -64,7 +68,7 @@ def test_ai_groups_covers_whitelist_exactly() -> None:
 
 
 def test_ai_groups_scope_matches_key_category() -> None:
-    text = CONSTANTS_JS.read_text(encoding="utf-8")
+    text = CONSTANTS_TS.read_text(encoding="utf-8")
     public_keys = set(_js_array_keys(text, "AI_PUBLIC_KEYS"))
     private_keys = set(_js_array_keys(text, "AI_PRIVATE_KEYS"))
 
@@ -79,7 +83,7 @@ def test_ai_groups_scope_matches_key_category() -> None:
 
 
 def test_ai_groups_have_titles_and_descriptions() -> None:
-    text = CONSTANTS_JS.read_text(encoding="utf-8")
+    text = CONSTANTS_TS.read_text(encoding="utf-8")
     groups = _split_groups(_groups_block(text))
     assert len(groups) >= 5, "AI 页分组太少，布局回到一张大卡了"
 
@@ -95,12 +99,11 @@ def test_ai_groups_have_titles_and_descriptions() -> None:
 
 
 def test_ai_page_wiring() -> None:
-    """渲染入口接上：AI 模块走 renderAiModule，页面文件本身存在。"""
-    assert AI_PAGE_JS.exists(), "modules/ai.js 缺失"
-    assert "function renderAiModule(" in AI_PAGE_JS.read_text(encoding="utf-8")
+    """渲染入口接上：AI 模块组件存在、引用分组表，并在 registry 中注册。"""
+    assert AI_PAGE_VUE.exists(), "modules/ai/AiModule.vue 缺失"
+    page_text = AI_PAGE_VUE.read_text(encoding="utf-8")
+    assert "AI_GROUPS" in page_text, "AiModule.vue 没有引用 AI_GROUPS"
 
-    field_render = FIELD_RENDER_JS.read_text(encoding="utf-8")
-    assert re.search(
-        r'if \(moduleId === "ai"\) \{\s*(?://[^\n]*\n\s*)?renderAiModule\(\);',
-        field_render,
-    ), "renderConfigModule 没有把 AI 模块交给 renderAiModule"
+    registry = REGISTRY_TS.read_text(encoding="utf-8")
+    assert re.search(r"from\s+['\"]\./ai/AiModule\.vue['\"]", registry), "registry 没有导入 AiModule"
+    assert re.search(r"\bai:\s*AiModule\b", registry), "registry 没有把 ai 映射到 AiModule"

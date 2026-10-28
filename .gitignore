@@ -16,6 +16,7 @@ __dev__/
 .runtime/
 .nodejs/
 dist/
+frontend/configer-dist/
 
 *.bundle.js
 

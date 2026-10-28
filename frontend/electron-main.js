@@ -885,7 +885,52 @@ function createConfigWindow() {
     },
   });
 
-  configWindow.loadFile(path.join(getFrontendAppDir(), 'config-window.html'));
+  const devUrl = String(process.env.FAUST_CONFIGER_DEV_URL || '').trim();
+  const configerEntry = path.join(getFrontendAppDir(), 'configer-dist', 'index.html');
+
+  // 起窗失败时统一「弹框 + 销毁 + 清空全局引用」，避免后续调用拿到已销毁的窗口。
+  const abortConfigWindow = (title, detail) => {
+    dialog.showErrorBox(title, detail);
+    configWindow.destroy();
+    configWindow = null;
+    return null;
+  };
+
+  if (devUrl) {
+    let parsed = null;
+    try {
+      parsed = new URL(devUrl);
+    } catch (e) {
+      return abortConfigWindow('配置中心开发地址无效', `FAUST_CONFIGER_DEV_URL 不是合法 URL：\n${devUrl}`);
+    }
+    if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
+      return abortConfigWindow(
+        '配置中心开发地址无效',
+        `FAUST_CONFIGER_DEV_URL 只允许 http://127.0.0.1 或 http://localhost，当前为：\n${devUrl}`,
+      );
+    }
+    configWindow.loadURL(devUrl);
+  } else {
+    if (!fs.existsSync(configerEntry)) {
+      return abortConfigWindow(
+        '配置中心构建缺失',
+        `未找到 ${configerEntry}。\n请先在 frontend 目录运行 npm run build:configer。`,
+      );
+    }
+    configWindow.loadFile(configerEntry);
+  }
+
+  configWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    console.error('[config-window] did-fail-load', errorCode, errorDescription, validatedURL);
+    if (configWindow && !configWindow.isDestroyed()) {
+      dialog.showErrorBox(
+        '配置中心加载失败',
+        `无法加载配置中心：${errorDescription}（${errorCode}）\n${validatedURL}`,
+      );
+    }
+  });
+
   configWindow.once('ready-to-show', () => {
     if (!configWindow || configWindow.isDestroyed()) return;
     configWindow.show();

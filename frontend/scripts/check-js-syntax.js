@@ -22,10 +22,8 @@ if (!vm.SourceTextModule && !process.env.FAUST_SYNTAX_INNER) {
 }
 
 const FRONTEND_DIR = path.resolve(__dirname, '..');
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git']);
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'configer-dist', '.git']);
 const SKIP_FILES = new Set([
-  '.codemirror-entry.js',
-  '.echarts-entry.js',
   '.pixi-live2d-entry.js',
   '.soullink-entry.js',
   '.profile-generator-entry.js',
