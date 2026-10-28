@@ -458,6 +458,11 @@ class ProcessorHandle:
         backend_root = Path(conf.PROJECT_ROOT)
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
+        # 父子两端约定 UTF-8：父进程固定按 UTF-8 解码子进程的 stdout/stderr
+        # （见 _pipe_loop），若子进程沿用 Windows 控制台代码页（cp936）输出，
+        # 中文日志会在这里变成乱码。显式覆盖，不依赖外部环境变量。
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         # 用「脚本路径」而不是 "-m 包名"：.runtime 是内嵌发行版（有 python311._pth），
         # 它忽略 PYTHONPATH 也不把 cwd/脚本目录放进 sys.path，只有 worker.py 自己
         # bootstrap（见 worker.py 顶部）才能 import faust_backend。
