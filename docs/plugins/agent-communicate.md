@@ -113,6 +113,4 @@ agents 表格化编辑、探测结果同步，以及当前任务的实时输出�
 
 ## 相关文档
 
-- 规格：[docs/agent-communicate-spec.md](../agent-communicate-spec.md)
-- 实施计划：[docs/superpowers/plans/2026-10-05-agent-communicate.md](../superpowers/plans/2026-10-05-agent-communicate.md)
 - 使用手册（Agent 视角）：`skill://agent-communicate/SKILL.md`

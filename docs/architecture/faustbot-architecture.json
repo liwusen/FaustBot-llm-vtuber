@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/liwusen/FaustBot-llm-vtuber",
-      "revision": "a5accaa51424b89444b8f3ec0a0cce3b57ddcc9d"
+      "revision": "0fed851aec23906056979b0be92c955ea17c77df"
     },
     "viewBox": [1340, 610],
     "views": [
@@ -49,7 +49,7 @@
       "tag": "受管子进程",
       "pos": [40, 480],
       "size": [140, 64],
-      "sources": [{ "path": "backend/faust_backend/speech_runtime.py", "label": "语音运行时" }]
+      "sources": [{ "path": "backend/faust_backend/speech/__init__.py", "label": "语音运行时" }]
     },
     {
       "id": "api",
@@ -69,7 +69,7 @@
       "tag": "工具 / 中间件 / 路由",
       "pos": [300, 480],
       "size": [150, 64],
-      "sources": [{ "path": "backend/faust_backend/plugin_system/manager.py", "label": "插件管理器" }]
+      "sources": [{ "path": "backend/faust_backend/plugins/system/manager.py", "label": "插件管理器" }]
     },
     {
       "id": "compact",
@@ -79,7 +79,7 @@
       "tag": "复用前缀命中缓存",
       "pos": [490, 80],
       "size": [150, 64],
-      "sources": [{ "path": "backend/faust_backend/runtime/compact.py", "label": "CompactMiddleware" }]
+      "sources": [{ "path": "backend/faust_backend/agent/runtime/compact.py", "label": "CompactMiddleware" }]
     },
     {
       "id": "tools",
@@ -89,7 +89,7 @@
       "tag": "VFS + MCP 工具",
       "pos": [700, 80],
       "size": [150, 64],
-      "sources": [{ "path": "backend/faust_backend/llm_tools.py", "label": "工具集与运行时路径" }]
+      "sources": [{ "path": "backend/faust_backend/tools/__init__.py", "label": "工具集与运行时路径" }]
     },
     {
       "id": "agent",
@@ -100,7 +100,7 @@
       "pos": [560, 268],
       "size": [170, 88],
       "sources": [
-        { "path": "backend/faust_backend/runtime/lifecycle.py", "label": "构建与流式事件" }
+        { "path": "backend/faust_backend/agent/runtime/build.py", "label": "构建与流式事件" }
       ]
     },
     {
@@ -110,7 +110,7 @@
       "sublabel": "独立工具组与上下文",
       "pos": [560, 480],
       "size": [170, 64],
-      "sources": [{ "path": "backend/faust_backend/subagent_manager.py", "label": "子 Agent 生命周期" }]
+      "sources": [{ "path": "backend/faust_backend/agent/subagent/manager.py", "label": "子 Agent 生命周期" }]
     },
     {
       "id": "checkpoint",
@@ -121,7 +121,7 @@
       "pos": [880, 80],
       "size": [160, 64],
       "sources": [
-        { "path": "backend/faust_backend/runtime/lifecycle.py", "label": "AsyncSqliteSaver" }
+        { "path": "backend/faust_backend/agent/runtime/rebuild.py", "label": "AsyncSqliteSaver" }
       ]
     },
     {
@@ -141,7 +141,7 @@
       "tag": "provider::model",
       "pos": [1120, 280],
       "size": [160, 64],
-      "sources": [{ "path": "backend/faust_backend/provider.py", "label": "Provider 与模型配置" }]
+      "sources": [{ "path": "backend/faust_backend/llm/provider.py", "label": "Provider 与模型配置" }]
     }
   ],
   "boundaries": [
