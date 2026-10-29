@@ -93,7 +93,7 @@ def test_main_agent_composition_gets_retry_middleware(monkeypatch):
             return []
 
     monkeypatch.setattr(state, "plugin_manager", None)
-    monkeypatch.setattr(build.llm_tools, "get_tools_for_agent", lambda agent: [])
+    monkeypatch.setattr(build.tools_mod, "get_tools_for_agent", lambda agent: [])
     monkeypatch.setattr(mcp_manager, "get_mcp_manager", lambda: _FakeMcp())
 
     tools, middlewares = build._compose_runtime_extensions()

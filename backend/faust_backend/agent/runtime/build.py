@@ -10,7 +10,7 @@ import os
 from langchain.agents import create_agent
 
 import faust_backend.agent.runtime.state as state
-import faust_backend.llm_tools as llm_tools
+import faust_backend.tools as tools_mod
 from faust_backend.agent.runtime import middleware
 from faust_backend.agent.runtime.turn.output_store import get_output_store
 from faust_backend.agent.subagent.manager import SubagentManager
@@ -23,7 +23,7 @@ def _collect_runtime_tools() -> list:
     """收集主 Agent 的完整工具列表（内置 + MCP + 插件注入）。"""
     from faust_backend.integrations.mcp import get_mcp_manager
 
-    base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
+    base_tools = list(tools_mod.get_tools_for_agent(state.AGENT_NAME))
     mcp_tools = get_mcp_manager().get_langchain_tools()
     if mcp_tools:
         base_tools.extend(mcp_tools)
@@ -87,7 +87,7 @@ def _compose_runtime_extensions(*, compact_middleware=None, server_tool_middlewa
 
 def _find_tool_by_name(name: str):
     target = str(name or "").strip()
-    for tool_item in llm_tools.get_tools_for_agent(state.AGENT_NAME):
+    for tool_item in tools_mod.get_tools_for_agent(state.AGENT_NAME):
         tool_name = getattr(tool_item, "name", None) or getattr(
             tool_item, "__name__", ""
         )

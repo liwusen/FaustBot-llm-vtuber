@@ -14,7 +14,7 @@ import tqdm
 import faust_backend.agent.runtime.state as state
 import faust_backend.agent.trigger as trigger_manager
 import faust_backend.services.manager as service_manager
-import faust_backend.speech_runtime as speech_runtime
+import faust_backend.speech as speech
 from faust_backend.core.config import args
 from faust_backend.core.log import get_logger
 from faust_backend.plugins.system import PluginManager
@@ -57,10 +57,10 @@ def start_services():
         for service in tqdm.tqdm(
             service_manager.get_service_keys(), desc="[main]Starting services"
         ):
-            if service == "tts" and not speech_runtime.should_start_local_tts():
+            if service == "tts" and not speech.should_start_local_tts():
                 log.info("跳过本地 TTS 服务（TTS_MODE 不是 gpt-sovits）")
                 continue
-            if service == "asr" and not speech_runtime.should_start_local_asr():
+            if service == "asr" and not speech.should_start_local_asr():
                 log.info("跳过本地 ASR 服务（ASR_MODE 不是 whisper/funasr）")
                 continue
             try:

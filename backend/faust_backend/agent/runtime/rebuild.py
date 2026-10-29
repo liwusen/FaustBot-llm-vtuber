@@ -17,7 +17,7 @@ import faust_backend.agent.araya.runtime as araya_runtime
 import faust_backend.agent.runtime.state as state
 import faust_backend.core.config as conf
 import faust_backend.core.frontend.api as backend2frontend
-import faust_backend.llm_tools as llm_tools
+import faust_backend.tools as tools_mod
 from faust_backend.agent.prompt.seed import _checkpoint_messages, _seed_system_prompt
 from faust_backend.agent.runtime.build import (
     _create_agent_with_extensions,
@@ -125,7 +125,7 @@ async def _rebuild_runtime_locked(
                 updated = [k for k, v in sync_result.items() if v]
                 log.info("模板文件已同步: %s", ", ".join(updated))
             state.makeup_init_prompt()
-            llm_tools.refresh_runtime_paths()
+            tools_mod.refresh_runtime_paths()
             await refresh_runtime_nodes(await get_faustbot_vfs(refresh=True))
 
             # ---mcp---
@@ -333,7 +333,7 @@ def schedule_memory_record_sync(user_text: str, assistant_text: str) -> None:
 
     async def _job():
         try:
-            llm_tools.refresh_runtime_paths()
+            tools_mod.refresh_runtime_paths()
             from faust_backend.memory import get_memory
 
             result = await get_memory().add_chat_record(user_text, assistant_text)

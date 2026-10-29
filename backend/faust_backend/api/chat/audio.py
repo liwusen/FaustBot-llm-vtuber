@@ -4,7 +4,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import Response
 import faust_backend.core.config as conf
-import faust_backend.speech_runtime as speech_runtime
+import faust_backend.speech as speech
 from faust_backend.processors import get_processor_manager
 from faust_backend.processors.builtin.vad import SAMPLE_RATE, VAD_THRESHOLD, WINDOW_SIZE
 from faust_backend.processors.errors import ProcessorError
@@ -22,7 +22,7 @@ VAD_DEGRADED_BACKOFF_SECONDS = 30.0
 @router.get("/faust/audio/config")
 async def speech_config_get():
     conf.reload_configs()
-    return {"status": "ok", "config": speech_runtime.frontend_speech_config()}
+    return {"status": "ok", "config": speech.frontend_speech_config()}
 
 
 @router.get("/faust/audio/vad/status")
@@ -164,9 +164,9 @@ async def speech_tts_post(payload: dict):
         raise HTTPException(status_code=400, detail="缺少 TTS 文本")
     conf.reload_configs()
     try:
-        audio_bytes, content_type = await speech_runtime.synthesize_tts(text, lang)
+        audio_bytes, content_type = await speech.synthesize_tts(text, lang)
         return Response(content=audio_bytes, media_type=content_type)
-    except speech_runtime.SpeechRuntimeError as e:
+    except speech.SpeechRuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS 代理失败: {e}")
@@ -178,13 +178,13 @@ async def speech_asr_post(file: UploadFile = File(...)):
     try:
         audio_bytes = await file.read()
         result = await asyncio.to_thread(
-            speech_runtime.transcribe_audio,
+            speech.transcribe_audio,
             file.filename or "audio.wav",
             audio_bytes,
             file.content_type or "audio/wav",
         )
         return result
-    except speech_runtime.SpeechRuntimeError as e:
+    except speech.SpeechRuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ASR 代理失败: {e}")

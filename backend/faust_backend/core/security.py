@@ -7,7 +7,7 @@ from langchain.tools import tool
 import json,re
 import faust_backend.core.config as conf
 import faust_backend.core.frontend.api as backend2front
-from faust_backend.llm_tools import HILRequest
+from faust_backend.tools.hil import HILRequest
 @tool
 async def listdir(path):
     """

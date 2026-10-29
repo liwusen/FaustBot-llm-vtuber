@@ -324,7 +324,7 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     只保留真正出问题的结构：一把锁 + 临界区 + 临界区**之外**的引导对话。
     """
     import faust_backend.services.admin as admin_runtime
-    import faust_backend.llm_tools as llm_tools
+    import faust_backend.tools as tools_mod
     import faust_backend.integrations.mcp as mcp_manager
     import faust_backend.llm.provider as provider
 
@@ -338,7 +338,7 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     monkeypatch.setattr(state, "AGENT_ROOT", state.AGENT_ROOT)
     monkeypatch.setattr(admin_runtime, "sync_template_files", lambda name: {})
     monkeypatch.setattr(state, "makeup_init_prompt", lambda: None)
-    monkeypatch.setattr(llm_tools, "refresh_runtime_paths", lambda: None)
+    monkeypatch.setattr(tools_mod, "refresh_runtime_paths", lambda: None)
     monkeypatch.setattr(state, "get_model_providers", lambda: FakeProviders())
     monkeypatch.setattr(rebuild.args, "save_in_memory", True)
     monkeypatch.setattr(state, "plugin_manager", None)
