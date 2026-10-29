@@ -13,8 +13,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import faust_backend.config_loader as conf
+
 #: vendored 上游推理代码所在目录（其下是 ``mso`` 包）
-VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
+VENDOR_DIR = Path(conf.PACKAGE_ROOT) / "vendor"
 
 #: 可选模型尺寸 → 上游仓库（ckpt=OmniJev adapter，base=Qwen3.5 基座）
 SIZES: dict[str, dict[str, str]] = {

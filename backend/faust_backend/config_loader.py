@@ -12,8 +12,19 @@ d_name=os.path.dirname
 a_path=os.path.abspath
 
 
-# 项目基础设施根目录（backend/ 代码所在目录）
-PROJECT_ROOT = d_name(d_name(a_path(__file__)))
+# ---------------------------------------------------------------------------
+# 路径锚点（全仓唯一）
+#
+# 这里是**唯一**允许用 __file__ 深度推算出 backend/ 与 faust_backend/ 的地方；
+# 其余模块一律引用本文件导出的常量，不再自己数 dirname（守卫测试见
+# backend/tests/test_architecture.py）。
+#
+# 搬动本文件时，只需调整下面两处 d_name 的层数，全仓路径自动跟随。
+# ---------------------------------------------------------------------------
+BACKEND_ROOT = d_name(d_name(a_path(__file__)))  # backend/
+PROJECT_ROOT = BACKEND_ROOT                      # 历史名称：语义与取值都等于 backend/（勿改）
+PACKAGE_ROOT = d_name(a_path(__file__))          # backend/faust_backend/
+REPO_ROOT = d_name(BACKEND_ROOT)                 # 仓库根 faust/
 # 用户数据根目录（~/.faustbot），存放配置、Agent 数据、缓存等
 CONFIG_ROOT = os.path.join(os.path.expanduser("~"), ".faustbot")
 # 工具的默认工作目录（WORKDIR_ROOT）：Agent 自己的工作目录

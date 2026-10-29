@@ -16,12 +16,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+import faust_backend.config_loader as conf
 import faust_backend.service_manager as service_manager
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.component")
 
-BACKEND_DIR = Path(__file__).resolve().parent.parent
+BACKEND_DIR = Path(conf.BACKEND_ROOT)
 
 # ── Phase A3: Torch 版本映射 ──
 

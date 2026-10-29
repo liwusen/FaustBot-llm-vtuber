@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 import requests
 
+import faust_backend.config_loader as conf
 import faust_backend.logger as logger
 from faust_backend.utils import DownloadTask
 
@@ -140,7 +141,7 @@ def validate_manual_package(file_path: str | Path) -> dict[str, str]:
     if not zipfile.is_zipfile(src):
         raise ValueError("更新包已损坏（不是有效的 zip 文件），请重新下载")
 
-    current = _current_tag(Path(__file__).resolve().parents[2])
+    current = _current_tag(Path(conf.REPO_ROOT))
     if not is_newer_version(tag, current):
         raise ValueError(f"更新包版本 {tag} 不高于当前版本 {current}，无需更新")
 
@@ -203,7 +204,7 @@ class UpdateManager:
         self.root = (
             Path(project_root).resolve()
             if project_root
-            else Path(__file__).resolve().parents[2]
+            else Path(conf.REPO_ROOT)
         )
         self._latest_release: dict[str, Any] | None = None
         self._cached_ts: float = 0.0

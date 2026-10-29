@@ -3,11 +3,12 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+import faust_backend.config_loader as conf
 from faust_backend.logger import get_logger
 
 log = get_logger("faust.service")
 
-BACKEND_ROOT = Path(__file__).resolve().parent.parent
+BACKEND_ROOT = Path(conf.BACKEND_ROOT)
 STARTUP_WAIT_SECONDS = 15
 TAIL_LOG_LINES = 120
 CREATE_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE

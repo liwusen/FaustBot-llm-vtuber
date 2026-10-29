@@ -10,13 +10,14 @@ import numpy as np
 
 from ..base import Processor, ProcessorContext
 from ..registry import processor
+from faust_backend import config_loader as conf
 
 SAMPLE_RATE = 16000
 WINDOW_SIZE = 512
 VAD_THRESHOLD = 0.5
 
-#: backend/ 目录（本文件位于 backend/faust_backend/processors/builtin/）
-BACKEND_ROOT = Path(__file__).resolve().parents[3]
+#: backend/ 目录（由 config_loader 唯一锚点导出，勿自行推算）
+BACKEND_ROOT = Path(conf.BACKEND_ROOT)
 #: torch hub 缓存目录：与迁移前 vad_runtime.py / download_vad.py 完全一致
 TORCH_HUB_DIR = BACKEND_ROOT / "asr-hub" / "model" / "torch_hub"
 SILERO_CACHE_DIR = TORCH_HUB_DIR / "snakers4_silero-vad_master"

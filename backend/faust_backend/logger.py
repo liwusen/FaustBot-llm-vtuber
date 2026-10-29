@@ -27,11 +27,13 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import faust_backend.config_loader as conf
+
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
 
-LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+LOG_DIR = Path(conf.REPO_ROOT) / "logs"
 LOG_FILE = LOG_DIR / "faust.log"
 LOG_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
 LOG_BACKUP_COUNT = 5

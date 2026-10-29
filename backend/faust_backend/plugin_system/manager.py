@@ -120,8 +120,8 @@ def _ensure_default_plugins() -> None:
     candidates = [
         Path(conf.PROJECT_ROOT) / "default_plugins",
         Path(conf.PROJECT_ROOT).parent / "backend" / "default_plugins",
-        Path(__file__).resolve().parents[2] / "default_plugins",
-        Path(__file__).resolve().parents[2] / "plugins",
+        Path(conf.BACKEND_ROOT) / "default_plugins",
+        Path(conf.BACKEND_ROOT) / "plugins",
     ]
     for src in candidates:
         if src.exists() and src.is_dir():
@@ -153,7 +153,7 @@ def _ensure_default_plugins() -> None:
 def _plugin_user_dir() -> Path:
     if conf:
         return Path(conf.CONFIG_ROOT) / "plugins"
-    return Path(__file__).resolve().parents[2] / "plugins"
+    return Path(conf.BACKEND_ROOT) / "plugins"
 
 
 class PluginManager:
