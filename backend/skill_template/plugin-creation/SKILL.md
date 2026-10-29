@@ -58,10 +58,10 @@
 
 ## 新风格插件（推荐）：FaustPlugin 基类
 
-继承 `faust_backend.plugin_system.FaustPlugin`，覆写需要的 hook：
+继承 `faust_backend.plugins.system.FaustPlugin`，覆写需要的 hook：
 
 ```python
-from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 from langchain.tools import tool
 
 class Plugin(FaustPlugin):
@@ -143,7 +143,7 @@ def get_plugin():
 ## 旧风格插件（兼容）：Plugin 类
 
 ```python
-from faust_backend.plugin_system import PluginManifest, PluginContext, ToolSpec
+from faust_backend.plugins.system import PluginManifest, PluginContext, ToolSpec
 
 class Plugin:
     manifest = PluginManifest(plugin_id="my-plugin", name="My Plugin")

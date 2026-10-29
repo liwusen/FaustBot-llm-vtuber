@@ -148,3 +148,56 @@ def test_root_modules_are_only_the_registered_exception():
         "faust_backend/ 根目录只允许 download_vad.py（§4.8 豁免），实际："
         f"{root_modules}"
     )
+
+
+def test_api_package_init_stays_import_free():
+    """`api/__init__.py` 的模块顶层不许 import 任何 faust_backend 模块。
+
+    这条守的是两个**只有真启后端才炸**的坑（§5 实施记录 #7 / #8）：
+    一旦这里重新把 29 个路由模块在模块层 import 进来，
+    `app/lifespan.py` → `import faust_backend.api.live` 触发本文件 → 拉进
+    `api/system/system.py` → 它回头 import 半初始化的 `app.lifespan` → 循环导入；
+    同时 `from faust_backend.api.chat import chat` 这行还会把父包的 `chat`
+    属性遮蔽成模块，连带 `api.chat.audio` 之类全部 ImportError。
+    """
+    bad = [
+        name
+        for name in _toplevel_imports(PKG / "api" / "__init__.py")
+        if name.startswith("faust_backend")
+    ]
+    assert not bad, (
+        "api/__init__.py 必须保持模块层零业务 import（注册时惰性 import），实际："
+        f"{bad}"
+    )
+
+
+def _resolves(dotted: str) -> bool:
+    """`faust_backend.a.b.C` 只要能解析到 `a/b.py` 或 `a/b/__init__.py` 就算成立。"""
+    parts = dotted.split(".")
+    for end in range(len(parts), 1, -1):
+        rel = Path(*parts[1:end])
+        base = PKG / rel
+        if base.with_suffix(".py").is_file() or (base / "__init__.py").is_file():
+            return True
+    return False
+
+
+def test_docs_in_backend_teach_existing_modules():
+    """后端自带的模板文档（skill_template / agents_template 等）不许教已不存在的模块。
+
+    `backend/skill_template/plugin-creation/SKILL.md` 曾经长期写着
+    `from faust_backend.plugin_system import ...`，照它建插件会直接 ImportError——
+    这类漂移 pytest 平时抓不到，因为文档里没有代码。
+    """
+    skip = ("minecraft", ".pytest_cache", "tts-hub", "asr-hub", "voices", "node_modules")
+    offenders = []
+    for path in sorted(BACKEND.rglob("*.md")):
+        rel = path.relative_to(BACKEND)
+        if any(part in skip for part in rel.parts):
+            continue
+        for m in re.finditer(r"faust_backend\.[A-Za-z_][\w.]*", path.read_text(encoding="utf-8", errors="replace")):
+            dotted = m.group(0).rstrip(".")
+            if not _resolves(dotted):
+                offenders.append(f"{rel.as_posix()}: {dotted}")
+    assert not offenders, "文档里引用了不存在的模块：\n" + "\n".join(offenders)
+
