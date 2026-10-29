@@ -11,17 +11,33 @@ FaustBot is an AI-driven Vtuber/desktop pet platform with a **Python FastAPI bac
 ```
 faust/
 ├── backend/                    # Python FastAPI 后端
-│   ├── main.py                 # 入口，FastAPI app 创建、路由注册、启动
-│   ├── faust_backend/          # 核心模块
-│   │   ├── runtime/            # 运行时生命周期、状态管理
-│   │   ├── agent/              # Agent 相关（LangGraph）
-│   │   ├── plugin_system/      # 插件系统（pluggy）
+│   ├── main.py                 # 入口：建 app、register_routes、start_services
+│   ├── faust_backend/          # 核心模块（领域包）
+│   │   ├── core/               # 跨切面基础设施（叶子，不 import 业务包）
+│   │   │                       #   config(唯一路径锚点) / log / message / events /
+│   │   │                       #   frontend / utils / security / uri / ui_settings
+│   │   ├── llm/                # 模型接入层（provider/formats/thinking/models_dev）
+│   │   ├── agent/              # 一切「会思考的东西」
+│   │   │   ├── runtime/        #   state / invoke / build / rebuild / lock /
+│   │   │   │                   #   compact / scheduler / middleware/ / turn/
+│   │   │   ├── subagent/       #   manager / events
+│   │   │   ├── araya/          #   辅助 Agent 运行时
+│   │   │   ├── prompt/         #   character_card / seed
+│   │   │   ├── skill.py        #   技能管理
+│   │   │   └── trigger.py      #   触发器管理
+│   │   ├── live/               # B 站直播（manager / mode）
+│   │   ├── avatar/             # 虚拟形象配置（vrm_config / vrm_pose）
+│   │   ├── integrations/       # 外部系统（mcp / minecraft / nimble / omnijev / searchapi）
+│   │   ├── services/           # 后台服务与运维（admin / manager / update / components）
+│   │   ├── plugins/            # 插件生态（system/ = pluggy 主体，market.py）
+│   │   ├── api/                # 只做 HTTP/WS 适配（admin/ chat/ system/ + 单文件）
+│   │   ├── app/                # 进程装配：lifespan.py + services.py
 │   │   ├── memory/             # 多模态记忆（向量 + 知识图谱 + BM25）
-│   │   ├── speech/             # 语音处理（VAD/ASR/TTS）
+│   │   ├── speech/             # 语音处理（ASR/TTS）
 │   │   ├── tools/              # Agent 工具集
-│   │   ├── routes/             # FastAPI 路由
-│   │   ├── events/             # 事件系统
-│   │   └── services/           # 后台服务
+│   │   ├── processors/         # 重计算子进程框架（VAD/OCR 等）
+│   │   ├── vendor/ blivedm/    # vendored 第三方，勿改
+│   │   └── download_vad.py     # ⚠ 唯一豁免：CI 按脚本路径调用，勿搬
 │   └── default_plugins/        # 内置插件
 ├── frontend/                   # Electron 前端
 │   ├── electron-main.js        # Electron 主进程
@@ -30,21 +46,29 @@ faust/
 └── .runtime/                   # Python 运行时环境
 ```
 
+> 依赖方向：`core/` 与 `llm/` 是叶子；`agent/` 只依赖 `core`/`llm`/`tools`；
+> 只有 `app/` 与 `api/` 知道全部业务包。路径锚点只有 `core/config.py` 一处
+> （`BACKEND_ROOT` / `PACKAGE_ROOT` / `REPO_ROOT`），守卫见
+> `backend/tests/test_architecture.py`。
+
 ### 核心组件
 
 1. **FastAPI 后端** (`backend/main.py`)
    
    - 端口: 13900
-   - 生命周期: `lifespan()` 管理启动/关闭
-   - 路由: admin_config, chat, audio, plugins 等
+   - 生命周期: `app/lifespan.py` 的 `lifespan()` 管理启动/关闭
+   - 路由: `api/register_routes(app)` 统一注册（admin / chat / system 分组）
+   - 路由模块不写业务逻辑，只做 HTTP/WS 适配
 
-2. **LangGraph Agent** (`runtime/lifecycle.py`)
+2. **LangGraph Agent** (`agent/runtime/`)
    
-   - 使用 `langchain.agents.create_agent()` 创建
+   - 使用 `langchain.agents.create_agent()` 创建（`build.py::_create_agent_with_extensions`）
+   - 调用入口 `invoke.py`（`invoke_agent_locked` / `stream_chat_agent_events`）
+   - 重建入口 `rebuild.py`（`rebuild_runtime`，锁在 `lock.py`）
    - 支持 tool calling、reasoning/thinking 模式
    - Checkpoint: SQLite 持久化 or InMemory
 
-3. **插件系统** (`plugin_system/`)
+3. **插件系统** (`plugins/system/`)
    
    - 基于 `pluggy` 实现
    - Hook: `plugin_loaded`, `heartbeat`, `register_routes`, `register_tools` 等
@@ -69,7 +93,7 @@ faust/
    - 记忆: `memory`, `diary`
    - 特殊: `skill`, `subagent`, `trigger`, `vfs`
 
-7. **触发器系统** (`trigger_manager.py`)
+7. **触发器系统** (`agent/trigger.py`)
    
    - 支持定时触发、事件触发
    - 与插件系统集成

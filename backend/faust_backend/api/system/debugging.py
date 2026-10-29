@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body
-from faust_backend.routes.subagents import subagent_status_overrides
+from faust_backend.api.chat.subagents import subagent_status_overrides
 from faust_backend.agent.runtime import state
 
 from faust_backend.agent.skill import list_skills

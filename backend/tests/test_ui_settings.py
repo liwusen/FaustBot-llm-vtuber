@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.core.ui_settings as ui_settings
-from faust_backend.routes.ui_settings import get_ui_setting, post_ui_setting
+from faust_backend.api.system.ui_settings import get_ui_setting, post_ui_setting
 
 
 def test_ui_settings_load_defaults_when_missing(tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.encoders import jsonable_encoder
 
 from faust_backend.agent.runtime import state
-from faust_backend.routes import debugging
+from faust_backend.api.system import debugging
 from faust_backend.agent.subagent.manager import SubagentManager
 import faust_backend.agent.skill as skill_manager
 import faust_backend.core.config as conf
@@ -31,7 +31,7 @@ async def main() -> None:
     saved_name = getattr(conf, "AGENT_NAME", "faust")
     saved_root = debugging.CONFIG_ROOT
 
-    from faust_backend.plugin_system.manager import PluginManager
+    from faust_backend.plugins.system.manager import PluginManager
 
     real_pm = PluginManager()
     state.plugin_manager = real_pm

@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException, Query
 import faust_backend.core.config as conf
 from faust_backend.core.log import get_logger
 
-from .errors import ProcessorNotFoundError
-from .manager import get_processor_manager
+from faust_backend.processors.errors import ProcessorNotFoundError
+from faust_backend.processors.manager import get_processor_manager
 
 log = get_logger("faust.processor.admin")
 

@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 _PLUGIN_COMMON = '''
 from __future__ import annotations
 
-from faust_backend.plugin_system import PluginManifest, hookimpl
-from faust_backend.plugin_system.plugin_base import FaustPlugin
+from faust_backend.plugins.system import PluginManifest, hookimpl
+from faust_backend.plugins.system.plugin_base import FaustPlugin
 from faust_backend.processors.base import Processor
 
 
@@ -100,7 +100,7 @@ def _write_plugin(root: Path, plugin_id: str, source: str) -> Path:
 
 @pytest.mark.asyncio
 async def test_plugin_processor_can_be_required_and_invoked(tmp_path):
-    from faust_backend.plugin_system import PluginManager
+    from faust_backend.plugins.system import PluginManager
     from faust_backend.processors import get_processor_manager
     from faust_backend.processors.errors import ProcessorNotFoundError
     from faust_backend.processors.registry import get_processor
@@ -137,7 +137,7 @@ async def test_plugin_processor_can_be_required_and_invoked(tmp_path):
 
 @pytest.mark.asyncio
 async def test_broken_plugin_processor_marks_plugin_load_failed(tmp_path):
-    from faust_backend.plugin_system import PluginManager
+    from faust_backend.plugins.system import PluginManager
 
     plugins_dir = tmp_path / "plugins"
     _write_plugin(plugins_dir, "tmp_broken_plugin", BROKEN_PLUGIN_MAIN)
@@ -152,7 +152,7 @@ async def test_broken_plugin_processor_marks_plugin_load_failed(tmp_path):
 @pytest.mark.asyncio
 async def test_plugin_load_failure_rolls_back_registered_processors(tmp_path):
     """Processor 注册后插件才加载失败：必须回滚，否则名字被永久占住。"""
-    from faust_backend.plugin_system import PluginManager
+    from faust_backend.plugins.system import PluginManager
     from faust_backend.processors.errors import ProcessorNotFoundError
     from faust_backend.processors.registry import get_processor
 

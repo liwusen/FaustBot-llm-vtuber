@@ -10,7 +10,7 @@ import threading
 import os
 
 import faust_backend.core.config as conf
-import faust_backend.nimble as nimble
+import faust_backend.integrations.nimble as nimble
 from faust_backend.agent.runtime.turn import presence as frontend_presence
 from pydantic import BaseModel, Field, field_validator
 from faust_backend.core.log import get_logger
@@ -403,7 +403,7 @@ async def render_trigger_text(task: dict) -> str | None:
     成立，放在消费循环里会让"怎么描述一条触发"散落在路由层。消费侧（命令 WS）
     只负责把 payload 变成一条请求交给调度器。
     """
-    from faust_backend import live_mode
+    from faust_backend.live import mode as live_mode
 
     trigger_text = f"<Trigger>触发器唤醒了你，请根据触发器内容执行相应操作。{str(task)}"
     if not isinstance(task, dict):

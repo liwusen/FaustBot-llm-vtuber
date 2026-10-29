@@ -25,7 +25,7 @@ from langchain_core.messages import AIMessageChunk
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import faust_backend.core.config as conf
-import faust_backend.routes.chat as chat
+from faust_backend.api.chat import chat as chat
 from faust_backend.agent.runtime import rebuild
 from faust_backend.agent.runtime import state
 from faust_backend.agent.runtime.invoke import (
@@ -323,9 +323,9 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
 
     只保留真正出问题的结构：一把锁 + 临界区 + 临界区**之外**的引导对话。
     """
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.services.admin as admin_runtime
     import faust_backend.llm_tools as llm_tools
-    import faust_backend.mcp_manager as mcp_manager
+    import faust_backend.integrations.mcp as mcp_manager
     import faust_backend.llm.provider as provider
 
     fake_agent = FakeInvokeAgent()

@@ -13,7 +13,7 @@ from tqdm import tqdm
 import requests
 
 import faust_backend.core.config as conf
-from faust_backend.update_manager import GH_PROXY, is_newer_version
+from faust_backend.services.update import GH_PROXY, is_newer_version
 
 from faust_backend.core.log import get_logger
 

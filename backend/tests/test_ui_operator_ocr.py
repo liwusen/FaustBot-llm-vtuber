@@ -12,7 +12,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from faust_backend.plugin_system import PluginManager
+from faust_backend.plugins.system import PluginManager
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / "default_plugins"
 

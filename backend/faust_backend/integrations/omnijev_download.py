@@ -21,7 +21,7 @@ from typing import Callable
 
 from tqdm.auto import tqdm as _tqdm_auto
 
-from faust_backend.omnijev_runtime import SIZES, quant_config
+from faust_backend.integrations.omnijev import SIZES, quant_config
 
 LogFn = Callable[[str], None]
 

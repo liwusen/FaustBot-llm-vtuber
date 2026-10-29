@@ -21,7 +21,7 @@ log = get_logger("faust.lifecycle")
 
 def _collect_runtime_tools() -> list:
     """收集主 Agent 的完整工具列表（内置 + MCP + 插件注入）。"""
-    from faust_backend.mcp_manager import get_mcp_manager
+    from faust_backend.integrations.mcp import get_mcp_manager
 
     base_tools = list(llm_tools.get_tools_for_agent(state.AGENT_NAME))
     mcp_tools = get_mcp_manager().get_langchain_tools()
@@ -97,7 +97,7 @@ def _find_tool_by_name(name: str):
 
 
 def _build_subagent_toolsets() -> dict[str, list]:
-    from faust_backend.mcp_manager import get_mcp_manager
+    from faust_backend.integrations.mcp import get_mcp_manager
 
     toolsets = {
         "BASESET": [

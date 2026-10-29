@@ -23,7 +23,7 @@ from typing import Any, Callable
 from lm import AgileLogManager
 from agile_base import AgileContext, AgileHookBase, AgileHookType, AgileModule, AgileStorage, build_invoker
 import faust_backend.core.config as conf
-from faust_backend.plugin_system import PluginContext
+from faust_backend.plugins.system import PluginContext
 from faust_backend.tools.vfs import get_faustbot_vfs
 
 MODULES: dict[str, AgileModule] = {}

@@ -13,7 +13,7 @@ except Exception:
     def tool(func):
         return func
 
-from faust_backend.plugin_system import PluginContext, PluginManifest, ToolSpec, hookimpl
+from faust_backend.plugins.system import PluginContext, PluginManifest, ToolSpec, hookimpl
 from faust_backend.processors import get_processor_manager
 
 

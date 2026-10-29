@@ -11,8 +11,8 @@ except Exception:
 from langchain_community.utilities import WikipediaAPIWrapper
 
 import faust_backend.core.config as conf
-from faust_backend.plugin_system import PluginContext, PluginManifest, ToolSpec
-from faust_backend.searchapi_patched import SearchApiAPIWrapper
+from faust_backend.plugins.system import PluginContext, PluginManifest, ToolSpec
+from faust_backend.integrations.searchapi import SearchApiAPIWrapper
 
 
 class Plugin:

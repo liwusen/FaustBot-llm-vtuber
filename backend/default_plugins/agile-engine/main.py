@@ -15,7 +15,7 @@ if _PLUGIN_DIR not in sys.path:
     sys.path.insert(0, _PLUGIN_DIR)
 
 from faust_backend.core.log import get_logger
-from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
 import runner  # noqa: E402
 

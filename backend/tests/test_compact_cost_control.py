@@ -161,7 +161,7 @@ def test_usage_is_logged_for_cost_audit(monkeypatch, caplog):
 
 def test_cost_control_keys_are_exposed_to_frontend():
     """五个压缩配置键必须在公共配置默认值里，否则前端「AI 服务商/高级配置」渲染不出它们。"""
-    from faust_backend import admin_runtime
+    from faust_backend.services import admin as admin_runtime
 
     defaults = admin_runtime.PUBLIC_CONFIG_DEFAULTS
     assert defaults["COMPACT_COST_CONTROL_ENABLED"] is False

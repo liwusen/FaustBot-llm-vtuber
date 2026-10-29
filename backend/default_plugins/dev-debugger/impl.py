@@ -13,7 +13,7 @@ import json
 import re
 from typing import Any
 
-from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, hookimpl
 from faust_backend.core.log import get_logger
 import asyncio
 

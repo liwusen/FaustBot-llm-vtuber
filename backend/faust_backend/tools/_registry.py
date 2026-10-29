@@ -78,7 +78,7 @@ def get_tools_for_agent(agent_name: str | None = None):
     model_type = str(getattr(conf, 'MODEL_TYPE', 'live2d') or 'live2d').strip().lower()
     md_block_excluded = set() if bool(getattr(conf, 'MD_BLOCK_ENABLED', True)) else set(MD_BLOCK_TOOL_NAMES)
     try:
-        from faust_backend.live_mode import is_live_mode, get_excluded_tool_names
+        from faust_backend.live.mode import is_live_mode, get_excluded_tool_names
         if is_live_mode():
             excluded = DEFAULT_EXCLUDED_TOOL_NAMES | get_excluded_tool_names() | md_block_excluded
             if model_type != "vrm":

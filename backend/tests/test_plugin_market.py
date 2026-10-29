@@ -11,8 +11,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 sys.argv = [sys.argv[0]]
 
-import faust_backend.plugin_market as plugin_market
-from faust_backend.update_manager import is_newer_version
+import faust_backend.plugins.market as plugin_market
+from faust_backend.services.update import is_newer_version
 
 
 def _catalog_payload(plugins):

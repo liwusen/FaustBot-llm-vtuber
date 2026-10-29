@@ -13,11 +13,11 @@ import tqdm
 
 import faust_backend.agent.runtime.state as state
 import faust_backend.agent.trigger as trigger_manager
-import faust_backend.service_manager as service_manager
+import faust_backend.services.manager as service_manager
 import faust_backend.speech_runtime as speech_runtime
 from faust_backend.core.config import args
 from faust_backend.core.log import get_logger
-from faust_backend.plugin_system import PluginManager
+from faust_backend.plugins.system import PluginManager
 
 log = get_logger("faust.lifecycle")
 

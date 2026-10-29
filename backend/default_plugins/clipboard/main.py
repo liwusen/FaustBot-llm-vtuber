@@ -9,7 +9,7 @@ except Exception:
         return func
 import sys
 import subprocess
-from faust_backend.plugin_system import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
+from faust_backend.plugins.system import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 
 
 class EchoTraceMiddleware:

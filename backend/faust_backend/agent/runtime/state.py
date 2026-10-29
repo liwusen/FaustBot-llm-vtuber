@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from uvicorn import Server
 
 if TYPE_CHECKING:
-    from faust_backend.plugin_system.manager import PluginManager
+    from faust_backend.plugins.system.manager import PluginManager
 
 log = get_logger("faust.runtime.state")
 

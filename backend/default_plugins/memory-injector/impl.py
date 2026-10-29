@@ -25,7 +25,7 @@ from faust_backend.core.log import get_logger
 from faust_backend.memory import get_memory
 from faust_backend.memory.stopwords import filter_info_tokens
 from faust_backend.memory.tokenize_pool import jieba_tokenize
-from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, hookimpl
 
 log = get_logger("faust.plugins.memory-injector")
 

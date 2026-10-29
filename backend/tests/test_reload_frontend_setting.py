@@ -30,7 +30,7 @@ def test_bridge_request_avatar_capabilities_pushes_command():
 
 
 def test_push_reload_if_ui_changed_on_ui_key(monkeypatch):
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.services.admin as admin_runtime
     import faust_backend.core.frontend.api as b2f
 
     calls = []
@@ -43,7 +43,7 @@ def test_push_reload_if_ui_changed_on_ui_key(monkeypatch):
 
 
 def test_push_reload_if_ui_changed_ignores_non_ui_keys(monkeypatch):
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.services.admin as admin_runtime
     import faust_backend.core.frontend.api as b2f
 
     calls = []
@@ -57,7 +57,7 @@ def test_push_reload_if_ui_changed_ignores_non_ui_keys(monkeypatch):
 
 def test_push_reload_if_ui_changed_normalization(monkeypatch):
     """None 与 '' 视为相等；int 与等值字符串视为相等（save_config 可能改类型）"""
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.services.admin as admin_runtime
     import faust_backend.core.frontend.api as b2f
 
     calls = []
@@ -73,13 +73,13 @@ def test_push_reload_if_ui_changed_normalization(monkeypatch):
 
 
 def test_ptt_mode_default_is_true():
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.services.admin as admin_runtime
 
     assert admin_runtime.PUBLIC_CONFIG_DEFAULTS["PTT_MODE"] is True
 
 
 def test_push_reload_if_ui_changed_on_ptt_mode(monkeypatch):
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.services.admin as admin_runtime
     import faust_backend.core.frontend.api as b2f
 
     calls = []

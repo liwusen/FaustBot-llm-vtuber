@@ -2,7 +2,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from os.path import join as pjoin
 import faust_backend.core.config as conf
-import faust_backend.admin_runtime as admin_runtime
+import faust_backend.services.admin as admin_runtime
 import faust_backend.agent.prompt.character_card as character_card
 from faust_backend.agent.runtime import state
 from faust_backend.agent.runtime.rebuild import rebuild_runtime

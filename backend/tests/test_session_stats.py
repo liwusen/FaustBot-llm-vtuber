@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.llm.provider import DEFAULT_CONTEXT_LENGTH, ModelProvider, ModelProviders
 from faust_backend.agent.runtime.turn import session_stats
-from faust_backend.routes.session import session_context_api
+from faust_backend.api.chat.session import session_context_api
 
 
 # ── format_tokens ──────────────────────────────────────────────────
@@ -206,7 +206,7 @@ def test_session_context_route_returns_stats(monkeypatch):
 
 
 def test_session_token_summary_text_shape(monkeypatch):
-    from faust_backend.routes.chat import _session_token_summary
+    from faust_backend.api.chat.chat import _session_token_summary
 
     messages = [
         HumanMessage(content="你好"),
@@ -229,7 +229,7 @@ def test_session_token_summary_text_shape(monkeypatch):
 
 
 def test_session_token_summary_without_usage(monkeypatch):
-    from faust_backend.routes.chat import _session_token_summary
+    from faust_backend.api.chat.chat import _session_token_summary
 
     _patch_session(monkeypatch, messages=[HumanMessage(content="你好")])
 
@@ -244,7 +244,7 @@ def test_session_token_summary_without_usage(monkeypatch):
 
 
 def test_session_token_summary_empty_session(monkeypatch):
-    from faust_backend.routes.chat import _session_token_summary
+    from faust_backend.api.chat.chat import _session_token_summary
 
     _patch_session(monkeypatch, messages=[])
 

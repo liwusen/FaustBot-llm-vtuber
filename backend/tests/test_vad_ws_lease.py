@@ -115,7 +115,7 @@ def _frame() -> bytes:
 
 @pytest.mark.asyncio
 async def test_vad_ws_forwards_probability_and_is_speech(monkeypatch):
-    import faust_backend.routes.audio as audio_routes
+    import faust_backend.api.chat.audio as audio_routes
 
     manager = _FakeManager(lambda: _FakeLease(_FakeHandle(), [{"probability": 0.83, "is_speech": True}]))
     monkeypatch.setattr(audio_routes, "get_processor_manager", lambda: manager)
@@ -131,7 +131,7 @@ async def test_vad_ws_forwards_probability_and_is_speech(monkeypatch):
 async def test_vad_ws_degrades_with_error_field_and_backs_off(monkeypatch):
     from faust_backend.processors.errors import ProcessorStartError
 
-    import faust_backend.routes.audio as audio_routes
+    import faust_backend.api.chat.audio as audio_routes
 
     def _raise():
         raise ProcessorStartError("torch 缺失", last_error="ModuleNotFoundError: torch")
@@ -153,7 +153,7 @@ async def test_vad_ws_degrades_with_error_field_and_backs_off(monkeypatch):
 @pytest.mark.asyncio
 async def test_vad_ws_self_heals_after_worker_crash(monkeypatch):
     """同一连接里 worker 崩溃后：换新 lease 并继续回帧（自愈）。"""
-    import faust_backend.routes.audio as audio_routes
+    import faust_backend.api.chat.audio as audio_routes
 
     handle = _FakeHandle(state="ACTIVE")
     leases: list[_FakeLease] = []
@@ -189,7 +189,7 @@ async def test_vad_ws_releases_new_lease_when_self_heal_fails(monkeypatch):
     """自愈时新 lease 起不来：新 lease 也必须释放，否则引用计数永久残留。"""
     from faust_backend.processors.errors import ProcessorStartError
 
-    import faust_backend.routes.audio as audio_routes
+    import faust_backend.api.chat.audio as audio_routes
 
     handle = _FakeHandle(state="ACTIVE")
 
@@ -227,7 +227,7 @@ async def test_vad_ws_releases_new_lease_when_self_heal_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_vad_ws_releases_lease_on_disconnect(monkeypatch):
-    import faust_backend.routes.audio as audio_routes
+    import faust_backend.api.chat.audio as audio_routes
 
     lease = _FakeLease(_FakeHandle(), [{"probability": 0.1, "is_speech": False}])
     manager = _FakeManager(lambda: lease)
@@ -239,7 +239,7 @@ async def test_vad_ws_releases_lease_on_disconnect(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_vad_status_keeps_legacy_fields(monkeypatch):
-    import faust_backend.routes.audio as audio_routes
+    import faust_backend.api.chat.audio as audio_routes
 
     manager = _FakeManager(lambda: _FakeLease(_FakeHandle(), []))
     manager.handle_obj.state = "ACTIVE"

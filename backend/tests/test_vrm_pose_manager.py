@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
-import faust_backend.vrm_pose_manager as vpm
+import faust_backend.avatar.vrm_pose as vpm
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +60,7 @@ def client():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from faust_backend.routes.admin_models import router
+    from faust_backend.api.admin.admin_models import router
 
     app = FastAPI()
     app.include_router(router)

@@ -25,7 +25,7 @@ except Exception:
         return func
 
 from faust_backend.core.log import get_logger
-from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
 log = get_logger("faust.plugin.song-studio")
 

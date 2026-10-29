@@ -18,7 +18,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.core.config as conf
-import faust_backend.routes.public_api as public_api
+import faust_backend.api.public as public_api
 import faust_backend.agent.trigger as tm
 from faust_backend.agent.runtime.turn import presence as frontend_presence
 
@@ -162,7 +162,7 @@ def test_drain_inbox_as_refused_records_each_item():
 
 
 def test_debugging_trigger_queue_reports_presence():
-    from faust_backend.routes import debugging
+    from faust_backend.api.system import debugging
 
     frontend_presence.mark_offline("conn")
     tm._emit_trigger({"id": "x::1", "type": "event", "event_name": "e"})
@@ -230,7 +230,7 @@ class _FakeWs:
 async def test_command_websocket_marks_presence_and_drains_on_disconnect(monkeypatch):
     import faust_backend.core.frontend.api as backend2front
     import faust_backend.core.events as events
-    import faust_backend.routes.chat as chat
+    from faust_backend.api.chat import chat as chat
     from faust_backend.agent.runtime import state
 
     # 模块级 Event 会绑定"首次使用它的事件循环"；跨 pytest 模块时那可能是已关闭的
@@ -276,7 +276,7 @@ async def test_command_websocket_detects_silent_disconnect(monkeypatch):
     """
     import faust_backend.core.frontend.api as backend2front
     import faust_backend.core.events as events
-    import faust_backend.routes.chat as chat
+    from faust_backend.api.chat import chat as chat
     from faust_backend.agent.runtime import state
     from starlette.websockets import WebSocketDisconnect
 

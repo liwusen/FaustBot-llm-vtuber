@@ -15,12 +15,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from faust_backend.component_manager import (
+from faust_backend.services.components import (
     detect_components,
     detect_gpu,
     on_component_installed,
 )
-import faust_backend.service_manager as service_manager
+import faust_backend.services.manager as service_manager
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.component.api")

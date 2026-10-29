@@ -5,7 +5,7 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 import faust_backend.core.config as conf
 import faust_backend.core.frontend.api as backend2frontend
-import faust_backend.vrm_pose_manager as vrm_pose_manager
+import faust_backend.avatar.vrm_pose as vrm_pose_manager
 
 VRM_EXPRESSIONS = ["neutral", "happy", "angry", "sad", "relaxed", "surprised"]
 

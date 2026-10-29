@@ -11,7 +11,7 @@ AGILE_DIR = Path(__file__).resolve().parents[1] / "default_plugins" / "agile-eng
 sys.path.insert(0, str(AGILE_DIR))
 
 import faust_backend.core.config as conf  # noqa: E402
-from faust_backend.plugin_system import PluginContext  # noqa: E402
+from faust_backend.plugins.system import PluginContext  # noqa: E402
 from faust_backend.tools.vfs import get_faustbot_vfs  # noqa: E402
 import pytest_asyncio
 import runner  # noqa: E402

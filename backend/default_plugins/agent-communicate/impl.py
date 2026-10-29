@@ -28,7 +28,7 @@ except ImportError as exc:  # pragma: no cover - 依赖缺失必须显式失败
     ) from exc
 
 from faust_backend.core.log import get_logger
-from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, hookimpl
 
 from agents import AgentRegistry, AgentRuntime, AgentSettings, build_settings
 from tasks import EnvelopeError, TaskStore

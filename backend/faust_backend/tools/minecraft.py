@@ -4,7 +4,7 @@ import asyncio
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-import faust_backend.minecraft_client as minecraft_client
+import faust_backend.integrations.minecraft as minecraft_client
 
 
 @register

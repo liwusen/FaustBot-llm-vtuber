@@ -14,12 +14,12 @@ from fastapi import FastAPI
 import faust_backend.agent.araya.runtime as araya_runtime
 import faust_backend.agent.runtime.state as state
 import faust_backend.agent.trigger as trigger_manager
-import faust_backend.blive_manager as blive_manager
+import faust_backend.live.manager as blive_manager
 import faust_backend.core.frontend.api as backend2frontend
-import faust_backend.live_api as live_api
-import faust_backend.minecraft_client as minecraft_client
-import faust_backend.nimble as nimble
-import faust_backend.service_manager as service_manager
+import faust_backend.api.live as live_api
+import faust_backend.integrations.minecraft as minecraft_client
+import faust_backend.integrations.nimble as nimble
+import faust_backend.services.manager as service_manager
 from faust_backend.agent.runtime.rebuild import rebuild_runtime
 from faust_backend.app.services import _plugin_heartbeat_loop, init_plugin_manager
 from faust_backend.core.config import args
@@ -56,7 +56,7 @@ async def _start_araya_runtime() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_plugin_manager()
-    from faust_backend.mcp_manager import get_mcp_manager
+    from faust_backend.integrations.mcp import get_mcp_manager
 
     mcp_manager = get_mcp_manager()
 

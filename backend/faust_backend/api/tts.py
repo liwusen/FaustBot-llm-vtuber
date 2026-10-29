@@ -6,13 +6,9 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-from .edge_tts_manager import edge_tts_manager
+from faust_backend.speech.tts.edge_manager import edge_tts_manager
 
 router = APIRouter(prefix="/faust/edge-tts", tags=["edge-tts"])
-
-def register_edge_tts_routes(app):
-    """注册Edge TTS路由到FastAPI应用"""
-    app.include_router(router)
 
 class VoiceResponse(BaseModel):
     """语音信息响应"""

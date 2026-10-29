@@ -65,7 +65,7 @@ class _StubManager:
 
 @pytest.fixture
 def client(monkeypatch):
-    import faust_backend.processors.admin_api as admin_api
+    import faust_backend.api.processors as admin_api
 
     stub = _StubManager()
     monkeypatch.setattr(admin_api, "get_processor_manager", lambda: stub)

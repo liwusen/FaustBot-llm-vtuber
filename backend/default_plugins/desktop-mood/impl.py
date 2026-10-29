@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import faust_backend.core.frontend.api as backend2frontend
-from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, hookimpl
 
 from faust_backend.core.log import get_logger
 log = get_logger("faust.plugins.desktop-mood")
@@ -1178,7 +1178,7 @@ class Plugin(FaustPlugin):
             return str(template or '')
 
     def _show_nimble_note(self, title: str, note: str) -> None:
-        import faust_backend.nimble as nimble
+        import faust_backend.integrations.nimble as nimble
         import asyncio
 
         html = '<div style="padding:18px;font-family:Segoe UI;color:#fff;background:rgba(20,20,30,.85);border-radius:16px;">' + note + '</div>'

@@ -115,7 +115,7 @@ class ArayaRuntime:
 
     def _sync_templates(self) -> None:
         try:
-            from faust_backend.admin_runtime import sync_araya_template_files
+            from faust_backend.services.admin import sync_araya_template_files
             result = sync_araya_template_files()
             updated = [k for k, v in result.items() if v]
             if updated:

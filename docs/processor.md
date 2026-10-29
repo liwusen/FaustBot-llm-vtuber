@@ -360,7 +360,7 @@ VAD 常量（`processors/builtin/vad.py`）：`SAMPLE_RATE = 16000`、`WINDOW_SI
 ## 在插件中注册 Processor
 
 ```python
-from faust_backend.plugin_system import PluginContext, hookimpl
+from faust_backend.plugins.system import PluginContext, hookimpl
 from faust_backend.processors.base import Processor
 
 
@@ -454,7 +454,7 @@ curl -X POST http://127.0.0.1:13900/faust/admin/processors/VAD/stop
 }
 ```
 
-两个值都在 `faust_backend/config_loader.py` 以模块级大写全局暴露，`prune_loop` 每轮重新读取，改配置无需重启后端（`PROCESSOR_PRUNE_INTERVAL` 设为 `0` 同样即时生效）。详见[配置说明](configuration.md#高级重计算子进程processor回收)。
+两个值都在 `faust_backend/core/config.py` 以模块级大写全局暴露，`prune_loop` 每轮重新读取，改配置无需重启后端（`PROCESSOR_PRUNE_INTERVAL` 设为 `0` 同样即时生效）。详见[配置说明](configuration.md#高级重计算子进程processor回收)。
 
 ## 开发与测试
 

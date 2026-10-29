@@ -188,7 +188,7 @@ async def synthesize_tts(text: str, lang: str | None = None) -> tuple[bytes, str
 
 async def _synthesize_impl(payload_text: str, lang: str | None) -> tuple[bytes, str]:
     if current_tts_mode() == "edge-tts":
-        import faust_backend.tts_edge as tts_edge
+        import faust_backend.speech.tts.edge as tts_edge
         try:
             return await tts_edge.synthesize_edge_tts(
                 payload_text,

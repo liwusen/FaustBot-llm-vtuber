@@ -2,7 +2,7 @@
  * 上下文占用药丸（输入栏工具条右端）。
  *
  * 分工约定：token 数字与「K / M」格式化规则**只在后端实现一份**
- * （`faust_backend/runtime/session_stats.py` 的 `collect_session_stats()` /
+ * （`faust_backend/agent/runtime/turn/session_stats.py` 的 `collect_session_stats()` /
  * `format_tokens()`），前端只消费 `used_tokens_text` / `context_length_text`
  * 与原始整数（后者仅用于 hover 提示里的完整数字），不再复制一套规则，
  * 避免两端阈值不同导致显示漂移。

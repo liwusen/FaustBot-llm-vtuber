@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import faust_backend.core.config as conf
-from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
 from faust_backend.core.log import get_logger
 log = get_logger("faust.plugins.emotion-engine")

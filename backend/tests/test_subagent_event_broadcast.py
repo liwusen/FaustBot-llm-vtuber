@@ -145,7 +145,7 @@ async def test_chat_ws_forward_survives_manager_rebuild(tmp_path, monkeypatch):
 
     from starlette.websockets import WebSocketDisconnect
 
-    from faust_backend.routes import chat as chat_route
+    from faust_backend.api.chat import chat as chat_route
     from faust_backend.agent.runtime import state as runtime_state
 
     class FakeWebSocket:

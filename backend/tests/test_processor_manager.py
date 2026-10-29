@@ -1129,7 +1129,7 @@ async def test_plugin_context_delegates_processor_calls():
     """PluginContext.processor_invoke 只是把调用转给注入的 callable（并 await 其结果）。"""
     from pathlib import Path
 
-    from faust_backend.plugin_system.interfaces import PluginContext
+    from faust_backend.plugins.system.interfaces import PluginContext
 
     calls: list[tuple] = []
 

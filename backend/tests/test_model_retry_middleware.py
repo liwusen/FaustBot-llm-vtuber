@@ -85,7 +85,7 @@ async def test_exhausted_retries_raise_original_error(monkeypatch):
 
 
 def test_main_agent_composition_gets_retry_middleware(monkeypatch):
-    import faust_backend.mcp_manager as mcp_manager
+    import faust_backend.integrations.mcp as mcp_manager
     from faust_backend.agent.runtime import build, state
 
     class _FakeMcp:

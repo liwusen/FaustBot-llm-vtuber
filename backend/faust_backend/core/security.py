@@ -83,7 +83,7 @@ async def check_access(path, operation):
         bool: 是否允许访问
     """
     try:
-        from faust_backend.live_mode import is_live_mode
+        from faust_backend.live.mode import is_live_mode
         if is_live_mode():
             norm_path = os.path.normpath(path).replace("\\", "/")
             if not await match_path_pattern(norm_path, "*/agents/*.md"):

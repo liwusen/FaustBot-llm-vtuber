@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-import faust_backend.admin_runtime as admin_runtime
+import faust_backend.services.admin as admin_runtime
 from faust_backend.agent.runtime import state
 from faust_backend.agent.runtime.rebuild import rebuild_runtime
 

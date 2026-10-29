@@ -33,48 +33,8 @@ _t.begin("runtime_state")
 from faust_backend.agent.runtime import state
 _t.end("runtime_state")
 
-# ── 内部路由模块 ──
-_t.begin("admin_routes")
-from faust_backend.routes.admin_config import router as admin_config_router
-from faust_backend.routes.admin_runtime import router as admin_runtime_router
-from faust_backend.routes.admin_models import router as admin_models_router
-from faust_backend.routes.admin_services import router as admin_services_router
-from faust_backend.routes.admin_agents import router as admin_agents_router
-from faust_backend.routes.admin_skills import router as admin_skills_router
-from faust_backend.routes.admin_triggers import router as admin_triggers_router
-from faust_backend.routes.admin_plugins import router as admin_plugins_router
-from faust_backend.routes.admin_logs import router as admin_logs_router
-from faust_backend.routes.admin_mcp import router as admin_mcp_router
-from faust_backend.routes.admin_providers import router as admin_providers_router
-from faust_backend.processors.admin_api import router as processors_router
-from faust_backend.routes.ui_settings import router as ui_settings_router
-_t.end("admin_routes")
-_t.begin("chat_routes")
-from faust_backend.routes.chat import router as chat_router
-from faust_backend.routes.session import router as session_router
-from faust_backend.routes.hil_nimble import router as hil_nimble_router
-from faust_backend.routes.audio import router as audio_router
-from faust_backend.routes.system import router as system_router
-from faust_backend.routes.autocomplete import router as autocomplete_router
-from faust_backend.routes.logger_ws import router as logger_ws_router
-from faust_backend.routes.subagents import router as subagents_router
-from faust_backend.routes.debugging import router as debugging_router
-from faust_backend.routes.public_api import router as public_api_router
-_t.end("chat_routes")
-
-# ── 组件管理路由 ──
-_t.begin("component")
-from faust_backend.component_api import router as component_router
-_t.end("component")
-
-# ── 外部模块路由 ──
-_t.begin("external_routes")
-import faust_backend.araya_api as araya_api
-import faust_backend.live_api as live_api
-import faust_backend.update_api as update_api
-import faust_backend.memory.api as memory_api
-import faust_backend.edge_tts_api as edge_tts_api
-_t.end("external_routes")
+# ── 路由注册入口 ──
+from faust_backend.api import register_routes
 
 # ── FastAPI 应用 ──
 app = FastAPI(
@@ -94,42 +54,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 注册内部路由 ──
-routers = [
-    admin_config_router,
-    admin_runtime_router,
-    admin_models_router,
-    admin_services_router,
-    admin_agents_router,
-    admin_skills_router,
-    admin_triggers_router,
-    admin_plugins_router,
-    admin_logs_router,
-    admin_mcp_router,
-    admin_providers_router,
-    processors_router,
-    ui_settings_router,
-    chat_router,
-    session_router,
-    hil_nimble_router,
-    audio_router,
-    system_router,
-    autocomplete_router,
-    component_router,
-    logger_ws_router,
-    subagents_router,
-    debugging_router,
-    public_api_router,
-    memory_api.router,  # 内部 memory API
-    update_api.router,  # 内部 update API
-    live_api.router,  # 内部 live API
-]
-for r in routers:
-    app.include_router(r)
+# ── 注册路由 ──
+register_routes(app)
 
-# ── 注册外部路由 ──
-araya_api.register_araya_routes(app)
-edge_tts_api.register_edge_tts_routes(app)  # TODO: 以上几个路由应该使用router注册
 # ── 插件前端静态资源挂载 ──
 _t.begin("staticfiles")
 from fastapi.staticfiles import StaticFiles
@@ -162,7 +89,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 # ── 启动后台服务 ──
 _t.begin("services")
 start_services()
-from faust_backend.component_manager import init_component_guard
+from faust_backend.services.components import init_component_guard
 
 init_component_guard()
 _t.end("services")

@@ -377,7 +377,7 @@ def register_pip_deps(self) -> list[str]:
 
 ```python
 from langchain.tools import tool
-from faust_backend.plugin_system import ToolSpec
+from faust_backend.plugins.system import ToolSpec
 
 @tool
 def my_search(query: str) -> str:
@@ -450,7 +450,7 @@ async with manager.require("MY_TEXT", requirer="my_plugin", config={"langs": ["e
 注册 Agent 中间件。
 
 ```python
-from faust_backend.plugin_system import MiddlewareSpec
+from faust_backend.plugins.system import MiddlewareSpec
 
 @hookimpl
 def register_middlewares(self, ctx: PluginContext) -> list:
@@ -556,7 +556,7 @@ def llm_request_pre(self, messages: list, ctx: PluginContext) -> list | None:
     return None
 ```
 
-调用点：`backend/faust_backend/runtime/lifecycle.py` 的 `invoke_agent_locked` 与 `stream_chat_agent_events`（`_apply_llm_request_pre`）。
+调用点：`backend/faust_backend/agent/runtime/invoke.py` 的 `invoke_agent_locked` 与 `stream_chat_agent_events`（`_apply_llm_request_pre`）。
 
 ---
 

@@ -13,7 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
 import faust_backend.agent.subagent.manager as subagent_manager
 from faust_backend.agent.runtime import state as runtime_state
 from faust_backend.tools.read import read
-from faust_backend.routes import subagents as subagent_routes
+from faust_backend.api.chat import subagents as subagent_routes
 from faust_backend.tools import subagent as subagent_tools
 from faust_backend.core.uri import parse
 

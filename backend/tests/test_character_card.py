@@ -16,7 +16,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-import faust_backend.admin_runtime as admin_runtime
+import faust_backend.services.admin as admin_runtime
 import faust_backend.agent.prompt.character_card as character_card
 from faust_backend.memory.store import GraphStore
 

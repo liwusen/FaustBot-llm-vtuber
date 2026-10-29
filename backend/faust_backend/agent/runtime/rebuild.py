@@ -118,7 +118,7 @@ async def _rebuild_runtime_locked(
             )
 
             # ---Templates Makeup---
-            import faust_backend.admin_runtime as admin_runtime
+            import faust_backend.services.admin as admin_runtime
 
             sync_result = admin_runtime.sync_template_files(state.AGENT_NAME)
             if any(sync_result.values()):
@@ -129,7 +129,7 @@ async def _rebuild_runtime_locked(
             await refresh_runtime_nodes(await get_faustbot_vfs(refresh=True))
 
             # ---mcp---
-            from faust_backend.mcp_manager import get_mcp_manager
+            from faust_backend.integrations.mcp import get_mcp_manager
 
             mcp_manager = get_mcp_manager()
             mcp_manager.load_config(getattr(conf, "MCP_SERVERS", {}) or {})

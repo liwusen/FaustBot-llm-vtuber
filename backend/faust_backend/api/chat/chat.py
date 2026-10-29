@@ -10,13 +10,13 @@ from faust_backend.core.message import (
 )
 import faust_backend.core.frontend.api as backend2frontend
 import faust_backend.core.events as events
-import faust_backend.nimble as nimble
+import faust_backend.integrations.nimble as nimble
 import faust_backend.agent.araya.runtime as araya_runtime
 import faust_backend.agent.trigger as trigger_manager
 import faust_backend.agent.runtime.turn.gate as turn_gate
-import faust_backend.admin_runtime as admin_runtime
+import faust_backend.services.admin as admin_runtime
 import faust_backend.core.config as conf
-import faust_backend.service_manager as service_manager
+import faust_backend.services.manager as service_manager
 import faust_backend.agent.skill as skill_manager
 from faust_backend.agent.runtime import state
 from faust_backend.agent.subagent import events as subagent_events
@@ -27,7 +27,7 @@ from faust_backend.agent.runtime.build import _build_chat_model
 from faust_backend.agent.runtime.invoke import stream_chat_agent_events, stream_silent_reply
 from faust_backend.agent.runtime.rebuild import rebuild_runtime, schedule_memory_record_sync
 from faust_backend.agent.runtime.turn.session_stats import collect_session_stats, get_checkpoint_messages
-from faust_backend.mcp_manager import get_mcp_manager
+from faust_backend.integrations.mcp import get_mcp_manager
 from faust_backend.core.log import get_logger
 from faust_backend.agent.runtime.turn.output_store import reset_output_store
 

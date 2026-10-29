@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.mcp_manager import (  # noqa: E402
+from faust_backend.integrations.mcp import (  # noqa: E402
     McpManager,
     McpServerHandle,
     _find_nodejs,

@@ -25,11 +25,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 @pytest.fixture
 def reset_guard():
     """Reset ServiceGuard singleton between tests."""
-    from faust_backend.component_manager import _service_guard as sg
+    from faust_backend.services.components import _service_guard as sg
 
     _ = sg
     yield
-    from faust_backend.component_manager import _service_guard as guard
+    from faust_backend.services.components import _service_guard as guard
 
     if guard is not None:
         guard._restart_counts.clear()
@@ -42,7 +42,7 @@ def reset_guard():
 class TestDetectGpu:
     def test_no_nvidia_smi_fallback_empty(self):
         """nvidia-smi not available -> has_nvidia=False, empty list."""
-        from faust_backend.component_manager import detect_gpu
+        from faust_backend.services.components import detect_gpu
 
         with patch("subprocess.run", side_effect=FileNotFoundError("no nvidia-smi")), \
              patch("torch.cuda.is_available", return_value=False):
@@ -53,7 +53,7 @@ class TestDetectGpu:
 
     def test_nvidia_smi_returns_gpus(self):
         """nvidia-smi returns GPU info."""
-        from faust_backend.component_manager import detect_gpu
+        from faust_backend.services.components import detect_gpu
 
         fake_name_proc = MagicMock()
         fake_name_proc.returncode = 0
@@ -79,8 +79,8 @@ class TestDetectGpu:
 class TestDetectComponents:
     def test_funasr_not_installed(self):
         """funasr not installed, service_manager mocked."""
-        from faust_backend.component_manager import detect_components
-        from faust_backend import service_manager
+        from faust_backend.services.components import detect_components
+        from faust_backend.services import manager as service_manager
 
         with patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
             with patch.object(service_manager, "service_status", return_value={"is_running": False}):
@@ -90,8 +90,8 @@ class TestDetectComponents:
 
     def test_minecraft_bridge_status_from_service_manager(self):
         """Minecraft bridge status reflects service_manager."""
-        from faust_backend.component_manager import detect_components
-        from faust_backend import service_manager
+        from faust_backend.services.components import detect_components
+        from faust_backend.services import manager as service_manager
 
         original = service_manager.service_status
 
@@ -106,8 +106,8 @@ class TestDetectComponents:
 
     def test_minecraft_bridge_not_running(self):
         """Minecraft bridge not running."""
-        from faust_backend.component_manager import detect_components
-        from faust_backend import service_manager
+        from faust_backend.services.components import detect_components
+        from faust_backend.services import manager as service_manager
 
         with patch.object(service_manager, "service_status", return_value={"is_running": False}):
             result = detect_components()
@@ -119,14 +119,14 @@ class TestDetectComponents:
 
 class TestTorchVariants:
     def test_all_variants_have_expected_keys(self):
-        from faust_backend.component_manager import TORCH_VARIANTS
+        from faust_backend.services.components import TORCH_VARIANTS
 
         for key, val in TORCH_VARIANTS.items():
             assert "index_url" in val, f"{key} missing index_url"
             assert "cuda" in val or key == "cpu", f"{key} missing cuda"
 
     def test_aliyun_mirror_template(self):
-        from faust_backend.component_manager import ALIYUN_MIRROR_TEMPLATE
+        from faust_backend.services.components import ALIYUN_MIRROR_TEMPLATE
 
         url = ALIYUN_MIRROR_TEMPLATE.format(variant="cu128")
         assert "cu128" in url
@@ -138,7 +138,7 @@ class TestTorchVariants:
 
 class TestComponentTask:
     def test_to_dict_includes_all_fields(self):
-        from faust_backend.component_api import ComponentTask
+        from faust_backend.api.components import ComponentTask
 
         task = ComponentTask(
             task_id="test-1",
@@ -158,7 +158,7 @@ class TestComponentTask:
         assert d["error"] is None
 
     def test_log_lines_capped_at_200(self):
-        from faust_backend.component_api import ComponentTask
+        from faust_backend.api.components import ComponentTask
 
         task = ComponentTask(
             task_id="test-2", component="tts",
@@ -175,8 +175,8 @@ class TestServiceGuard:
     @pytest.mark.asyncio
     async def test_start_with_guard_already_running(self, reset_guard):
         """If service is already running, skip start."""
-        from faust_backend.component_manager import ServiceGuard
-        from faust_backend import service_manager
+        from faust_backend.services.components import ServiceGuard
+        from faust_backend.services import manager as service_manager
 
         guard = ServiceGuard()
 
@@ -187,7 +187,7 @@ class TestServiceGuard:
     @pytest.mark.asyncio
     async def test_unknown_service_returns_error(self, reset_guard):
         """Unknown service key returns error."""
-        from faust_backend.component_manager import ServiceGuard
+        from faust_backend.services.components import ServiceGuard
 
         guard = ServiceGuard()
         result = await guard.start_with_guard("nonexistent")
@@ -197,7 +197,7 @@ class TestServiceGuard:
     @pytest.mark.asyncio
     async def test_reset_clears_count(self, reset_guard):
         """Reset clears restart count."""
-        from faust_backend.component_manager import ServiceGuard
+        from faust_backend.services.components import ServiceGuard
 
         guard = ServiceGuard()
         guard._restart_counts["mc_operator"] = 2
@@ -205,7 +205,7 @@ class TestServiceGuard:
         assert guard.get_count("mc_operator") == 0
 
     def test_get_count_returns_zero_for_new_service(self, reset_guard):
-        from faust_backend.component_manager import ServiceGuard
+        from faust_backend.services.components import ServiceGuard
 
         guard = ServiceGuard()
         assert guard.get_count("mc_operator") == 0
@@ -218,8 +218,8 @@ class TestStatusApi:
     @pytest.mark.asyncio
     async def test_status_endpoint_mocked(self):
         """GET /faust/components/status returns expected structure."""
-        from faust_backend.component_api import get_component_status
-        from faust_backend import service_manager
+        from faust_backend.api.components import get_component_status
+        from faust_backend.services import manager as service_manager
 
         fake_gpu = {"gpus": [], "has_nvidia": False}
         fake_components = {
@@ -229,8 +229,8 @@ class TestStatusApi:
         }
         fake_service = {"is_running": False}
 
-        with patch("faust_backend.component_api.detect_gpu", return_value=fake_gpu), \
-             patch("faust_backend.component_api.detect_components", return_value=fake_components), \
+        with patch("faust_backend.api.components.detect_gpu", return_value=fake_gpu), \
+             patch("faust_backend.api.components.detect_components", return_value=fake_components), \
              patch.object(service_manager, "service_status", return_value=fake_service):
             response = await get_component_status()
 
@@ -248,7 +248,7 @@ class TestInstallApi:
     @pytest.mark.asyncio
     async def test_install_funasr_creates_task(self):
         """POST /faust/components/install returns task_id."""
-        from faust_backend.component_api import start_install
+        from faust_backend.api.components import start_install
         from pydantic import BaseModel
 
         class FakeReq(BaseModel):
@@ -257,7 +257,7 @@ class TestInstallApi:
             use_aliyun_mirror: bool = False
             tts_variant: str | None = None
 
-        with patch("faust_backend.component_api._run_install") as mock_run:
+        with patch("faust_backend.api.components._run_install") as mock_run:
             response = await start_install(FakeReq())
             assert response.status == "started"
             assert response.task_id is not None
@@ -271,29 +271,29 @@ class TestConfigChangeTrigger:
     @pytest.mark.asyncio
     async def test_asr_mode_changed_to_local_triggers_start(self):
         """ASR_MODE changes to a local engine (whisper) -> start_with_guard('asr') called."""
-        from faust_backend.component_manager import check_and_manage_services
+        from faust_backend.services.components import check_and_manage_services
 
         old = {"ASR_MODE": "cloud"}
         new = {"ASR_MODE": "whisper"}
 
-        with patch("faust_backend.component_manager.get_service_guard") as mock_guard:
+        with patch("faust_backend.services.components.get_service_guard") as mock_guard:
             guard = AsyncMock()
             mock_guard.return_value = guard
-            with patch("faust_backend.service_manager.stop_service"):
+            with patch("faust_backend.services.manager.stop_service"):
                 await check_and_manage_services(old, new)
                 guard.start_with_guard.assert_called_once_with("asr")
 
     @pytest.mark.asyncio
     async def test_asr_mode_changed_to_cloud_triggers_stop(self):
         """ASR_MODE changes to cloud -> stop_service('asr') called."""
-        from faust_backend.component_manager import check_and_manage_services
-        from faust_backend import service_manager
+        from faust_backend.services.components import check_and_manage_services
+        from faust_backend.services import manager as service_manager
 
         old = {"ASR_MODE": "local"}
         new = {"ASR_MODE": "cloud"}
 
         with patch.object(service_manager, "stop_service") as mock_stop:
-            with patch("faust_backend.component_manager.get_service_guard") as mock_guard:
+            with patch("faust_backend.services.components.get_service_guard") as mock_guard:
                 guard = AsyncMock()
                 mock_guard.return_value = guard
                 await check_and_manage_services(old, new)

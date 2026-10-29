@@ -190,7 +190,7 @@ class TestTreeRouteIncludeMetadata:
     def _client(self, memory_store, monkeypatch):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        import faust_backend.memory.api as memory_api
+        import faust_backend.api.memory as memory_api
 
         monkeypatch.setattr(memory_api, "_m", lambda: memory_store)
         app = FastAPI()

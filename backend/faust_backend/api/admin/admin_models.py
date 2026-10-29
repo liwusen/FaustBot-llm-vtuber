@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
-import faust_backend.admin_runtime as admin_runtime
-import faust_backend.vrm_config_manager as vrm_config_manager
-import faust_backend.vrm_pose_manager as vrm_pose_manager
+import faust_backend.services.admin as admin_runtime
+import faust_backend.avatar.vrm_config as vrm_config_manager
+import faust_backend.avatar.vrm_pose as vrm_pose_manager
 from faust_backend.agent.runtime import state
 
 router = APIRouter(tags=["admin-models"])

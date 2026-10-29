@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.core.config as conf
 import faust_backend.core.events as events
-import faust_backend.routes.chat as chat
+from faust_backend.api.chat import chat as chat
 import faust_backend.agent.trigger as tm
 import faust_backend.agent.runtime.turn.gate as tg
 from faust_backend.agent.runtime.turn import presence as frontend_presence

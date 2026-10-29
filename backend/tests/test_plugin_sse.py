@@ -8,10 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from faust_backend.plugin_system import PluginManager
-from faust_backend.plugin_system.manager import PluginLoadError
-from faust_backend.plugin_system.plugin_base import FaustPlugin
-from faust_backend.plugin_system.interfaces import PluginManifest
+from faust_backend.plugins.system import PluginManager
+from faust_backend.plugins.system.manager import PluginLoadError
+from faust_backend.plugins.system.plugin_base import FaustPlugin
+from faust_backend.plugins.system.interfaces import PluginManifest
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'
 STATE_FILE = Path(__file__).resolve().parents[2] / 'logs' / 'plugin-test-state-sse.json'

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-import faust_backend.service_manager as service_manager
+import faust_backend.services.manager as service_manager
 from faust_backend.agent.runtime import state
 
 router = APIRouter(tags=["admin-services"])

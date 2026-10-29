@@ -3,8 +3,8 @@ import json
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-import faust_backend.plugin_market as plugin_market
-from faust_backend.plugin_system.manager import PluginLoadError
+import faust_backend.plugins.market as plugin_market
+from faust_backend.plugins.system.manager import PluginLoadError
 from faust_backend.agent.runtime import state
 from faust_backend.agent.runtime.rebuild import rebuild_runtime
 from faust_backend.app.services import _sync_plugin_trigger_filters

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-import faust_backend.admin_runtime as admin_runtime
+import faust_backend.services.admin as admin_runtime
 from faust_backend.agent.runtime import state
 from faust_backend.agent.runtime.rebuild import rebuild_runtime
 
@@ -26,7 +26,7 @@ async def admin_save_config(payload: dict):
 
     # 配置保存后检查 ASR / TTS 模式变化，按需启动/关闭/重启服务
     from faust_backend.core.config import config as new_config
-    from faust_backend.component_manager import check_and_manage_services
+    from faust_backend.services.components import check_and_manage_services
     await check_and_manage_services(old_config_copy, dict(new_config))
 
     admin_runtime.push_reload_if_ui_changed(old_config_copy, dict(new_config))
@@ -50,7 +50,7 @@ async def admin_reload_config(payload: dict | None = None):
 
     # 配置变更后检查服务启停
     from faust_backend.core.config import config as new_config
-    from faust_backend.component_manager import check_and_manage_services
+    from faust_backend.services.components import check_and_manage_services
     await check_and_manage_services(old_config_copy, dict(new_config))
     admin_runtime.push_reload_if_ui_changed(old_config_copy, dict(new_config))
     pm = getattr(state, 'plugin_manager', None)

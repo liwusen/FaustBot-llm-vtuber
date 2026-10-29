@@ -42,7 +42,7 @@ class FakeCtx:
     def __init__(self, values=None):
         self.values = dict(values or {})
         import tempfile
-        from faust_backend.plugin_system.plugin_storage import PluginStorage
+        from faust_backend.plugins.system.plugin_storage import PluginStorage
         self.storage = PluginStorage("memory-injector-test",
                                      Path(tempfile.mkdtemp()), agent_name="faust")
 

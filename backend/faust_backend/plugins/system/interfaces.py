@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
-    from faust_backend.plugin_system.plugin_storage import PluginStorage
+    from faust_backend.plugins.system.plugin_storage import PluginStorage
 @dataclass
 class PluginContext:
     plugin_id: str

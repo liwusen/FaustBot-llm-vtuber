@@ -20,7 +20,7 @@ import dm_sources  # noqa: E402
 import dm_timeline  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from faust_backend.plugin_system import PluginManager  # noqa: E402
+from faust_backend.plugins.system import PluginManager  # noqa: E402
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'
 

@@ -369,7 +369,7 @@ def test_no_chat_global_references():
 
 def _make_provider_app():
     from fastapi import FastAPI
-    from faust_backend.routes.admin_providers import router
+    from faust_backend.api.admin.admin_providers import router
     app = FastAPI()
     app.include_router(router)
     return app
@@ -451,7 +451,7 @@ def test_select_model_switches(tmp_path, monkeypatch):
     mp.providers[0].models = ["m1", "m2"]
     conf.save_model_providers()
     monkeypatch.setattr(
-        "faust_backend.routes.admin_providers._rebuild_after_change",
+        "faust_backend.api.admin.admin_providers._rebuild_after_change",
         _noop_rebuild,
     )
 
@@ -472,8 +472,8 @@ def test_save_config_with_providers(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
     import faust_backend.agent.runtime.state as state_mod
-    import faust_backend.routes.admin_config as admin_config_mod
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.api.admin.admin_config as admin_config_mod
+    import faust_backend.services.admin as admin_runtime
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
     monkeypatch.setattr(conf, "CONFIG_FILE_PATH", str(tmp_path / "faust.config.json"))
@@ -487,7 +487,7 @@ def test_save_config_with_providers(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "faust_backend.component_manager.check_and_manage_services",
+        "faust_backend.services.components.check_and_manage_services",
         _noop_check,
     )
 
@@ -559,8 +559,8 @@ def test_save_config_persists_model_context_lengths(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
     import faust_backend.agent.runtime.state as state_mod
-    import faust_backend.routes.admin_config as admin_config_mod
-    import faust_backend.admin_runtime as admin_runtime
+    import faust_backend.api.admin.admin_config as admin_config_mod
+    import faust_backend.services.admin as admin_runtime
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
     monkeypatch.setattr(conf, "CONFIG_FILE_PATH", str(tmp_path / "faust.config.json"))
@@ -575,7 +575,7 @@ def test_save_config_persists_model_context_lengths(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "faust_backend.component_manager.check_and_manage_services",
+        "faust_backend.services.components.check_and_manage_services",
         _noop_check,
     )
 
@@ -675,7 +675,7 @@ def test_reasoning_config_migrates_old_thinking(tmp_path, monkeypatch):
 
 def test_set_reasoning_effort_validates_level(monkeypatch):
     """/effort 命令：非法 level 拒绝，合法 level 写 REASONING_CONFIG 并 rebuild。"""
-    from faust_backend.routes import chat as chat_route
+    from faust_backend.api.chat import chat as chat_route
     import faust_backend.core.config as conf
 
     saved = {}

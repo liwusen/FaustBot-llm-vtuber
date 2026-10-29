@@ -14,7 +14,7 @@ import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.plugin_system import manager as plugin_manager
+from faust_backend.plugins.system import manager as plugin_manager
 
 
 def test_on_loop_bridge_returns_instead_of_self_deadlocking():

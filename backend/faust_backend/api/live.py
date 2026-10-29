@@ -5,7 +5,7 @@ from fastapi import APIRouter
 import faust_backend.core.config as conf
 import faust_backend.core.frontend.api as backend2front
 import faust_backend.agent.trigger as trigger_manager
-from faust_backend.live_mode import (
+from faust_backend.live.mode import (
     is_live_mode,
     set_live_mode,
     get_danmaku_blacklist,
@@ -13,7 +13,7 @@ from faust_backend.live_mode import (
     get_tts_blacklist,
     set_tts_blacklist,
 )
-from faust_backend.blive_manager import get_blive_manager
+from faust_backend.live.manager import get_blive_manager
 
 log = logging.getLogger("faust.live_api")
 

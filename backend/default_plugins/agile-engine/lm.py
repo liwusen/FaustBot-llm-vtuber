@@ -1,6 +1,6 @@
 """
 Agile Log Manager
-from faust_backend.plugin_system import PluginContext
+from faust_backend.plugins.system import PluginContext
 """
 import time
 from pydantic import BaseModel, Field

@@ -1,5 +1,5 @@
 from typing import Callable, Any, Optional
-from faust_backend.plugin_system import PluginContext
+from faust_backend.plugins.system import PluginContext
 from pydantic import BaseModel, Field
 from dataclasses import dataclass
 from abc import ABC, abstractmethod

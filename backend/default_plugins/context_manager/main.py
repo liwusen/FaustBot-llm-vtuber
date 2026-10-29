@@ -8,7 +8,7 @@ from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage, Sys
 from langgraph.runtime import Runtime
 from typing_extensions import override
 
-from faust_backend.plugin_system import MiddlewareSpec, PluginContext, PluginManifest
+from faust_backend.plugins.system import MiddlewareSpec, PluginContext, PluginManifest
 
 
 DEFAULT_TRIGGER_USER_KEEP = 3

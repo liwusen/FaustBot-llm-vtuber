@@ -43,7 +43,8 @@ from typing import Any
 import numpy as np
 
 import faust_backend.core.config as conf
-from faust_backend import download_omnijev, omnijev_runtime
+from faust_backend.integrations import omnijev_download as download_omnijev
+from faust_backend.integrations import omnijev as omnijev_runtime
 
 from ..base import Processor, ProcessorContext
 from ..registry import processor

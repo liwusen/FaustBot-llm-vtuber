@@ -80,7 +80,7 @@ FaustBot 插件可以在以下层面扩展和修改系统：
 | HTTP 客户端 | aiohttp / requests | API 调用、数据拉取 |
 | 数据存储 | SQLite / JSON | 本地数据持久化 |
 | Agent 集成 | LangChain | 工具定义（`@tool` 装饰器） |
-| 日志 | faust_backend.logger | 统一日志接口 |
+| 日志 | faust_backend.core.log | 统一日志接口 |
 
 ### 前端（JavaScript）
 
@@ -162,7 +162,7 @@ ctx.vfs_write_symbolic(
 继承 `FaustPlugin` 基类，使用 pluggy hook：
 
 ```python
-from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
+from faust_backend.plugins.system import FaustPlugin, PluginContext, hookimpl
 
 class Plugin(FaustPlugin):
     def startup(self, ctx: PluginContext) -> None:
@@ -182,7 +182,7 @@ def get_plugin():
 使用 `on_load`/`on_unload`，无 pluggy 集成：
 
 ```python
-from faust_backend.plugin_system import PluginManifest, PluginContext
+from faust_backend.plugins.system import PluginManifest, PluginContext
 
 class Plugin:
     manifest = PluginManifest(plugin_id="my-plugin", name="My Plugin")

@@ -32,7 +32,7 @@ if str(REPO_PLUGIN_DIR) not in sys.path:
 
 import faust_backend.core.config as conf  # noqa: E402
 import faust_backend.agent.trigger as trigger_manager  # noqa: E402
-from faust_backend.plugin_system import PluginManager  # noqa: E402
+from faust_backend.plugins.system import PluginManager  # noqa: E402
 from faust_backend.tools.vfs import get_faustbot_vfs  # noqa: E402
 
 import agents as agents_module  # noqa: E402

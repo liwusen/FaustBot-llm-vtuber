@@ -31,7 +31,7 @@ if str(REPO_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_PLUGIN_DIR))
 
 import faust_backend.core.config as conf  # noqa: E402
-from faust_backend.plugin_system import PluginManager  # noqa: E402
+from faust_backend.plugins.system import PluginManager  # noqa: E402
 
 OPENCODE = shutil.which("opencode")
 ENABLED = os.environ.get("FAUST_ACP_IT") == "1" and bool(OPENCODE)

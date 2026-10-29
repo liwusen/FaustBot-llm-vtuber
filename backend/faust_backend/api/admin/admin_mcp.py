@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-import faust_backend.admin_runtime as admin_runtime
+import faust_backend.services.admin as admin_runtime
 import faust_backend.core.config as conf
-from faust_backend.mcp_manager import get_mcp_manager
+from faust_backend.integrations.mcp import get_mcp_manager
 
 router = APIRouter(tags=["admin-mcp"])
 

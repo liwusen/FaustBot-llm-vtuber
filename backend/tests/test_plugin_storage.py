@@ -8,7 +8,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from faust_backend.plugin_system.plugin_storage import PluginStorage  # noqa: E402
+from faust_backend.plugins.system.plugin_storage import PluginStorage  # noqa: E402
 
 
 def test_global_scope_persists_and_survives_reset(tmp_path):

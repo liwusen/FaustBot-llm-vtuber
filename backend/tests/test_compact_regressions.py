@@ -235,7 +235,7 @@ def _install_compact_env(monkeypatch, *, mode: str, agent_fail: bool = False,
     直接给 state.compact_middleware / state.agent 赋值会泄漏给同一 pytest 进程里
     后续所有测试，因此这里统一用 monkeypatch.setattr。
     """
-    from faust_backend.routes import chat as chat_route
+    from faust_backend.api.chat import chat as chat_route
     from faust_backend.agent.runtime import state
 
     ws = _FakeWS()
@@ -255,7 +255,7 @@ def _install_compact_env(monkeypatch, *, mode: str, agent_fail: bool = False,
 
 def _run_compact(monkeypatch, *, mode: str, agent_fail: bool = False, messages=("hi",),
                  middleware=_UNSET):
-    from faust_backend.routes import chat as chat_route
+    from faust_backend.api.chat import chat as chat_route
 
     ws = _install_compact_env(
         monkeypatch, mode=mode, agent_fail=agent_fail, messages=messages,
@@ -371,7 +371,7 @@ def test_compact_missing_middleware_fails_visibly(monkeypatch):
 
 def test_safe_send_swallows_closed_socket():
     """连接已断时发送不能抛异常，否则会杀死整个接收循环。"""
-    from faust_backend.routes import chat as chat_route
+    from faust_backend.api.chat import chat as chat_route
 
     class _Dead:
         async def send_text(self, text):
@@ -383,7 +383,7 @@ def test_safe_send_swallows_closed_socket():
 
 def test_compact_survives_dead_socket(monkeypatch):
     """连接中途断开时 /compact 也不能把异常抛回接收循环，且必须尝试收尾。"""
-    from faust_backend.routes import chat as chat_route
+    from faust_backend.api.chat import chat as chat_route
 
     class _DeadWS:
         def __init__(self):
