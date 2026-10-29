@@ -168,7 +168,7 @@ class Plugin(FaustPlugin):
                 build_ReasoningChatOpenAI_from_spec,
                 parse_spec,
             )
-            from faust_backend.runtime import state
+            from faust_backend.agent.runtime import state
             from langchain_core.messages import HumanMessage
 
             # 先校验 spec 格式，无效立即给出可行动错误

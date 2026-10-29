@@ -13,8 +13,8 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 
-from faust_backend.runtime import usage as usage_mod
-from faust_backend.runtime.compact import (
+from faust_backend.agent.runtime.turn import usage as usage_mod
+from faust_backend.agent.runtime.compact import (
     CompactMiddleware,
     _reported_tokens,
 )

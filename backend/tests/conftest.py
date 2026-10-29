@@ -25,7 +25,7 @@ def _fresh_agent_lock():
 
     调度器单例同理（worker 任务绑定创建它的事件循环）：一并换新，避免跨模块串味。
     """
-    from faust_backend.runtime import scheduler, state
+    from faust_backend.agent.runtime import scheduler, state
 
     scheduler.reset_scheduler()
     state.agent_lock = asyncio.Lock()
@@ -45,7 +45,7 @@ def hold_agent_lock():
 
     @asynccontextmanager
     async def _hold(owner: str = "test_holder"):
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         release = asyncio.Event()
 
@@ -106,7 +106,8 @@ def read_memory_store(tmp_path, monkeypatch):
 @pytest.fixture
 def isolated_output_store(tmp_path, monkeypatch):
     """隔离的 OutputStore：artifact 落在 tmp_path，不写用户数据目录。"""
-    from faust_backend.runtime import output_store, state
+    from faust_backend.agent.runtime import state
+    from faust_backend.agent.runtime.turn import output_store
 
     monkeypatch.setattr(state, "AGENT_ROOT", str(tmp_path))
     output_store.reset_output_store()

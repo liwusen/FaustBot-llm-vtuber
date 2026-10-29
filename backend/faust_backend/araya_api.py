@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from faust_backend.araya_runtime import get_araya_runtime
+from faust_backend.agent.araya.runtime import get_araya_runtime
 
 from faust_backend.core.log import get_logger
 

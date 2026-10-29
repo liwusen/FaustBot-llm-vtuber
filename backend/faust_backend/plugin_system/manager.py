@@ -16,7 +16,7 @@ import pluggy
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
-import faust_backend.trigger_manager as trigger_manager
+import faust_backend.agent.trigger as trigger_manager
 from faust_backend.processors import get_processor_manager, invoke_processor, processor_status
 from faust_backend.tools.vfs import get_faustbot_vfs
 

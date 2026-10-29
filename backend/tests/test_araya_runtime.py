@@ -10,7 +10,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 sys.argv = [sys.argv[0]]
 
-import faust_backend.araya_runtime as araya_runtime
+import faust_backend.agent.araya.runtime as araya_runtime
 
 
 def _prepare_araya_prompt(root: Path) -> None:
@@ -119,7 +119,7 @@ def test_araya_trigger_run_is_non_blocking(monkeypatch, tmp_path):
 
 def test_araya_should_trigger_false_after_grouping_marker(monkeypatch, tmp_path):
     """触发后立即写入 last_trigger_ts 抢占，下次轮响应返回 False，避免重复刷屏。"""
-    import faust_backend.araya_runtime as ar
+    import faust_backend.agent.araya.runtime as ar
     # 直接用真实 runtime 的 should_trigger + _load_state/_save_state 验证抢占效果
     monkeypatch.setattr(ar.conf, "CONFIG_ROOT", str(tmp_path))
     monkeypatch.setattr(ar.conf, "AGENT_NAME", "faust")
@@ -182,7 +182,7 @@ def test_araya_attachment_read_keeps_image_bytes_out_of_text(
     import base64 as _base64
 
     import faust_backend.memory as memory_pkg
-    from faust_backend.runtime.middleware import wrap_tools
+    from faust_backend.agent.runtime.middleware import wrap_tools
 
     _prepare_araya_prompt(tmp_path)
     monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
@@ -370,8 +370,8 @@ def test_araya_agent_mounts_tool_call_repair_middleware(monkeypatch, tmp_path):
 
     from langchain.agents.middleware import ModelRetryMiddleware
 
-    from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
-    from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
+    from faust_backend.agent.runtime.middleware.mm_bridge import MultimodalBridgeMiddleware
+    from faust_backend.agent.runtime.middleware.tool_call_repair import ToolCallRepairMiddleware
 
     _prepare_araya_prompt(tmp_path)
     monkeypatch.setattr(araya_runtime.conf, "CONFIG_ROOT", str(tmp_path))
@@ -428,7 +428,7 @@ def test_init_agent_accepts_model_without_model_name(monkeypatch, tmp_path):
         subagent_models: list = []
 
     import faust_backend.llm.provider as provider_mod
-    import faust_backend.runtime.state as runtime_state
+    import faust_backend.agent.runtime.state as runtime_state
     import asyncio
 
     async def _fake_build_main_chat_model(providers, intensity=None):
@@ -449,30 +449,30 @@ def test_start_araya_runtime_degrades_without_raising(monkeypatch):
     """Araya 启动失败只降级 Araya：返回 False，不把异常抛给 lifespan。"""
     import asyncio
 
-    from faust_backend.runtime import lifecycle
+    from faust_backend.app import lifespan as app_lifespan
 
     class BoomRuntime:
         async def startup(self):
             raise AttributeError("'ChatGoogleGenerativeAI' object has no attribute 'model_name'")
 
     monkeypatch.setattr(
-        lifecycle.araya_runtime, "get_araya_runtime", lambda refresh=False: BoomRuntime()
+        app_lifespan.araya_runtime, "get_araya_runtime", lambda refresh=False: BoomRuntime()
     )
 
-    assert asyncio.run(lifecycle._start_araya_runtime()) is False
+    assert asyncio.run(app_lifespan._start_araya_runtime()) is False
 
 
 def test_start_araya_runtime_reports_success(monkeypatch):
     import asyncio
 
-    from faust_backend.runtime import lifecycle
+    from faust_backend.app import lifespan as app_lifespan
 
     class OkRuntime:
         async def startup(self):
             return None
 
     monkeypatch.setattr(
-        lifecycle.araya_runtime, "get_araya_runtime", lambda refresh=False: OkRuntime()
+        app_lifespan.araya_runtime, "get_araya_runtime", lambda refresh=False: OkRuntime()
     )
 
-    assert asyncio.run(lifecycle._start_araya_runtime()) is True
+    assert asyncio.run(app_lifespan._start_araya_runtime()) is True

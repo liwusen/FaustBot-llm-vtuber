@@ -101,7 +101,7 @@ class TestBuildChatModel:
         from unittest.mock import patch
 
         from faust_backend.llm.provider import ModelProviders, new_provider
-        from faust_backend.runtime.lifecycle import _build_chat_model
+        from faust_backend.agent.runtime.build import _build_chat_model
 
         providers = ModelProviders()
         new_provider(providers, "test", "https://test.api/v1", "test-key")
@@ -118,7 +118,7 @@ class TestBuildChatModel:
             "faust_backend.llm.provider.build_ReasoningChatOpenAI_from_spec",
             side_effect=fake_build,
         ) as mock_build, patch(
-            "faust_backend.runtime.state.get_model_providers",
+            "faust_backend.agent.runtime.state.get_model_providers",
             return_value=providers,
         ):
             result = asyncio.run(_build_chat_model(model_name="test::gpt-4o"))
@@ -145,7 +145,7 @@ class TestBuildChatModel:
 
     def test_thinking_disabled_when_type_none(self):
         from faust_backend.llm.provider import ModelProviders, new_provider
-        from faust_backend.runtime.lifecycle import _build_chat_model
+        from faust_backend.agent.runtime.build import _build_chat_model
         import asyncio
         from unittest.mock import patch
         import faust_backend.core.config as conf
@@ -165,7 +165,7 @@ class TestBuildChatModel:
             "faust_backend.llm.provider.build_ReasoningChatOpenAI_from_spec",
             side_effect=fake_build,
         ), patch(
-            "faust_backend.runtime.state.get_model_providers",
+            "faust_backend.agent.runtime.state.get_model_providers",
             return_value=providers,
         ), patch.object(conf, "REASONING_CONFIG", "high"):
             asyncio.run(_build_chat_model(model_name="test::gpt-4o"))
@@ -177,14 +177,14 @@ class TestBuildChatModel:
 
     def test_missing_main_model_raises(self):
         from faust_backend.llm.provider import ModelProviders
-        from faust_backend.runtime.lifecycle import _build_chat_model
+        from faust_backend.agent.runtime.build import _build_chat_model
         import asyncio
         from unittest.mock import patch
 
         providers = ModelProviders()
 
         with patch(
-            "faust_backend.runtime.state.get_model_providers",
+            "faust_backend.agent.runtime.state.get_model_providers",
             return_value=providers,
         ):
             try:
@@ -227,7 +227,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_reasoning_content_yields_reasoning_delta(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         chunk = self._make_mock_chunk(content="Hello", additional_kwargs={"reasoning_content": "I think..."})
         agent = self._mock_agent_stream([
             {"event": "on_chat_model_stream", "data": {"chunk": chunk}, "name": "", "run_id": ""}
@@ -244,7 +244,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_no_reasoning_only_delta(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         chunk = self._make_mock_chunk(content="Only text")
         agent = self._mock_agent_stream([
             {"event": "on_chat_model_stream", "data": {"chunk": chunk}, "name": "", "run_id": ""}
@@ -260,7 +260,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_reasoning_fallback_keys(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         chunk1 = self._make_mock_chunk(content="A", additional_kwargs={"reasoning": "think..."})
         chunk2 = self._make_mock_chunk(content="B", additional_kwargs={"think": "ponder..."})
         agent = self._mock_agent_stream([
@@ -277,7 +277,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_empty_content_skipped(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         chunk = self._make_mock_chunk(content=None)
         agent = self._mock_agent_stream([
             {"event": "on_chat_model_stream", "data": {"chunk": chunk}, "name": "", "run_id": ""}
@@ -290,7 +290,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_non_ai_chunk_skipped(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         chunk = MagicMock()
         chunk.type = "human"
         chunk.content = "skip me"
@@ -305,7 +305,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_non_dict_events_skipped(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         agent = self._mock_agent_stream(["string_event", 42])
         results = []
         async for evt in stream_chat_agent_events(agent, {"messages": []}):
@@ -315,7 +315,7 @@ class TestStreamReasoningDelta:
 
     @pytest.mark.asyncio
     async def test_additional_kwargs_none_does_not_crash(self):
-        from faust_backend.runtime.lifecycle import stream_chat_agent_events
+        from faust_backend.agent.runtime.invoke import stream_chat_agent_events
         chunk = MagicMock()
         chunk.type = "ai"
         chunk.content = "safe"
@@ -442,7 +442,7 @@ def test_anthropic_budget_is_clamped_to_minimum():
 def test_extract_reasoning_from_additional_kwargs():
     from langchain_core.messages import AIMessage
 
-    from faust_backend.runtime.state import extract_reasoning_text
+    from faust_backend.core.message import extract_reasoning_text
 
     message = AIMessage(content="answer", additional_kwargs={"reasoning_content": "想一想"})
     assert extract_reasoning_text(message) == "想一想"
@@ -454,7 +454,7 @@ def test_extract_reasoning_from_additional_kwargs():
 def test_extract_reasoning_from_content_blocks():
     from langchain_core.messages import AIMessage
 
-    from faust_backend.runtime.state import extract_reasoning_text
+    from faust_backend.core.message import extract_reasoning_text
 
     # Anthropic / Gemini：thinking 块
     anthropic = AIMessage(
@@ -481,7 +481,7 @@ def test_extract_reasoning_from_content_blocks():
 def test_message_content_to_text_ignores_reasoning_blocks():
     from langchain_core.messages import AIMessage
 
-    from faust_backend.runtime.state import message_content_to_text
+    from faust_backend.core.message import message_content_to_text
 
     message = AIMessage(
         content=[

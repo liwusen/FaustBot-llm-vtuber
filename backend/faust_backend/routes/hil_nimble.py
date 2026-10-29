@@ -2,7 +2,7 @@ from fastapi import APIRouter
 import faust_backend.core.frontend.api as backend2frontend
 import faust_backend.core.events as events
 import faust_backend.nimble as nimble
-import faust_backend.trigger_manager as trigger_manager
+import faust_backend.agent.trigger as trigger_manager
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.hil_nimble")

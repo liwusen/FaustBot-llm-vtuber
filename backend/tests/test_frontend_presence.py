@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.core.config as conf
 import faust_backend.routes.public_api as public_api
-import faust_backend.trigger_manager as tm
-from faust_backend.runtime import frontend_presence
+import faust_backend.agent.trigger as tm
+from faust_backend.agent.runtime.turn import presence as frontend_presence
 
 # 只有少数几个用例需要真事件循环；其余保持同步（内部用 asyncio.run 跑协程），
 # 因此不使用模块级 pytestmark。
@@ -231,7 +231,7 @@ async def test_command_websocket_marks_presence_and_drains_on_disconnect(monkeyp
     import faust_backend.core.frontend.api as backend2front
     import faust_backend.core.events as events
     import faust_backend.routes.chat as chat
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     # 模块级 Event 会绑定"首次使用它的事件循环"；跨 pytest 模块时那可能是已关闭的
     # 上一个循环。测试内换一个属于当前循环的 Event（产品代码全部走属性访问）。
@@ -277,7 +277,7 @@ async def test_command_websocket_detects_silent_disconnect(monkeypatch):
     import faust_backend.core.frontend.api as backend2front
     import faust_backend.core.events as events
     import faust_backend.routes.chat as chat
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     from starlette.websockets import WebSocketDisconnect
 
     class _DyingWs(_FakeWs):

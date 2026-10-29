@@ -420,7 +420,7 @@ _VFS_ASYNC_INIT_LOCK = asyncio.Lock()
 
 
 def _read_task_section(section_title: str) -> str:
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     task_path = Path(state.AGENT_ROOT) / 'TASK.md'
     if not task_path.exists():
         return f'[找不到 TASK.md: {task_path}]'
@@ -459,7 +459,7 @@ def _subagenting_doc() -> str:
 
 
 def _avatoolset_doc() -> str:
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     manager = state.subagent_manager
     if manager is None:
         return '(subagent manager 未初始化)'
@@ -469,7 +469,7 @@ def _avatoolset_doc() -> str:
 def _ava_subagent_models_doc() -> str:
     # [R8] provider 未加载/文件损坏时返回友好提示，不让 VFS 读取崩溃
     try:
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
         providers = state.get_model_providers()
     except Exception as exc:  # noqa: BLE001
         return f"# Available Subagent Models\n\n(provider 配置不可用: {exc})"
@@ -529,7 +529,7 @@ async def refresh_runtime_nodes(vfs: AsyncVirtualFileSystem | None = None) -> As
     existing = await target.list_dir('/subagents') or []
     for name in existing:
         await target.delete('/subagents/' + name)
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     manager = state.subagent_manager
     if manager is not None:
         statuses = manager.list_statuses()

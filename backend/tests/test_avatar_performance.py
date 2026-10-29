@@ -129,7 +129,7 @@ def requested(monkeypatch):
 
 @pytest.fixture
 def emotion_manager(monkeypatch):
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
 
     manager = _FakeManager()
     monkeypatch.setattr(runtime_state, "plugin_manager", manager)
@@ -439,7 +439,7 @@ async def test_heavy_interaction_enqueues_one_trigger(clock, emotion_manager):
 
 @pytest.mark.asyncio
 async def test_interaction_survives_emotion_engine_failure(clock, monkeypatch):
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
 
     class _Boom:
         async def communicate(self, plugin_id, payload):

@@ -1023,7 +1023,7 @@ class TaskStore:
 
     def _default_enqueue(self, payload: dict[str, Any]) -> Any:
         """生产路径：调用 trigger_manager.append_trigger（按属性查找，便于测试替换）。"""
-        from faust_backend import trigger_manager
+        from faust_backend.agent import trigger as trigger_manager
 
         return trigger_manager.append_trigger(payload)
 

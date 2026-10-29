@@ -21,9 +21,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import faust_backend.core.config as conf
 import faust_backend.routes.chat as chat
-from faust_backend.runtime import scheduler as agent_scheduler
-from faust_backend.runtime import state
-from faust_backend.runtime import turn_state
+from faust_backend.agent.runtime import scheduler as agent_scheduler
+from faust_backend.agent.runtime import state
+from faust_backend.agent.runtime.turn import state as turn_state
 from langchain_core.messages import AIMessageChunk
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -67,7 +67,7 @@ async def _start_trigger_turn(scheduler, block: asyncio.Event) -> agent_schedule
 
 async def test_interjection_cancels_busy_trigger(reset_trigger_registry, monkeypatch):
     """触发器占用执行位时用户插话: 抢占该回合、消息加前缀。"""
-    from faust_backend.runtime import frontend_presence
+    from faust_backend.agent.runtime.turn import presence as frontend_presence
 
     frontend_presence.mark_online("conn")
     scheduler = agent_scheduler.AgentScheduler()

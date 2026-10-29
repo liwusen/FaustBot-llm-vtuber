@@ -7,7 +7,7 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 import faust_backend.nimble as nimble
 import faust_backend.core.frontend.api as backend2frontend
-import faust_backend.trigger_manager as trigger_manager
+import faust_backend.agent.trigger as trigger_manager
 from faust_backend.core.log import get_logger
 from faust_backend.core.uri import (
     parse,
@@ -32,7 +32,7 @@ async def _resolve_path_html(spec: str) -> str:
     parsed = parse(ref)
 
     if parsed.scheme == SCHEME_SKILL:
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         parts = [p for p in parsed.path.split("/") if p]
         if not parts:

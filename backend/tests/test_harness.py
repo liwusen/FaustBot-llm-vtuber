@@ -28,7 +28,7 @@ from faust_backend.core.uri import (
     SCHEME_FAUSTBOT,
     SCHEME_IMG_SOURCE,
 )
-from faust_backend.runtime.output_store import OutputStore, reset_output_store
+from faust_backend.agent.runtime.turn.output_store import OutputStore, reset_output_store
 
 
 # ============================================================
@@ -273,7 +273,7 @@ class TestReadTool:
     @pytest.mark.asyncio
     async def test_read_artifact(self):
         from faust_backend.tools.read import read
-        from faust_backend.runtime.output_store import get_output_store
+        from faust_backend.agent.runtime.turn.output_store import get_output_store
         store = get_output_store()
         oid = store.put("artifact content", tool_name="test")
         result = await read.ainvoke({"uri": f"artifact://{oid}"})
@@ -282,7 +282,7 @@ class TestReadTool:
     @pytest.mark.asyncio
     async def test_read_artifact_with_range(self):
         from faust_backend.tools.read import read
-        from faust_backend.runtime.output_store import get_output_store
+        from faust_backend.agent.runtime.turn.output_store import get_output_store
         store = get_output_store()
         content = "\n".join(f"line {i}" for i in range(1, 21))
         oid = store.put(content, tool_name="test")
@@ -389,7 +389,7 @@ class MyClass:
     async def test_read_skill_file_raw(self, tmp_path):
         """skill 目录内的代码文件同样支持 `:raw`（skill://demo/scripts/client.py:raw）。"""
         from faust_backend.tools.read import read
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         agent_root = tmp_path / "agents"
         skill_dir = agent_root / "skill.d" / "demo_skill"
@@ -570,7 +570,7 @@ class MyClass:
     async def test_read_skill_lists_dir_and_reads_explicit_file(self, tmp_path):
         from faust_backend.tools.read import read
         import faust_backend.core.config as conf
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         agent_root = tmp_path / "agents" / "demo_agent"
         skill_root = agent_root / "skill.d" / "demo_skill"
@@ -604,7 +604,7 @@ class MyClass:
     @pytest.mark.asyncio
     async def test_read_skill_rejects_escape(self, tmp_path):
         from faust_backend.tools.read import read
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         agent_root = tmp_path / "agents" / "demo_agent"
         (agent_root / "skill.d" / "demo_skill").mkdir(parents=True, exist_ok=True)
@@ -1123,13 +1123,13 @@ class TestAnimationTools:
 
 class TestToolValueToText:
     def test_dict_passes_through(self):
-        from faust_backend.runtime.state import tool_value_to_text
+        from faust_backend.core.message import tool_value_to_text
         result = tool_value_to_text({"kind": "multimodal_tool_result", "text": "hi"})
         assert isinstance(result, dict)
         assert result["kind"] == "multimodal_tool_result"
 
     def test_string_unchanged(self):
-        from faust_backend.runtime.state import tool_value_to_text
+        from faust_backend.core.message import tool_value_to_text
         result = tool_value_to_text("hello")
         assert result == "hello"
 
@@ -1140,7 +1140,7 @@ class TestMiddlewareTruncation:
     """Verify wrap_tool_output actually truncates output for the paths LangGraph uses."""
 
     def setup_method(self):
-        from faust_backend.runtime.output_store import reset_output_store
+        from faust_backend.agent.runtime.turn.output_store import reset_output_store
         reset_output_store()
 
     def _long_output(self) -> str:
@@ -1150,7 +1150,7 @@ class TestMiddlewareTruncation:
         """Sync @tool _arun() async path must also truncate."""
         import asyncio
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def big_tool(x: str) -> str:
@@ -1167,7 +1167,7 @@ class TestMiddlewareTruncation:
     def test_short_output_passes_through(self):
         """Short single-line output (<=120 chars) should NOT create an artifact."""
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def small_tool(x: str) -> str:
@@ -1184,7 +1184,7 @@ class TestMiddlewareTruncation:
     def test_tool_exception_becomes_error_artifact(self):
         """When a tool raises, the exception is stored as an artifact."""
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def crash_tool(x: str) -> str:
@@ -1202,7 +1202,7 @@ class TestMiddlewareTruncation:
     def test_sync_tool_run_truncates(self):
         """Sync @tool _run() → long output should be truncated with artifact ref."""
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def big_tool(x: str) -> str:
@@ -1219,7 +1219,7 @@ class TestMiddlewareTruncation:
     def test_sync_tool_invoke_truncates(self):
         """Sync @tool invoke() — the path LangGraph actually calls — must truncate."""
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def big_tool(x: str) -> str:
@@ -1236,7 +1236,7 @@ class TestMiddlewareTruncation:
     def test_multiline_long_output_truncates(self):
         """Multi-line with >300 lines should be truncated with artifact ref."""
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def ml_tool(x: str) -> str:
@@ -1252,7 +1252,7 @@ class TestMiddlewareTruncation:
         """Async @tool — _arun path must truncate."""
         import asyncio
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         async def async_big(x: str) -> str:
@@ -1273,7 +1273,7 @@ class TestMiddlewareTruncation:
         """
         import asyncio
         from langchain.tools import tool
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
 
         @tool
         def dual_tool(x: str) -> str:
@@ -1342,7 +1342,7 @@ class TestReadImage:
 
 class TestReadForcePlainText:
     def test_artifact_image_force_plain_text(self):
-        from faust_backend.runtime.output_store import reset_output_store, get_output_store
+        from faust_backend.agent.runtime.turn.output_store import reset_output_store, get_output_store
         reset_output_store()
         store = get_output_store()
         payload = {
@@ -1383,7 +1383,7 @@ class TestMiddlewareMultimodal:
     @pytest.mark.parametrize("as_json", [True, False])
     def test_result_carries_artifact_ref_not_image_bytes(self, isolated_output_store, as_json):
         import json
-        from faust_backend.runtime.middleware import _store_and_summarize
+        from faust_backend.agent.runtime.middleware import _store_and_summarize
 
         payload = self._payload("截图描述")
         result = _store_and_summarize(
@@ -1407,7 +1407,7 @@ class TestMiddlewareMultimodal:
     def test_multi_megabyte_image_result_stays_small(self, isolated_output_store):
         """核心回归：图片再大，进消息文本的也只有引用。"""
         import base64
-        from faust_backend.runtime.middleware import _store_and_summarize
+        from faust_backend.agent.runtime.middleware import _store_and_summarize
 
         big = base64.b64encode(b"\x89PNG" + b"x" * 2_600_000).decode("ascii")
         result = _store_and_summarize(isolated_output_store, "read", self._payload("大截图", big))
@@ -1418,7 +1418,7 @@ class TestMiddlewareMultimodal:
     def test_existing_artifact_ref_is_not_re_stored(self, isolated_output_store):
         """read artifact:// 已经返回引用形态 → 不再复制一份 artifact。"""
         import json
-        from faust_backend.runtime.middleware import _store_and_summarize
+        from faust_backend.agent.runtime.middleware import _store_and_summarize
 
         ref = {
             "kind": "multimodal_tool_result",
@@ -1449,8 +1449,8 @@ class TestToolOutputStoreBinding:
 
         from langchain.tools import tool as lc_tool
 
-        from faust_backend.runtime import output_store
-        from faust_backend.runtime.middleware import wrap_tool_output
+        from faust_backend.agent.runtime.turn import output_store
+        from faust_backend.agent.runtime.middleware import wrap_tool_output
         from faust_backend.tools.read import read as read_tool
 
         @lc_tool

@@ -468,7 +468,7 @@ async def import_character_card(card_path: str, agent_name: str | None = None) -
     - 原始卡片存档到 agents/<name>/card.json
     - 立绘写为目标 agent 记忆库附件，世界书逐条写为记忆节点
     """
-    from faust_backend import character_card
+    from faust_backend.agent.prompt import character_card
     from faust_backend.memory.store import GraphStore
 
     source = character_card.load_card_file(card_path)

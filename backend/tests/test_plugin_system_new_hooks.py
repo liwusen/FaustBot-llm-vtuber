@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from faust_backend.agent.runtime.invoke import _apply_llm_request_pre
 from faust_backend.plugin_system import PluginManager
 from faust_backend.plugin_system.hooks import CoreHooks, hookimpl
 from faust_backend.plugin_system.plugin_base import FaustPlugin
@@ -169,11 +170,12 @@ def test_firstresult_async_hook_wins():
     assert results == ["[async] 你好"]
 
 
-# ── 调用点：lifecycle._apply_llm_request_pre ──
+# ── 调用点：_apply_llm_request_pre ──
 
 
 def test_lifecycle_apply_llm_request_pre(monkeypatch):
-    from faust_backend.runtime import lifecycle, state
+    from faust_backend.agent.runtime import state
+    from faust_backend.agent.runtime.invoke import _apply_llm_request_pre
 
     class FakePM:
         async def _call_pluggy_hook(self, name, **kw):
@@ -183,12 +185,13 @@ def test_lifecycle_apply_llm_request_pre(monkeypatch):
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
     payload = {"messages": [{"role": "user", "content": "hi"}]}
-    out = _run(lifecycle._apply_llm_request_pre(payload))
+    out = _run(_apply_llm_request_pre(payload))
     assert out["messages"][0] == {"role": "system", "content": "injected"}
 
 
 def test_lifecycle_apply_llm_request_pre_passthrough(monkeypatch):
-    from faust_backend.runtime import lifecycle, state
+    from faust_backend.agent.runtime import state
+    from faust_backend.agent.runtime.invoke import _apply_llm_request_pre
 
     class FakePM:
         async def _call_pluggy_hook(self, name, **kw):
@@ -196,16 +199,17 @@ def test_lifecycle_apply_llm_request_pre_passthrough(monkeypatch):
 
     monkeypatch.setattr(state, "plugin_manager", FakePM())
     payload = {"messages": [{"role": "user", "content": "hi"}]}
-    out = _run(lifecycle._apply_llm_request_pre(payload))
+    out = _run(_apply_llm_request_pre(payload))
     assert out["messages"] == [{"role": "user", "content": "hi"}]
 
 
 def test_lifecycle_apply_llm_request_pre_no_pm(monkeypatch):
-    from faust_backend.runtime import lifecycle, state
+    from faust_backend.agent.runtime import state
+    from faust_backend.agent.runtime.invoke import _apply_llm_request_pre
 
     monkeypatch.setattr(state, "plugin_manager", None)
     payload = {"messages": [{"role": "user", "content": "hi"}]}
-    out = _run(lifecycle._apply_llm_request_pre(payload))
+    out = _run(_apply_llm_request_pre(payload))
     assert out is payload
 
 
@@ -213,7 +217,7 @@ def test_lifecycle_apply_llm_request_pre_no_pm(monkeypatch):
 
 
 def test_synthesize_apply_tts_text_hook(monkeypatch):
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     from faust_backend.speech.tts import synthesize
 
     class FakePM:
@@ -227,7 +231,7 @@ def test_synthesize_apply_tts_text_hook(monkeypatch):
 
 
 def test_synthesize_apply_tts_text_hook_passthrough(monkeypatch):
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     from faust_backend.speech.tts import synthesize
 
     class FakePM:
@@ -239,7 +243,7 @@ def test_synthesize_apply_tts_text_hook_passthrough(monkeypatch):
 
 
 def test_synthesize_fire_tts_start(monkeypatch):
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     from faust_backend.speech.tts import synthesize
 
     seen: list[str] = []

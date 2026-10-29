@@ -724,7 +724,7 @@ async def ainvoke_json(model: Any, messages: list[Any], api_format: str) -> dict
         except Exception as exc:  # noqa: BLE001 - 网关不支持就退回纯 prompt 约束
             log.debug("模型不支持 response_format=json_object，改用 prompt 约束: %s", exc)
     response = await runnable.ainvoke(messages)
-    from faust_backend.runtime.state import message_content_to_text
+    from faust_backend.core.message import message_content_to_text
 
     return parse_json_object(message_content_to_text(getattr(response, "content", "")))
 

@@ -11,12 +11,12 @@ from langchain_core.tools import tool
 
 from faust_backend.llm.formats import build_server_tool_specs
 from faust_backend.llm.provider import ModelProvider, ModelProviders
-from faust_backend.runtime.server_tools import (
+from faust_backend.agent.runtime.middleware.server_tools import (
     ServerToolMiddleware,
     build_server_tool_middleware,
     resolve_server_tool_specs,
 )
-from faust_backend.runtime.tool_call_repair import repair_dangling_tool_calls
+from faust_backend.agent.runtime.middleware.tool_call_repair import repair_dangling_tool_calls
 
 
 @tool
@@ -203,7 +203,7 @@ def test_build_server_tool_specs_is_stable_for_all_formats():
 
 def test_compact_binds_server_specs_with_mocks(monkeypatch):
     import faust_backend.core.config as conf
-    from faust_backend.runtime.compact import CompactMiddleware
+    from faust_backend.agent.runtime.compact import CompactMiddleware
 
     monkeypatch.setattr(conf, "COMPACT_COST_CONTROL_ENABLED", False)
     monkeypatch.setattr(conf, "COMPACT_MAX_INPUT_TOKENS", 0)

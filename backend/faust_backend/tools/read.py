@@ -31,7 +31,7 @@ from faust_backend.core.uri import (
     SCHEME_IMG_SOURCE,
     SCHEME_SOURCE_CODE,
 )
-from faust_backend.runtime.output_store import get_output_store
+from faust_backend.agent.runtime.turn.output_store import get_output_store
 from faust_backend.memory.store import _path_id
 from faust_backend.core.log import get_logger
 from faust_backend.tools.vfs import (
@@ -357,7 +357,7 @@ async def _read_memory(parsed, *, force_plain_text: bool = False, show_line_numb
 
 
 def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: bool = False, with_metadata: bool = False) -> str:
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     raw_path = str(parsed.path or "").strip("/")
     if not raw_path:
@@ -372,7 +372,7 @@ def _read_skill(parsed, *, force_plain_text: bool = False, show_line_number: boo
         for d in names:
             lines.append(f"  skill://{d.name}/")
             if with_metadata:
-                from faust_backend.skill_manager import _read_skill_meta
+                from faust_backend.agent.skill import _read_skill_meta
 
                 desc = str(_read_skill_meta(d).get("description") or "").strip()
                 if desc:
@@ -698,7 +698,7 @@ def _image_to_tool_result(
 
 
 def _read_task_section(section_title: str) -> str:
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     task_path = Path(state.AGENT_ROOT) / "TASK.md"
     if not task_path.exists():

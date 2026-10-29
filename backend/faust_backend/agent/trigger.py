@@ -11,7 +11,7 @@ import os
 
 import faust_backend.core.config as conf
 import faust_backend.nimble as nimble
-from faust_backend.runtime import frontend_presence
+from faust_backend.agent.runtime.turn import presence as frontend_presence
 from pydantic import BaseModel, Field, field_validator
 from faust_backend.core.log import get_logger
 
@@ -152,7 +152,7 @@ def _emit_trigger(trigger_payload: dict):
     else:
         trigger_queue.put(payload)
     _log_event_csv(payload)
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     pm = state.plugin_manager
     if pm:
         # watchdog 线程/同步回调上下文，使用同步桥接执行（可能含异步 hook 实现）
@@ -521,7 +521,7 @@ async def append_trigger(trigger_dict_or_str: dict | str):
             _refuse_trigger(trigger, reason=refused.reason)
             raise refused
     trigger = _apply_append_filters(trigger)
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
     pm = getattr(state, 'plugin_manager', None)
     if pm:
         # 这里必须走 async hook：append_trigger 的调用点（Agent 工具、HTTP 路由、
@@ -595,7 +595,7 @@ def drop_pending_wakeups(trigger_id: str) -> int:
                 q.queue.clear()
                 q.queue.extend(kept)
     try:
-        from faust_backend.runtime import scheduler
+        from faust_backend.agent.runtime import scheduler
 
         removed += scheduler.get_scheduler().cancel_merge_key(trigger_id, reason="trigger_deleted")
     except Exception as e:  # noqa: BLE001 - 删除触发器不得因调度器异常而失败

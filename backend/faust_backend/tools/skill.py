@@ -9,8 +9,8 @@ from faust_backend.tools.hil import HILRequest
 from faust_backend.tools._patch_utils import install_skill_from_slug
 import faust_backend.core.config as conf
 
-import faust_backend.skill_manager as skill_manager
-from faust_backend.runtime import state
+import faust_backend.agent.skill as skill_manager
+from faust_backend.agent.runtime import state
 
 
 @register

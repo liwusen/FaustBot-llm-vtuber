@@ -139,7 +139,7 @@ def test_invoke_inside_running_loop(plugin, monkeypatch):
 
 def test_get_trigger_queue_snapshot_returns_items_without_consuming():
     """快照必须返回队列内容且不消费队列。"""
-    import faust_backend.trigger_manager as tm
+    import faust_backend.agent.trigger as tm
 
     with tm.trigger_queue.mutex:
         tm.trigger_queue.queue.append({"id": "t1", "type": "event", "event_name": "test"})
@@ -165,7 +165,7 @@ def test_get_trigger_queue_snapshot_returns_items_without_consuming():
 def test_trigger_queue_route_returns_queue():
     """GET /faust/debugging/trigger-queue 返回 queue_size + triggers 列表。"""
     from faust_backend.routes import debugging as dbg_route
-    import faust_backend.trigger_manager as tm
+    import faust_backend.agent.trigger as tm
 
     with tm.trigger_queue.mutex:
         tm.trigger_queue.queue.append({"id": "q1", "type": "datetime", "target": "2026-09-01T00:00:00Z"})
@@ -183,7 +183,7 @@ def test_trigger_queue_route_returns_queue():
 def test_trigger_queue_route_empty():
     """空队列返回 queue_size=0。"""
     from faust_backend.routes import debugging as dbg_route
-    import faust_backend.trigger_manager as tm
+    import faust_backend.agent.trigger as tm
 
     with tm.trigger_queue.mutex:
         tm.trigger_queue.queue.clear()

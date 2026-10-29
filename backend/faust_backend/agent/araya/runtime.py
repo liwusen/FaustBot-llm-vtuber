@@ -17,7 +17,7 @@ from langchain_openai import ChatOpenAI
 
 import faust_backend.core.config as conf
 from faust_backend.core.log import get_logger
-from faust_backend.runtime.model_retry import with_model_retry
+from faust_backend.agent.runtime.middleware.model_retry import with_model_retry
 
 import traceback
 
@@ -663,12 +663,12 @@ class ArayaRuntime:
         ]
 
     async def _init_agent(self) -> None:
-        from faust_backend.runtime import state as runtime_state
+        from faust_backend.agent.runtime import state as runtime_state
         from faust_backend.llm.provider import build_main_chat_model
-        from faust_backend.runtime.middleware import wrap_tools
-        from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
-        from faust_backend.runtime.server_tools import build_server_tool_middleware
-        from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
+        from faust_backend.agent.runtime.middleware import wrap_tools
+        from faust_backend.agent.runtime.middleware.mm_bridge import MultimodalBridgeMiddleware
+        from faust_backend.agent.runtime.middleware.server_tools import build_server_tool_middleware
+        from faust_backend.agent.runtime.middleware.tool_call_repair import ToolCallRepairMiddleware
         # Araya 用 main_model：服务端工具按同一 model spec 解析
         _providers = runtime_state.get_model_providers()
         self._chat_model = await build_main_chat_model(_providers, intensity=None)

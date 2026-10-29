@@ -208,7 +208,7 @@ def test_chat_route_helper_uses_onion_dispatcher(monkeypatch):
     若路由层退回「只取 pluggy 第一条非 None」，这条断言会失败。
     """
     from faust_backend.routes import chat
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     pm = _manager_with(
         ("a-emotion", SuffixPlugin("情绪"), 10),
@@ -220,7 +220,7 @@ def test_chat_route_helper_uses_onion_dispatcher(monkeypatch):
 
 def test_chat_route_helper_passthrough_without_manager(monkeypatch):
     from faust_backend.routes import chat
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     monkeypatch.setattr(state, "plugin_manager", None)
     assert _run(chat._apply_plugin_message_hooks("你好")) == "你好"

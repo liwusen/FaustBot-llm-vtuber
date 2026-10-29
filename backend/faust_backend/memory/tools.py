@@ -128,7 +128,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         from faust_backend.memory.config import ENTITY_DEDUP_THRESHOLD
         prompt_path = Path(__file__).parent / "extraction_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
-        from faust_backend.runtime import state as runtime_state
+        from faust_backend.agent.runtime import state as runtime_state
         from faust_backend.llm.provider import build_main_chat_model
         providers = runtime_state.get_model_providers()
         if not providers or not providers.main_model:

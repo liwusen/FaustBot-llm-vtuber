@@ -357,7 +357,7 @@ def test_no_chat_global_references():
     allowed = {
         "admin_runtime.py",
         "core/config.py",
-        "provider.py",
+        "llm/provider.py",
         "memory/eval/cli.py",
     }
     real = [o for o in offenders if o[0] not in allowed]
@@ -378,7 +378,7 @@ def _make_provider_app():
 def test_providers_crud_roundtrip(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
-    import faust_backend.runtime.state as state_mod
+    import faust_backend.agent.runtime.state as state_mod
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
     monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
@@ -408,7 +408,7 @@ def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
     import faust_backend.llm.provider as prov
-    import faust_backend.runtime.state as state_mod
+    import faust_backend.agent.runtime.state as state_mod
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
     monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
@@ -437,7 +437,7 @@ def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
 def test_select_model_switches(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
-    import faust_backend.runtime.state as state_mod
+    import faust_backend.agent.runtime.state as state_mod
     from faust_backend.llm.provider import new_provider
 
     async def _noop_rebuild(**kw):
@@ -471,7 +471,7 @@ def test_save_config_with_providers(tmp_path, monkeypatch):
     provider 配置与公共配置一起持久化，无需单独保存。"""
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
-    import faust_backend.runtime.state as state_mod
+    import faust_backend.agent.runtime.state as state_mod
     import faust_backend.routes.admin_config as admin_config_mod
     import faust_backend.admin_runtime as admin_runtime
 
@@ -558,7 +558,7 @@ def test_save_config_persists_model_context_lengths(tmp_path, monkeypatch):
     重新加载（ensure_model_providers_loaded）能读到该值。"""
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
-    import faust_backend.runtime.state as state_mod
+    import faust_backend.agent.runtime.state as state_mod
     import faust_backend.routes.admin_config as admin_config_mod
     import faust_backend.admin_runtime as admin_runtime
 

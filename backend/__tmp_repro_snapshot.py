@@ -5,10 +5,10 @@ from pathlib import Path
 
 from fastapi.encoders import jsonable_encoder
 
-from faust_backend.runtime import state
+from faust_backend.agent.runtime import state
 from faust_backend.routes import debugging
-from faust_backend.subagent_manager import SubagentManager
-import faust_backend.skill_manager as skill_manager
+from faust_backend.agent.subagent.manager import SubagentManager
+import faust_backend.agent.skill as skill_manager
 import faust_backend.core.config as conf
 
 

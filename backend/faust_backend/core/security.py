@@ -28,7 +28,7 @@ async def _get_checker_agent():
     """惰性构建安全审核 LLM（统一走 provider 配置：opencode_go 头等）。"""
     global _checker_agent
     if _checker_agent is None:
-        from faust_backend.runtime import state as runtime_state
+        from faust_backend.agent.runtime import state as runtime_state
         from faust_backend.llm.provider import build_main_chat_model
         _checker_agent = await build_main_chat_model(
             runtime_state.get_model_providers(), intensity=None

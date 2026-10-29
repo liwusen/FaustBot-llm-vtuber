@@ -16,8 +16,8 @@ from langchain_core.messages import AIMessageChunk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.runtime import lifecycle
-from faust_backend.runtime import state
+from faust_backend.agent.runtime.invoke import invoke_agent_locked, stream_chat_agent_events
+from faust_backend.agent.runtime import state
 
 # 模块级 asyncio.Lock 绑定首个事件循环：全部用例共享同一循环
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -83,7 +83,7 @@ def lock_timeout_env():
 
 async def test_stream_starts_with_lock_acquired():
     """流式消费第一项是 lock_acquired（前端据此清除"排队等待中"）。"""
-    agen = lifecycle.stream_chat_agent_events(FakeStreamAgent(texts=("你好",)), {"messages": []})
+    agen = stream_chat_agent_events(FakeStreamAgent(texts=("你好",)), {"messages": []})
     try:
         acquired = await _next(agen)
         assert acquired == {"type": "lock_acquired"}
@@ -97,7 +97,7 @@ async def test_stream_starts_with_lock_acquired():
 
 async def test_consumer_pause_does_not_hold_lock():
     """消费者暂停读取时锁必须已释放（修复：前端节拍劫持全局锁）。"""
-    agen = lifecycle.stream_chat_agent_events(
+    agen = stream_chat_agent_events(
         FakeStreamAgent(texts=("一", "二", "三")), {"messages": []}
     )
     try:
@@ -120,12 +120,12 @@ async def test_invoke_agent_locked_timeout_and_recovery(lock_timeout_env, hold_a
     """
     async with hold_agent_lock("test_holder"):
         with pytest.raises(RuntimeError) as exc_info:
-            await lifecycle.invoke_agent_locked(FakeInvokeAgent(), {"messages": []})
+            await invoke_agent_locked(FakeInvokeAgent(), {"messages": []})
         msg = str(exc_info.value)
         assert "等待主 Agent 锁超时" in msg
         assert "test_holder" in msg
 
-    res = await lifecycle.invoke_agent_locked(FakeInvokeAgent(), {"messages": []})
+    res = await invoke_agent_locked(FakeInvokeAgent(), {"messages": []})
     assert res["messages"][-1]["content"] == "ok"
     assert not state.agent_lock.locked()
 
@@ -134,7 +134,7 @@ async def test_stream_timeout_when_lock_held(lock_timeout_env):
     """流式路径等待锁超时：RuntimeError 经队列重抛给消费者，锁不被破坏。"""
     await state.agent_lock.acquire()
     state.mark_agent_lock_acquired("test_holder")
-    agen = lifecycle.stream_chat_agent_events(FakeStreamAgent(), {"messages": []})
+    agen = stream_chat_agent_events(FakeStreamAgent(), {"messages": []})
     try:
         with pytest.raises(RuntimeError) as exc_info:
             await _next(agen)
@@ -148,7 +148,7 @@ async def test_stream_timeout_when_lock_held(lock_timeout_env):
 
 async def test_stream_error_propagates_and_releases_lock():
     """生产者异常经队列重抛给消费者，且锁必然释放。"""
-    agen = lifecycle.stream_chat_agent_events(
+    agen = stream_chat_agent_events(
         FakeStreamAgent(error=ValueError("boom")), {"messages": []}
     )
     try:
@@ -164,7 +164,7 @@ async def test_stream_abort_propagates_cancelled():
     """abort_event 触发后消费者收到 CancelledError，锁释放。"""
     abort = asyncio.Event()
     gate = asyncio.Event()
-    agen = lifecycle.stream_chat_agent_events(
+    agen = stream_chat_agent_events(
         FakeStreamAgent(gate=gate, texts=("一", "二")), {"messages": []}, abort_event=abort
     )
     try:

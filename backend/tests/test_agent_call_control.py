@@ -26,7 +26,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import faust_backend.core.config as conf
 import faust_backend.routes.chat as chat
-from faust_backend.runtime import lifecycle, state
+from faust_backend.agent.runtime import rebuild
+from faust_backend.agent.runtime import state
+from faust_backend.agent.runtime.invoke import (
+    acquire_agent_lock,
+    invoke_agent_locked,
+    stream_chat_agent_events,
+)
+from faust_backend.agent.runtime.rebuild import rebuild_runtime
+from faust_backend.agent.prompt.seed import _seed_system_prompt
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -123,7 +131,7 @@ async def test_producer_cancelled_while_waiting_lock_terminates_consumer(monkeyp
     monkeypatch.setattr(state, "AGENT_LOCK_TIMEOUT", 30.0)
     await state.agent_lock.acquire()
     state.mark_agent_lock_acquired("test_holder")
-    agen = lifecycle.stream_chat_agent_events(FakeStreamAgent(), {"messages": []})
+    agen = stream_chat_agent_events(FakeStreamAgent(), {"messages": []})
     try:
         # 推进生成器让它创建生产者；生产者此刻停在 acquire_agent_lock 上
         consumer = asyncio.create_task(agen.__anext__())
@@ -151,7 +159,7 @@ async def test_rebuild_runtime_busy_keeps_runtime_intact(
     sentinel = object()
     monkeypatch.setattr(state, "agent", sentinel)
     async with hold_agent_lock("test_holder"):
-        info = await lifecycle.rebuild_runtime(reset_dialog=False, no_initial_chat=True)
+        info = await rebuild_runtime(reset_dialog=False, no_initial_chat=True)
     assert info["ready"] is False
     assert info["status"] == "busy"
     assert "等待主 Agent 锁超时" in info["error"]
@@ -222,7 +230,7 @@ async def test_invoke_agent_locked_inside_scheduled_turn_does_not_reacquire(shor
     锁由调度器 worker 持有；回合体内的 ``invoke_agent_locked`` 走"已持锁"路径
     （``acquire_agent_lock`` 在临界区内是 no-op），因此在短超时下也必须立刻返回。
     """
-    from faust_backend.runtime import scheduler as agent_scheduler
+    from faust_backend.agent.runtime import scheduler as agent_scheduler
 
     agent = FakeInvokeAgent()
     scheduler = agent_scheduler.AgentScheduler()
@@ -230,7 +238,7 @@ async def test_invoke_agent_locked_inside_scheduled_turn_does_not_reacquire(shor
 
     async def _run():
         seen.append(state.agent_lock.locked())
-        return await lifecycle.invoke_agent_locked(agent, {"messages": []})
+        return await invoke_agent_locked(agent, {"messages": []})
 
     handle = scheduler.submit(
         agent_scheduler.AgentRequest(
@@ -253,7 +261,7 @@ async def test_acquire_agent_lock_rejects_reentrancy(short_lock_timeout):
     try:
         started = time.monotonic()
         with pytest.raises(RuntimeError, match="不可重入"):
-            await lifecycle.acquire_agent_lock("inner")
+            await acquire_agent_lock("inner")
         assert time.monotonic() - started < 1.0
     finally:
         state.agent_lock.release()
@@ -274,7 +282,7 @@ async def test_clear_success_path_completes_and_releases_lock(monkeypatch):
 
     async def fake_rebuild(*, reset_dialog=False, no_initial_chat=False):
         # 真实 rebuild 在同一个临界区里还会发起一次引导对话：绝不能再取一次锁
-        await lifecycle.invoke_agent_locked(state.agent, {"messages": []})
+        await invoke_agent_locked(state.agent, {"messages": []})
         return {"ready": True, "status": "ready", "error": ""}
 
     monkeypatch.setattr(chat, "rebuild_runtime", fake_rebuild)
@@ -332,7 +340,7 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     monkeypatch.setattr(state, "makeup_init_prompt", lambda: None)
     monkeypatch.setattr(llm_tools, "refresh_runtime_paths", lambda: None)
     monkeypatch.setattr(state, "get_model_providers", lambda: FakeProviders())
-    monkeypatch.setattr(lifecycle.args, "save_in_memory", True)
+    monkeypatch.setattr(rebuild.args, "save_in_memory", True)
     monkeypatch.setattr(state, "plugin_manager", None)
     # set_runtime_state 会改这几个全局，测完还原
     monkeypatch.setattr(state, "RUNTIME_READY", state.RUNTIME_READY)
@@ -352,13 +360,13 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     async def _rebuild_subagents(**kwargs):
         return None
 
-    monkeypatch.setattr(lifecycle, "get_faustbot_vfs", _vfs)
-    monkeypatch.setattr(lifecycle, "refresh_runtime_nodes", _refresh_nodes)
-    monkeypatch.setattr(lifecycle, "_create_agent_with_extensions", _create_agent)
-    monkeypatch.setattr(lifecycle, "_rebuild_subagent_manager", _rebuild_subagents)
+    monkeypatch.setattr(rebuild, "get_faustbot_vfs", _vfs)
+    monkeypatch.setattr(rebuild, "refresh_runtime_nodes", _refresh_nodes)
+    monkeypatch.setattr(rebuild, "_create_agent_with_extensions", _create_agent)
+    monkeypatch.setattr(rebuild, "_rebuild_subagent_manager", _rebuild_subagents)
     monkeypatch.setattr(mcp_manager, "get_mcp_manager", lambda: FakeMcpManager())
     monkeypatch.setattr(
-        lifecycle.araya_runtime, "get_araya_runtime", lambda refresh=False: FakeAraya()
+        rebuild.araya_runtime, "get_araya_runtime", lambda refresh=False: FakeAraya()
     )
     return fake_agent
 
@@ -373,7 +381,7 @@ async def test_rebuild_inside_exclusive_turn_seeds_prompt_without_self_lock(monk
     调用：system-only 的模型请求在 Gemini/Anthropic 上非法（contents are
     required / messages 不能为空），历史实现因此把 /clear 变成必然降级。
     """
-    from faust_backend.runtime import scheduler as agent_scheduler
+    from faust_backend.agent.runtime import scheduler as agent_scheduler
 
     fake_agent = _stub_rebuild_deps(monkeypatch)
     monkeypatch.setattr(state, "AGENT_LOCK_TIMEOUT", 0.3)
@@ -381,7 +389,7 @@ async def test_rebuild_inside_exclusive_turn_seeds_prompt_without_self_lock(monk
     locked_during: list[bool] = []
 
     async def _run():
-        info = await lifecycle.rebuild_runtime(reset_dialog=True, no_initial_chat=False)
+        info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
         locked_during.append(state.agent_lock.locked())
         return info
 
@@ -415,7 +423,7 @@ async def test_seed_system_prompt_writes_on_empty_checkpoint(monkeypatch):
     monkeypatch.setattr(state, "PROMPT", "角色设定")
     agent = FakeInvokeAgent()
 
-    seeded = await lifecycle._seed_system_prompt(agent)
+    seeded = await _seed_system_prompt(agent)
 
     assert seeded is True
     assert agent.calls == []
@@ -432,7 +440,7 @@ async def test_seed_system_prompt_is_idempotent(monkeypatch):
         messages=[SystemMessage(content="角色设定"), HumanMessage(content="hi")]
     )
 
-    seeded = await lifecycle._seed_system_prompt(agent)
+    seeded = await _seed_system_prompt(agent)
 
     assert seeded is False
     assert agent.updates == []
@@ -451,7 +459,7 @@ async def test_seed_system_prompt_replaces_stale_system_and_keeps_history(monkey
         ]
     )
 
-    seeded = await lifecycle._seed_system_prompt(agent)
+    seeded = await _seed_system_prompt(agent)
 
     assert seeded is True
     assert [type(m).__name__ for m in agent.messages] == [
@@ -469,5 +477,5 @@ async def test_seed_system_prompt_skips_empty_prompt(monkeypatch):
 
     agent = FakeInvokeAgent()
 
-    assert await lifecycle._seed_system_prompt(agent) is False
+    assert await _seed_system_prompt(agent) is False
     assert agent.updates == []

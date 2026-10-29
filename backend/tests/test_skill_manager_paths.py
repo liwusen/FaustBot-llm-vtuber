@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from faust_backend.skill_manager import _skill_paths
-from faust_backend import skill_manager
+from faust_backend.agent.skill import _skill_paths
+from faust_backend.agent import skill as skill_manager
 
 
 def test_skill_paths_only_scans_agent_skill_dir(tmp_path, monkeypatch):
@@ -18,7 +18,7 @@ def test_skill_paths_only_scans_agent_skill_dir(tmp_path, monkeypatch):
     (agent_dir / "skill.d" / "_private").mkdir()
     (agent_dir / "skill.d" / ".hidden").mkdir()
 
-    monkeypatch.setattr("faust_backend.skill_manager._skill_dir", lambda agent_name=None: agent_dir / "skill.d")
+    monkeypatch.setattr("faust_backend.agent.skill._skill_dir", lambda agent_name=None: agent_dir / "skill.d")
 
     names = sorted(p.name for p in _skill_paths("faust"))
     assert names == ["csv", "minecraft"]

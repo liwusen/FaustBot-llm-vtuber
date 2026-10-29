@@ -16,8 +16,8 @@ from typing import Any, Callable
 from langchain_core.tools import BaseTool
 
 from faust_backend.core.log import get_logger
-from faust_backend.runtime.output_store import get_output_store
-from faust_backend.runtime import state
+from faust_backend.agent.runtime.turn.output_store import get_output_store
+from faust_backend.agent.runtime import state
 
 log = get_logger("faust.tool_middleware")
 

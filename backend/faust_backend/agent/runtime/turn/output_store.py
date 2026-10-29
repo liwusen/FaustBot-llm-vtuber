@@ -247,7 +247,7 @@ _store: OutputStore | None = None
 def get_output_store() -> OutputStore:
     global _store
     try:
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
         storage_path = os.path.join(state.AGENT_ROOT, "artifact.json")
     except Exception:
         storage_path = ""
@@ -263,7 +263,7 @@ def reset_output_store(*, clear_persisted: bool = False) -> None:
             _store.clear()
         else:
             try:
-                from faust_backend.runtime import state
+                from faust_backend.agent.runtime import state
                 storage_path = os.path.join(state.AGENT_ROOT, "artifact.json")
                 if storage_path and os.path.exists(storage_path):
                     os.remove(storage_path)

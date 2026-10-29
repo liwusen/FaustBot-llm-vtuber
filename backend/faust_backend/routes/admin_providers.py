@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import faust_backend.core.config as conf
-from faust_backend.runtime import state
+from faust_backend.agent.runtime import state
 
 router = APIRouter(tags=["admin-providers"])
 
@@ -37,7 +37,7 @@ def _get_mp():
 
 
 def _rebuild_after_change():
-    from faust_backend.runtime.lifecycle import rebuild_runtime
+    from faust_backend.agent.runtime.rebuild import rebuild_runtime
     return rebuild_runtime(reset_dialog=False, no_initial_chat=True)
 
 
@@ -163,7 +163,7 @@ async def admin_models_dev_status():
 @router.post("/faust/admin/models-dev/refresh")
 async def admin_models_dev_refresh():
     """强制刷新 models.dev 目录并应用到全部 Provider。"""
-    from faust_backend.runtime.lifecycle import refresh_models_dev_catalog
+    from faust_backend.agent.runtime.rebuild import refresh_models_dev_catalog
 
     try:
         return await refresh_models_dev_catalog(force=True)

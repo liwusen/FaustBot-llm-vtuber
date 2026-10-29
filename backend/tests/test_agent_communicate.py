@@ -31,7 +31,7 @@ if str(REPO_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_PLUGIN_DIR))
 
 import faust_backend.core.config as conf  # noqa: E402
-import faust_backend.trigger_manager as trigger_manager  # noqa: E402
+import faust_backend.agent.trigger as trigger_manager  # noqa: E402
 from faust_backend.plugin_system import PluginManager  # noqa: E402
 from faust_backend.tools.vfs import get_faustbot_vfs  # noqa: E402
 
@@ -836,8 +836,8 @@ class TestSkill:
     @pytest.mark.asyncio
     async def test_skill_installed_listed_and_readable(self, tmp_path, monkeypatch):
         """内置模板会装进 skill.d，listSkills 可见，skill:// 可读（规格 §15.1 验收）。"""
-        from faust_backend import skill_manager
-        from faust_backend.runtime import state
+        from faust_backend.agent import skill as skill_manager
+        from faust_backend.agent.runtime import state
         from faust_backend.tools.read import read as read_tool
 
         config_root = tmp_path / "config"

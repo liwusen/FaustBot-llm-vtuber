@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 import faust_backend.admin_runtime as admin_runtime
-from faust_backend.runtime import state
-from faust_backend.runtime.lifecycle import rebuild_runtime
+from faust_backend.agent.runtime import state
+from faust_backend.agent.runtime.rebuild import rebuild_runtime
 
 router = APIRouter(tags=["admin-runtime"])
 

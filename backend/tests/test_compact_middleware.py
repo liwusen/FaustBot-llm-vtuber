@@ -24,7 +24,7 @@ from langchain_core.tools import tool  # noqa: E402
 from langchain_core.utils.function_calling import convert_to_openai_tool  # noqa: E402
 from langgraph.graph.message import REMOVE_ALL_MESSAGES  # noqa: E402
 
-from faust_backend.runtime.compact import (  # noqa: E402
+from faust_backend.agent.runtime.compact import (  # noqa: E402
     COMPACT_MARKER_END,
     COMPACT_MARKER_START,
     CompactMiddleware,

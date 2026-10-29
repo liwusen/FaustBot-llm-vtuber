@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 import faust_backend.core.config as conf
 import faust_backend.core.frontend.api as backend2front
-import faust_backend.trigger_manager as trigger_manager
+import faust_backend.agent.trigger as trigger_manager
 from faust_backend.live_mode import (
     is_live_mode,
     set_live_mode,

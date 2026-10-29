@@ -48,10 +48,13 @@ from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from typing_extensions import override
 
+from faust_backend.core.message import (
+    message_content_to_text,
+)
 from faust_backend.llm.formats import forced_no_tool_choice
 from faust_backend.core.log import get_logger
-from faust_backend.runtime import usage as usage_mod
-from faust_backend.runtime.tool_call_repair import repair_dangling_tool_calls
+from faust_backend.agent.runtime.turn import usage as usage_mod
+from faust_backend.agent.runtime.middleware.tool_call_repair import repair_dangling_tool_calls
 
 log = get_logger("faust.compact")
 
@@ -654,9 +657,9 @@ class CompactMiddleware(SummarizationMiddleware):
 
 def _content_to_text(content: Any) -> str:
     """把模型分片 content 归一化成纯文本（与 runtime.state 保持一致）。"""
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
 
-    return runtime_state.message_content_to_text(content)
+    return message_content_to_text(content)
 
 
 async def build_compact_middleware(
@@ -680,8 +683,8 @@ async def build_compact_middleware(
     import faust_backend.core.config as conf
     from faust_backend.llm.formats import build_chat_model_from_spec
     from faust_backend.llm.provider import get_context_length, get_model_api_format
-    from faust_backend.runtime import state as runtime_state
-    from faust_backend.runtime.server_tools import resolve_server_tool_specs
+    from faust_backend.agent.runtime import state as runtime_state
+    from faust_backend.agent.runtime.middleware.server_tools import resolve_server_tool_specs
 
     if not model_spec:
         log.warning("未配置模型 spec，auto compact 未启用")

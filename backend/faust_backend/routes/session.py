@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from faust_backend.runtime.session_stats import collect_session_stats
+from faust_backend.agent.runtime.turn.session_stats import collect_session_stats
 
 router = APIRouter(tags=["session"])
 router.description = "会话上下文统计：上下文占用、窗口上限、自动压缩阈值"

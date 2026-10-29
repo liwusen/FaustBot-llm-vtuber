@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 import faust_backend.service_manager as service_manager
-from faust_backend.runtime import state
+from faust_backend.agent.runtime import state
 
 router = APIRouter(tags=["admin-services"])
 router.description = "服务管理：列出/查看/启停/重启后端子进程服务"

@@ -1,6 +1,6 @@
 import os
-import faust_backend.skill_manager as skill_manager
-from faust_backend.runtime import state
+import faust_backend.agent.skill as skill_manager
+from faust_backend.agent.runtime import state
 from faust_backend.core.log import get_logger
 from fastapi import APIRouter
 

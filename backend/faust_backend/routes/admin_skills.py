@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException
-import faust_backend.skill_manager as skill_manager
-from faust_backend.runtime import state
+import faust_backend.agent.skill as skill_manager
+from faust_backend.agent.runtime import state
 
 router = APIRouter(tags=["admin-skills"])
 

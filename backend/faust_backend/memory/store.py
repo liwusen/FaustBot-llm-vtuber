@@ -678,7 +678,7 @@ class GraphStore:
     async def file_read(self, path: str) -> dict:
         # ── memory_read_pre hook ──
         try:
-            from faust_backend.runtime import state
+            from faust_backend.agent.runtime import state
             pm = getattr(state, 'plugin_manager', None)
             if pm:
                 results = await pm._call_pluggy_hook('memory_read_pre', query=path, filters=None, ctx=None)
@@ -717,7 +717,7 @@ class GraphStore:
 
         # ── memory_read_post hook ──
         try:
-            from faust_backend.runtime import state as _state
+            from faust_backend.agent.runtime import state as _state
             pm = getattr(_state, 'plugin_manager', None)
             if pm:
                 post_results = await pm._call_pluggy_hook('memory_read_post', query=path, results=[result], ctx=None)
@@ -738,7 +738,7 @@ class GraphStore:
                          tags: list[str] | None = None) -> dict:
         # ── memory_write_pre hook ──
         try:
-            from faust_backend.runtime import state
+            from faust_backend.agent.runtime import state
             pm = getattr(state, 'plugin_manager', None)
             if pm:
                 results = await pm._call_pluggy_hook('memory_write_pre', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, ctx=None)
@@ -819,7 +819,7 @@ class GraphStore:
 
         # ── memory_write_post hook ──
         try:
-            from faust_backend.runtime import state as _state
+            from faust_backend.agent.runtime import state as _state
             pm = getattr(_state, 'plugin_manager', None)
             if pm:
                 await pm._call_pluggy_hook('memory_write_post', content=content, metadata={"path": path, "description": description, "declared_by": declared_by, "tags": tags}, id=nid, ctx=None)
@@ -1470,7 +1470,7 @@ class GraphStore:
 
     def _get_openai(self) -> AsyncOpenAI:
         if self._openai_client is None:
-            from faust_backend.runtime import state as runtime_state
+            from faust_backend.agent.runtime import state as runtime_state
             from faust_backend.llm.provider import get_main_credentials
             _, _fallback_key, _ = get_main_credentials(runtime_state.get_model_providers())
             api_key = conf.EMBED_API_KEY or _fallback_key
@@ -2207,7 +2207,7 @@ class GraphStore:
             return items
         try:
             import httpx
-            from faust_backend.runtime import state as runtime_state
+            from faust_backend.agent.runtime import state as runtime_state
             from faust_backend.llm.provider import try_main_openai_credentials
             _creds = try_main_openai_credentials(runtime_state.get_model_providers())
             if _creds is None:

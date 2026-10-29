@@ -119,7 +119,7 @@ def transcribe_audio(filename: str, audio_bytes: bytes, content_type: str | None
             raise SpeechRuntimeError(f"MiMo ASR 响应格式异常: {resp.text[:200]}") from exc
         return {"status": "success", "text": text.strip(), "mode": "mimo"}
 
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
     from faust_backend.llm.provider import get_main_credentials
     _, _speech_key, _ = get_main_credentials(runtime_state.get_model_providers())
     api_key = str(_speech_key or "").strip()

@@ -22,8 +22,8 @@ from faust_backend.llm.provider import (
     get_context_length,
     get_model_api_format,
 )
-from faust_backend.runtime import state
-from faust_backend.runtime import usage as usage_mod
+from faust_backend.agent.runtime import state
+from faust_backend.agent.runtime.turn import usage as usage_mod
 
 log = get_logger("faust.session")
 

@@ -7,7 +7,7 @@ from faust_backend.memory.config import EMBED_MODEL
 
 
 def _provider_fallback_key() -> str:
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
     from faust_backend.llm.provider import get_main_credentials
     _, _fallback_key, _ = get_main_credentials(runtime_state.get_model_providers())
     return _fallback_key

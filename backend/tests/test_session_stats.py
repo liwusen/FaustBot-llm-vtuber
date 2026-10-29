@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.llm.provider import DEFAULT_CONTEXT_LENGTH, ModelProvider, ModelProviders
-from faust_backend.runtime import session_stats
+from faust_backend.agent.runtime.turn import session_stats
 from faust_backend.routes.session import session_context_api
 
 

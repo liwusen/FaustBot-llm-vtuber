@@ -17,7 +17,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import faust_backend.admin_runtime as admin_runtime
-import faust_backend.character_card as character_card
+import faust_backend.agent.prompt.character_card as character_card
 from faust_backend.memory.store import GraphStore
 
 TEMPLATE_DIR = Path(admin_runtime.conf.PROJECT_ROOT) / "agents_template" / "faust"

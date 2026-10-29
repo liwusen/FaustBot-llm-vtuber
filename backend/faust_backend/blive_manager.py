@@ -18,7 +18,7 @@ BLiveClient = blivedm.BLiveClient
 BaseHandler = blivedm.BaseHandler
 
 import faust_backend.core.frontend.api as backend2front
-import faust_backend.trigger_manager as trigger_manager
+import faust_backend.agent.trigger as trigger_manager
 from faust_backend.live_mode import is_danmaku_blacklisted
 
 log = logging.getLogger("faust.blive")

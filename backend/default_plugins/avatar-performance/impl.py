@@ -587,7 +587,7 @@ class Plugin(FaustPlugin):
 
     async def _apply_nudge(self, tags: list[str]) -> None:
         """把交互映射成有符号情绪标签，落到已有 EmotionEngineStore。失败只记日志。"""
-        from faust_backend.runtime import state as runtime_state
+        from faust_backend.agent.runtime import state as runtime_state
 
         manager = runtime_state.plugin_manager
         if manager is None:

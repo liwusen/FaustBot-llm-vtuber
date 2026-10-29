@@ -4,29 +4,32 @@ import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from faust_backend.core.message import (
+    format_chat_error,
+    message_content_to_text,
+)
 import faust_backend.core.frontend.api as backend2frontend
 import faust_backend.core.events as events
 import faust_backend.nimble as nimble
-import faust_backend.araya_runtime as araya_runtime
-import faust_backend.trigger_manager as trigger_manager
-import faust_backend.turn_gate as turn_gate
+import faust_backend.agent.araya.runtime as araya_runtime
+import faust_backend.agent.trigger as trigger_manager
+import faust_backend.agent.runtime.turn.gate as turn_gate
 import faust_backend.admin_runtime as admin_runtime
 import faust_backend.core.config as conf
 import faust_backend.service_manager as service_manager
-import faust_backend.skill_manager as skill_manager
-from faust_backend.runtime import state
-from faust_backend.runtime import subagent_events
-from faust_backend.runtime import turn_state
-from faust_backend.runtime import frontend_presence
-from faust_backend.runtime import scheduler as agent_scheduler
-from faust_backend.runtime.lifecycle import (
-    stream_chat_agent_events, stream_silent_reply,
-    schedule_memory_record_sync, rebuild_runtime, _build_chat_model,
-)
-from faust_backend.runtime.session_stats import collect_session_stats, get_checkpoint_messages
+import faust_backend.agent.skill as skill_manager
+from faust_backend.agent.runtime import state
+from faust_backend.agent.subagent import events as subagent_events
+from faust_backend.agent.runtime.turn import state as turn_state
+from faust_backend.agent.runtime.turn import presence as frontend_presence
+from faust_backend.agent.runtime import scheduler as agent_scheduler
+from faust_backend.agent.runtime.build import _build_chat_model
+from faust_backend.agent.runtime.invoke import stream_chat_agent_events, stream_silent_reply
+from faust_backend.agent.runtime.rebuild import rebuild_runtime, schedule_memory_record_sync
+from faust_backend.agent.runtime.turn.session_stats import collect_session_stats, get_checkpoint_messages
 from faust_backend.mcp_manager import get_mcp_manager
 from faust_backend.core.log import get_logger
-from faust_backend.runtime.output_store import reset_output_store
+from faust_backend.agent.runtime.turn.output_store import reset_output_store
 
 log = get_logger("faust.chat")
 
@@ -52,7 +55,7 @@ def _parse_slash_command(text: str) -> tuple[str, str]:
 def _message_to_plain_text(message) -> str:
     msg_type = type(message).__name__
     content = getattr(message, "content", "")
-    text = state.message_content_to_text(content)
+    text = message_content_to_text(content)
     if not text and isinstance(content, list):
         text = json.dumps(content, ensure_ascii=False)
     return f"[{msg_type}] {text}".strip()
@@ -248,7 +251,7 @@ async def _run_slash_command_stream(websocket: WebSocket, factory) -> None:
         log.error("斜杠命令后台执行失败: %s", e, exc_info=True)
         # 前端在 error 分支即释放 currentChatRequest；此时再补 done 反而会另开一个空会话
         await _safe_send(
-            websocket, _main_event_payload("error", error=state.format_chat_error(e))
+            websocket, _main_event_payload("error", error=format_chat_error(e))
         )
         return
     if reply:
@@ -266,7 +269,7 @@ async def _run_compact_command(websocket: WebSocket) -> None:
         )
     except Exception as e:  # noqa: BLE001
         log.error("手动会话压缩失败: %s", e, exc_info=True)
-        reason = state.format_chat_error(e)
+        reason = format_chat_error(e)
         # 把失败原因一并塞进 compact_done：前端据此把卡片标成失败并显示原因，
         # 否则卡片在失败时照样显示"完成"（ok 字段此前完全没人读）。
         await _safe_send(
@@ -431,7 +434,7 @@ async def _force_interrupt_trigger(websocket) -> bool:
     抢占标记打在**触发器流的目标连接**上——前台触发器流读的正是它的
     ``force_interrupting``，据此把终态从 ``interrupted`` 换成 ``done(forced)``。
     """
-    from faust_backend.runtime import scheduler as agent_scheduler
+    from faust_backend.agent.runtime import scheduler as agent_scheduler
 
     scheduler = _scheduler()
     kinds = {agent_scheduler.TurnKind.TRIGGER, agent_scheduler.TurnKind.BATCH}
@@ -550,7 +553,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str, agent=None, origin:
                         await websocket.send_text(json.dumps(_subagents_summary_payload(), ensure_ascii=False))
                     continue
                 if event.get("type") == "delta":
-                    delta_text = state.message_content_to_text(event.get("content"))
+                    delta_text = message_content_to_text(event.get("content"))
                     if not delta_text:
                         continue
                     reply += delta_text
@@ -629,7 +632,7 @@ async def _run_agent_stream(websocket: WebSocket, text: str, agent=None, origin:
     except Exception as e:
         log.error("Chat agent stream 错误: %s", e, exc_info=True)
         try:
-            await websocket.send_text(json.dumps(_main_event_payload("error", error=state.format_chat_error(e)), ensure_ascii=False))
+            await websocket.send_text(json.dumps(_main_event_payload("error", error=format_chat_error(e)), ensure_ascii=False))
         except Exception:
             log.error("向 websocket 发送错误事件失败（连接可能已关闭）")
     return reply
@@ -655,7 +658,7 @@ async def chat_post(payload: dict):
             events.ignore_trigger_event.clear()
             log.info("消息已被插件拦截 (message_received -> __IGNORED__)")
             return {"reply": "", "suppressed": True}
-        from faust_backend.runtime import scheduler as agent_scheduler
+        from faust_backend.agent.runtime import scheduler as agent_scheduler
 
         handle = _scheduler().submit(agent_scheduler.AgentRequest(
             agent_scheduler.TurnKind.USER,
@@ -683,7 +686,7 @@ async def chat_post(payload: dict):
     except Exception as e:
         events.ignore_trigger_event.clear()
         log.error("Chat POST 错误: %s", e)
-        return {"error": state.format_chat_error(e), "warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
+        return {"error": format_chat_error(e), "warning": "使用websocket /faust/chat接口以获得更好的前端流式体验和更低的延迟。"}
 
 
 @router.websocket("/faust/chat")
@@ -791,7 +794,7 @@ async def chat_websocket(websocket: WebSocket):
                 log.error("斜杠命令处理失败: %s", e, exc_info=True)
                 await _safe_send(
                     websocket,
-                    _main_event_payload("error", error=state.format_chat_error(e)),
+                    _main_event_payload("error", error=format_chat_error(e)),
                 )
                 continue
             if handled:
@@ -819,7 +822,7 @@ async def chat_websocket(websocket: WebSocket):
             # 放在 ignore_trigger_event 置位之后，确保插话瞬间调度器不再放行触发器
             # 抢在用户消息前执行。
             try:
-                from faust_backend.runtime import scheduler as agent_scheduler
+                from faust_backend.agent.runtime import scheduler as agent_scheduler
 
                 araya_runtime.get_araya_runtime(refresh=True).mark_main_agent_activity()
                 events.ignore_trigger_event.set()
@@ -855,7 +858,7 @@ async def chat_websocket(websocket: WebSocket):
             except Exception as e:
                 events.ignore_trigger_event.clear()
                 log.error("Chat WebSocket 错误: %s", e)
-                await websocket.send_text(json.dumps(_main_event_payload("error", error=state.format_chat_error(e)), ensure_ascii=False))
+                await websocket.send_text(json.dumps(_main_event_payload("error", error=format_chat_error(e)), ensure_ascii=False))
     except WebSocketDisconnect:
         log.info("Chat WebSocket 断开")
     finally:

@@ -16,8 +16,8 @@
 锁的语义（迁移期保险丝）
 ------------------------
 worker 持锁期间，**本回合临界区内的所有子孙任务**看到的都是"锁已持有"：
-``lifecycle.acquire_agent_lock`` 在 ``in_scheduled_turn()`` 为真时直接返回，
-``lifecycle.release_agent_lock`` 只释放一次（``TurnHandle.lock_held``）。
+``acquire_agent_lock`` 在 ``in_scheduled_turn()`` 为真时直接返回，
+``release_agent_lock`` 只释放一次（``TurnHandle.lock_held``）。
 这样 ``stream_chat_agent_events`` 的生产者不会二次获取（asyncio.Lock 不可重入），
 而它结束时的释放仍然成立——与修复前"锁只覆盖 LLM 会话本身、不覆盖 websocket
 发送"的语义完全一致。
@@ -33,8 +33,10 @@ from contextvars import ContextVar
 from enum import Enum, IntEnum
 from typing import Any, Awaitable, Callable
 
+from faust_backend.agent.runtime.invoke import stream_silent_reply
+from faust_backend.agent.runtime.lock import acquire_agent_lock, release_agent_lock
 import faust_backend.core.events as events
-import faust_backend.turn_gate as turn_gate
+import faust_backend.agent.runtime.turn.gate as turn_gate
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.scheduler")
@@ -556,13 +558,12 @@ class AgentScheduler:
         self._cancel_handle(handle, "stalled")
 
     async def _run_handle(self, handle: TurnHandle) -> None:
-        from faust_backend.runtime import lifecycle
 
         request = handle.request
         handle.mark_running()
         self._executing = handle
         try:
-            await lifecycle.acquire_agent_lock(f"turn:{request.label}")
+            await acquire_agent_lock(f"turn:{request.label}")
             handle.lock_held = True
         except Exception as exc:  # noqa: BLE001 - 拿不到锁必须给出终态，不能卡住队列
             self._executing = None
@@ -746,7 +747,7 @@ def touch() -> None:
 
 def release_turn_lock() -> None:
     """释放调度器 worker 持有的主 Agent 锁（幂等：只有第一个调用者真正释放）。"""
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     handle = _current_turn.get()
     if handle is None or not handle.lock_held:
@@ -772,12 +773,11 @@ def submit_silent_call(
     gate: str = "playback",
 ) -> TurnHandle:
     """提交一次"静默调用"（不推前端）：proactive 情绪寒暄、后台触发器等入口共用。"""
-    from faust_backend.runtime import lifecycle
 
     return get_scheduler().submit(
         AgentRequest(
             kind,
-            lambda: lifecycle.stream_silent_reply(payload),
+            lambda: stream_silent_reply(payload),
             label=label,
             sink="silent",
             droppable=droppable,

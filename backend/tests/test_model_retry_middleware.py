@@ -19,11 +19,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-import faust_backend.araya_runtime as araya_runtime
-import faust_backend.subagent_manager as subagent_manager
-from faust_backend.runtime import model_retry
-from faust_backend.runtime.model_retry import with_model_retry
-from faust_backend.runtime.tool_call_repair import ToolCallRepairMiddleware
+import faust_backend.agent.araya.runtime as araya_runtime
+import faust_backend.agent.subagent.manager as subagent_manager
+from faust_backend.agent.runtime.middleware import model_retry
+from faust_backend.agent.runtime.middleware.model_retry import with_model_retry
+from faust_backend.agent.runtime.middleware.tool_call_repair import ToolCallRepairMiddleware
 
 
 class _FlakyModel(BaseChatModel):
@@ -86,17 +86,17 @@ async def test_exhausted_retries_raise_original_error(monkeypatch):
 
 def test_main_agent_composition_gets_retry_middleware(monkeypatch):
     import faust_backend.mcp_manager as mcp_manager
-    from faust_backend.runtime import lifecycle, state
+    from faust_backend.agent.runtime import build, state
 
     class _FakeMcp:
         def get_langchain_tools(self):
             return []
 
     monkeypatch.setattr(state, "plugin_manager", None)
-    monkeypatch.setattr(lifecycle.llm_tools, "get_tools_for_agent", lambda agent: [])
+    monkeypatch.setattr(build.llm_tools, "get_tools_for_agent", lambda agent: [])
     monkeypatch.setattr(mcp_manager, "get_mcp_manager", lambda: _FakeMcp())
 
-    tools, middlewares = lifecycle._compose_runtime_extensions()
+    tools, middlewares = build._compose_runtime_extensions()
 
     assert tools == []
     assert len(_retries(middlewares)) == 1
@@ -152,7 +152,7 @@ async def test_subagent_agents_get_retry_middleware(monkeypatch):
 @pytest.mark.asyncio
 async def test_araya_agent_gets_retry_middleware(monkeypatch):
     import faust_backend.llm.provider as provider_mod
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
 
     captured: dict = {}
 

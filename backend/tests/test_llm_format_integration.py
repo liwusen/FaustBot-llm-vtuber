@@ -41,7 +41,7 @@ def test_models_dev_catalog_reachable():
 @pytest.mark.skipif(not MODELS_DEV_ENABLED, reason="set FAUST_MODELS_DEV_IT=1 to run")
 def test_models_dev_matches_current_providers():
     import faust_backend.llm.models_dev as models_dev
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     catalog = asyncio.run(models_dev.refresh_catalog())
     providers = state.get_model_providers()
@@ -63,7 +63,7 @@ def test_each_resolved_format_answers():
     from langchain_core.messages import HumanMessage
 
     from faust_backend.llm.formats import resolve_route
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     providers = state.get_model_providers()
     seen_formats: dict[str, str] = {}

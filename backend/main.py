@@ -25,11 +25,12 @@ _t.end("fastapi")
 
 # ── Runtime 生命周期 ──
 _t.begin("runtime_lifecycle")
-from faust_backend.runtime.lifecycle import lifespan, start_services
+from faust_backend.app.lifespan import lifespan
+from faust_backend.app.services import start_services
 _t.begin("runtime_lifecycle")
 
 _t.begin("runtime_state")
-from faust_backend.runtime import state
+from faust_backend.agent.runtime import state
 _t.end("runtime_state")
 
 # ── 内部路由模块 ──

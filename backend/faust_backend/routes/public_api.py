@@ -4,8 +4,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-import faust_backend.trigger_manager as tm
-from faust_backend.runtime import frontend_presence
+import faust_backend.agent.trigger as tm
+from faust_backend.agent.runtime.turn import presence as frontend_presence
 
 router = APIRouter(tags=["public-api"])
 

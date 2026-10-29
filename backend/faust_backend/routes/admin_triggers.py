@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import APIRouter, HTTPException
-import faust_backend.trigger_manager as trigger_manager
-from faust_backend.runtime import state
+import faust_backend.agent.trigger as trigger_manager
+from faust_backend.agent.runtime import state
 
 router = APIRouter(tags=["admin-triggers"])
 

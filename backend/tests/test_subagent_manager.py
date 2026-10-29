@@ -10,8 +10,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-import faust_backend.subagent_manager as subagent_manager
-from faust_backend.runtime import state as runtime_state
+import faust_backend.agent.subagent.manager as subagent_manager
+from faust_backend.agent.runtime import state as runtime_state
 from faust_backend.tools.read import read
 from faust_backend.routes import subagents as subagent_routes
 from faust_backend.tools import subagent as subagent_tools

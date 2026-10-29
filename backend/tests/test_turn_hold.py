@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.core.config as conf
-import faust_backend.turn_gate as tg
+import faust_backend.agent.runtime.turn.gate as tg
 
 
 @pytest.fixture(autouse=True)
@@ -145,7 +145,7 @@ class _FakeWebSocket:
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_agent_stream_arms_gate_and_echoes_turn_id(monkeypatch):
     import faust_backend.routes.chat as chat
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     # 不写真实记忆库(该用例会正常跑完一轮流, 不拦的话会往 ~/.faustbot 落聊天记录)
     monkeypatch.setattr(chat, "schedule_memory_record_sync", lambda *a, **k: None)
@@ -173,7 +173,7 @@ async def test_run_agent_stream_arms_gate_and_echoes_turn_id(monkeypatch):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_agent_stream_without_turn_id_does_not_arm(monkeypatch):
     import faust_backend.routes.chat as chat
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     monkeypatch.setattr(chat, "schedule_memory_record_sync", lambda *a, **k: None)
 

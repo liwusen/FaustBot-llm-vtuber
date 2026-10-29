@@ -325,7 +325,7 @@ async def test_plugin_config_save_applies_to_running_plugin(monkeypatch):
     因此路由必须广播 config_changed，否则插件缓存永远停留在启动值。
     """
     from faust_backend.routes import admin_plugins as admin_plugins_routes
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
 
     pm = await _build_manager()
     pm.set_plugin_enabled('emotion-engine', True)

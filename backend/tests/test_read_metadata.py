@@ -134,7 +134,7 @@ class TestSourceCodeListingMetadata:
 class TestSkillListingMetadata:
     @pytest.fixture
     def agent_root(self, tmp_path, monkeypatch):
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         root = tmp_path / "agents" / "demo_agent"
         skill = root / "skill.d" / "demo_skill"

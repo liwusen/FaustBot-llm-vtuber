@@ -33,7 +33,7 @@ from langchain_core.messages import (  # noqa: E402
     SystemMessage,
 )
 
-from faust_backend.runtime.compact import (  # noqa: E402
+from faust_backend.agent.runtime.compact import (  # noqa: E402
     CompactMiddleware,
     _is_compact_summary,
     _reported_tokens,
@@ -236,7 +236,7 @@ def _install_compact_env(monkeypatch, *, mode: str, agent_fail: bool = False,
     后续所有测试，因此这里统一用 monkeypatch.setattr。
     """
     from faust_backend.routes import chat as chat_route
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     ws = _FakeWS()
     monkeypatch.setattr(
@@ -393,7 +393,7 @@ def test_compact_survives_dead_socket(monkeypatch):
             self.attempts.append(text)
             raise RuntimeError("socket closed")
 
-    from faust_backend.runtime import state
+    from faust_backend.agent.runtime import state
 
     monkeypatch.setattr(state, "compact_middleware", _FakeCompactMW("ok"), raising=False)
     monkeypatch.setattr(state, "agent", _FakeAgent(), raising=False)

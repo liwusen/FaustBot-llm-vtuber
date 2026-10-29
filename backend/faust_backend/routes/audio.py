@@ -8,7 +8,7 @@ import faust_backend.speech_runtime as speech_runtime
 from faust_backend.processors import get_processor_manager
 from faust_backend.processors.builtin.vad import SAMPLE_RATE, VAD_THRESHOLD, WINDOW_SIZE
 from faust_backend.processors.errors import ProcessorError
-from faust_backend.runtime import state
+from faust_backend.agent.runtime import state
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.audio")

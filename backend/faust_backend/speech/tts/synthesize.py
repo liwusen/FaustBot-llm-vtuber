@@ -148,7 +148,7 @@ async def _apply_tts_text_hook(text: str) -> str:
     """tts_text hook: plugins may rewrite the text fed to TTS (speech only,
     subtitles unaffected). First non-empty string result wins."""
     try:
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         pm = getattr(state, "plugin_manager", None)
         if pm is None:
@@ -166,7 +166,7 @@ async def _fire_tts_start(text: str) -> None:
     """tts_start hook: notified when a TTS segment is synthesized and about to
     be delivered to the frontend for playback."""
     try:
-        from faust_backend.runtime import state
+        from faust_backend.agent.runtime import state
 
         pm = getattr(state, "plugin_manager", None)
         if pm is not None:
@@ -245,7 +245,7 @@ async def _synthesize_impl(payload_text: str, lang: str | None) -> tuple[bytes, 
         except Exception as exc:
             raise SpeechRuntimeError(f"MiMo TTS 失败: {exc}") from exc
 
-    from faust_backend.runtime import state as runtime_state
+    from faust_backend.agent.runtime import state as runtime_state
     from faust_backend.llm.provider import get_main_credentials
     _, _speech_key, _ = get_main_credentials(runtime_state.get_model_providers())
     api_key = str(_speech_key or "").strip()

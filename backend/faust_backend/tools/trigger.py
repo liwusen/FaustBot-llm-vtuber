@@ -1,7 +1,7 @@
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-import faust_backend.trigger_manager as trigger_manager
+import faust_backend.agent.trigger as trigger_manager
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.tools.trigger")

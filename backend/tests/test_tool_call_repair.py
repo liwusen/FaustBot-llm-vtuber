@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from faust_backend.runtime.middleware import wrap_tools
-from faust_backend.runtime.tool_call_repair import (
+from faust_backend.agent.runtime.middleware import wrap_tools
+from faust_backend.agent.runtime.middleware.tool_call_repair import (
     PLACEHOLDER_CONTENT,
     ToolCallRepairMiddleware,
     repair_dangling_tool_calls,

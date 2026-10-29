@@ -15,9 +15,12 @@ from langgraph.graph.state import CompiledStateGraph
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
+from faust_backend.core.message import (
+    extract_reasoning_text,
+)
 from faust_backend.core.log import get_logger
-from faust_backend.runtime import subagent_events
-from faust_backend.runtime.model_retry import with_model_retry
+from faust_backend.agent.subagent import events as subagent_events
+from faust_backend.agent.runtime.middleware.model_retry import with_model_retry
 
 log = get_logger("faust.subagents")
 
@@ -193,11 +196,11 @@ class SubagentManager:
         命中前缀缓存，因此 mock 工具必须按该 Subagent 的实际 toolset 构建，
         不能共用主 Agent 的工具列表。
         """
-        from faust_backend.runtime.compact import (
+        from faust_backend.agent.runtime.compact import (
             CompactMiddleware,
             build_compact_middleware,
         )
-        from faust_backend.runtime.server_tools import (
+        from faust_backend.agent.runtime.middleware.server_tools import (
             ServerToolMiddleware,
             build_server_tool_middleware,
         )
@@ -210,7 +213,7 @@ class SubagentManager:
             m for m in middlewares if not isinstance(m, ServerToolMiddleware)
         ]
         if model_spec:
-            from faust_backend.runtime import state as runtime_state
+            from faust_backend.agent.runtime import state as runtime_state
 
             server_tool_middleware = build_server_tool_middleware(
                 runtime_state.get_model_providers(), model_spec
@@ -474,7 +477,7 @@ class SubagentManager:
         # model 可选：None 用默认 Subagent 模型；传入则校验白名单并构建对应模型
         chat_model = self.chatModel
         if model is not None:
-            from faust_backend.runtime import state as runtime_state
+            from faust_backend.agent.runtime import state as runtime_state
             from faust_backend.llm.provider import (
                 build_ReasoningChatOpenAI_from_spec,
                 is_subagent_model_allowed,
@@ -766,7 +769,7 @@ class SubagentManager:
         Yields:
             dict: _description_
         """        
-        from faust_backend.runtime.compact import COMPACT_TAG
+        from faust_backend.agent.runtime.compact import COMPACT_TAG
 
         # 压缩调用（带 COMPACT_TAG 的模型调用）必须与 Subagent 的正常输出分流：
         # 否则摘要文本会作为普通 delta 泄进 Subagent 输出，前端也看不到压缩卡片。
@@ -796,10 +799,10 @@ class SubagentManager:
                     compact_active = False
                     yield {"type": "compact_done"}
                 # 推理增量：四种 API 格式落点不同（additional_kwargs / content 块），
-                # 统一交给 runtime.state.extract_reasoning_text 提取。
-                from faust_backend.runtime import state as runtime_state
+                # 统一交给 runtime.extract_reasoning_text 提取。
+                from faust_backend.agent.runtime import state as runtime_state
 
-                reasoning = runtime_state.extract_reasoning_text(chunk)
+                reasoning = extract_reasoning_text(chunk)
                 if reasoning:
                     yield {"type": "reasoning_delta", "content": reasoning}
                 delta_text = SubagentManager._message_content_to_text(chunk.content)

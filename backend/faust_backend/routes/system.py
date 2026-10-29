@@ -1,9 +1,9 @@
 import asyncio
 from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
-import faust_backend.trigger_manager as trigger_manager
-from faust_backend.runtime import state
-from faust_backend.runtime.lifecycle import _graceful_shutdown_task
+import faust_backend.agent.trigger as trigger_manager
+from faust_backend.agent.runtime import state
+from faust_backend.app.lifespan import _graceful_shutdown_task
 
 router = APIRouter(tags=["system"])
 

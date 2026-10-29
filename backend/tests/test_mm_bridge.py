@@ -25,7 +25,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import faust_backend.core.config as conf  # noqa: E402
-from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware  # noqa: E402
+from faust_backend.agent.runtime.middleware.mm_bridge import MultimodalBridgeMiddleware  # noqa: E402
 
 
 def _png_base64(size: tuple[int, int]) -> str:

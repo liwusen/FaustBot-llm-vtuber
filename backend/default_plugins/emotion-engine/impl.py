@@ -197,8 +197,8 @@ def _schedule_proactive_chat(content: str) -> bool:
     与 chat.py 的后台触发器同款：提交给唯一调度器而不是自己起 task 抢主 Agent，
     这样它才排在 trigger 档、拥塞时可被硬丢（D2：`droppable` 是唯一允许硬丢者）。
     """
-    from faust_backend.runtime import state
-    from faust_backend.runtime import scheduler
+    from faust_backend.agent.runtime import state
+    from faust_backend.agent.runtime import scheduler
 
     if state.agent is None:
         log.warning("emotion-engine: agent 未就绪，跳过主动寒暄")

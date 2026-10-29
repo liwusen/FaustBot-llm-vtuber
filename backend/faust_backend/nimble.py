@@ -242,7 +242,7 @@ def message_trigger_id(callback_id: str) -> str:
 async def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[str, Any]]:
     """关闭会话的统一出口：删 trigger、通知前端、清理 VFS 与内存/磁盘记录。"""
     import faust_backend.core.frontend.api as backend2frontend
-    import faust_backend.trigger_manager as trigger_manager
+    import faust_backend.agent.trigger as trigger_manager
 
     session = close_nimble_session(callback_id, reason=reason)
     if not session:
@@ -344,7 +344,7 @@ def get_all_persistent_session_data() -> list:
 async def restore_persistent_sessions():
     """在启动时恢复所有持久化 Nimble 窗口。"""
     import faust_backend.core.frontend.api as backend2frontend
-    import faust_backend.trigger_manager as trigger_manager
+    import faust_backend.agent.trigger as trigger_manager
 
     entries = get_all_persistent_session_data()
     if not entries:

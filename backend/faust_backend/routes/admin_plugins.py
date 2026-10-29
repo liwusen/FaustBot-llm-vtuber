@@ -5,8 +5,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import faust_backend.plugin_market as plugin_market
 from faust_backend.plugin_system.manager import PluginLoadError
-from faust_backend.runtime import state
-from faust_backend.runtime.lifecycle import rebuild_runtime, _sync_plugin_trigger_filters
+from faust_backend.agent.runtime import state
+from faust_backend.agent.runtime.rebuild import rebuild_runtime
+from faust_backend.app.services import _sync_plugin_trigger_filters
 from typing import AsyncGenerator
 router = APIRouter(tags=["admin-plugins"])
 

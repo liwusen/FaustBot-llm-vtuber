@@ -16,9 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import faust_backend.core.config as conf
 import faust_backend.core.events as events
-import faust_backend.turn_gate as tg
-from faust_backend.runtime import scheduler as sched
-from faust_backend.runtime import state
+import faust_backend.agent.runtime.turn.gate as tg
+from faust_backend.agent.runtime import scheduler as sched
+from faust_backend.agent.runtime import state
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -37,7 +37,7 @@ class FakeClock:
 @pytest_asyncio.fixture
 async def sched_env(monkeypatch):
     """隔离的调度器 + 闸门 + 事件标志；收尾 cancel worker。"""
-    from faust_backend.runtime import frontend_presence
+    from faust_backend.agent.runtime.turn import presence as frontend_presence
 
     monkeypatch.setattr(conf, "TRIGGER_READ_FLOOR_SEC", 0.0)
     monkeypatch.setattr(conf, "TRIGGER_HOLD_MAX_SEC", 0.2)
