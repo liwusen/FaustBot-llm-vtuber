@@ -148,7 +148,7 @@ def test_registry_rejects_incomplete_and_duplicate_processors():
 
 
 def test_resolve_data_dir_default_and_override(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     from faust_backend.processors.base import resolve_data_dir
 
     monkeypatch.setattr(conf, "DATA_ROOT", str(tmp_path / "data"))
@@ -778,7 +778,7 @@ async def test_prune_whitelist_and_unknown_name(manager_factory):
 
 @pytest.mark.asyncio
 async def test_prune_loop_reads_config_and_recycles(manager_factory, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     manager = manager_factory()
     lease = await manager.startRequire("TEST_ECHO", requirer="chat")

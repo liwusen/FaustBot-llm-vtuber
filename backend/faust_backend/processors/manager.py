@@ -15,8 +15,8 @@ from typing import Any, Awaitable, Callable
 
 import psutil
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 
 from . import protocol as proto
 from .base import Processor, read_setup_marker, resolve_data_dir
@@ -68,7 +68,7 @@ def _main_loop_hint() -> asyncio.AbstractEventLoop | None:
     停止/回收时要跨已关闭的循环，收不到应答就会挂住。
     """
     try:
-        from faust_backend.backend2front import get_main_loop
+        from faust_backend.core.frontend.api import get_main_loop
     except Exception:  # noqa: BLE001 - 前端桥不可用时退回"首次调用者"策略
         return None
     loop = get_main_loop()

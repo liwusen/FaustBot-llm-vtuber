@@ -19,11 +19,11 @@ a_path=os.path.abspath
 # 其余模块一律引用本文件导出的常量，不再自己数 dirname（守卫测试见
 # backend/tests/test_architecture.py）。
 #
-# 搬动本文件时，只需调整下面两处 d_name 的层数，全仓路径自动跟随。
+# 搬动本文件时，只需调整 PACKAGE_ROOT 的层数，全仓路径自动跟随。
 # ---------------------------------------------------------------------------
-BACKEND_ROOT = d_name(d_name(a_path(__file__)))  # backend/
+PACKAGE_ROOT = d_name(d_name(a_path(__file__)))  # backend/faust_backend/（本文件在 core/ 下）
+BACKEND_ROOT = d_name(PACKAGE_ROOT)              # backend/
 PROJECT_ROOT = BACKEND_ROOT                      # 历史名称：语义与取值都等于 backend/（勿改）
-PACKAGE_ROOT = d_name(a_path(__file__))          # backend/faust_backend/
 REPO_ROOT = d_name(BACKEND_ROOT)                 # 仓库根 faust/
 # 用户数据根目录（~/.faustbot），存放配置、Agent 数据、缓存等
 CONFIG_ROOT = os.path.join(os.path.expanduser("~"), ".faustbot")

@@ -13,7 +13,7 @@ from pathlib import Path
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.tools.vfs import get_faustbot_vfs
 from ._patch_utils import replace_exact
 log = get_logger("faust.tools.edit")
@@ -56,7 +56,7 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
         old_str: Exact text to replace. Must be unique in the file.
         new_str: Replacement text (empty string deletes old_str).
     """
-    from faust_backend.config_loader import WORKDIR_ROOT
+    from faust_backend.core.config import WORKDIR_ROOT
 
     log.info("edit INPUT path=%s old_len=%d new_len=%d", path, len(old_str), len(new_str))
 
@@ -74,7 +74,7 @@ async def edit(path: str, old_str: str, new_str: str) -> str:
         log.info("edit OUTPUT %s", _msg[:120])
         return _msg
 
-    from faust_backend.runtime.uri import (
+    from faust_backend.core.uri import (
         detect_unsupported_protocol,
         SCHEME_FILE,
         SCHEME_MEMORY,

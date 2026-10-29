@@ -6,11 +6,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 import websocket
 import faust_backend.trigger_manager as trigger_manager
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.mc")
 
@@ -57,7 +57,7 @@ def _schedule_trigger_append(payload: dict[str, Any]) -> None:
     `append_trigger` 现在是 async（插件 hook 走 async 路径），而 ``_on_message``
     是 websocket-client 的同步回调（跑在 ``_ws_thread`` 里），不能直接 await。
     """
-    from faust_backend.backend2front import get_main_loop
+    from faust_backend.core.frontend.api import get_main_loop
 
     loop = get_main_loop()
     if loop is None or not loop.is_running():

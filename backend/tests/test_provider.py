@@ -260,7 +260,7 @@ def test_auto_load_force_keeps_old_models_on_failure(monkeypatch):
 
 
 def test_config_loader_creates_and_migrates(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     # 模拟旧配置：有 CHAT_* 无 provider.private.json
     public = {"CHAT_MODEL": "gpt-4o", "CHAT_API_BASE": "https://www.dmxapi.cn/v1"}
@@ -298,7 +298,7 @@ def test_config_loader_creates_and_migrates(tmp_path, monkeypatch):
 
 
 def test_config_loader_loads_existing(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     data = {
         "providers": [{"name": "x", "base_url": "http://x/v1", "key": "k", "models": ["m1"]}],
@@ -352,11 +352,11 @@ def test_no_chat_global_references():
                     "CHAT_MODEL", "CHAT_API_BASE", "CHAT_API_KEY"):
             if pat in text:
                 offenders.append((py.relative_to(root).as_posix(), pat))
-    # [R10] 豁免：admin_runtime 的 OBSOLETE 列表、config_loader 迁移逻辑、
-    # provider.py 注释、memory/eval 的 CLI 帮助文本
+    # [R10] 豁免：admin_runtime 的 OBSOLETE 列表、core/config 的迁移逻辑、
+    # llm/provider.py 注释、memory/eval 的 CLI 帮助文本
     allowed = {
         "admin_runtime.py",
-        "config_loader.py",
+        "core/config.py",
         "provider.py",
         "memory/eval/cli.py",
     }
@@ -377,7 +377,7 @@ def _make_provider_app():
 
 def test_providers_crud_roundtrip(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.runtime.state as state_mod
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
@@ -406,7 +406,7 @@ def test_providers_crud_roundtrip(tmp_path, monkeypatch):
 def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
     """「自动加载模型」路由必须 force=True：已有模型的 provider 也会清空重拉。"""
     from fastapi.testclient import TestClient
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.provider as prov
     import faust_backend.runtime.state as state_mod
 
@@ -436,7 +436,7 @@ def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
 
 def test_select_model_switches(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.runtime.state as state_mod
     from faust_backend.provider import new_provider
 
@@ -470,7 +470,7 @@ def test_save_config_with_providers(tmp_path, monkeypatch):
     """[统一保存] POST /faust/admin/config 携带 providers/main_model/subagent_models 时，
     provider 配置与公共配置一起持久化，无需单独保存。"""
     from fastapi.testclient import TestClient
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.runtime.state as state_mod
     import faust_backend.routes.admin_config as admin_config_mod
     import faust_backend.admin_runtime as admin_runtime
@@ -557,7 +557,7 @@ def test_save_config_persists_model_context_lengths(tmp_path, monkeypatch):
     """POST /faust/admin/config 携带含 model_context_lengths 的 providers 后，
     重新加载（ensure_model_providers_loaded）能读到该值。"""
     from fastapi.testclient import TestClient
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.runtime.state as state_mod
     import faust_backend.routes.admin_config as admin_config_mod
     import faust_backend.admin_runtime as admin_runtime
@@ -636,7 +636,7 @@ def test_model_context_lengths_absent_by_default(tmp_path):
 
 def test_reasoning_config_migrates_old_thinking(tmp_path, monkeypatch):
     """旧 THINKING_ENABLED/THINKING_INTENSITY 迁移为单一 REASONING_CONFIG。"""
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     def write_config(data):
         (tmp_path / "faust.config.json").write_text(json.dumps(data), encoding="utf-8")
@@ -676,7 +676,7 @@ def test_reasoning_config_migrates_old_thinking(tmp_path, monkeypatch):
 def test_set_reasoning_effort_validates_level(monkeypatch):
     """/effort 命令：非法 level 拒绝，合法 level 写 REASONING_CONFIG 并 rebuild。"""
     from faust_backend.routes import chat as chat_route
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     saved = {}
     monkeypatch.setattr(conf, "REASONING_CONFIG", "medium")

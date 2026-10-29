@@ -5,8 +5,8 @@ import asyncio
 from langchain_core.messages import HumanMessage,SystemMessage
 from langchain.tools import tool
 import json,re
-import faust_backend.config_loader as conf
-import faust_backend.backend2front as backend2front
+import faust_backend.core.config as conf
+import faust_backend.core.frontend.api as backend2front
 from faust_backend.llm_tools import HILRequest
 @tool
 async def listdir(path):

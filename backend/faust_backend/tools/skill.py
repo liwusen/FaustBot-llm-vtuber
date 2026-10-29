@@ -7,7 +7,7 @@ from langchain.tools import tool
 from faust_backend.tools._registry import register
 from faust_backend.tools.hil import HILRequest
 from faust_backend.tools._patch_utils import install_skill_from_slug
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state

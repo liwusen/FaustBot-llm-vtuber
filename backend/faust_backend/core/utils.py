@@ -7,7 +7,7 @@ import logging
 import threading
 from pathlib import Path
 import requests
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.utils")
 

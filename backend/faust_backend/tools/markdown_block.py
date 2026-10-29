@@ -1,8 +1,8 @@
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-import faust_backend.backend2front as backend2frontend
-from faust_backend.logger import get_logger
+import faust_backend.core.frontend.api as backend2frontend
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.tools.markdown_block")
 

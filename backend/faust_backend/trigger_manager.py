@@ -9,11 +9,11 @@ from pathlib import Path
 import threading
 import os
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.nimble as nimble
 from faust_backend.runtime import frontend_presence
 from pydantic import BaseModel, Field, field_validator
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 # 惰性解析 triggers 文件路径 — 不在 import 时读取文件
 _store_lock = threading.RLock()

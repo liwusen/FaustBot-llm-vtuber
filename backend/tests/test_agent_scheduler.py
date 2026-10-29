@@ -14,8 +14,8 @@ import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import faust_backend.config_loader as conf
-import faust_backend.events as events
+import faust_backend.core.config as conf
+import faust_backend.core.events as events
 import faust_backend.turn_gate as tg
 from faust_backend.runtime import scheduler as sched
 from faust_backend.runtime import state

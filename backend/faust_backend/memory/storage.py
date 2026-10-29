@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.memory.storage")
 

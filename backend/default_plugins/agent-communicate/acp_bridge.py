@@ -33,7 +33,7 @@ from acp.schema import (
 )
 from acp.contrib.session_state import SessionAccumulator  # noqa: F401  (对外转出，供 tasks 层使用)
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.plugins.agent-communicate.bridge")
 

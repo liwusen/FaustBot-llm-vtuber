@@ -2,7 +2,7 @@
 事件系统: 提供 EventBus 单例及向后兼容的模块级符号。
 """
 import asyncio
-from faust_backend.events.bus import EventBus
+from faust_backend.core.events.bus import EventBus
 
 _bus: EventBus | None = None
 

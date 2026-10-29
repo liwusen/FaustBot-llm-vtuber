@@ -1,4 +1,4 @@
-from faust_backend.frontend.bridge import FrontendBridge
+from faust_backend.core.frontend.bridge import FrontendBridge
 
 _bridge: FrontendBridge | None = None
 

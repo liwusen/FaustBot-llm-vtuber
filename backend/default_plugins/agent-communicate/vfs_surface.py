@@ -17,7 +17,7 @@ import json
 import time
 from typing import Any
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 from agents import AgentRegistry, render_discover_md
 from tasks import (

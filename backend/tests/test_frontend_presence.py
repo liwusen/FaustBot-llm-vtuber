@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.routes.public_api as public_api
 import faust_backend.trigger_manager as tm
 from faust_backend.runtime import frontend_presence
@@ -228,8 +228,8 @@ class _FakeWs:
 
 @asyncio_mark
 async def test_command_websocket_marks_presence_and_drains_on_disconnect(monkeypatch):
-    import faust_backend.backend2front as backend2front
-    import faust_backend.events as events
+    import faust_backend.core.frontend.api as backend2front
+    import faust_backend.core.events as events
     import faust_backend.routes.chat as chat
     from faust_backend.runtime import state
 
@@ -274,8 +274,8 @@ async def test_command_websocket_detects_silent_disconnect(monkeypatch):
     这是集成测试暴露的真实缺口：command WS 从不 receive，前端被 kill 后连接一直
     挂着，presence 停在"在线"，离线禁触失效、唤醒静默丢失。
     """
-    import faust_backend.backend2front as backend2front
-    import faust_backend.events as events
+    import faust_backend.core.frontend.api as backend2front
+    import faust_backend.core.events as events
     import faust_backend.routes.chat as chat
     from faust_backend.runtime import state
     from starlette.websockets import WebSocketDisconnect

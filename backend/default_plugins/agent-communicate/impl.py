@@ -27,7 +27,7 @@ except ImportError as exc:  # pragma: no cover - 依赖缺失必须显式失败
         "（requirements.txt 已声明）。插件不会降级为'功能静默不可用'。"
     ) from exc
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 
 from agents import AgentRegistry, AgentRuntime, AgentSettings, build_settings

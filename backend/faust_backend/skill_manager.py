@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 _SAFE_SLUG = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}$")

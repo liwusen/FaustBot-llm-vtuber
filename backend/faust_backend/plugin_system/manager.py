@@ -25,8 +25,8 @@ from .plugin_storage import PluginStorage
 from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
 from .plugin_base import FaustPlugin
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 from typing_extensions import deprecated
 log = get_logger(__name__)
 

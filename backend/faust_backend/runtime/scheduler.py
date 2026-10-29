@@ -33,9 +33,9 @@ from contextvars import ContextVar
 from enum import Enum, IntEnum
 from typing import Any, Awaitable, Callable
 
-import faust_backend.events as events
+import faust_backend.core.events as events
 import faust_backend.turn_gate as turn_gate
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.scheduler")
 

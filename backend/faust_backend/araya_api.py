@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from faust_backend.araya_runtime import get_araya_runtime
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.araya_api")
 

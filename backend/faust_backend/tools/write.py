@@ -13,7 +13,7 @@ from pathlib import Path
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes
 
 log = get_logger("faust.tools.write")
@@ -67,7 +67,7 @@ async def write(path: str, content: str) -> str:
     raw = path_str
     log.info("write INPUT path=%s content_len=%d", path_str, len(content))
 
-    from faust_backend.runtime.uri import (
+    from faust_backend.core.uri import (
         detect_unsupported_protocol,
         SCHEME_FILE,
         SCHEME_MEMORY,
@@ -97,7 +97,7 @@ async def write(path: str, content: str) -> str:
 
 
 def _write_file(raw: str, content: str) -> str:
-    from faust_backend.config_loader import PROJECT_ROOT, CONFIG_ROOT, WORKDIR_ROOT
+    from faust_backend.core.config import PROJECT_ROOT, CONFIG_ROOT, WORKDIR_ROOT
 
     file_path = Path(raw)
     if not file_path.is_absolute():

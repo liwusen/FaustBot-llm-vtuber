@@ -78,7 +78,7 @@ def read_memory_store(tmp_path, monkeypatch):
 
     供 read 工具的 memory:// 测试使用；禁用向量索引，写入不触发 embedding。
     """
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.memory as memory_pkg
     import faust_backend.memory.store as store
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from faust_backend.ui_settings import load_ui_settings, save_ui_settings
+from faust_backend.core.ui_settings import load_ui_settings, save_ui_settings
 
 
 router = APIRouter(tags=["ui-settings"])

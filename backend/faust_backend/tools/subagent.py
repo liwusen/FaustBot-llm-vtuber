@@ -4,7 +4,7 @@ import json
 
 from langchain.tools import tool
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.runtime import state
 from faust_backend.tools._registry import register
 from faust_backend.tools.read import read

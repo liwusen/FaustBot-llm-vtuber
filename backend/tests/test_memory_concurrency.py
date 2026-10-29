@@ -17,7 +17,7 @@ import pytest  # noqa: E402
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     import faust_backend.memory.store as store_mod
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))

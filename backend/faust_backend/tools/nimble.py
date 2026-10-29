@@ -6,10 +6,10 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 import faust_backend.nimble as nimble
-import faust_backend.backend2front as backend2frontend
+import faust_backend.core.frontend.api as backend2frontend
 import faust_backend.trigger_manager as trigger_manager
-from faust_backend.logger import get_logger
-from faust_backend.runtime.uri import (
+from faust_backend.core.log import get_logger
+from faust_backend.core.uri import (
     parse,
     SCHEME_FAUSTBOT,
     SCHEME_MEMORY,
@@ -49,7 +49,7 @@ async def _resolve_path_html(spec: str) -> str:
         return target.read_text(encoding="utf-8")
 
     if parsed.scheme == SCHEME_SOURCE_CODE:
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         repo_root = Path(conf.PROJECT_ROOT).parent
         parts = [p for p in parsed.path.split("/") if p]
@@ -78,7 +78,7 @@ async def _resolve_path_html(spec: str) -> str:
         return str(result.get("content", ""))
 
     # 磁盘文件
-    from faust_backend.config_loader import PROJECT_ROOT, CONFIG_ROOT, WORKDIR_ROOT
+    from faust_backend.core.config import PROJECT_ROOT, CONFIG_ROOT, WORKDIR_ROOT
 
     file_path = Path(parsed.path)
     if not file_path.is_absolute():

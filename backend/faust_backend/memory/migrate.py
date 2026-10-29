@@ -14,7 +14,7 @@ from typing import Any, Iterable
 import numpy as np
 from nano_vectordb import NanoVectorDB
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.memory.storage import (
     MemoryDB,
     MigrationError,

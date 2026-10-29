@@ -4,7 +4,7 @@ from faust_backend.plugin_system import PluginContext
 """
 import time
 from pydantic import BaseModel, Field
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from asyncio import Lock
 
 

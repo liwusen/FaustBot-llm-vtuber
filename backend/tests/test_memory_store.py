@@ -15,7 +15,7 @@ if str(BACKEND_ROOT) not in sys.path:
 sys.argv = [sys.argv[0]]
 
 import faust_backend.memory.store as store
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 @pytest.fixture

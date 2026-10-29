@@ -3,7 +3,7 @@
 原有消费者无需修改。
 """
 import asyncio
-from faust_backend.frontend import get_bridge
+from faust_backend.core.frontend import get_bridge
 
 _bridge = get_bridge()
 

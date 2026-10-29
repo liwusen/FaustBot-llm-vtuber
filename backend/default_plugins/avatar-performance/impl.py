@@ -25,8 +25,8 @@ from typing import Any
 
 from langchain.tools import tool
 
-import faust_backend.backend2front as backend2frontend
-from faust_backend.logger import get_logger
+import faust_backend.core.frontend.api as backend2frontend
+from faust_backend.core.log import get_logger
 from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
 log = get_logger("faust.plugins.avatar-performance")

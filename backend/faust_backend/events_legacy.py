@@ -3,7 +3,7 @@
 原有消费者无需修改。
 """
 import asyncio
-from faust_backend.events import get_bus
+from faust_backend.core.events import get_bus
 
 _bus = get_bus()
 

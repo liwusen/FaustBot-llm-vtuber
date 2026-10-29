@@ -17,7 +17,7 @@ import pytest  # noqa: E402
 from multidict import CIMultiDict  # noqa: E402
 from yarl import URL  # noqa: E402
 
-import faust_backend.config_loader as conf  # noqa: E402
+import faust_backend.core.config as conf  # noqa: E402
 import faust_backend.tts_edge as tts_edge  # noqa: E402
 from faust_backend.speech.errors import SpeechRuntimeError  # noqa: E402
 from faust_backend.speech.tts import retry as tts_retry  # noqa: E402

@@ -15,7 +15,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.runtime import subagent_events
 from faust_backend.runtime.model_retry import with_model_retry
 

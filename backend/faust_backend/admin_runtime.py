@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-import faust_backend.config_loader as conf
-import faust_backend.backend2front as backend2frontend
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+import faust_backend.core.frontend.api as backend2frontend
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.admin_runtime")
 
@@ -230,7 +230,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── Provider 配置（与公共配置一起保存，不单独保存） ──
     if "providers" in payload or "main_model" in payload or "subagent_models" in payload:
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         from faust_backend.provider import ModelProviders, dumps
         mp = conf.ensure_model_providers_loaded()
         if "providers" in payload:
@@ -262,7 +262,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     _write_json(PUBLIC_CONFIG_PATH, public_cfg)
     _write_json(PRIVATE_CONFIG_PATH, private_cfg)
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     conf.reload_configs()
     return get_config_view()
 

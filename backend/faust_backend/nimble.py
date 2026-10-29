@@ -16,8 +16,8 @@ import time
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional
-from faust_backend.logger import get_logger
-from faust_backend.config_loader import CONFIG_ROOT
+from faust_backend.core.log import get_logger
+from faust_backend.core.config import CONFIG_ROOT
 
 log = get_logger("faust.nimble")
 
@@ -191,7 +191,7 @@ async def register_session_vfs_nodes(callback_id: str) -> None:
         return "\n".join(lines)
 
     def write_console(_node, content) -> None:
-        import faust_backend.backend2front as backend2frontend
+        import faust_backend.core.frontend.api as backend2frontend
 
         s = _nimble_sessions.get(callback_id)
         if not s:
@@ -241,7 +241,7 @@ def message_trigger_id(callback_id: str) -> str:
 
 async def finalize_close(callback_id: str, reason: str = "closed") -> Optional[Dict[str, Any]]:
     """关闭会话的统一出口：删 trigger、通知前端、清理 VFS 与内存/磁盘记录。"""
-    import faust_backend.backend2front as backend2frontend
+    import faust_backend.core.frontend.api as backend2frontend
     import faust_backend.trigger_manager as trigger_manager
 
     session = close_nimble_session(callback_id, reason=reason)
@@ -343,7 +343,7 @@ def get_all_persistent_session_data() -> list:
 
 async def restore_persistent_sessions():
     """在启动时恢复所有持久化 Nimble 窗口。"""
-    import faust_backend.backend2front as backend2frontend
+    import faust_backend.core.frontend.api as backend2frontend
     import faust_backend.trigger_manager as trigger_manager
 
     entries = get_all_persistent_session_data()
@@ -400,7 +400,7 @@ def list_active_sessions() -> Dict[str, Dict[str, Any]]:
 
 def push_persistent_sessions_to_frontend():
     """将所有活跃的持久化 Nimble 窗口推送到前端（用于 WS 重连/新连接时恢复显示）。"""
-    import faust_backend.backend2front as backend2frontend
+    import faust_backend.core.frontend.api as backend2frontend
     count = 0
     for callback_id, session in list(_nimble_sessions.items()):
         if session.get("persistent") and not session.get("closed") and _now() < float(session.get("expires_at", 0)):

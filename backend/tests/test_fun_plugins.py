@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.plugin_system import PluginManager
 from faust_backend.tools.vfs import get_faustbot_vfs
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'

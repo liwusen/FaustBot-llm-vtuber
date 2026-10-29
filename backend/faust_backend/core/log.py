@@ -10,7 +10,7 @@ FaustBot 统一日志系统
 - 环状缓冲区（最多 500 条，防内存泄漏）
 
 用法：
-    from faust_backend.logger import get_logger
+    from faust_backend.core.log import get_logger
     log = get_logger("faust.main")
     log.info("服务启动")
 """
@@ -27,7 +27,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-import faust_backend.config_loader as conf
+from . import config as conf
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -229,7 +229,7 @@ def _init_root() -> None:
         "websockets",
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
-    import faust_backend.debug_config as debug_config
+    import faust_backend.core.debug_config as debug_config
     if debug_config.NETWORK_DEBUG:
         logging.getLogger("httpx").setLevel(logging.DEBUG)
         logging.getLogger("httpcore").setLevel(logging.DEBUG)

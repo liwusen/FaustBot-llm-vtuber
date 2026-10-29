@@ -15,7 +15,7 @@ from faust_backend.runtime import state as runtime_state
 from faust_backend.tools.read import read
 from faust_backend.routes import subagents as subagent_routes
 from faust_backend.tools import subagent as subagent_tools
-from faust_backend.runtime.uri import parse
+from faust_backend.core.uri import parse
 
 
 class FakeSaver:

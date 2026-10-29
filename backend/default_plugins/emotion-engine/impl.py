@@ -8,10 +8,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 log = get_logger("faust.plugins.emotion-engine")
 
 from langchain.tools import tool

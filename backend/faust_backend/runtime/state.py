@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import langgraph
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.llm_tools as llm_tools
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 from faust_backend.subagent_manager import SubagentManager
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver

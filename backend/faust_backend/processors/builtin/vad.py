@@ -10,7 +10,7 @@ import numpy as np
 
 from ..base import Processor, ProcessorContext
 from ..registry import processor
-from faust_backend import config_loader as conf
+from faust_backend.core import config as conf
 
 SAMPLE_RATE = 16000
 WINDOW_SIZE = 512

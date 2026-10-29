@@ -10,7 +10,7 @@ from faust_backend.memory.tools import (
     memoryWriteTool as _memoryWriteTool,
     memorySearchTool as _memorySearchTool,
 )
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.tools.memory")
 

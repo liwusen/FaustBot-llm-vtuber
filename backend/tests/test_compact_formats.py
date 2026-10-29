@@ -285,7 +285,7 @@ class _FakeModel:
 
 
 def _compact_env(monkeypatch, *, cost_control: bool = False, max_out: int = 0) -> None:
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     monkeypatch.setattr(conf, "COMPACT_COST_CONTROL_ENABLED", cost_control)
     monkeypatch.setattr(conf, "COMPACT_MAX_OUTPUT_TOKENS", max_out)

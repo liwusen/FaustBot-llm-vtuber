@@ -27,7 +27,7 @@ from langchain.agents.middleware.types import (
 )
 from typing_extensions import override
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.server_tools")
 

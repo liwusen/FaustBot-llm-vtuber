@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from faust_backend.frontend.bridge import FrontendBridge
+from faust_backend.core.frontend.bridge import FrontendBridge
 
 
 def test_bridge_reload_settings_pushes_command():
@@ -31,7 +31,7 @@ def test_bridge_request_avatar_capabilities_pushes_command():
 
 def test_push_reload_if_ui_changed_on_ui_key(monkeypatch):
     import faust_backend.admin_runtime as admin_runtime
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     calls = []
     monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
@@ -44,7 +44,7 @@ def test_push_reload_if_ui_changed_on_ui_key(monkeypatch):
 
 def test_push_reload_if_ui_changed_ignores_non_ui_keys(monkeypatch):
     import faust_backend.admin_runtime as admin_runtime
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     calls = []
     monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
@@ -58,7 +58,7 @@ def test_push_reload_if_ui_changed_ignores_non_ui_keys(monkeypatch):
 def test_push_reload_if_ui_changed_normalization(monkeypatch):
     """None 与 '' 视为相等；int 与等值字符串视为相等（save_config 可能改类型）"""
     import faust_backend.admin_runtime as admin_runtime
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     calls = []
     monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
@@ -80,7 +80,7 @@ def test_ptt_mode_default_is_true():
 
 def test_push_reload_if_ui_changed_on_ptt_mode(monkeypatch):
     import faust_backend.admin_runtime as admin_runtime
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     calls = []
     monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))

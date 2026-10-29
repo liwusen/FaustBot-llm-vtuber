@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.runtime import state
 

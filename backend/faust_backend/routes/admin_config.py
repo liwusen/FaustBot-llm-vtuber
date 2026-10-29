@@ -15,7 +15,7 @@ async def admin_get_config():
 @router.post("/faust/admin/config")
 async def admin_save_config(payload: dict):
     # 捕获旧配置用于服务变更检测（save_config 会重载全局 config）
-    from faust_backend.config_loader import config as old_config
+    from faust_backend.core.config import config as old_config
     old_config_copy = dict(old_config)
 
     try:
@@ -25,7 +25,7 @@ async def admin_save_config(payload: dict):
         raise HTTPException(status_code=400, detail=str(exc))
 
     # 配置保存后检查 ASR / TTS 模式变化，按需启动/关闭/重启服务
-    from faust_backend.config_loader import config as new_config
+    from faust_backend.core.config import config as new_config
     from faust_backend.component_manager import check_and_manage_services
     await check_and_manage_services(old_config_copy, dict(new_config))
 
@@ -40,7 +40,7 @@ async def admin_save_config(payload: dict):
 @router.post("/faust/admin/config/reload")
 async def admin_reload_config(payload: dict | None = None):
     # 捕获旧配置用于服务变更检测
-    from faust_backend.config_loader import config as old_config
+    from faust_backend.core.config import config as old_config
     old_config_copy = dict(old_config)
 
     info = await rebuild_runtime(
@@ -49,7 +49,7 @@ async def admin_reload_config(payload: dict | None = None):
     )
 
     # 配置变更后检查服务启停
-    from faust_backend.config_loader import config as new_config
+    from faust_backend.core.config import config as new_config
     from faust_backend.component_manager import check_and_manage_services
     await check_and_manage_services(old_config_copy, dict(new_config))
     admin_runtime.push_reload_if_ui_changed(old_config_copy, dict(new_config))

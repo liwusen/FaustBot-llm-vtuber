@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from faust_backend.logger import get_recent_errors
+from faust_backend.core.log import get_recent_errors
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-logs"])

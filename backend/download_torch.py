@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 from typing import Callable
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.download.torch")
 

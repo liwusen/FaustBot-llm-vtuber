@@ -2,7 +2,7 @@ from langchain.tools import tool
 
 from faust_backend.tools._registry import register
 import faust_backend.trigger_manager as trigger_manager
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.tools.trigger")
 

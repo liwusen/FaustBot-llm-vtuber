@@ -32,7 +32,7 @@ from acp.schema import (
     ToolCallStart,
 )
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 from agents import AgentRegistry, AgentRuntime
 

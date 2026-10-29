@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 
 from .errors import ProcessorNotFoundError
 from .manager import get_processor_manager

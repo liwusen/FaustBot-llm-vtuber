@@ -9,7 +9,7 @@ from faust_backend.runtime import state
 from faust_backend.routes import debugging
 from faust_backend.subagent_manager import SubagentManager
 import faust_backend.skill_manager as skill_manager
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 async def case(label, setup, teardown):

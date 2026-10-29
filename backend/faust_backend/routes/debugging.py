@@ -9,12 +9,12 @@ from faust_backend.routes.subagents import subagent_status_overrides
 from faust_backend.runtime import state
 
 from faust_backend.skill_manager import list_skills
-from faust_backend.logger import get_logger
-import faust_backend.logger as faust_logger
+from faust_backend.core.log import get_logger
+import faust_backend.core.log as faust_logger
 from faust_backend.runtime import state
 import sys
 from faust_backend.tools.vfs import get_faustbot_vfs
-from faust_backend.config_loader import CONFIG_ROOT
+from faust_backend.core.config import CONFIG_ROOT
 from faust_backend.runtime import frontend_presence
 import faust_backend.trigger_manager as trigger_manager
 log = get_logger("faust.debugging")

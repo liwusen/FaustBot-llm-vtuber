@@ -18,8 +18,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 
 from acp_bridge import AcpBridge, AcpBridgeError
 

@@ -10,8 +10,8 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import Field, create_model
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 
 try:
     from mcp import ClientSession, StdioServerParameters

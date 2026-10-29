@@ -7,7 +7,7 @@ import sys
 import threading
 from pathlib import Path
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 _blivedm_pkg = os.path.join(conf.PACKAGE_ROOT, "blivedm")
 if _blivedm_pkg not in sys.path:
@@ -17,7 +17,7 @@ from blivedm.models import web as web_models
 BLiveClient = blivedm.BLiveClient
 BaseHandler = blivedm.BaseHandler
 
-import faust_backend.backend2front as backend2front
+import faust_backend.core.frontend.api as backend2front
 import faust_backend.trigger_manager as trigger_manager
 from faust_backend.live_mode import is_danmaku_blacklisted
 

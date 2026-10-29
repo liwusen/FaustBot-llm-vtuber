@@ -17,7 +17,7 @@ REPO_PLUGIN_DIR = Path(__file__).resolve().parents[1] / 'default_plugins'
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     """隔离插件数据目录与规则文件路径，避免测试写真实用户数据。"""
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     monkeypatch.setattr(conf, "PLUGIN_DATA_ROOT", str(tmp_path / "plugin_data"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)

@@ -11,8 +11,8 @@ import threading
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 
 log = get_logger('faust.vfs')
 

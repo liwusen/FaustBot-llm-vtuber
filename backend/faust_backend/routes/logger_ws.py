@@ -1,6 +1,6 @@
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from faust_backend.logger import subscribe_ws, unsubscribe_ws, get_logger
+from faust_backend.core.log import subscribe_ws, unsubscribe_ws, get_logger
 
 log = get_logger("faust.logger_ws")
 

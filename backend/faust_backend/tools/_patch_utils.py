@@ -7,7 +7,7 @@ import datetime
 from pathlib import Path
 
 import requests
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 def safe_read_file_range(file_path: str, start_line: int, end_line: int) -> str:

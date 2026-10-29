@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 @pytest.fixture
 def config_env(tmp_path, monkeypatch):
     """把 config_loader 指向 tmp_path 下的最小配置，并在用例结束后还原全部大写全局量。"""
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     snapshot = {k: v for k, v in vars(conf).items() if k.isupper()}
     cfg_path = tmp_path / "faust.config.json"

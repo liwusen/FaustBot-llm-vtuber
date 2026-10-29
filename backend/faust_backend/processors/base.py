@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, ClassVar
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 #: marker 文件名（位于 ProcessorData 目录内）
 SETUP_MARKER_NAME = "setup.json"

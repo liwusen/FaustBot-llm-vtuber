@@ -1,9 +1,9 @@
 from fastapi import APIRouter
-import faust_backend.backend2front as backend2frontend
-import faust_backend.events as events
+import faust_backend.core.frontend.api as backend2frontend
+import faust_backend.core.events as events
 import faust_backend.nimble as nimble
 import faust_backend.trigger_manager as trigger_manager
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.hil_nimble")
 

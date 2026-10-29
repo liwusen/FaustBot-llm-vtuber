@@ -7,7 +7,7 @@ import json
 from typing import Any
 import traceback
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.memory import get_memory
 from langchain_core.messages import HumanMessage, SystemMessage
 from faust_backend.memory import GraphStore

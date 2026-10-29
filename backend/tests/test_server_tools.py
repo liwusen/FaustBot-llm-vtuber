@@ -202,7 +202,7 @@ def test_build_server_tool_specs_is_stable_for_all_formats():
 
 
 def test_compact_binds_server_specs_with_mocks(monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     from faust_backend.runtime.compact import CompactMiddleware
 
     monkeypatch.setattr(conf, "COMPACT_COST_CONTROL_ENABLED", False)

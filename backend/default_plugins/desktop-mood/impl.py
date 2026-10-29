@@ -11,10 +11,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import faust_backend.backend2front as backend2frontend
+import faust_backend.core.frontend.api as backend2frontend
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 log = get_logger("faust.plugins.desktop-mood")
 
 # 插件是以文件方式加载的（模块名 faust_plugin_desktop-mood），加载器不会把插件目录加进

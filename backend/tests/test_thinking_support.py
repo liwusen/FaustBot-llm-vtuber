@@ -125,19 +125,19 @@ class TestBuildChatModel:
             return {"mock_build": mock_build, "captured": captured, "result": result}
 
     def test_thinking_enabled_by_default_provider(self):
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         with patch.object(conf, "REASONING_CONFIG", "medium"):
             info = self._call_and_capture()
         assert info["captured"]["intensity"] == "medium"  # 全局 medium 且 thinking_type != none
 
     def test_thinking_uses_global_reasoning_config(self):
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         with patch.object(conf, "REASONING_CONFIG", "high"):
             info = self._call_and_capture()
         assert info["captured"]["intensity"] == "high"
 
     def test_thinking_off_when_global_off(self):
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         from unittest.mock import patch
         with patch.object(conf, "REASONING_CONFIG", "off"):
             info = self._call_and_capture()
@@ -148,7 +148,7 @@ class TestBuildChatModel:
         from faust_backend.runtime.lifecycle import _build_chat_model
         import asyncio
         from unittest.mock import patch
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         providers = ModelProviders()
         new_provider(providers, "test", "https://test.api/v1", "test-key")
@@ -203,7 +203,7 @@ class TestStreamReasoningDelta:
 
     @pytest.fixture(autouse=True)
     def _setup(self):
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         for key in ("CHAT_API_KEY", "CHAT_API_BASE", "THINKING_ENABLED",
                      "THINKING_PRESET", "THINKING_INTENSITY"):
             if not hasattr(conf, key):

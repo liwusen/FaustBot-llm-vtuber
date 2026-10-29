@@ -18,7 +18,7 @@ def get_memory(agent_name: str | None = None, *, refresh: bool = False) -> Graph
         # 与旧实现一致：只丢弃引用、不 close——可能仍有协程在用旧实例。
         _STORES.clear()
 
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     name = str(agent_name or conf.AGENT_NAME)
     store = _STORES.get(name)
     if store is None:

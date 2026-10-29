@@ -2,8 +2,8 @@ import logging
 
 from fastapi import APIRouter
 
-import faust_backend.config_loader as conf
-import faust_backend.backend2front as backend2front
+import faust_backend.core.config as conf
+import faust_backend.core.frontend.api as backend2front
 import faust_backend.trigger_manager as trigger_manager
 from faust_backend.live_mode import (
     is_live_mode,

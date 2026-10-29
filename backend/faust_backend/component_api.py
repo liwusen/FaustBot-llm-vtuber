@@ -21,7 +21,7 @@ from faust_backend.component_manager import (
     on_component_installed,
 )
 import faust_backend.service_manager as service_manager
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.component.api")
 

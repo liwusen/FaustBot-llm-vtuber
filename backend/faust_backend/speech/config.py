@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 def _conf_get(key: str, default: Any = None) -> Any:

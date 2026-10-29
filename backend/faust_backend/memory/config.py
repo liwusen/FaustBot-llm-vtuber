@@ -1,4 +1,4 @@
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 EMBED_MODEL = conf.EMBED_MODEL
 EMBED_DIM = 1536
 MAX_CHUNK_CHARS = 3000

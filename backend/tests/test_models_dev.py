@@ -12,7 +12,7 @@ import json
 import httpx
 import pytest
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.models_dev as models_dev
 from faust_backend.provider import ModelProvider
 

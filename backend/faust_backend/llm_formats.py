@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 from urllib.parse import urlparse
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.thinking import get_format_thinking_params
 from faust_backend.thinking_caps import (
     ThinkingOption,

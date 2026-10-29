@@ -10,7 +10,7 @@ except Exception:
 
 from langchain_community.utilities import WikipediaAPIWrapper
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 from faust_backend.plugin_system import PluginContext, PluginManifest, ToolSpec
 from faust_backend.searchapi_patched import SearchApiAPIWrapper
 

@@ -2,7 +2,7 @@ import json
 import os
 from os.path import join as pjoin
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 VRM_POSE_PATH = pjoin(conf.CONFIG_ROOT, "vrm_poses.json")
 

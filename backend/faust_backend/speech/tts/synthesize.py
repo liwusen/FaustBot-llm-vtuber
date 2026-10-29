@@ -5,7 +5,7 @@ from typing import Any
 
 import requests
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 from faust_backend.speech.errors import SpeechRuntimeError
 from faust_backend.speech.config import (
     _conf_get,

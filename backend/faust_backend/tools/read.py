@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 import pyautogui
 
 from faust_backend.tools._registry import register
-from faust_backend.runtime.uri import (
+from faust_backend.core.uri import (
     parse,
     SCHEME_FILE,
     SCHEME_ARTIFACT,
@@ -33,12 +33,12 @@ from faust_backend.runtime.uri import (
 )
 from faust_backend.runtime.output_store import get_output_store
 from faust_backend.memory.store import _path_id
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.tools.vfs import (
     get_faustbot_vfs,
     refresh_runtime_nodes,
 )
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 log = get_logger("faust.tools.read")
 
@@ -782,7 +782,7 @@ def _read_file(parsed, *, force_plain_text: bool = False, show_line_number: bool
     # File
     if not file_path.exists():
         # Try as a relative path from agent workdir first, then source root.
-        from faust_backend.config_loader import WORKDIR_ROOT, PROJECT_ROOT
+        from faust_backend.core.config import WORKDIR_ROOT, PROJECT_ROOT
 
         for base in (WORKDIR_ROOT, PROJECT_ROOT):
             alt = Path(base) / path_str

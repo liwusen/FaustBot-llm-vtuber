@@ -18,7 +18,7 @@ from pathlib import Path
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.tools.vfs import get_faustbot_vfs
 
 log = get_logger("faust.tools.search")
@@ -86,7 +86,7 @@ async def search(pattern: str, *, paths: list[str] | str | None = None, max_file
     vfs_scopes: list[str] = []
     fs_paths: list[str] = []
 
-    from faust_backend.runtime.uri import (
+    from faust_backend.core.uri import (
         detect_unsupported_protocol,
         SCHEME_FILE,
         SCHEME_MEMORY,
@@ -168,7 +168,7 @@ def _search_filesystem(pattern: str, paths: list[str], max_file_walks_fs: int = 
     except re.error as e:
         return f"正则表达式错误: {e}"
 
-    from faust_backend.config_loader import WORKDIR_ROOT
+    from faust_backend.core.config import WORKDIR_ROOT
     project_root = Path(WORKDIR_ROOT)
 
     results: list[dict] = []

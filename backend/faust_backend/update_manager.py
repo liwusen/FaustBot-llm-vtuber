@@ -16,9 +16,9 @@ from typing import Any, Callable
 
 import requests
 
-import faust_backend.config_loader as conf
-import faust_backend.logger as logger
-from faust_backend.utils import DownloadTask
+import faust_backend.core.config as conf
+import faust_backend.core.log as logger
+from faust_backend.core.utils import DownloadTask
 
 log = logger.get_logger("faust.update.manager")
 

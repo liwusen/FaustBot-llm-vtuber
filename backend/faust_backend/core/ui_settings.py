@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 
 UI_SETTINGS_PATH = Path(conf.CONFIG_ROOT) / "ui-settings.json"
@@ -54,7 +54,7 @@ def save_ui_settings(payload: Any) -> dict[str, Any]:
     )
     if normalized.get("widgets") != (existing.get("widgets") or {}):
         # UI 参数实际变化：通知前端立即重载（懒导入避免加载环）
-        from faust_backend.backend2front import FrontEndReloadSettings
+        from faust_backend.core.frontend.api import FrontEndReloadSettings
 
         FrontEndReloadSettings()
     return normalized

@@ -30,7 +30,7 @@ if str(BACKEND_ROOT) not in sys.path:
 if str(REPO_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_PLUGIN_DIR))
 
-import faust_backend.config_loader as conf  # noqa: E402
+import faust_backend.core.config as conf  # noqa: E402
 import faust_backend.trigger_manager as trigger_manager  # noqa: E402
 from faust_backend.plugin_system import PluginManager  # noqa: E402
 from faust_backend.tools.vfs import get_faustbot_vfs  # noqa: E402

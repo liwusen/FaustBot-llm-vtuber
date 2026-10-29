@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.service_manager as service_manager
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.component")
 
@@ -278,7 +278,7 @@ def get_service_guard() -> ServiceGuard:
 
 async def on_component_installed(component: str, details: dict | None = None) -> None:
     """组件安装完成后的回调。"""
-    from faust_backend.config_loader import config
+    from faust_backend.core.config import config
     guard = get_service_guard()
     _ = details
 

@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 #: vendored 上游推理代码所在目录（其下是 ``mso`` 包）
 VENDOR_DIR = Path(conf.PACKAGE_ROOT) / "vendor"

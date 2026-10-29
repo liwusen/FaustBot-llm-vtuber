@@ -4,14 +4,14 @@ import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-import faust_backend.backend2front as backend2frontend
-import faust_backend.events as events
+import faust_backend.core.frontend.api as backend2frontend
+import faust_backend.core.events as events
 import faust_backend.nimble as nimble
 import faust_backend.araya_runtime as araya_runtime
 import faust_backend.trigger_manager as trigger_manager
 import faust_backend.turn_gate as turn_gate
 import faust_backend.admin_runtime as admin_runtime
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.service_manager as service_manager
 import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state
@@ -25,7 +25,7 @@ from faust_backend.runtime.lifecycle import (
 )
 from faust_backend.runtime.session_stats import collect_session_stats, get_checkpoint_messages
 from faust_backend.mcp_manager import get_mcp_manager
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.runtime.output_store import reset_output_store
 
 log = get_logger("faust.chat")

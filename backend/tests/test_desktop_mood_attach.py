@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import dm_attach  # noqa: E402
 import dm_sources  # noqa: E402
-import faust_backend.config_loader as conf  # noqa: E402
+import faust_backend.core.config as conf  # noqa: E402
 from faust_backend.plugin_system import PluginManager  # noqa: E402
 from faust_backend.tools.vfs import get_faustbot_vfs  # noqa: E402
 

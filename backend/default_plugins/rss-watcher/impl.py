@@ -13,7 +13,7 @@ from typing import Any
 import aiohttp
 
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.plugin.rss-watcher")
 _PLUGIN: "Plugin | None" = None

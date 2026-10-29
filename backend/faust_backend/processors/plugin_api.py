@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 from .manager import get_processor_manager
 

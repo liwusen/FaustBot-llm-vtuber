@@ -15,8 +15,8 @@ from typing import Any, Optional, Sequence
 
 from langchain_core.messages import AnyMessage
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 from faust_backend.provider import (
     DEFAULT_CONTEXT_LENGTH,
     get_context_length,

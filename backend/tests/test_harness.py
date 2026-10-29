@@ -19,7 +19,7 @@ from PIL import Image
 # Ensure the backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.runtime.uri import (
+from faust_backend.core.uri import (
     parse,
     SCHEME_FILE,
     SCHEME_ARTIFACT,
@@ -323,7 +323,7 @@ class TestReadTool:
 
     def test_read_uri_is_dir_for_trailing_slash(self):
         """回归：带 / 结尾的 scheme URI 应识别为目录（memory://user/ → is_dir）。"""
-        from faust_backend.runtime.uri import parse
+        from faust_backend.core.uri import parse
         assert parse("memory://user/").is_dir is True
         assert parse("memory://user").is_dir is False
         assert parse("memory://").is_dir is True
@@ -333,7 +333,7 @@ class TestReadTool:
     @pytest.mark.asyncio
     async def test_read_file_with_structural_summary(self, tmp_path):
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         code = '''"""
 Module docstring.
 """
@@ -370,7 +370,7 @@ class MyClass:
     async def test_read_file_raw_skips_structural_summary(self, tmp_path):
         """`:raw` 关闭结构摘要：返回原文（回归：此前 :raw 被当成文件名 → 文件不存在）。"""
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         code = "def foo():\n    return 42\n\n\ndef bar(x):\n    return x + 1\n"
         (tmp_path / "demo.py").write_text(code, encoding="utf-8")
 
@@ -418,7 +418,7 @@ class MyClass:
     async def test_read_file_raw_with_line_numbers(self, tmp_path):
         """RAW + show_line_number=True：全文编号；截断提示行不编号。"""
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         (tmp_path / "small.py").write_text("def foo():\n    return 42\n", encoding="utf-8")
         (tmp_path / "big.py").write_text(
             "".join(f"line{i}\n" for i in range(1, 401)), encoding="utf-8"
@@ -462,7 +462,7 @@ class MyClass:
     @pytest.mark.asyncio
     async def test_read_file_with_line_range(self, tmp_path):
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         content = "\n".join(f"line {i}" for i in range(1, 11))
         f = tmp_path / "data.txt"
         f.write_text(content, encoding="utf-8")
@@ -480,7 +480,7 @@ class MyClass:
     @pytest.mark.asyncio
     async def test_read_directory(self, tmp_path):
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         (tmp_path / "sub/").mkdir()
         (tmp_path / "a.txt").write_text("a")
         (tmp_path / "b.py").write_text("b")
@@ -569,7 +569,7 @@ class MyClass:
     @pytest.mark.asyncio
     async def test_read_skill_lists_dir_and_reads_explicit_file(self, tmp_path):
         from faust_backend.tools.read import read
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         from faust_backend.runtime import state
 
         agent_root = tmp_path / "agents" / "demo_agent"
@@ -653,7 +653,7 @@ class TestWriteTool:
     @pytest.mark.asyncio
     async def test_write_text_file(self, tmp_path):
         from faust_backend.tools.write import write
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         result = await write.ainvoke({"path": "hello.md", "content": "# Hello\nWorld"})
         assert "已写入" in result
@@ -664,7 +664,7 @@ class TestWriteTool:
     @pytest.mark.asyncio
     async def test_write_rejects_outside_path(self, tmp_path):
         from faust_backend.tools.write import write
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
@@ -689,7 +689,7 @@ class TestEditTool:
     @pytest.mark.asyncio
     async def test_unique_replace(self, tmp_path):
         from faust_backend.tools.edit import edit
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         content = "def foo():\n    return 1\n\ndef bar():\n    return 2\n"
         f = tmp_path / "test.txt"
@@ -713,7 +713,7 @@ class TestEditTool:
     @pytest.mark.asyncio
     async def test_no_match_guidance(self, tmp_path):
         from faust_backend.tools.edit import edit
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         f = tmp_path / "test.txt"
         f.write_text("line 1\nline 2\n", encoding="utf-8")
@@ -735,7 +735,7 @@ class TestEditTool:
     @pytest.mark.asyncio
     async def test_multiple_match_guidance(self, tmp_path):
         from faust_backend.tools.edit import edit
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         f = tmp_path / "test.txt"
         f.write_text("return 1\nreturn 1\nreturn 1\n", encoding="utf-8")
@@ -757,7 +757,7 @@ class TestEditTool:
     @pytest.mark.asyncio
     async def test_empty_old_str_guidance(self, tmp_path):
         from faust_backend.tools.edit import edit
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         f = tmp_path / "test.txt"
         f.write_text("content\n", encoding="utf-8")
@@ -778,7 +778,7 @@ class TestEditTool:
     @pytest.mark.asyncio
     async def test_same_old_new_noop(self, tmp_path):
         from faust_backend.tools.edit import edit
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         f = tmp_path / "test.txt"
         f.write_text("same\n", encoding="utf-8")
@@ -798,7 +798,7 @@ class TestEditTool:
     @pytest.mark.asyncio
     async def test_missing_file(self):
         from faust_backend.tools.edit import edit
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = "/tmp"
@@ -821,7 +821,7 @@ class TestFindTool:
     @pytest.mark.asyncio
     async def test_find_filesystem(self, tmp_path):
         from faust_backend.tools.find import find
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         (tmp_path / "src/").mkdir()
         (tmp_path / "src/a.py").write_text("a")
@@ -842,7 +842,7 @@ class TestFindTool:
     @pytest.mark.asyncio
     async def test_find_multiple_globs(self, tmp_path):
         from faust_backend.tools.find import find
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         (tmp_path / "src/a.py").parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / "src/a.py").write_text("a")
@@ -861,7 +861,7 @@ class TestFindTool:
     @pytest.mark.asyncio
     async def test_find_no_match(self, tmp_path):
         from faust_backend.tools.find import find
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         orig_root = conf.WORKDIR_ROOT
         conf.WORKDIR_ROOT = str(tmp_path)
@@ -955,7 +955,7 @@ class TestFindTool:
     async def test_find_max_file_walks_limit(self, tmp_path):
         """find 的 max_file_walks_fs 应限制文件系统遍历文件数。"""
         from faust_backend.tools.find import find
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         (tmp_path / "d/").mkdir()
         for i in range(30):
@@ -978,7 +978,7 @@ class TestSearchToolFilesystem:
     @pytest.mark.asyncio
     async def test_search_regex(self, tmp_path):
         from faust_backend.tools.search import search
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         (tmp_path / "src/").mkdir()
         (tmp_path / "src/a.py").write_text("def hello():\n    return 42\n", encoding="utf-8")
@@ -995,7 +995,7 @@ class TestSearchToolFilesystem:
     @pytest.mark.asyncio
     async def test_search_no_match(self, tmp_path):
         from faust_backend.tools.search import search
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         (tmp_path / "src/a.py").parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / "src/a.py").write_text("hello world")
@@ -1012,7 +1012,7 @@ class TestSearchToolFilesystem:
     async def test_search_max_file_walks_limit(self, tmp_path):
         """search 的 max_file_walks_fs 应限制文件系统遍历文件数。"""
         from faust_backend.tools.search import search
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         (tmp_path / "dir/").mkdir()
         for i in range(30):
@@ -1064,7 +1064,7 @@ class TestExecuteTool:
         security_check_command 会真实调用外部 LLM（首次构建 ChatOpenAI 的同步
         开销也会污染本测试的心跳测量），此处替换为直接放行，只测量子进程执行。
         """
-        import faust_backend.security as security
+        import faust_backend.core.security as security
 
         async def _approve(command):
             return True
@@ -1353,7 +1353,7 @@ class TestReadForcePlainText:
         oid = store.put_multimodal(payload, tool_name="read")
 
         from faust_backend.tools.read import _read_artifact
-        from faust_backend.runtime.uri import parse
+        from faust_backend.core.uri import parse
         parsed = parse(f"artifact://{oid}")
         result = _read_artifact(parsed, force_plain_text=True)
         assert "描述内容" in result

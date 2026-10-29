@@ -3,7 +3,7 @@ import json
 import logging
 import uuid
 
-from faust_backend.events import get_bus
+from faust_backend.core.events import get_bus
 
 logger = logging.getLogger("faust.frontend.bridge")
 

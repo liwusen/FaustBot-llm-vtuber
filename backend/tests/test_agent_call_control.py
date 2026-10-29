@@ -24,7 +24,7 @@ from langchain_core.messages import AIMessageChunk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.routes.chat as chat
 from faust_backend.runtime import lifecycle, state
 

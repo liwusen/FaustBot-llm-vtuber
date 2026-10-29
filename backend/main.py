@@ -6,14 +6,14 @@ if __package__ in {None, ""}:
     if _BACKEND_ROOT not in sys.path:
         sys.path.insert(0, _BACKEND_ROOT)
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.main")
 import datetime
 
 log.info("当前时间: %s", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-from faust_backend.utils import PerfTimer
+from faust_backend.core.utils import PerfTimer
 
 _t = PerfTimer()
 

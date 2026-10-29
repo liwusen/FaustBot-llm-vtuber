@@ -583,8 +583,8 @@ async def _call_communicate(plugin, payload):
 
 @pytest.mark.asyncio
 async def test_plugin_loads_registers_tools_and_vfs_nodes(tmp_path, monkeypatch):
-    from faust_backend.config_loader import PLUGIN_DATA_ROOT  # noqa: F401  仅确认可导入
-    import faust_backend.config_loader as conf
+    from faust_backend.core.config import PLUGIN_DATA_ROOT  # noqa: F401  仅确认可导入
+    import faust_backend.core.config as conf
     from faust_backend.plugin_system import PluginManager
     from faust_backend.tools.vfs import get_faustbot_vfs
 

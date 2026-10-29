@@ -31,7 +31,7 @@ import time
 import uuid
 from typing import Any
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 # 阅读下限的封顶值: 再长的回复也不会因为 read_floor 把触发器压太久
 READ_FLOOR_CAP_SEC = 8.0

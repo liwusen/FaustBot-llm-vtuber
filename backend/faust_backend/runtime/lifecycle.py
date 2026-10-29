@@ -1,4 +1,4 @@
-from faust_backend.utils import PerfTimer
+from faust_backend.core.utils import PerfTimer
 
 _t = PerfTimer()
 
@@ -21,9 +21,9 @@ import aiosqlite
 import tqdm
 
 _t.begin("faustbot_backend1")
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 import faust_backend.llm_tools as llm_tools
-import faust_backend.backend2front as backend2frontend
+import faust_backend.core.frontend.api as backend2frontend
 import faust_backend.trigger_manager as trigger_manager
 import faust_backend.araya_runtime as araya_runtime
 import faust_backend.service_manager as service_manager
@@ -40,13 +40,13 @@ import faust_backend.nimble as nimble
 from faust_backend.plugin_system import PluginManager
 from faust_backend.runtime import middleware
 from faust_backend.runtime.output_store import get_output_store
-from faust_backend.config_loader import args
+from faust_backend.core.config import args
 
 _t.end("faustbot_backend2")
 
 _t.begin("faustbot_backend3")
 from faust_backend.runtime import state
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.subagent_manager import SubagentManager
 from faust_backend.tools.vfs import get_faustbot_vfs, refresh_runtime_nodes
 
@@ -718,7 +718,7 @@ async def _build_chat_model(*, model_name: str):
     """
     from faust_backend.provider import build_ReasoningChatOpenAI_from_spec
     from faust_backend.runtime import state as runtime_state
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     providers = runtime_state.get_model_providers()
     spec = model_name or providers.main_model
     if not spec:

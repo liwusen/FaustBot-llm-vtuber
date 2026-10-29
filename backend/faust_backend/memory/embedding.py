@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from openai import AsyncOpenAI
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 from faust_backend.memory.config import EMBED_MODEL
 
 

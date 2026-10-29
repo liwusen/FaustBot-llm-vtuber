@@ -21,8 +21,8 @@ from nano_vectordb import NanoVectorDB
 from openai import AsyncOpenAI
 from rank_bm25 import BM25Okapi
 
-import faust_backend.config_loader as conf
-from faust_backend.logger import get_logger
+import faust_backend.core.config as conf
+from faust_backend.core.log import get_logger
 from faust_backend.memory.migrate import migrate_if_needed
 from faust_backend.memory.storage import (
     MemoryDB, ensure_root_node, epoch_to_iso, iso_to_epoch,

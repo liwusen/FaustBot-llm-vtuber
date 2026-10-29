@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 from ..base import Processor, ProcessorContext
 from ..registry import processor

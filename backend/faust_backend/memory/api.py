@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.memory import get_memory
 from faust_backend.memory.tools import schedule_extract
 

@@ -15,7 +15,7 @@ import asyncio
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.tools.execute")
 
@@ -73,18 +73,18 @@ async def execute(language: str, code: str, *, timeout: int = 30, cwd: str = "")
 def _resolve_cwd(cwd: str) -> str:
     if cwd:
         return cwd
-    from faust_backend.config_loader import WORKDIR_ROOT
+    from faust_backend.core.config import WORKDIR_ROOT
     return WORKDIR_ROOT
 
 
 async def _run_shell(command: str, timeout: int, cwd: str) -> str:
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     if not getattr(conf, 'SECURITY_SYS_ENABLED', False):
         # Security system is disabled — execute without checks
         return await _run_shell_no_check(command, timeout, cwd)
 
     try:
-        from faust_backend.security import security_check_command
+        from faust_backend.core.security import security_check_command
     except ImportError:
         return await _run_shell_no_check(command, timeout, cwd)
 
@@ -247,7 +247,7 @@ async def _run_js(code: str, timeout: int, cwd: str) -> str:
     if env_node and os.path.isfile(env_node):
         runtimes.append(env_node)
     else:
-        from faust_backend.config_loader import PROJECT_ROOT
+        from faust_backend.core.config import PROJECT_ROOT
         bundled_node = os.path.join(os.path.dirname(PROJECT_ROOT), ".nodejs", "node.exe")
         if os.path.isfile(bundled_node):
             runtimes.append(bundled_node)

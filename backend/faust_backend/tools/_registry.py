@@ -4,9 +4,9 @@ import asyncio
 import threading
 from pathlib import Path
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 os.environ["SEARCHAPI_API_KEY"] = conf.SEARCH_API_KEY
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.tools.registry")
 

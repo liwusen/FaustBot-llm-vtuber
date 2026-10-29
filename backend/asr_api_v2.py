@@ -10,7 +10,7 @@ import sys
 import re
 
 from datetime import datetime
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 

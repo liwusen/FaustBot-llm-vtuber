@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, TypeVar
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.speech.errors import SpeechRuntimeError
 
 log = get_logger("faust.speech.tts")

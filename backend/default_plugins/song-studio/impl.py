@@ -24,7 +24,7 @@ except Exception:
     def tool(func):
         return func
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.plugin_system import FaustPlugin, PluginContext, ToolSpec, hookimpl
 
 log = get_logger("faust.plugin.song-studio")
@@ -134,7 +134,7 @@ class Plugin(FaustPlugin):
         # 演唱期间持续压制触发器（chat 回合结束会 clear 该事件）
         if self._singing is not None:
             try:
-                from faust_backend.events import get_bus
+                from faust_backend.core.events import get_bus
                 get_bus().ignore_trigger_event.set()
             except Exception:
                 pass
@@ -165,7 +165,7 @@ class Plugin(FaustPlugin):
             if not path.exists():
                 raise RuntimeError(f"参考音色音频不存在: {path}")
             return path
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
         refer = str(getattr(conf, "TTS_REFER_WAV_PATH", "") or "").strip()
         if not refer:
             raise RuntimeError("未配置参考音色：请在插件配置中设置 REF_AUDIO_PATH，或配置 TTS 参考音频")
@@ -432,7 +432,7 @@ class Plugin(FaustPlugin):
     # ── singing control ──
 
     def _start_singing(self, song: dict, entry: dict) -> None:
-        from faust_backend.frontend import get_bridge
+        from faust_backend.core.frontend import get_bridge
         lyrics = None
         lrc_path = song.get("lrc")
         if lrc_path:
@@ -447,7 +447,7 @@ class Plugin(FaustPlugin):
         }
         self._singing = {"song": song["name"], "cache_key": entry["key"], "started_at": time.time()}
         try:
-            from faust_backend.events import get_bus
+            from faust_backend.core.events import get_bus
             get_bus().ignore_trigger_event.set()
         except Exception:
             pass
@@ -458,12 +458,12 @@ class Plugin(FaustPlugin):
         was_singing = self._singing is not None
         self._singing = None
         try:
-            from faust_backend.events import get_bus
+            from faust_backend.core.events import get_bus
             get_bus().ignore_trigger_event.clear()
         except Exception:
             pass
         if notify_frontend and was_singing:
-            from faust_backend.frontend import get_bridge
+            from faust_backend.core.frontend import get_bridge
             get_bridge().sing_stop()
         return was_singing
 

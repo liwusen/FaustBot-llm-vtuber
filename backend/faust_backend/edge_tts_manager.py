@@ -13,7 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 MODULE_DIR = conf.PACKAGE_ROOT
 BACKEND_DIR = conf.BACKEND_ROOT

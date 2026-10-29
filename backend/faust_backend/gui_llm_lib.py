@@ -9,7 +9,7 @@ from PIL import Image
 from io import BytesIO
 import base64
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 # API 配置（惰性获取，基于 main_model 对应 provider）
 def _provider_credentials():
     """返回 (api_key, base_url)。

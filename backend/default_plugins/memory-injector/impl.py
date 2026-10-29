@@ -21,7 +21,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Iterable, List
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.memory import get_memory
 from faust_backend.memory.stopwords import filter_info_tokens
 from faust_backend.memory.tokenize_pool import jieba_tokenize

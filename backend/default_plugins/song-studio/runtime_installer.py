@@ -17,7 +17,7 @@ from typing import Callable
 
 import requests
 
-from faust_backend.utils import DownloadTask
+from faust_backend.core.utils import DownloadTask
 
 PYTHON_EMBED_URL = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"

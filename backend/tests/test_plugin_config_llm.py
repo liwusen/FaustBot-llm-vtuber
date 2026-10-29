@@ -23,7 +23,7 @@ MAIN_MODEL = "deepseek::deepseek-v4-pro"
 
 
 def _manager(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     from faust_backend.plugin_system.manager import PluginManager
     from faust_backend.provider import ModelProviders
 
@@ -53,7 +53,7 @@ def test_llm_type_normalization(tmp_path, monkeypatch):
 
 
 def test_llm_default_falls_back_to_main_model(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     from faust_backend.provider import ModelProviders
 
     pm = _manager(tmp_path, monkeypatch)
@@ -104,7 +104,7 @@ def test_non_llm_key_keeps_plain_defaults(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_quick_screen_view_uses_llm_type(tmp_path, monkeypatch):
     """内置插件 Quick Screen View 的 screen-model 使用 llm 类型（缺省 = 主对话模型）。"""
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     from faust_backend.plugin_system.manager import PluginManager
     from faust_backend.provider import ModelProviders
 

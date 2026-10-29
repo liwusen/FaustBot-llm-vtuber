@@ -14,7 +14,7 @@ import re
 from typing import Any
 
 from faust_backend.plugin_system import FaustPlugin, PluginContext, hookimpl
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 import asyncio
 
 log = get_logger("faust.plugins.dev-debugger")

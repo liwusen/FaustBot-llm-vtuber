@@ -36,7 +36,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 from typing_extensions import override
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 from faust_backend.runtime.output_store import get_output_store
 
 #: 桥接消息上标记源 ToolMessage 的 additional_kwargs 键（幂等去重依据）

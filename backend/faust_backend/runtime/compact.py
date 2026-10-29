@@ -49,7 +49,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from typing_extensions import override
 
 from faust_backend.llm_formats import forced_no_tool_choice
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from faust_backend.runtime import usage as usage_mod
 from faust_backend.runtime.tool_call_repair import repair_dangling_tool_calls
 
@@ -296,7 +296,7 @@ class CompactMiddleware(SummarizationMiddleware):
         if not messages:
             return ""
 
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         cost_control = self._cost_control_active()
         if cost_control:
@@ -417,7 +417,7 @@ class CompactMiddleware(SummarizationMiddleware):
         由 `COMPACT_COST_CONTROL_ENABLED` 决定，默认关闭；一旦发生过截断，
         本进程内不再施加，保证不会每回合重复付费。
         """
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         if self._cost_cap_bypassed:
             return False
@@ -485,7 +485,7 @@ class CompactMiddleware(SummarizationMiddleware):
 
         所以默认 0（不限制），且必须配合 COMPACT_COST_CONTROL_ENABLED 一起打开。
         """
-        import faust_backend.config_loader as conf
+        import faust_backend.core.config as conf
 
         cap = conf.COMPACT_MAX_INPUT_TOKENS
         if cap <= 0:
@@ -677,7 +677,7 @@ async def build_compact_middleware(
     构建失败（如 provider 配置缺失）时返回 None，而不是抛错——auto compact
     是保命机制，不应因为自身构建失败就阻断整个 Agent 启动。
     """
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     from faust_backend.llm_formats import build_chat_model_from_spec
     from faust_backend.provider import get_context_length, get_model_api_format
     from faust_backend.runtime import state as runtime_state

@@ -10,7 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 from faust_backend.runtime import state
 
 router = APIRouter(tags=["admin-providers"])

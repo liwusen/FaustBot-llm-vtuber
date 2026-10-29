@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 
-import faust_backend.config_loader as conf  # noqa: E402
+import faust_backend.core.config as conf  # noqa: E402
 from faust_backend.runtime.compact import CompactMiddleware  # noqa: E402
 
 

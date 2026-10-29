@@ -1,7 +1,7 @@
 import os
 import json
 from os.path import join as pjoin
-import faust_backend.config_loader as conf
+import faust_backend.core.config as conf
 
 VRM_CONFIG_DEFAULTS = {
     "arms": {

@@ -1,7 +1,7 @@
 import os
 import faust_backend.skill_manager as skill_manager
 from faust_backend.runtime import state
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 from fastapi import APIRouter
 
 

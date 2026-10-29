@@ -24,7 +24,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-import faust_backend.config_loader as conf  # noqa: E402
+import faust_backend.core.config as conf  # noqa: E402
 from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware  # noqa: E402
 
 

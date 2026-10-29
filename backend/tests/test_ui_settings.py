@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import faust_backend.ui_settings as ui_settings
+import faust_backend.core.ui_settings as ui_settings
 from faust_backend.routes.ui_settings import get_ui_setting, post_ui_setting
 
 
@@ -79,7 +79,7 @@ def test_ui_settings_onboarding_explicitly_cleared(tmp_path, monkeypatch):
 
 def test_ui_settings_widget_change_pushes_reload(monkeypatch, tmp_path):
     """widgets 实际变化时必须触发 RELOAD_FRONTEND_SETTING"""
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
     calls = []
@@ -90,7 +90,7 @@ def test_ui_settings_widget_change_pushes_reload(monkeypatch, tmp_path):
 
 def test_ui_settings_identical_save_no_reload(monkeypatch, tmp_path):
     """内容不变（前端自己回存）时不触发"""
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
     calls = []
@@ -102,7 +102,7 @@ def test_ui_settings_identical_save_no_reload(monkeypatch, tmp_path):
 
 def test_ui_settings_onboarding_only_no_reload(monkeypatch, tmp_path):
     """仅 onboarding 变化不触发"""
-    import faust_backend.backend2front as b2f
+    import faust_backend.core.frontend.api as b2f
 
     monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
     calls = []

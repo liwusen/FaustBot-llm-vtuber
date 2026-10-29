@@ -39,7 +39,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from faust_backend.logger import get_logger
+from faust_backend.core.log import get_logger
 
 log = get_logger("faust.thinking_caps")
 

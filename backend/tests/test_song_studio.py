@@ -136,7 +136,7 @@ def test_plugin_unknown_action(plugin):
 
 
 def test_plugin_convert_requires_ref(plugin, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
     monkeypatch.setattr(conf, 'TTS_REFER_WAV_PATH', '', raising=False)
     _write_wav(plugin.lib.source_dir / 'demo.wav')
     resp = asyncio.run(plugin.communicate_handler({'action': 'convert_song', 'name': 'demo'}, plugin.ctx))

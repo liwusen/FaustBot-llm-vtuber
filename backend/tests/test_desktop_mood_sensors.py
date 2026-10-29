@@ -220,7 +220,7 @@ async def test_disabled_sources_produce_no_fields():
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    import faust_backend.config_loader as conf
+    import faust_backend.core.config as conf
 
     monkeypatch.setattr(conf, 'PLUGIN_DATA_ROOT', str(tmp_path / 'plugin_data'))
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)

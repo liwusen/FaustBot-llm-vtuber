@@ -5,8 +5,8 @@ import json
 from langchain.tools import tool
 
 from faust_backend.tools._registry import register
-import faust_backend.events as events
-import faust_backend.backend2front as backend2frontend
+import faust_backend.core.events as events
+import faust_backend.core.frontend.api as backend2frontend
 
 
 async def HILRequest(id, title, summary, timeout_seconds: int = 120, severity: str = "warning"):
