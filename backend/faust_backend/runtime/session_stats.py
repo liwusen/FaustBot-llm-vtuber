@@ -17,7 +17,7 @@ from langchain_core.messages import AnyMessage
 
 import faust_backend.core.config as conf
 from faust_backend.core.log import get_logger
-from faust_backend.provider import (
+from faust_backend.llm.provider import (
     DEFAULT_CONTEXT_LENGTH,
     get_context_length,
     get_model_api_format,

@@ -9,7 +9,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from faust_backend import provider as pv  # noqa: E402
+from faust_backend.llm import provider as pv  # noqa: E402
 
 
 def test_model_provider_opencode_go_flag_default_off():

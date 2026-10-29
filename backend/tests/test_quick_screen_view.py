@@ -63,7 +63,7 @@ def _patch_screenshot(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _patch_model(monkeypatch: pytest.MonkeyPatch, chat: Any | None = None) -> _FakeModelBuilder:
     fake = _FakeModelBuilder(chat)
-    import faust_backend.provider as provider_mod
+    import faust_backend.llm.provider as provider_mod
     import faust_backend.runtime.state as state_mod
 
     monkeypatch.setattr(provider_mod, "build_ReasoningChatOpenAI_from_spec", fake.build)

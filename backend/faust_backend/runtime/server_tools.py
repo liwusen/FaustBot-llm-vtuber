@@ -71,8 +71,8 @@ def resolve_server_tool_specs(providers: Any, spec: str) -> list[dict[str, Any]]
     端点/格式解析失败时**抛错**：用户显式勾选了服务端工具却因为配置问题静默
     不生效，会让 Agent 表现出「明明开了联网搜索却不会搜」的假故障。
     """
-    from faust_backend.llm_formats import build_server_tool_specs, resolve_route
-    from faust_backend.provider import parse_spec
+    from faust_backend.llm.formats import build_server_tool_specs, resolve_route
+    from faust_backend.llm.provider import parse_spec
 
     if not spec:
         return []

@@ -48,7 +48,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from typing_extensions import override
 
-from faust_backend.llm_formats import forced_no_tool_choice
+from faust_backend.llm.formats import forced_no_tool_choice
 from faust_backend.core.log import get_logger
 from faust_backend.runtime import usage as usage_mod
 from faust_backend.runtime.tool_call_repair import repair_dangling_tool_calls
@@ -678,8 +678,8 @@ async def build_compact_middleware(
     是保命机制，不应因为自身构建失败就阻断整个 Agent 启动。
     """
     import faust_backend.core.config as conf
-    from faust_backend.llm_formats import build_chat_model_from_spec
-    from faust_backend.provider import get_context_length, get_model_api_format
+    from faust_backend.llm.formats import build_chat_model_from_spec
+    from faust_backend.llm.provider import get_context_length, get_model_api_format
     from faust_backend.runtime import state as runtime_state
     from faust_backend.runtime.server_tools import resolve_server_tool_specs
 

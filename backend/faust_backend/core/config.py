@@ -455,7 +455,7 @@ def ensure_model_providers_loaded() -> 'ModelProviders':
     if MODEL_PROVIDERS is not None:
         return MODEL_PROVIDERS
 
-    from faust_backend.provider import ModelProviders, loads, dumps
+    from faust_backend.llm.provider import ModelProviders, loads, dumps
 
     path = PROVIDER_CONFIG_PATH
     if os.path.exists(path):
@@ -472,7 +472,7 @@ def ensure_model_providers_loaded() -> 'ModelProviders':
     old_base = config.get("CHAT_API_BASE", "")
     old_key = private_config.get("CHAT_API_KEY", "")
     if old_model and old_base:
-        from faust_backend.provider import new_provider
+        from faust_backend.llm.provider import new_provider
         new_provider(MODEL_PROVIDERS, "ORIGIONAL", old_base, old_key or None)
         # [R3] 把旧模型塞进 ORIGIONAL.models，保证 build_..._from_spec 校验通过
         MODEL_PROVIDERS.providers[-1].models = [old_model]
@@ -500,7 +500,7 @@ def save_model_providers() -> None:
     """把当前 MODEL_PROVIDERS 持久化到 provider.private.json。"""
     if MODEL_PROVIDERS is None:
         return
-    from faust_backend.provider import dumps
+    from faust_backend.llm.provider import dumps
     dumps(MODEL_PROVIDERS, PROVIDER_CONFIG_PATH)
 
 

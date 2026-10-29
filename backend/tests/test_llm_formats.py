@@ -9,8 +9,8 @@ import asyncio
 
 import pytest
 
-from faust_backend import llm_formats
-from faust_backend.llm_formats import (
+from faust_backend.llm import formats as llm_formats
+from faust_backend.llm.formats import (
     API_FORMATS,
     build_server_tool_specs,
     detect_api_format,
@@ -22,7 +22,7 @@ from faust_backend.llm_formats import (
     resolve_route,
     supported_server_tools,
 )
-from faust_backend.provider import ModelProvider
+from faust_backend.llm.provider import ModelProvider
 
 
 def _provider(**overrides) -> ModelProvider:

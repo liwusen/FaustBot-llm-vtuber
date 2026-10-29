@@ -7,7 +7,7 @@ from pathlib import Path
 # Ensure the backend is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.provider import (
+from faust_backend.llm.provider import (
     ModelProvider, ModelProviders,
     new_provider, remove_provider, remove_model_from_provider,
     loads, dumps, build_ReasoningChatOpenAI_from_spec,
@@ -93,7 +93,7 @@ def test_build_model_unknown_model_raises():
 
 def test_build_model_tolerates_empty_models_list(monkeypatch):
     """[R3] models 为空（加载失败/离线）时，显式指定的模型名仍可用，不崩溃。"""
-    import faust_backend.provider as prov
+    import faust_backend.llm.provider as prov
     p = make_providers()
     p.providers[0].models = []  # 模拟自动加载失败
 
@@ -107,9 +107,9 @@ def test_build_model_tolerates_empty_models_list(monkeypatch):
 
 def test_build_model_thinking_disabled_when_type_none(monkeypatch):
     """[R5] thinking_type == 'none' 时即使传 intensity 也不启用思考（返回 ChatOpenAI 而非 ReasoningChatOpenAI）。"""
-    from faust_backend.thinking import ReasoningChatOpenAI as RChat
+    from faust_backend.llm.thinking import ReasoningChatOpenAI as RChat
     from langchain_openai import ChatOpenAI
-    import faust_backend.provider as prov
+    import faust_backend.llm.provider as prov
     p = make_providers()
     p.providers[0].thinking_type = "none"
 
@@ -125,7 +125,7 @@ def test_build_model_thinking_disabled_when_type_none(monkeypatch):
 def test_get_provider_models_parses_openai_shape(monkeypatch):
     """[R2] 解析 OpenAI 兼容 {data:[{id}]} 结构。"""
     import httpx
-    from faust_backend.provider import get_provider_models_by_api
+    from faust_backend.llm.provider import get_provider_models_by_api
 
     class FakeResp:
         def raise_for_status(self):
@@ -157,7 +157,7 @@ def test_get_provider_models_parses_openai_shape(monkeypatch):
 def test_get_provider_models_keeps_path_prefix(monkeypatch):
     """[502 回归] base_url 带路径前缀（/v1、/compatible-mode/v1）时，models URL 必须保留前缀。"""
     import httpx
-    from faust_backend.provider import get_provider_models_by_api
+    from faust_backend.llm.provider import get_provider_models_by_api
 
     captured_url = {}
 
@@ -193,7 +193,7 @@ def test_auto_load_force_refreshes_existing_models(monkeypatch):
     """force=True：已有 models 时丢弃旧列表重新拉取（前端「自动加载模型」语义）；
     默认仍幂等，不触网。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     class FakeResp:
         def raise_for_status(self):
@@ -230,7 +230,7 @@ def test_auto_load_force_refreshes_existing_models(monkeypatch):
 def test_auto_load_force_keeps_old_models_on_failure(monkeypatch):
     """force=True 拉取失败时抛错，且不清空旧 models。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     class FakeClient:
         def __init__(self, *a, **kw):
@@ -319,7 +319,7 @@ def test_config_loader_loads_existing(tmp_path, monkeypatch):
 
 
 def test_get_main_credentials():
-    from faust_backend.provider import get_main_credentials
+    from faust_backend.llm.provider import get_main_credentials
     p = make_providers()
     assert get_main_credentials(p) == ("deepseek-v4-pro", "sk-test", "https://api.deepseek.com/v1")
     p.main_model = None
@@ -329,7 +329,7 @@ def test_get_main_credentials():
 
 
 def test_subagent_model_validation():
-    from faust_backend.provider import is_subagent_model_allowed, get_default_subagent_model
+    from faust_backend.llm.provider import is_subagent_model_allowed, get_default_subagent_model
     p = make_providers()
     assert is_subagent_model_allowed(p, "deepseek::deepseek-v4") is True
     assert is_subagent_model_allowed(p, "qwen::qwen-7b-chat") is True
@@ -407,7 +407,7 @@ def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
     """「自动加载模型」路由必须 force=True：已有模型的 provider 也会清空重拉。"""
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
-    import faust_backend.provider as prov
+    import faust_backend.llm.provider as prov
     import faust_backend.runtime.state as state_mod
 
     monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
@@ -438,7 +438,7 @@ def test_select_model_switches(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import faust_backend.core.config as conf
     import faust_backend.runtime.state as state_mod
-    from faust_backend.provider import new_provider
+    from faust_backend.llm.provider import new_provider
 
     async def _noop_rebuild(**kw):
         return {"status": "ok"}
@@ -737,7 +737,7 @@ def _fake_models_client(payload):
 
 def test_extract_context_length_supports_both_field_names():
     """OpenRouter 用 context_length，DeepSeek 用 context_window。"""
-    from faust_backend.provider import _extract_context_length
+    from faust_backend.llm.provider import _extract_context_length
 
     assert _extract_context_length({"context_length": 1050000}) == 1050000
     assert _extract_context_length({"context_window": 1048576}) == 1048576
@@ -746,7 +746,7 @@ def test_extract_context_length_supports_both_field_names():
 
 
 def test_extract_context_length_rejects_invalid_values():
-    from faust_backend.provider import _extract_context_length
+    from faust_backend.llm.provider import _extract_context_length
 
     assert _extract_context_length({}) is None
     assert _extract_context_length({"context_length": 0}) is None
@@ -759,7 +759,7 @@ def test_extract_context_length_rejects_invalid_values():
 
 def test_fetch_provider_model_entries_normalizes(monkeypatch):
     import httpx
-    from faust_backend.provider import fetch_provider_model_entries
+    from faust_backend.llm.provider import fetch_provider_model_entries
 
     monkeypatch.setattr(
         httpx,
@@ -869,7 +869,7 @@ def test_fetch_provider_model_entries_normalizes(monkeypatch):
 
 def test_fetch_provider_model_entries_bare_list_has_no_metadata(monkeypatch):
     import httpx
-    from faust_backend.provider import fetch_provider_model_entries
+    from faust_backend.llm.provider import fetch_provider_model_entries
 
     monkeypatch.setattr(httpx, "AsyncClient", _fake_models_client(["a", "b"]))
     entries = asyncio.run(fetch_provider_model_entries(make_providers().providers[0]))
@@ -894,7 +894,7 @@ def test_fetch_provider_model_entries_bare_list_has_no_metadata(monkeypatch):
 def test_auto_load_fills_context_length_from_api(monkeypatch):
     """API 报了上下文长度就自动填，省去用户手填。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     monkeypatch.setattr(
         httpx,
@@ -919,7 +919,7 @@ def test_auto_load_fills_context_length_from_api(monkeypatch):
 def test_auto_load_does_not_clobber_user_configured_length(monkeypatch):
     """用户手工配置的值优先于 API 元数据。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     monkeypatch.setattr(
         httpx,
@@ -936,7 +936,7 @@ def test_auto_load_does_not_clobber_user_configured_length(monkeypatch):
 def test_auto_load_force_prunes_stale_context_lengths(monkeypatch):
     """force 刷新时，已不在模型列表中的陈旧条目应被清理。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     monkeypatch.setattr(
         httpx,
@@ -953,7 +953,7 @@ def test_auto_load_force_prunes_stale_context_lengths(monkeypatch):
 def test_auto_load_fills_thinking_caps_from_api(monkeypatch):
     """API 报了思考形状就落盘：构建模型时不再靠模型名猜。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     monkeypatch.setattr(
         httpx,
@@ -987,7 +987,7 @@ def test_auto_load_fills_thinking_caps_from_api(monkeypatch):
 def test_auto_load_thinking_caps_do_not_clobber_existing(monkeypatch):
     """已有条目（用户/上一次拉取）优先，不被 /models 覆盖。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     monkeypatch.setattr(
         httpx,
@@ -1006,7 +1006,7 @@ def test_auto_load_thinking_caps_do_not_clobber_existing(monkeypatch):
 
 def test_auto_load_force_prunes_stale_thinking_caps(monkeypatch):
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     monkeypatch.setattr(
         httpx, "AsyncClient", _fake_models_client({"data": [{"id": "m1"}]})
@@ -1021,7 +1021,7 @@ def test_auto_load_force_prunes_stale_thinking_caps(monkeypatch):
 def test_auto_load_is_idempotent_when_models_present(monkeypatch):
     """默认路径（force=False）已有 models 时不触网。"""
     import httpx
-    from faust_backend.provider import auto_load_model_for_provider
+    from faust_backend.llm.provider import auto_load_model_for_provider
 
     def _boom(*a, **kw):
         raise AssertionError("不应发起网络请求")

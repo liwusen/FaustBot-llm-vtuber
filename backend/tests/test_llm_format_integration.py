@@ -23,7 +23,7 @@ LLM_FORMAT_ENABLED = os.environ.get("FAUST_LLM_FORMAT_IT") == "1"
 
 @pytest.mark.skipif(not MODELS_DEV_ENABLED, reason="set FAUST_MODELS_DEV_IT=1 to run")
 def test_models_dev_catalog_reachable():
-    import faust_backend.models_dev as models_dev
+    import faust_backend.llm.models_dev as models_dev
 
     catalog = asyncio.run(models_dev.refresh_catalog())
 
@@ -40,7 +40,7 @@ def test_models_dev_catalog_reachable():
 
 @pytest.mark.skipif(not MODELS_DEV_ENABLED, reason="set FAUST_MODELS_DEV_IT=1 to run")
 def test_models_dev_matches_current_providers():
-    import faust_backend.models_dev as models_dev
+    import faust_backend.llm.models_dev as models_dev
     from faust_backend.runtime import state
 
     catalog = asyncio.run(models_dev.refresh_catalog())
@@ -62,7 +62,7 @@ def test_models_dev_matches_current_providers():
 def test_each_resolved_format_answers():
     from langchain_core.messages import HumanMessage
 
-    from faust_backend.llm_formats import resolve_route
+    from faust_backend.llm.formats import resolve_route
     from faust_backend.runtime import state
 
     providers = state.get_model_providers()
@@ -74,7 +74,7 @@ def test_each_resolved_format_answers():
 
     assert seen_formats, "当前配置里没有任何可解析格式的模型"
 
-    from faust_backend.llm_formats import build_chat_model_from_spec
+    from faust_backend.llm.formats import build_chat_model_from_spec
 
     for api_format, spec in seen_formats.items():
         model = asyncio.run(

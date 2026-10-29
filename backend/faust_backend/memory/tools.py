@@ -129,7 +129,7 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
         prompt_path = Path(__file__).parent / "extraction_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
         from faust_backend.runtime import state as runtime_state
-        from faust_backend.provider import build_main_chat_model
+        from faust_backend.llm.provider import build_main_chat_model
         providers = runtime_state.get_model_providers()
         if not providers or not providers.main_model:
             log.critical("LLM extraction API not configured, skipping extraction")
@@ -140,8 +140,8 @@ async def _bg_extract_and_save(text: str, doc_path: str = "") -> None:
             m.register_extraction(doc_path)
 
         # 统一走 provider 配置的模型（opencode_go 头、格式分发、thinking 等一致生效）
-        from faust_backend.llm_formats import ainvoke_json
-        from faust_backend.provider import get_model_api_format
+        from faust_backend.llm.formats import ainvoke_json
+        from faust_backend.llm.provider import get_model_api_format
 
         llm = await build_main_chat_model(providers, intensity=None)
         api_format = get_model_api_format(providers, str(providers.main_model or ""))

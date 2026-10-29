@@ -28,9 +28,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import faust_backend.core.config as conf
-from faust_backend.llm_formats import API_FORMATS, detect_api_format, normalize_format_base_url
+from faust_backend.llm.formats import API_FORMATS, detect_api_format, normalize_format_base_url
 from faust_backend.core.log import get_logger
-from faust_backend.thinking_caps import capability_from_catalog_model
+from faust_backend.llm.thinking_caps import capability_from_catalog_model
 
 log = get_logger("faust.models_dev")
 

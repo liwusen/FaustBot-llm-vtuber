@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages.ai import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
-from faust_backend.thinking_caps import (
+from faust_backend.llm.thinking_caps import (
     GOOGLE_EFFORT_LEVELS,
     MODE_BUDGET,
     MODE_EFFORT,

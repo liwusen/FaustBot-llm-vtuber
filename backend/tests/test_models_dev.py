@@ -13,8 +13,8 @@ import httpx
 import pytest
 
 import faust_backend.core.config as conf
-import faust_backend.models_dev as models_dev
-from faust_backend.provider import ModelProvider
+import faust_backend.llm.models_dev as models_dev
+from faust_backend.llm.provider import ModelProvider
 
 
 # ── 通用 fixture：一个「多格式聚合网关」的目录结构（虚构名字，无 Provider 特判） ──

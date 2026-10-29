@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from faust_backend.provider import ModelProvider
-from faust_backend.thinking_caps import (
+from faust_backend.llm.provider import ModelProvider
+from faust_backend.llm.thinking_caps import (
     MODE_BUDGET,
     MODE_EFFORT,
     MODE_TOGGLE,

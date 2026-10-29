@@ -33,8 +33,8 @@ from typing import Any, Iterable, Sequence
 from urllib.parse import urlparse
 
 from faust_backend.core.log import get_logger
-from faust_backend.thinking import get_format_thinking_params
-from faust_backend.thinking_caps import (
+from faust_backend.llm.thinking import get_format_thinking_params
+from faust_backend.llm.thinking_caps import (
     ThinkingOption,
     describe_thinking,
     resolve_thinking_capability,
@@ -472,7 +472,7 @@ async def build_chat_model_from_spec(
         intensity: thinking 强度（low/medium/high）；None 表示不启用。
         purpose: `chat` / `aux`（辅助调用，无思考）/ `compact`（摘要专用上限）。
     """
-    from faust_backend.provider import (
+    from faust_backend.llm.provider import (
         auto_load_model_for_provider,
         parse_spec,
         resolve_provider,
@@ -531,7 +531,7 @@ async def build_chat_model_from_spec(
 
 
 def _common_headers(provider: Any) -> dict[str, str]:
-    from faust_backend.provider import FAUSTBOT_USER_AGENT, opencode_headers
+    from faust_backend.llm.provider import FAUSTBOT_USER_AGENT, opencode_headers
 
     headers = {"User-Agent": FAUSTBOT_USER_AGENT}
     if getattr(provider, "opencode_go", False):
@@ -549,7 +549,7 @@ def _stream_usage(provider: Any, *, default: bool) -> bool:
 def _build_openai_chat(provider, model, decision, intensity):
     from langchain_openai import ChatOpenAI
 
-    from faust_backend.thinking import ReasoningChatOpenAI, get_thinking_params
+    from faust_backend.llm.thinking import ReasoningChatOpenAI, get_thinking_params
 
     kwargs: dict[str, Any] = {
         "model": model,

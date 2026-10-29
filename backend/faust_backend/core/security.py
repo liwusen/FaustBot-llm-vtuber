@@ -29,7 +29,7 @@ async def _get_checker_agent():
     global _checker_agent
     if _checker_agent is None:
         from faust_backend.runtime import state as runtime_state
-        from faust_backend.provider import build_main_chat_model
+        from faust_backend.llm.provider import build_main_chat_model
         _checker_agent = await build_main_chat_model(
             runtime_state.get_model_providers(), intensity=None
         )

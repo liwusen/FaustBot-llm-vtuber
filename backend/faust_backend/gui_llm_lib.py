@@ -19,7 +19,7 @@ def _provider_credentials():
     而不是把请求发到一个必然 404 的路径上。
     """
     from faust_backend.runtime import state as runtime_state
-    from faust_backend.provider import get_main_openai_credentials
+    from faust_backend.llm.provider import get_main_openai_credentials
     providers = runtime_state.get_model_providers()
     _, api_key, base_url = get_main_openai_credentials(providers)
     return api_key, base_url
@@ -216,7 +216,7 @@ def get_response(image_url: str, instruction: str) -> str:
         str: 模型返回的内容。
     """
     from faust_backend.runtime import state as runtime_state
-    from faust_backend.provider import get_main_openai_credentials
+    from faust_backend.llm.provider import get_main_openai_credentials
     _model_name, _, _ = get_main_openai_credentials(
         runtime_state.get_model_providers()
     )

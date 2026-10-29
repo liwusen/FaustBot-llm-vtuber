@@ -59,7 +59,7 @@ def test_araya_run_once_updates_state_and_log(monkeypatch, tmp_path):
                 content = "maintained"
             yield {"event": "on_chat_model_stream", "data": {"chunk": FakeAIMessageChunk()}}
 
-    import faust_backend.provider as provider_mod
+    import faust_backend.llm.provider as provider_mod
 
     async def _fake_build_main_chat_model(providers, intensity=None):
         # Araya 必须经 provider.build_main_chat_model 获取统一配置的 LLM
@@ -226,7 +226,7 @@ def _araya_runtime_with_fake_llm(monkeypatch, tmp_path, stream_events):
             for event in stream_events(payload):
                 yield event
 
-    import faust_backend.provider as provider_mod
+    import faust_backend.llm.provider as provider_mod
 
     async def _fake_build_main_chat_model(providers, intensity=None):
         return FakeChatOpenAI(model="fake-model")
@@ -381,7 +381,7 @@ def test_araya_agent_mounts_tool_call_repair_middleware(monkeypatch, tmp_path):
         def __init__(self, **kwargs):
             self.model_name = kwargs.get("model")
 
-    import faust_backend.provider as provider_mod
+    import faust_backend.llm.provider as provider_mod
 
     async def _fake_build_main_chat_model(providers, intensity=None):
         return FakeChatOpenAI(model="fake-model")
@@ -427,7 +427,7 @@ def test_init_agent_accepts_model_without_model_name(monkeypatch, tmp_path):
         providers: list = []
         subagent_models: list = []
 
-    import faust_backend.provider as provider_mod
+    import faust_backend.llm.provider as provider_mod
     import faust_backend.runtime.state as runtime_state
     import asyncio
 

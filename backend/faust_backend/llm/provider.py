@@ -3,8 +3,8 @@ import uuid
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from langchain_core.language_models import BaseChatModel
-from faust_backend.llm_formats import API_FORMATS
-from faust_backend.thinking_caps import capability_from_models_entry
+from faust_backend.llm.formats import API_FORMATS
+from faust_backend.llm.thinking_caps import capability_from_models_entry
 
 # 对外统一标识本客户端（FaustBot v3，langchain 栈）。不设置时 openai-python /
 # httpx 会以自身 UA 发请求（AsyncOpenAI/Python x.y.z、python-httpx/x.y），部分
@@ -275,7 +275,7 @@ async def build_ReasoningChatOpenAI_from_spec(
 ) -> BaseChatModel:
     """按模型 spec 构建对应 API 格式的 LangChain Chat 模型（兼容入口）。
 
-    真正的格式解析与构建在 `faust_backend.llm_formats.build_chat_model_from_spec`：
+    真正的格式解析与构建在 `faust_backend.llm.formats.build_chat_model_from_spec`：
     一个 Provider 可能同时提供 OpenAI Chat / OpenAI Responses / Anthropic
     Messages / Gemini 四种格式的模型（如聚合网关），必须按模型分别构建。
     本函数保留旧名字，避免大量既有调用点与测试被迫改动。
@@ -288,7 +288,7 @@ async def build_ReasoningChatOpenAI_from_spec(
     Raises:
         ValueError: provider/model 不存在，或无法为该模型确定可用端点。
     """
-    from faust_backend.llm_formats import build_chat_model_from_spec
+    from faust_backend.llm.formats import build_chat_model_from_spec
 
     return await build_chat_model_from_spec(
         providers, spec=spec, intensity=intensity, purpose="chat"
@@ -457,7 +457,7 @@ def try_main_openai_credentials(providers: ModelProviders) -> tuple[str, str, st
     格式，这些功能**不能**拿 base_url 直接拼 `/chat/completions`——必须让
     调用方明确知道不可用，而不是发一个必然 404/400 的请求。
     """
-    from faust_backend.llm_formats import resolve_route
+    from faust_backend.llm.formats import resolve_route
 
     if not providers or not providers.main_model:
         return None
@@ -481,7 +481,7 @@ def try_main_openai_credentials(providers: ModelProviders) -> tuple[str, str, st
     # 内部功能仍可指向同一 Provider 的 Chat Completions 路径。
     explicit_chat = (provider.format_base_urls or {}).get("openai_chat")
     if explicit_chat:
-        from faust_backend.llm_formats import normalize_format_base_url
+        from faust_backend.llm.formats import normalize_format_base_url
 
         normalized = normalize_format_base_url("openai_chat", explicit_chat)
         if normalized:
@@ -508,14 +508,14 @@ def get_main_openai_credentials(providers: ModelProviders) -> tuple[str, str, st
 
 def get_provider_decisions(providers: ModelProviders) -> dict[str, dict[str, dict]]:
     """返回 `{provider: {model: 格式决策}}`，供管理接口/前端展示。"""
-    from faust_backend.llm_formats import describe_all_formats
+    from faust_backend.llm.formats import describe_all_formats
 
     return describe_all_formats(providers)
 
 
 def get_model_api_format(providers: ModelProviders, spec: str) -> str:
     """返回 spec 对应的 API 格式；无法解析时按 openai_chat 处理。"""
-    from faust_backend.llm_formats import resolve_route
+    from faust_backend.llm.formats import resolve_route
 
     try:
         provider_name, model_name = parse_spec(spec)

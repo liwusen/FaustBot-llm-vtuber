@@ -43,14 +43,14 @@ def _rebuild_after_change():
 
 def _formats_payload(mp) -> dict[str, dict[str, dict]]:
     """每个 Provider 每个模型的格式决策（供前端 Models 表格展示）。"""
-    from faust_backend.llm_formats import describe_all_formats
+    from faust_backend.llm.formats import describe_all_formats
 
     return describe_all_formats(mp)
 
 
 def _catalog_payload(mp) -> dict[str, dict]:
     """每个 Provider 的目录匹配概览。"""
-    from faust_backend.models_dev import summarize_formats
+    from faust_backend.llm.models_dev import summarize_formats
 
     payload: dict[str, dict] = {}
     for provider in mp.providers:
@@ -83,7 +83,7 @@ async def admin_list_providers():
 
 @router.post("/faust/admin/providers")
 async def admin_add_provider(payload: ProviderCreate):
-    from faust_backend.provider import new_provider
+    from faust_backend.llm.provider import new_provider
     mp = _get_mp()
     name = str(payload.name or "").strip()
     if not name:
@@ -97,7 +97,7 @@ async def admin_add_provider(payload: ProviderCreate):
 
 @router.delete("/faust/admin/providers/{name}")
 async def admin_remove_provider(name: str):
-    from faust_backend.provider import remove_provider
+    from faust_backend.llm.provider import remove_provider
     mp = _get_mp()
     if not remove_provider(mp, name):
         raise HTTPException(status_code=404, detail=f"provider '{name}' 未找到")
@@ -114,8 +114,8 @@ async def admin_auto_load_models(name: str):
     自动填充，前端需要立刻反映这些值。随后用 models.dev 目录补全格式路由与
     缺失的上下文/输出长度（目录不可用时只用 /models 与通用启发式，不报错）。
     """
-    import faust_backend.models_dev as models_dev
-    from faust_backend.provider import resolve_provider, auto_load_model_for_provider
+    import faust_backend.llm.models_dev as models_dev
+    from faust_backend.llm.provider import resolve_provider, auto_load_model_for_provider
 
     mp = _get_mp()
     try:
@@ -137,7 +137,7 @@ async def admin_auto_load_models(name: str):
     except Exception as exc:  # noqa: BLE001 - 目录失败不影响模型列表
         catalog_info = {"error": str(exc)}
     conf.save_model_providers()
-    from faust_backend.llm_formats import describe_provider_formats
+    from faust_backend.llm.formats import describe_provider_formats
 
     return {
         "status": "ok",
@@ -155,7 +155,7 @@ async def admin_auto_load_models(name: str):
 @router.get("/faust/admin/models-dev/status")
 async def admin_models_dev_status():
     """models.dev 目录缓存状态（年龄、provider 数、最后错误）。"""
-    import faust_backend.models_dev as models_dev
+    import faust_backend.llm.models_dev as models_dev
 
     return models_dev.catalog_status()
 
@@ -177,8 +177,8 @@ async def admin_catalog_match(name: str, payload: CatalogMatchPayload | None = N
 
     `provider_id` 为空表示取消 pin 并自动重新匹配。
     """
-    import faust_backend.models_dev as models_dev
-    from faust_backend.provider import resolve_provider
+    import faust_backend.llm.models_dev as models_dev
+    from faust_backend.llm.provider import resolve_provider
 
     mp = _get_mp()
     try:
@@ -199,7 +199,7 @@ async def admin_catalog_match(name: str, payload: CatalogMatchPayload | None = N
         )
     result = models_dev.enrich_provider(provider, catalog)
     conf.save_model_providers()
-    from faust_backend.llm_formats import describe_provider_formats
+    from faust_backend.llm.formats import describe_provider_formats
 
     return {
         "status": "ok",

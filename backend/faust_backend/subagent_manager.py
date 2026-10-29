@@ -475,7 +475,7 @@ class SubagentManager:
         chat_model = self.chatModel
         if model is not None:
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import (
+            from faust_backend.llm.provider import (
                 build_ReasoningChatOpenAI_from_spec,
                 is_subagent_model_allowed,
             )

@@ -1471,7 +1471,7 @@ class GraphStore:
     def _get_openai(self) -> AsyncOpenAI:
         if self._openai_client is None:
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import get_main_credentials
+            from faust_backend.llm.provider import get_main_credentials
             _, _fallback_key, _ = get_main_credentials(runtime_state.get_model_providers())
             api_key = conf.EMBED_API_KEY or _fallback_key
             base_url = conf.EMBED_API_BASE or "https://api.openai.com/v1"
@@ -2208,7 +2208,7 @@ class GraphStore:
         try:
             import httpx
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import try_main_openai_credentials
+            from faust_backend.llm.provider import try_main_openai_credentials
             _creds = try_main_openai_credentials(runtime_state.get_model_providers())
             if _creds is None:
                 # 主模型不是 OpenAI 兼容格式：rerank 端点无处可发，保持原顺序

@@ -9,8 +9,8 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from faust_backend.llm_formats import build_server_tool_specs
-from faust_backend.provider import ModelProvider, ModelProviders
+from faust_backend.llm.formats import build_server_tool_specs
+from faust_backend.llm.provider import ModelProvider, ModelProviders
 from faust_backend.runtime.server_tools import (
     ServerToolMiddleware,
     build_server_tool_middleware,

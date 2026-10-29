@@ -151,7 +151,7 @@ async def test_subagent_agents_get_retry_middleware(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_araya_agent_gets_retry_middleware(monkeypatch):
-    import faust_backend.provider as provider_mod
+    import faust_backend.llm.provider as provider_mod
     from faust_backend.runtime import state as runtime_state
 
     captured: dict = {}

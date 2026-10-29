@@ -318,7 +318,7 @@ def _stub_rebuild_deps(monkeypatch) -> FakeInvokeAgent:
     import faust_backend.admin_runtime as admin_runtime
     import faust_backend.llm_tools as llm_tools
     import faust_backend.mcp_manager as mcp_manager
-    import faust_backend.provider as provider
+    import faust_backend.llm.provider as provider
 
     fake_agent = FakeInvokeAgent()
     monkeypatch.setattr(conf, "reload_configs", lambda: None)

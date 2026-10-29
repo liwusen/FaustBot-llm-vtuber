@@ -231,7 +231,7 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     # ── Provider 配置（与公共配置一起保存，不单独保存） ──
     if "providers" in payload or "main_model" in payload or "subagent_models" in payload:
         import faust_backend.core.config as conf
-        from faust_backend.provider import ModelProviders, dumps
+        from faust_backend.llm.provider import ModelProviders, dumps
         mp = conf.ensure_model_providers_loaded()
         if "providers" in payload:
             try:

@@ -664,7 +664,7 @@ class ArayaRuntime:
 
     async def _init_agent(self) -> None:
         from faust_backend.runtime import state as runtime_state
-        from faust_backend.provider import build_main_chat_model
+        from faust_backend.llm.provider import build_main_chat_model
         from faust_backend.runtime.middleware import wrap_tools
         from faust_backend.runtime.mm_bridge import MultimodalBridgeMiddleware
         from faust_backend.runtime.server_tools import build_server_tool_middleware
@@ -698,7 +698,7 @@ class ArayaRuntime:
         """关闭模型持有的 HTTP 客户端（格式无关，统一交给 llm_formats）。"""
         if self._chat_model is None:
             return
-        from faust_backend.llm_formats import close_chat_model
+        from faust_backend.llm.formats import close_chat_model
 
         try:
             await close_chat_model(self._chat_model)

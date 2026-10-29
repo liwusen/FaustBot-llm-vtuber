@@ -164,7 +164,7 @@ class Plugin(FaustPlugin):
                 )
             data_url = _image_to_data_url(image)
 
-            from faust_backend.provider import (
+            from faust_backend.llm.provider import (
                 build_ReasoningChatOpenAI_from_spec,
                 parse_spec,
             )

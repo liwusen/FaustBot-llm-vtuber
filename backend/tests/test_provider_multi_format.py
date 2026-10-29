@@ -12,18 +12,18 @@ from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
-from faust_backend.llm_formats import (
+from faust_backend.llm.formats import (
     build_chat_model_from_spec,
     close_chat_model,
 )
-from faust_backend.provider import (
+from faust_backend.llm.provider import (
     ModelProviders,
     ModelProvider,
     get_main_openai_credentials,
     get_model_api_format,
     try_main_openai_credentials,
 )
-from faust_backend.thinking import ReasoningChatOpenAI
+from faust_backend.llm.thinking import ReasoningChatOpenAI
 
 MODELS = ("chat-model", "claude-model", "gemini-model", "gpt-model")
 

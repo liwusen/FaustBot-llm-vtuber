@@ -716,7 +716,7 @@ async def _build_chat_model(*, model_name: str):
     thinking 参数由全局 REASONING_CONFIG 驱动（off/low/medium/high）：
     REASONING_CONFIG == "off" 或 provider 的 thinking_type == "none" 时不传思考参数。
     """
-    from faust_backend.provider import build_ReasoningChatOpenAI_from_spec
+    from faust_backend.llm.provider import build_ReasoningChatOpenAI_from_spec
     from faust_backend.runtime import state as runtime_state
     import faust_backend.core.config as conf
     providers = runtime_state.get_model_providers()
@@ -808,7 +808,7 @@ async def _rebuild_runtime_locked(
         try:
             conf.reload_configs()
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import (
+            from faust_backend.llm.provider import (
                 get_main_credentials,
                 try_main_openai_credentials,
             )
@@ -902,7 +902,7 @@ async def _rebuild_runtime_locked(
                 state.checkpointer = InMemorySaver()
             log.info("Checkpoint 已为重建就绪")
             from faust_backend.runtime import state as runtime_state
-            from faust_backend.provider import get_default_subagent_model
+            from faust_backend.llm.provider import get_default_subagent_model
             _providers = runtime_state.get_model_providers()
             state.agent = await _create_agent_with_extensions(
                 model_name=_providers.main_model,
@@ -1011,7 +1011,7 @@ async def refresh_models_dev_catalog(*, force: bool = False) -> dict:
     只有配置真的变化时才写回 `provider.private.json`，避免无谓的磁盘写入。
     任何异常都只记日志：目录缺失时格式会回退到通用启发式，Agent 照常工作。
     """
-    import faust_backend.models_dev as models_dev
+    import faust_backend.llm.models_dev as models_dev
 
     providers = state.get_model_providers()
     snapshot = None

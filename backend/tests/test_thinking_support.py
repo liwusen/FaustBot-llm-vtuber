@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from faust_backend.thinking import (
+from faust_backend.llm.thinking import (
     THINKING_PRESETS,
     ReasoningChatOpenAI,
     get_thinking_params,
@@ -100,7 +100,7 @@ class TestBuildChatModel:
         import asyncio
         from unittest.mock import patch
 
-        from faust_backend.provider import ModelProviders, new_provider
+        from faust_backend.llm.provider import ModelProviders, new_provider
         from faust_backend.runtime.lifecycle import _build_chat_model
 
         providers = ModelProviders()
@@ -115,7 +115,7 @@ class TestBuildChatModel:
             return {"spec": spec, "intensity": intensity}
 
         with patch(
-            "faust_backend.provider.build_ReasoningChatOpenAI_from_spec",
+            "faust_backend.llm.provider.build_ReasoningChatOpenAI_from_spec",
             side_effect=fake_build,
         ) as mock_build, patch(
             "faust_backend.runtime.state.get_model_providers",
@@ -144,7 +144,7 @@ class TestBuildChatModel:
         assert info["captured"]["intensity"] is None  # 全局 off → 不思考
 
     def test_thinking_disabled_when_type_none(self):
-        from faust_backend.provider import ModelProviders, new_provider
+        from faust_backend.llm.provider import ModelProviders, new_provider
         from faust_backend.runtime.lifecycle import _build_chat_model
         import asyncio
         from unittest.mock import patch
@@ -162,7 +162,7 @@ class TestBuildChatModel:
             return object()
 
         with patch(
-            "faust_backend.provider.build_ReasoningChatOpenAI_from_spec",
+            "faust_backend.llm.provider.build_ReasoningChatOpenAI_from_spec",
             side_effect=fake_build,
         ), patch(
             "faust_backend.runtime.state.get_model_providers",
@@ -176,7 +176,7 @@ class TestBuildChatModel:
         assert info["captured"]["spec"] == "test::gpt-4o"
 
     def test_missing_main_model_raises(self):
-        from faust_backend.provider import ModelProviders
+        from faust_backend.llm.provider import ModelProviders
         from faust_backend.runtime.lifecycle import _build_chat_model
         import asyncio
         from unittest.mock import patch
@@ -334,7 +334,7 @@ class TestStreamReasoningDelta:
 
 
 def test_get_format_thinking_params_per_format():
-    from faust_backend.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking import get_format_thinking_params
 
     # Chat：沿用历史预设（OpenAI 兼容网关方言）
     assert get_format_thinking_params("openai_chat", "openai", "high") == {
@@ -364,8 +364,8 @@ def test_get_format_thinking_params_per_format():
 
 def test_gemini_effort_option_replaces_budget():
     """回归：Gemini 3/4 只接受 thinking level，传 budget 会直接 400。"""
-    from faust_backend.thinking import get_format_thinking_params
-    from faust_backend.thinking_caps import ThinkingOption
+    from faust_backend.llm.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking_caps import ThinkingOption
 
     params = get_format_thinking_params(
         "google_gemini",
@@ -378,8 +378,8 @@ def test_gemini_effort_option_replaces_budget():
 
 
 def test_gemini_effort_maps_to_supported_level():
-    from faust_backend.thinking import get_format_thinking_params
-    from faust_backend.thinking_caps import ThinkingOption
+    from faust_backend.llm.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking_caps import ThinkingOption
 
     params = get_format_thinking_params(
         "google_gemini",
@@ -391,8 +391,8 @@ def test_gemini_effort_maps_to_supported_level():
 
 
 def test_gemini_budget_option_is_clamped():
-    from faust_backend.thinking import get_format_thinking_params
-    from faust_backend.thinking_caps import ThinkingOption
+    from faust_backend.llm.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking_caps import ThinkingOption
 
     params = get_format_thinking_params(
         "google_gemini",
@@ -404,8 +404,8 @@ def test_gemini_budget_option_is_clamped():
 
 
 def test_gemini_toggle_option_sends_thoughts_only():
-    from faust_backend.thinking import get_format_thinking_params
-    from faust_backend.thinking_caps import ThinkingOption
+    from faust_backend.llm.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking_caps import ThinkingOption
 
     assert get_format_thinking_params(
         "google_gemini", "qwen", "medium", option=ThinkingOption("toggle")
@@ -413,8 +413,8 @@ def test_gemini_toggle_option_sends_thoughts_only():
 
 
 def test_responses_maps_effort_to_supported_level():
-    from faust_backend.thinking import get_format_thinking_params
-    from faust_backend.thinking_caps import ThinkingOption
+    from faust_backend.llm.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking_caps import ThinkingOption
 
     params = get_format_thinking_params(
         "openai_responses",
@@ -426,8 +426,8 @@ def test_responses_maps_effort_to_supported_level():
 
 
 def test_anthropic_budget_is_clamped_to_minimum():
-    from faust_backend.thinking import get_format_thinking_params
-    from faust_backend.thinking_caps import ThinkingOption
+    from faust_backend.llm.thinking import get_format_thinking_params
+    from faust_backend.llm.thinking_caps import ThinkingOption
 
     params = get_format_thinking_params(
         "anthropic_messages",
