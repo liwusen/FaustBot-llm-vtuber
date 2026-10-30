@@ -11,6 +11,15 @@ from dataclasses import dataclass, field
 
 if TYPE_CHECKING:
     from faust_backend.plugins.system.plugin_storage import PluginStorage
+
+# plugin.json 里以该前缀声明的内部标记（不参与插件自有配置，由宿主解释）
+MARK_PREFIX = "faustbot.internal.mark."
+# 内置插件：随仓库分发，禁止卸载
+MARK_BUILTIN = f"{MARK_PREFIX}builtin"
+# 核心功能插件：始终启用，禁止关闭
+MARK_CORE_FEATURE = f"{MARK_PREFIX}core_feature"
+
+
 @dataclass
 class PluginContext:
     plugin_id: str
@@ -234,6 +243,18 @@ class PluginManifest:
     entry: str = "main.py"
     permissions: list[str] = field(default_factory=list)
     priority: int = 100
+    # plugin.json 中的 faustbot.internal.mark.* 标记（原样保留，宿主按需解释）
+    marks: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def builtin(self) -> bool:
+        """内置插件：随仓库分发，禁止卸载。"""
+        return bool(self.marks.get(MARK_BUILTIN))
+
+    @property
+    def core_feature(self) -> bool:
+        """核心功能插件：始终启用，禁止关闭。"""
+        return bool(self.marks.get(MARK_CORE_FEATURE))
 
 
 class PluginProtocol(Protocol):

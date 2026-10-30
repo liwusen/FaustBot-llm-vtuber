@@ -84,6 +84,26 @@ FaustBot 插件系统基于 **pluggy** 框架实现，支持两种插件风格�
 | `permissions` | list | 否 | `[]` | 所需权限声明 |
 | `priority` | int | 否 | `100` | 加载优先级（越小越先） |
 
+### 内部标记（`faustbot.internal.mark.*`）
+
+`plugin.json` 中以 `faustbot.internal.mark.` 为前缀的键由宿主解释，不会进入插件配置，也不会传给插件代码：
+
+| 标记 | 类型 | 含义 |
+|------|------|------|
+| `faustbot.internal.mark.builtin` | bool | 内置插件：随仓库分发，配置中心禁用「删除」按钮，删除接口返回 409。 |
+| `faustbot.internal.mark.core_feature` | bool | 核心功能：始终启用，配置中心锁定开关并显示「强制启用」，禁用接口返回 409。 |
+
+```json
+{
+  "id": "emotion-engine",
+  "name": "Emotion Engine",
+  "faustbot.internal.mark.builtin": true,
+  "faustbot.internal.mark.core_feature": true
+}
+```
+
+两个标记可以同时存在；`core_feature` 隐含不可关闭，但**不**隐含不可卸载，需要禁止卸载时同时声明 `builtin`。插件代码里自建的 `PluginManifest` 会继承 `plugin.json` 的标记。
+
 ---
 
 ## PluginContext API

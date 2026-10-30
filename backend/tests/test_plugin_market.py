@@ -152,3 +152,44 @@ def test_check_plugin_updates_classification(monkeypatch):
     assert result["updates"][0]["installed_version"] == "1.0.0"
     assert result["up_to_date"] == ["same"]
     assert result["not_in_market"] == ["local-only"]
+
+
+def _write_plugin_dir(plugins_dir: Path, plugin_id: str, manifest: dict):
+    plugin_dir = plugins_dir / plugin_id
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return plugin_dir
+
+
+def test_delete_installed_plugin_removes_dir_and_state(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = _write_plugin_dir(plugins_dir, "demo", {"id": "demo", "name": "Demo"})
+    state_file = plugins_dir / "plugins.state.json"
+    state_file.write_text(json.dumps({
+        "plugins": {"demo": {"enabled": False}, "keep": {"enabled": True}},
+        "configs": {"demo": {"A": 1}, "keep": {"B": 2}},
+    }), encoding="utf-8")
+
+    result = plugin_market.delete_installed_plugin(
+        plugin_id="demo", plugins_dir=plugins_dir, state_file=state_file)
+
+    assert result["plugin_id"] == "demo"
+    assert not plugin_dir.exists()
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "demo" not in state["plugins"]
+    assert "demo" not in state["configs"]
+    assert "keep" in state["plugins"] and "keep" in state["configs"]
+
+
+def test_delete_installed_plugin_refuses_builtin(tmp_path):
+    plugins_dir = tmp_path / "plugins"
+    plugin_dir = _write_plugin_dir(plugins_dir, "core", {
+        "id": "core",
+        "name": "Core",
+        "faustbot.internal.mark.builtin": True,
+    })
+
+    with pytest.raises(plugin_market.PluginMarketError, match="内置插件不可卸载"):
+        plugin_market.delete_installed_plugin(plugin_id="core", plugins_dir=plugins_dir)
+
+    assert plugin_dir.exists()

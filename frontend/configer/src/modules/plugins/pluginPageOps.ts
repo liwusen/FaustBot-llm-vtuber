@@ -53,6 +53,12 @@ export interface PluginInfo {
   author?: string;
   homepage?: string;
   enabled?: boolean;
+  /** 内置插件：随仓库分发，禁止卸载。 */
+  builtin?: boolean;
+  /** 核心功能插件：始终启用，禁止关闭。 */
+  core_feature?: boolean;
+  /** plugin.json 中的 faustbot.internal.mark.* 原始标记。 */
+  marks?: Record<string, unknown>;
   permissions?: string[];
   priority?: number;
   tools?: PluginToolInfo[];
@@ -61,6 +67,27 @@ export interface PluginInfo {
   config?: PluginConfigSnapshot | null;
   health?: PluginHealth | null;
   [key: string]: unknown;
+}
+
+export const PLUGIN_MARK_BUILTIN = 'faustbot.internal.mark.builtin';
+export const PLUGIN_MARK_CORE_FEATURE = 'faustbot.internal.mark.core_feature';
+
+/** 读取插件标记：优先原始 marks，其次后端归一化后的布尔字段。 */
+export function pluginHasMark(plugin: PluginInfo | null | undefined, mark: string): boolean {
+  if (!plugin) return false;
+  const raw = plugin.marks?.[mark];
+  if (raw !== undefined) return Boolean(raw);
+  if (mark === PLUGIN_MARK_BUILTIN) return Boolean(plugin.builtin);
+  if (mark === PLUGIN_MARK_CORE_FEATURE) return Boolean(plugin.core_feature);
+  return false;
+}
+
+export function pluginIsBuiltin(plugin: PluginInfo | null | undefined): boolean {
+  return pluginHasMark(plugin, PLUGIN_MARK_BUILTIN);
+}
+
+export function pluginIsCoreFeature(plugin: PluginInfo | null | undefined): boolean {
+  return pluginHasMark(plugin, PLUGIN_MARK_CORE_FEATURE);
 }
 
 export interface PluginUpdateEntry {
@@ -286,6 +313,8 @@ export function pluginBasicRows(plugin: PluginInfo): InfoRow[] {
     { label: '作者', value: plugin.author },
     { label: '主页', value: plugin.homepage },
     { label: '启用', value: plugin.enabled },
+    { label: '内置', value: pluginIsBuiltin(plugin) ? '是（不可卸载）' : '否' },
+    { label: '核心功能', value: pluginIsCoreFeature(plugin) ? '是（强制启用）' : '否' },
     { label: '优先级', value: plugin.priority },
     { label: '描述', value: plugin.description },
   ];

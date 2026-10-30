@@ -283,6 +283,27 @@ curl -X POST http://localhost:13900/faust/admin/plugins/package-zip \
 
 ---
 
+## 内置插件与核心功能标记
+
+`plugin.json` 支持两个由宿主解释的内部标记（不会传给插件代码）：
+
+| 标记 | 含义 |
+|------|------|
+| `faustbot.internal.mark.builtin` | 内置插件：配置中心禁用「删除」，删除接口返回 409。 |
+| `faustbot.internal.mark.core_feature` | 核心功能：始终启用，配置中心锁定开关并显示「强制启用」，禁用接口返回 409。 |
+
+```json
+{
+  "id": "emotion-engine",
+  "faustbot.internal.mark.builtin": true,
+  "faustbot.internal.mark.core_feature": true
+}
+```
+
+市场分发的第三方插件不要声明这两个标记。
+
+---
+
 ## 最佳实践
 
 ### 架构设计

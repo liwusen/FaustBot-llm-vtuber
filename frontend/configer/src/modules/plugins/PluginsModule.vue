@@ -29,6 +29,8 @@ import {
   pluginFieldText,
   pluginHealthLabel,
   pluginHealthRows,
+  pluginIsBuiltin,
+  pluginIsCoreFeature,
   pluginLlmDescription,
   pluginLlmDisplayValue,
   pluginLlmHasValue,
@@ -207,6 +209,11 @@ async function selectPlugin(plugin: PluginInfo): Promise<void> {
 async function togglePlugin(plugin: PluginInfo, enabled: boolean): Promise<void> {
   const id = String(plugin.id || '');
   if (!id) return;
+  if (!enabled && pluginIsCoreFeature(plugin)) {
+    plugin.enabled = true;
+    ui.showBanner('error', `插件 ${id} 是核心功能，强制启用，无法关闭。`);
+    return;
+  }
   plugin.enabled = enabled;
   try {
     await cfgApi('POST', enabled ? API.pluginEnable(id) : API.pluginDisable(id), {
@@ -224,6 +231,10 @@ async function togglePlugin(plugin: PluginInfo, enabled: boolean): Promise<void>
 async function deletePlugin(plugin: PluginInfo): Promise<void> {
   const id = String(plugin.id || '');
   if (!id) return;
+  if (pluginIsBuiltin(plugin)) {
+    ui.showBanner('error', `插件 ${id} 是内置插件，不可卸载。`);
+    return;
+  }
   if (!window.confirm(`确定删除插件 ${id} ?`)) return;
   try {
     await cfgApi('DELETE', API.pluginDelete(id), null, {
@@ -369,7 +380,11 @@ onMounted(() => {
                 <PluginHealthChart :plugin="plugin" />
                 <div class="plugin-row-text">
                   <strong class="plugin-row-title">{{ plugin.name || plugin.id }}</strong>
-                  <div class="plugin-row-subtitle">{{ plugin.description || plugin.id }}</div>
+                  <div class="plugin-row-subtitle">
+                    <span v-if="pluginIsBuiltin(plugin)" class="tag-chip tag-chip-muted">内置</span>
+                    <span v-if="pluginIsCoreFeature(plugin)" class="tag-chip tag-chip-muted">核心功能</span>
+                    {{ plugin.description || plugin.id }}
+                  </div>
                 </div>
               </div>
             </td>
@@ -380,18 +395,35 @@ onMounted(() => {
               </span>
             </td>
             <td>
-              <span class="tag-chip" :class="{ 'tag-chip-muted': !plugin.enabled }">
-                {{ plugin.enabled ? '已启用' : '已关闭' }}
+              <span
+                class="tag-chip"
+                :class="{ 'tag-chip-muted': !pluginIsCoreFeature(plugin) && !plugin.enabled }"
+              >
+                {{
+                  pluginIsCoreFeature(plugin)
+                    ? '强制启用'
+                    : plugin.enabled
+                      ? '已启用'
+                      : '已关闭'
+                }}
               </span>
               <div class="plugin-status-note">{{ pluginHealthLabel(plugin) }}</div>
             </td>
             <td>
               <div class="toolbar compact plugin-row-actions">
                 <SwitchField
-                  :model-value="Boolean(plugin.enabled)"
+                  :model-value="pluginIsCoreFeature(plugin) || Boolean(plugin.enabled)"
+                  :label="pluginIsCoreFeature(plugin) ? '强制启用' : undefined"
+                  :disabled="pluginIsCoreFeature(plugin)"
                   @update:model-value="(enabled) => togglePlugin(plugin, enabled)"
                 />
-                <button class="btn btn-ghost" type="button" @click.stop="deletePlugin(plugin)">
+                <button
+                  class="btn btn-ghost"
+                  type="button"
+                  :disabled="pluginIsBuiltin(plugin)"
+                  :title="pluginIsBuiltin(plugin) ? '内置插件不可卸载' : undefined"
+                  @click.stop="deletePlugin(plugin)"
+                >
                   删除
                 </button>
                 <button

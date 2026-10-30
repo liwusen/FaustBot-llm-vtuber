@@ -191,4 +191,35 @@ describe('PluginsModule', () => {
       no_initial_chat: true,
     });
   });
+
+  it('locks uninstall for builtin plugins and the toggle for core features', async () => {
+    currentPlugins = [
+      {
+        id: 'core',
+        name: 'Core Plugin',
+        enabled: true,
+        builtin: true,
+        core_feature: true,
+        description: '核心插件',
+        health: { status: 'healthy' },
+        config: { schema: [], values: {} },
+      },
+    ];
+    wrapper = mountModule();
+    await flushPromises();
+
+    const row = wrapper.findAll('.plugin-list-table tbody tr')[0];
+    expect(row.text()).toContain('内置');
+    expect(row.text()).toContain('核心功能');
+    expect(row.text()).toContain('强制启用');
+
+    const deleteButton = row.findAll('button').find((button) => button.text() === '删除');
+    expect(deleteButton).toBeTruthy();
+    expect(deleteButton!.attributes('disabled')).toBeDefined();
+    expect(deleteButton!.attributes('title')).toBe('内置插件不可卸载');
+
+    const toggle = row.find('.switch input');
+    expect(toggle.attributes('disabled')).toBeDefined();
+    expect(toggle.attributes('checked')).toBeDefined();
+  });
 });

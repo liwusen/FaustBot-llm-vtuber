@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from faust_backend.plugins.system import PluginManager
+from faust_backend.plugins.system.manager import PluginLoadError
 from faust_backend.tools.vfs import get_faustbot_vfs
 import faust_backend.core.config as conf
 
@@ -182,13 +183,38 @@ async def test_plugin_reload_skips_when_unchanged():
     await pm.reload(force=True)
     summary = await pm.reload()
     assert summary.get('skipped') is True
-    pm.set_plugin_enabled('emotion-engine', False)
+    pm.set_plugin_enabled('rss-watcher', False)
     summary2 = await pm.reload(force=True)
     assert summary2.get('skipped') is False
-    assert 'emotion-engine' in pm._plugins
-    assert pm._plugins['emotion-engine']['plugin'] is None
+    assert 'rss-watcher' in pm._plugins
+    assert pm._plugins['rss-watcher']['plugin'] is None
     summary3 = await pm.reload()
     assert summary3.get('skipped') is True
+
+
+@pytest.mark.asyncio
+async def test_core_feature_plugin_is_forced_enabled():
+    pm = await _build_manager()
+    for pid in ('emotion-engine', 'avatar-performance'):
+        with pytest.raises(PluginLoadError):
+            pm.set_plugin_enabled(pid, False)
+
+    # 旧状态文件里遗留的 enabled=false 也不能压过 core_feature 标记
+    pm._state.setdefault('plugins', {}).setdefault('emotion-engine', {})['enabled'] = False
+    await pm.reload(force=True)
+
+    items = {item['id']: item for item in pm.list_plugins()}
+    for pid in ('emotion-engine', 'avatar-performance'):
+        assert pm._plugins[pid]['plugin'] is not None
+        assert items[pid]['enabled'] is True
+        assert items[pid]['core_feature'] is True
+        assert items[pid]['builtin'] is True
+        assert items[pid]['marks']['faustbot.internal.mark.core_feature'] is True
+
+    # 普通插件仍然可以被关闭
+    pm.set_plugin_enabled('rss-watcher', False)
+    await pm.reload(force=True)
+    assert pm._plugins['rss-watcher']['plugin'] is None
 
 
 @pytest.mark.asyncio

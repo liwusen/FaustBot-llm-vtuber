@@ -13,6 +13,7 @@ from tqdm import tqdm
 import requests
 
 import faust_backend.core.config as conf
+from faust_backend.plugins.system.interfaces import MARK_BUILTIN, MARK_PREFIX
 from faust_backend.services.update import GH_PROXY, is_newer_version
 
 from faust_backend.core.log import get_logger
@@ -331,6 +332,24 @@ def package_plugin_to_zip(
     }
 
 
+def _read_manifest_marks(plugin_dir: Path) -> dict[str, Any]:
+    """读取插件目录 plugin.json 里的 faustbot.internal.mark.* 标记。"""
+    manifest_file = plugin_dir / "plugin.json"
+    if not manifest_file.exists():
+        return {}
+    try:
+        raw = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in raw.items()
+        if str(key).startswith(MARK_PREFIX)
+    }
+
+
 def delete_installed_plugin(*, plugin_id: str, plugins_dir: Path, state_file: Path | None = None) -> dict[str, Any]:
     pid = str(plugin_id or "").strip()
     if not _SAFE_PLUGIN_ID.match(pid):
@@ -340,6 +359,9 @@ def delete_installed_plugin(*, plugin_id: str, plugins_dir: Path, state_file: Pa
     target_dir = plugins_dir / pid
     if not target_dir.exists() or not target_dir.is_dir():
         raise PluginMarketError(f"插件不存在: {pid}")
+
+    if _read_manifest_marks(target_dir).get(MARK_BUILTIN):
+        raise PluginMarketError(f"内置插件不可卸载: {pid}")
 
     shutil.rmtree(target_dir)
 

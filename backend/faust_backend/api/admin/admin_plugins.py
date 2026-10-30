@@ -93,7 +93,10 @@ async def admin_enable_plugin(plugin_id: str, payload: dict | None = None):
 @router.post("/faust/admin/plugins/{plugin_id}/disable")
 async def admin_disable_plugin(plugin_id: str, payload: dict | None = None):
     if state.plugin_manager:
-        state.plugin_manager.set_plugin_enabled(plugin_id, False)
+        try:
+            state.plugin_manager.set_plugin_enabled(plugin_id, False)
+        except PluginLoadError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
     apply_runtime = bool((payload or {}).get("apply_runtime", True))
     reset_dialog = bool((payload or {}).get("reset_dialog", True))
     no_initial_chat = bool((payload or {}).get("no_initial_chat", True))
@@ -371,6 +374,7 @@ async def admin_delete_plugin(plugin_id: str, apply_runtime: bool = True, reset_
             "runtime": runtime_info, "items": state.plugin_manager.list_plugins() if state.plugin_manager else [],
         }
     except plugin_market.PluginMarketError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        status = 409 if "内置插件不可卸载" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"插件删除失败: {e}")

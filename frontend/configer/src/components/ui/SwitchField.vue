@@ -4,6 +4,7 @@ import { computed } from 'vue';
 const props = defineProps<{
   modelValue: boolean;
   label?: string;
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -13,15 +14,21 @@ const emit = defineEmits<{
 const text = computed(() => props.label ?? (props.modelValue ? '已启用' : '已禁用'));
 
 function onChange(event: Event): void {
+  if (props.disabled) return;
   emit('update:modelValue', Boolean((event.target as HTMLInputElement).checked));
 }
 </script>
 
 <template>
-  <div class="switch-row">
+  <div class="switch-row" :class="{ 'switch-row-disabled': disabled }">
     <span class="switch-text">{{ text }}</span>
-    <label class="switch">
-      <input type="checkbox" :checked="modelValue" @change="onChange" />
+    <label class="switch" :class="{ 'switch-disabled': disabled }">
+      <input
+        type="checkbox"
+        :checked="modelValue"
+        :disabled="disabled"
+        @change="onChange"
+      />
       <span class="switch-slider"></span>
     </label>
   </div>

@@ -22,7 +22,13 @@ from faust_backend.tools.vfs import get_faustbot_vfs
 
 from .hooks import CoreHooks, hookimpl
 from .plugin_storage import PluginStorage
-from .interfaces import MiddlewareSpec, PluginContext, PluginManifest, ToolSpec
+from .interfaces import (
+    MARK_PREFIX,
+    MiddlewareSpec,
+    PluginContext,
+    PluginManifest,
+    ToolSpec,
+)
 from .plugin_base import FaustPlugin
 
 import faust_backend.core.config as conf
@@ -156,6 +162,13 @@ def _plugin_user_dir() -> Path:
     return Path(conf.BACKEND_ROOT) / "plugins"
 
 
+def _inherit_manifest_marks(target: PluginManifest, source: PluginManifest) -> PluginManifest:
+    """插件代码里自建 manifest 时，继承 plugin.json 的 faustbot.internal.mark.* 标记。"""
+    for key, value in source.marks.items():
+        target.marks.setdefault(key, value)
+    return target
+
+
 class PluginManager:
     def __init__(self, plugins_dir: Path | None = None, state_file: Path | None = None):
         self.plugins_dir = Path(plugins_dir) if plugins_dir else _plugin_user_dir()
@@ -226,7 +239,9 @@ class PluginManager:
             if not plugin_dir.is_dir() or plugin_dir.name.startswith("_"):
                 continue
             manifest = self._load_manifest(plugin_dir)
-            states[manifest.plugin_id] = self._plugin_enabled(manifest.plugin_id, manifest.enabled)
+            states[manifest.plugin_id] = self._plugin_enabled(
+                manifest.plugin_id, manifest.enabled, manifest
+            )
         return json.dumps(states, ensure_ascii=False, sort_keys=True)
 
     def needs_reload(self) -> bool:
@@ -245,6 +260,11 @@ class PluginManager:
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         plugin_id = str(raw.get("id") or plugin_dir.name)
+        marks = {
+            str(key): value
+            for key, value in raw.items()
+            if str(key).startswith(MARK_PREFIX)
+        }
         return PluginManifest(
             plugin_id=plugin_id,
             name=str(raw.get("name") or plugin_id),
@@ -256,6 +276,7 @@ class PluginManager:
             entry=str(raw.get("entry") or "main.py"),
             permissions=list(raw.get("permissions") or []),
             priority=int(raw.get("priority") or 100),
+            marks=marks,
         )
 
     async def _build_plugin_context_async(self, plugin_id: str, plugin_dir: Path) -> PluginContext:
@@ -577,9 +598,33 @@ class PluginManager:
         dedup: dict[str, MiddlewareSpec] = {m.name: m for m in out}
         return list(dedup.values())
 
-    def _plugin_enabled(self, plugin_id: str, default: bool) -> bool:
+    def _plugin_enabled(self, plugin_id: str, default: bool, manifest: PluginManifest | None = None) -> bool:
+        """插件是否启用。core_feature 标记的插件无条件启用，用户状态不能覆盖。"""
+        if manifest is None:
+            record = self._plugins.get(plugin_id)
+            if record is not None:
+                manifest = record.get("manifest")
+        if manifest is not None and manifest.core_feature:
+            return True
         p_state = self._state.setdefault("plugins", {}).setdefault(plugin_id, {})
         return bool(p_state.get("enabled", default))
+
+    def get_plugin_manifest(self, plugin_id: str) -> PluginManifest | None:
+        """按 plugin_id 取清单：优先已加载记录，否则从插件目录读 plugin.json。"""
+        record = self._plugins.get(plugin_id)
+        if record is not None:
+            return record.get("manifest")
+        plugin_dir = self.plugins_dir / plugin_id
+        if plugin_dir.is_dir():
+            return self._load_manifest(plugin_dir)
+        return None
+
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> None:
+        manifest = self.get_plugin_manifest(plugin_id)
+        if not enabled and manifest is not None and manifest.core_feature:
+            raise PluginLoadError(f"Plugin is a core feature and cannot be disabled: {plugin_id}")
+        self._state.setdefault("plugins", {}).setdefault(plugin_id, {})["enabled"] = bool(enabled)
+        self._save_state()
 
     async def reload(self, *, force: bool = False) -> dict[str, Any]:
         if not force and not self.needs_reload():
@@ -626,7 +671,7 @@ class PluginManager:
                 continue
 
             manifest = self._load_manifest(plugin_dir)
-            if not self._plugin_enabled(manifest.plugin_id, manifest.enabled):
+            if not self._plugin_enabled(manifest.plugin_id, manifest.enabled, manifest):
                 self._plugins[manifest.plugin_id] = {
                     "manifest": manifest,
                     "ctx": None,
@@ -645,6 +690,7 @@ class PluginManager:
                 if getattr(plugin, "manifest", None) is None:
                     plugin.manifest = manifest
                 else:
+                    plugin.manifest = _inherit_manifest_marks(plugin.manifest, manifest)
                     manifest = plugin.manifest
 
                 # ── pluggy registration for FaustPlugin instances ──
@@ -751,10 +797,6 @@ class PluginManager:
             return {"changed": False, "enabled": True}
         summary = await self.reload()
         return {"changed": True, "enabled": True, "reload": summary}
-
-    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> None:
-        self._state.setdefault("plugins", {}).setdefault(plugin_id, {})["enabled"] = bool(enabled)
-        self._save_state()
 
     def filter_trigger_on_append(self, trigger_payload: dict | None) -> dict | None:
         if not isinstance(trigger_payload, dict):
@@ -878,7 +920,10 @@ class PluginManager:
                     "description": manifest.description,
                     "author": manifest.author,
                     "homepage": manifest.homepage,
-                    "enabled": self._plugin_enabled(plugin_id, manifest.enabled),
+                    "enabled": self._plugin_enabled(plugin_id, manifest.enabled, manifest),
+                    "builtin": manifest.builtin,
+                    "core_feature": manifest.core_feature,
+                    "marks": dict(manifest.marks),
                     "permissions": list(manifest.permissions),
                     "priority": manifest.priority,
                     "tools": tool_items,

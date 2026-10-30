@@ -868,6 +868,13 @@ body {
 	color: var(--muted);
 }
 
+.plugin-row-subtitle .tag-chip {
+	margin-right: 6px;
+	padding: 1px 8px;
+	font-size: 11px;
+	vertical-align: middle;
+}
+
 .plugin-row-actions {
 	justify-content: flex-end;
 }
@@ -1507,6 +1514,19 @@ body {
 
 .switch input:checked + .switch-slider::before {
 	transform: translateX(16px);
+}
+
+.switch input:disabled {
+	cursor: not-allowed;
+}
+
+.switch input:disabled + .switch-slider {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+.switch-row-disabled .switch-text {
+	color: var(--muted);
 }
 
 .switch-text {

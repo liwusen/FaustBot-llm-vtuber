@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   PLUGIN_LLM_UNSET_TEXT,
+  PLUGIN_MARK_BUILTIN,
+  PLUGIN_MARK_CORE_FEATURE,
   isLlmConfigType,
   parsePluginFieldValue,
+  pluginBasicRows,
   pluginConfigDraftValues,
   pluginConfigPayload,
+  pluginHasMark,
   pluginHealthChartOption,
   pluginHealthLabel,
+  pluginIsBuiltin,
+  pluginIsCoreFeature,
   pluginLlmDisplayValue,
   pluginLlmHasValue,
   pluginMiddlewareRows,
@@ -270,6 +276,33 @@ describe('resolvePluginSelection', () => {
     expect(resolvePluginSelection([{ id: 'a' }, { id: 'b' }], 'gone')).toBe('a');
     expect(resolvePluginSelection([], 'gone')).toBe('');
     expect(resolvePluginSelection([{ id: 'a' }], '')).toBe('a');
+  });
+});
+
+describe('plugin marks', () => {
+  it('reads raw marks first and falls back to normalized booleans', () => {
+    expect(pluginHasMark({ marks: { [PLUGIN_MARK_BUILTIN]: true } }, PLUGIN_MARK_BUILTIN)).toBe(true);
+    expect(pluginHasMark({ marks: { [PLUGIN_MARK_CORE_FEATURE]: false } }, PLUGIN_MARK_CORE_FEATURE)).toBe(false);
+    expect(pluginIsBuiltin({ builtin: true })).toBe(true);
+    expect(pluginIsBuiltin({})).toBe(false);
+    expect(pluginIsBuiltin(null)).toBe(false);
+    expect(pluginIsCoreFeature({ core_feature: true })).toBe(true);
+    expect(pluginIsCoreFeature({ core_feature: false })).toBe(false);
+    expect(pluginHasMark({}, 'faustbot.internal.mark.unknown')).toBe(false);
+  });
+
+  it('exposes the mark state in the basic info rows', () => {
+    const rows = pluginBasicRows({
+      id: 'core',
+      builtin: true,
+      core_feature: true,
+    });
+    expect(rows).toContainEqual({ label: '内置', value: '是（不可卸载）' });
+    expect(rows).toContainEqual({ label: '核心功能', value: '是（强制启用）' });
+
+    const plain = pluginBasicRows({ id: 'plain' });
+    expect(plain).toContainEqual({ label: '内置', value: '否' });
+    expect(plain).toContainEqual({ label: '核心功能', value: '否' });
   });
 });
 
