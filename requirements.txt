@@ -61,7 +61,8 @@ Brotli>=1.2.0
 pure-protobuf
 yarl
 # pdm-backend
-edge_tts
+# >=7.3.0: 微软语音 WSS 握手要求 Sec-MS-GEC v2 令牌；7.2.x 仍签 v1，合成必然 403
+edge_tts>=7.3.0
 rank_bm25
 #
 funasr>=0.9.6
