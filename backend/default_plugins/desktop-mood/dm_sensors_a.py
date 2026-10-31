@@ -25,7 +25,7 @@ except Exception:  # noqa: BLE001
 
 SOURCES = (
     {'id': 'window_geometry', 'key': 'ENABLE_WINDOW_GEOMETRY', 'tier': 'green', 'default': True,
-     'cadence': 10, 'label': '窗口几何', 'note': '活动窗口是否全屏、尺寸位置（用于判断游戏/视频全屏）',
+     'cadence': 10, 'label': '窗口几何', 'note': '用户应用窗口是否全屏、尺寸位置（FaustBot 自身窗口不计全屏）',
      'group': 'window', 'attach_weight': 85, 'attach_fields': ('window_fullscreen',),
      'fields': ('window_fullscreen', 'window_rect')},
     {'id': 'app_session', 'key': 'ENABLE_APP_SESSION', 'tier': 'green', 'default': True,
@@ -80,6 +80,19 @@ CODE_TOUCH_SEC = 300
 DIRTY_MARKERS = ('●', '*', '✱')
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.next', 'target'}
 
+# ── 窗口探测：Win32 常量与"用户应用窗口"过滤 ─────────────────
+GW_HWNDNEXT = 2
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_LAYERED = 0x00080000
+WS_EX_NOACTIVATE = 0x08000000
+DWMWA_CLOAKED = 14
+MAX_ZORDER_WALK = 500             # z 序回溯上限，防止异常链死循环
+ZORDER_SKIP_CLASSES = frozenset({
+    'Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'SHELLDLL_DefView',
+    'Windows.UI.Core.CoreWindow',
+})
+
 
 # ── ctypes 小工具 ─────────────────────────────────────────────
 
@@ -92,25 +105,14 @@ class MONITORINFO(ctypes.Structure):
     _fields_ = [('cbSize', ctypes.c_ulong), ('rcMonitor', RECT), ('rcWork', RECT), ('dwFlags', ctypes.c_ulong)]
 
 
-def _foreground_rect() -> tuple[int, int, int, int] | None:
+def _window_snapshot(hwnd: int) -> dict[str, Any] | None:
+    """一个顶层窗口的 hwnd / 所属进程 / 屏幕矩形 / 所在显示器矩形；取不到时 None。"""
     try:
         user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd or user32.IsIconic(hwnd):
+        if not hwnd or not user32.IsWindow(hwnd):
             return None
         rect = RECT()
         if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-            return None
-        return rect.left, rect.top, rect.right, rect.bottom
-    except Exception:
-        return None
-
-
-def _monitor_rect() -> tuple[int, int, int, int] | None:
-    try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
             return None
         monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
         if not monitor:
@@ -119,14 +121,119 @@ def _monitor_rect() -> tuple[int, int, int, int] | None:
         info.cbSize = ctypes.sizeof(MONITORINFO)
         if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
             return None
-        return info.rcMonitor.left, info.rcMonitor.top, info.rcMonitor.right, info.rcMonitor.bottom
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return {
+            'hwnd': int(hwnd),
+            'pid': int(pid.value) or None,
+            'rect': (rect.left, rect.top, rect.right, rect.bottom),
+            'monitor': (info.rcMonitor.left, info.rcMonitor.top,
+                        info.rcMonitor.right, info.rcMonitor.bottom),
+        }
     except Exception:
         return None
 
 
+def _foreground_window() -> dict[str, Any] | None:
+    """当前前台窗口快照（最小化视作没有前台窗口）。"""
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd or user32.IsIconic(hwnd):
+            return None
+        return _window_snapshot(hwnd)
+    except Exception:
+        return None
+
+
+def _window_class(hwnd: int) -> str:
+    try:
+        buffer = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetClassNameW(hwnd, buffer, 256)
+        return buffer.value
+    except Exception:
+        return ''
+
+
+def _is_cloaked(hwnd: int) -> bool:
+    """UWP/其它虚拟桌面上"逻辑可见但 DWM 已隐藏"的窗口。"""
+    try:
+        cloaked = ctypes.c_int(0)
+        hresult = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+        return hresult == 0 and bool(cloaked.value)
+    except Exception:
+        return False
+
+
+def is_own_window(pid: int | None, own_pid: int | None) -> bool:
+    """窗口所属进程是否就是 FaustBot 自己（桌宠/配置/直播窗口都属于它）。"""
+    return bool(own_pid) and pid is not None and int(pid) == int(own_pid)
+
+
+def _is_user_window(hwnd: int, own_pid: int | None) -> bool:
+    """z 序候选过滤：跳过自身窗口、悬浮层、隐藏/挂起窗口与桌面外壳。"""
+    try:
+        user32 = ctypes.windll.user32
+        if not user32.IsWindow(hwnd) or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return False
+        if _window_class(hwnd) in ZORDER_SKIP_CLASSES or _is_cloaked(hwnd):
+            return False
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if is_own_window(int(pid.value), own_pid):
+            return False
+        exstyle = int(user32.GetWindowLongW(hwnd, GWL_EXSTYLE)) & 0xFFFFFFFF
+        if exstyle & (WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE):
+            return False
+        if user32.GetWindowTextLengthW(hwnd) <= 0:
+            return False
+        rect = RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        return rect.right > rect.left and rect.bottom > rect.top
+    except Exception:
+        return False
+
+
+def _next_user_window(own_pid: int | None) -> dict[str, Any] | None:
+    """按 z 序自上而下找第一个"用户应用窗口"（桌宠置顶时它下面的那个）。"""
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetTopWindow(0)
+        steps = 0
+        while hwnd and steps < MAX_ZORDER_WALK:
+            steps += 1
+            if _is_user_window(hwnd, own_pid):
+                return _window_snapshot(hwnd)
+            hwnd = user32.GetWindow(hwnd, GW_HWNDNEXT)
+    except Exception:
+        return None
+    return None
+
+
+def resolve_user_window(own_pid: int | None) -> tuple[dict[str, Any] | None, bool]:
+    """用户实际在用的窗口 + "前台是不是 FaustBot 自己"。
+
+    桌宠窗口铺满主屏且始终置顶，焦点落到它身上时 GetForegroundWindow 返回的就是它；
+    那不是用户的应用窗口——按 z 序看它下面那个窗口，下面没有可用的用户窗口时返回
+    (None, True)，让调用方沿用上一轮的值，绝不把 FaustBot 当成"用户正在全屏"。
+    """
+    foreground = _foreground_window()
+    if foreground is None:
+        return None, False
+    if not is_own_window(foreground.get('pid'), own_pid):
+        return foreground, False
+    return _next_user_window(own_pid), True
+
+
 def is_fullscreen(rect: tuple[int, int, int, int] | None,
                   monitor: tuple[int, int, int, int] | None) -> bool:
-    """前台窗口是否铺满所在显示器（浏览器 F11、游戏、视频全屏都命中）。"""
+    """窗口是否铺满所在显示器（浏览器 F11、游戏、视频全屏都命中）。
+
+    容差是 2px：桌宠窗口特意只内缩 1px 躲开 DWM 的全屏判定，几何上它同样算"全屏"，
+    所以调用方必须先用 `resolve_user_window()` 把 FaustBot 自身的窗口排除掉。
+    """
     if rect is None or monitor is None:
         return False
     return (abs(rect[0] - monitor[0]) <= 2 and abs(rect[1] - monitor[1]) <= 2
@@ -261,7 +368,9 @@ def _read_mouse(state: dict[str, Any]) -> dict[str, Any]:
 # ── 各源采集 ─────────────────────────────────────────────────
 
 def _collect_window_geometry(sctx: SensorContext) -> dict[str, Any]:
-    rect, monitor = _foreground_rect(), _monitor_rect()
+    window, _own_foreground = resolve_user_window(sctx.own_app_pid)
+    rect = window['rect'] if window else None
+    monitor = window['monitor'] if window else None
     return {
         'window_fullscreen': is_fullscreen(rect, monitor),
         'window_rect': None if rect is None else {

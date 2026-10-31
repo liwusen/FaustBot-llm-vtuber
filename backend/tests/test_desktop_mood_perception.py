@@ -74,6 +74,32 @@ async def test_default_tiers_collect_green_and_yellow_only(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_own_window_is_excluded_from_fullscreen(tmp_path, monkeypatch):
+    pm, plugin = await _plugin(tmp_path)
+    sensors_a = sys.modules['faust_plugin_desktop-mood'].dm_sensors_a
+    monitor = (0, 0, 1920, 1080)
+    # 桌宠窗口：铺满主屏但内缩 1px，进程是前端上报的自身 PID
+    pet = {'hwnd': 101, 'pid': 4242, 'rect': (1, 1, 1919, 1079), 'monitor': monitor}
+    game = {'hwnd': 202, 'pid': 777, 'rect': (0, 0, 1920, 1080), 'monitor': monitor}
+    await pm.communicate('desktop-mood', {
+        'action': 'report', 'source': 'electron_main', 'fields': {'app_pid': 4242}})
+
+    # 前台是桌宠自己：不算全屏，也不冒充用户的应用
+    monkeypatch.setattr(sensors_a, '_foreground_window', lambda: pet)
+    monkeypatch.setattr(sensors_a, '_next_user_window', lambda own_pid: None)
+    context = await plugin.collect_context()
+    assert context['window_fullscreen'] is False
+    assert context['window_process'] is None
+    assert context['window_title'] == ''
+
+    # 真·全屏的别的进程窗口照旧命中（同 cadence 内强制重采一次）
+    monkeypatch.setattr(sensors_a, '_foreground_window', lambda: game)
+    plugin._source_last_run.clear()
+    context = await plugin.collect_context()
+    assert context['window_fullscreen'] is True
+
+
+@pytest.mark.asyncio
 async def test_green_tier_off_hides_metadata_senses(tmp_path):
     pm, plugin = await _plugin(tmp_path)
     pm.set_plugin_config_values('desktop-mood', {'ENABLE_TIER_GREEN': False})

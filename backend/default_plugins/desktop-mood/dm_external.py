@@ -51,6 +51,9 @@ WEATHER_KV = 'external.weather'
 WEATHER_AT_KV = 'external.weather_at'
 WEATHER_TTL_SEC = 600
 REPORT_TTL_SEC = 3600
+# 自身 PID 只用于"把自己的窗口和用户应用窗口分开"，前端每 60s 刷新一次；
+# 太久没刷新说明前端已退出，不能再拿旧 PID 抑制全屏判定。
+OWN_APP_PID_MAX_AGE_SEC = 600
 MAX_FIELDS_PER_REPORT = 16
 MAX_VALUE_CHARS = 400
 
@@ -116,6 +119,25 @@ def fresh_reports(store: Any, now: float) -> dict[str, Any]:
             continue
         fresh[str(source)] = {**(value.get('fields') or {}), 'age_sec': age}
     return fresh
+
+
+def own_app_pid(store: Any, now: float) -> int | None:
+    """FaustBot 前端（Electron 主进程）上报的自身 PID；上报过期或缺失时返回 None。
+
+    桌宠窗口铺满主屏又置顶，窗口感知必须能把"它自己的窗口"和"用户的应用窗口"分开，
+    否则焦点落到桌宠上就会被当成"用户在全屏"。前端每 60s 刷新一次 app_pid。
+    """
+    electron = fresh_reports(store, now).get('electron') or {}
+    age = electron.get('age_sec')
+    if age is not None and int(age) > OWN_APP_PID_MAX_AGE_SEC:
+        return None
+    value = electron.get('app_pid')
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_calendar(ts: float) -> dict[str, Any]:

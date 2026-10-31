@@ -121,6 +121,15 @@ def test_detect_events_reports_transitions_only():
     assert dm_timeline.detect_events(current, current) == []
 
 
+def test_fullscreen_events_need_known_previous_state():
+    # 首轮采样（previous 里没有 window_fullscreen）不能凭空虚报"进入全屏"
+    assert dm_timeline.detect_events({'window_fullscreen': True}, {}) == []
+    assert [event['kind'] for event in dm_timeline.detect_events(
+        {'window_fullscreen': False}, {'window_fullscreen': True})] == ['fullscreen']
+    assert [event['kind'] for event in dm_timeline.detect_events(
+        {'window_fullscreen': True}, {'window_fullscreen': False})] == ['fullscreen']
+
+
 def test_away_digest_and_rhythm_accumulate():
     archive: dict = {}
     day = dm_timeline._day_key()
@@ -183,6 +192,15 @@ def test_external_freshness_and_flattening():
     assert fresh['electron']['locked'] is True
     stale = dm_external.fresh_reports(store, time.time() + dm_external.REPORT_TTL_SEC + 5)
     assert stale == {}
+
+
+def test_own_app_pid_requires_fresh_frontend_report():
+    store = _Store()
+    dm_external.ingest({'source': 'electron', 'fields': {'app_pid': 4242}}, store)
+    assert dm_external.own_app_pid(store, time.time()) == 4242
+    # 前端超过 OWN_APP_PID_MAX_AGE_SEC 没刷新 → 不再拿旧 PID 抑制全屏判定
+    assert dm_external.own_app_pid(store, time.time() + dm_external.OWN_APP_PID_MAX_AGE_SEC + 5) is None
+    assert dm_external.own_app_pid(_Store(), time.time()) is None
 
 
 def test_calendar_and_weather_formatters():
@@ -372,10 +390,55 @@ def test_fullscreen_and_dirty_document_helpers():
     monitor = (0, 0, 1920, 1080)
     assert sensors_a.is_fullscreen((0, 0, 1920, 1080), monitor) is True
     assert sensors_a.is_fullscreen((-1, 0, 1921, 1081), monitor) is True
+    # 桌宠窗口只内缩 1px 躲 DWM 的全屏判定，几何上同样"全屏"——所以必须按进程身份排除
+    assert sensors_a.is_fullscreen((1, 1, 1919, 1079), monitor) is True
     assert sensors_a.is_fullscreen((100, 100, 1000, 800), monitor) is False
     assert sensors_a.is_fullscreen(None, monitor) is False
     assert sensors_a.count_dirty_documents(['● a.py - VS Code', '*b.txt - Notepad', 'Chrome']) == 2
     assert sensors_a.count_dirty_documents([]) == 0
+
+
+def test_own_window_is_not_counted_as_fullscreen(monkeypatch):
+    sensors_a = _load('dm_sensors_a')
+    monitor = (0, 0, 1920, 1080)
+    pet = {'hwnd': 101, 'pid': 4242, 'rect': (1, 1, 1919, 1079), 'monitor': monitor}
+    edge = {'hwnd': 202, 'pid': 777, 'rect': (100, 100, 1500, 900), 'monitor': monitor}
+    monkeypatch.setattr(sensors_a, '_foreground_window', lambda: pet)
+    monkeypatch.setattr(sensors_a, '_next_user_window', lambda own_pid: edge)
+
+    window, own_foreground = sensors_a.resolve_user_window(4242)
+    assert own_foreground is True
+    assert window == edge  # 取的是桌宠下面的用户窗口，而不是桌宠自己
+    assert sensors_a.is_fullscreen(edge['rect'], edge['monitor']) is False
+
+    # 桌宠下面没有别的用户窗口：交给调用方沿用上一轮
+    monkeypatch.setattr(sensors_a, '_next_user_window', lambda own_pid: None)
+    assert sensors_a.resolve_user_window(4242) == (None, True)
+
+    # 前端没上报自身 PID（或已退出）→ 无从区分，退回旧行为
+    assert sensors_a.resolve_user_window(None) == (pet, False)
+
+    # 前台本来就是别的应用 → 不走 z 序回溯
+    other = {'hwnd': 303, 'pid': 888, 'rect': (0, 0, 1920, 1080), 'monitor': monitor}
+    monkeypatch.setattr(sensors_a, '_foreground_window', lambda: other)
+    assert sensors_a.resolve_user_window(4242) == (other, False)
+    assert sensors_a.is_fullscreen(other['rect'], other['monitor']) is True
+
+
+def test_window_geometry_skips_own_window(monkeypatch):
+    import types
+
+    sensors_a = _load('dm_sensors_a')
+    sctx = types.SimpleNamespace(own_app_pid=4242)
+    monkeypatch.setattr(sensors_a, 'resolve_user_window', lambda own_pid: (None, True))
+    assert sensors_a._collect_window_geometry(sctx) == {'window_fullscreen': False, 'window_rect': None}
+
+    fullscreen = {'rect': (0, 0, 1920, 1080), 'monitor': (0, 0, 1920, 1080)}
+    monkeypatch.setattr(sensors_a, 'resolve_user_window', lambda own_pid: (fullscreen, False))
+    assert sensors_a._collect_window_geometry(sctx) == {
+        'window_fullscreen': True,
+        'window_rect': {'x': 0, 'y': 0, 'width': 1920, 'height': 1080},
+    }
 
 
 def test_process_diff_and_device_helpers():

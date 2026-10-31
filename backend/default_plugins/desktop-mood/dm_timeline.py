@@ -165,10 +165,12 @@ def detect_events(context: dict[str, Any], previous: dict[str, Any]) -> list[dic
     if process_now and process_now != process_was:
         add('window', f'切到 {describe_process(process_now)}')
 
-    if context.get('window_fullscreen') and not previous.get('window_fullscreen'):
-        add('fullscreen', '进入全屏（游戏/视频）')
-    elif previous.get('window_fullscreen') and context.get('window_fullscreen') is False:
-        add('fullscreen', '退出全屏')
+    # 只在前后两轮都真的有值时才判转移：首轮采样/感知源刚开启时不能凭空虚报"进入全屏"
+    fullscreen_now = context.get('window_fullscreen')
+    fullscreen_was = previous.get('window_fullscreen')
+    if (isinstance(fullscreen_now, bool) and isinstance(fullscreen_was, bool)
+            and fullscreen_now != fullscreen_was):
+        add('fullscreen', '进入全屏（游戏/视频）' if fullscreen_now else '退出全屏')
 
     playing_now = str((context.get('smtc') or {}).get('status_name') or '').lower() == 'playing'
     playing_was = str((previous.get('smtc') or {}).get('status_name') or '').lower() == 'playing'

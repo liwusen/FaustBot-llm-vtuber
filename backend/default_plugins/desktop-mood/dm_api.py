@@ -56,6 +56,7 @@ class SensorContext:
     log: Any                           # logger
     get_config: Callable[..., Any] | None = None  # async (key, default) -> 插件配置值
     due: Callable[[str], bool] | None = None      # 本轮的源是否到采样时间（cadence）
+    own_app_pid: int | None = None                # FaustBot 前端自身 PID：窗口感知据此排除桌宠自己的窗口
 
     def is_due(self, source_id: str) -> bool:
         """中价/重价源请先问这个，避免每 10 秒心跳都做重活。"""

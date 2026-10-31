@@ -121,10 +121,9 @@ def _windows_idle_seconds() -> int | None:
         return None
 
 
-def _foreground_window_title() -> str:
+def _window_title(hwnd: int) -> str:
     try:
         user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return ''
         buffer = ctypes.create_unicode_buffer(512)
@@ -134,23 +133,15 @@ def _foreground_window_title() -> str:
         return ''
 
 
-def _foreground_window_process() -> dict[str, str] | None:
-    """前台窗口所属进程（名/路径），用于稳定识别用户正在运行的程序（如游戏 exe）。
+def _window_process(pid: int | None) -> dict[str, str] | None:
+    """窗口所属进程（名/路径），用于稳定识别用户正在运行的程序（如游戏 exe）。
 
     窗口标题易变（游戏可能显示当前地图/加载界面等），可执行名才是稳定信号。
     """
-    if psutil is None:
+    if psutil is None or not pid:
         return None
     try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            return None
-        pid = ctypes.c_ulong()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if not pid.value:
-            return None
-        proc = psutil.Process(pid.value)
+        proc = psutil.Process(int(pid))
         try:
             exe = proc.exe()
         except Exception:
@@ -890,11 +881,15 @@ class Plugin(FaustPlugin):
         return due
 
     async def _collect_base(self, context: dict[str, Any], sources: dict[str, bool],
-                            due: dict[str, bool]) -> None:
+                            due: dict[str, bool], own_pid: int | None = None) -> None:
         """基础源（collector 留在本文件）：系统负载/电池/空闲/窗口/节日/媒体/剪贴板。"""
         def add(source_id: str, field: str, value: Any) -> None:
             if sources.get(source_id) and due.get(source_id, True):
                 context[field] = value
+
+        # 前台窗口只解析一次：桌宠自己在前台时按 z 序取它下面的用户应用；
+        # 下面没有可用的用户窗口就沿用上一轮的值（不把 FaustBot 当成用户的应用）。
+        window, own_foreground = dm_sensors_a.resolve_user_window(own_pid)
 
         if sources.get('system_load') and psutil is not None and due.get('system_load', True):
             try:
@@ -933,9 +928,9 @@ class Plugin(FaustPlugin):
         if sources.get('idle') and due.get('idle', True):
             context['idle_seconds'] = _windows_idle_seconds()
         if sources.get('window_process') and due.get('window_process', True):
-            context['window_process'] = _foreground_window_process()
+            context['window_process'] = self._window_process_field(window, own_foreground)
         if sources.get('window_title') and due.get('window_title', True):
-            context['window_title'] = _foreground_window_title()
+            context['window_title'] = self._window_title_field(window, own_foreground)
         if sources.get('holiday') and due.get('holiday', True):
             context['holiday'] = _holiday_name()
         if sources.get('smtc') and due.get('smtc', True):
@@ -953,10 +948,27 @@ class Plugin(FaustPlugin):
                 self._sensor_status['clipboard'] = f'判定失败: {exc}'
         del add
 
+    def _window_process_field(self, window: dict[str, Any] | None,
+                              own_foreground: bool) -> dict[str, str] | None:
+        """用户应用窗口的进程；桌宠在前台且下面没有用户窗口时沿用上一轮。"""
+        process = _window_process(window.get('pid')) if window else None
+        if process is None and own_foreground:
+            return self._last_fields.get('window_process')
+        return process
+
+    def _window_title_field(self, window: dict[str, Any] | None, own_foreground: bool) -> str:
+        """用户应用窗口的标题；桌宠在前台且下面没有用户窗口时沿用上一轮。"""
+        title = _window_title(int(window.get('hwnd') or 0)) if window else ''
+        if not title and own_foreground:
+            return str(self._last_fields.get('window_title') or '')
+        return title
+
     async def collect_context(self) -> dict[str, Any]:
         tiers, sources = await self._perception_flags()
         now = time.time()
         due = self._due_sources(now)
+        # 自身 PID 与感知源开关无关：它是"别把自己的窗口当成用户应用"的身份信息
+        own_pid = dm_external.own_app_pid(self.store, now)
         context: dict[str, Any] = {
             'hour': time.localtime().tm_hour,
             'manual_mood': self.store.snapshot().get('manual_mood') if self.store is not None else 'auto',
@@ -966,7 +978,7 @@ class Plugin(FaustPlugin):
             },
         }
         status: dict[str, str] = {}
-        await self._collect_base(context, sources, due)
+        await self._collect_base(context, sources, due, own_pid)
 
         sctx = dm_api.SensorContext(
             now=now,
@@ -979,6 +991,7 @@ class Plugin(FaustPlugin):
             log=log,
             get_config=self.ctx.get_config if self.ctx is not None else None,
             due=lambda source_id: bool(due.get(source_id, True)) and bool(sources.get(source_id)),
+            own_app_pid=own_pid,
         )
         for module in SENSOR_MODULES:
             module_sources = [source for source in self.registry.sources

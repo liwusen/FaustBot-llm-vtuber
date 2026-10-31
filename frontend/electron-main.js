@@ -413,6 +413,10 @@ function buildDisplaySnapshot(){
 function buildPerceptionSnapshot(){
   const snapshot = buildDisplaySnapshot();
   try { snapshot.ac_online = !powerMonitor.isOnBatteryPower(); } catch (e) { /* 电源状态不可用时省略 */ }
+  // 自身主进程 PID：desktop-mood 用它把桌宠/配置/直播窗口从"用户前台应用"里排除掉，
+  // 否则这个铺满主屏、置顶的透明窗口会被当成"用户正在全屏游戏/视频"。
+  // 这些窗口的 HWND 都归 Electron 主进程所有，所以比较 PID 就够。
+  snapshot.app_pid = process.pid;
   return snapshot;
 }
 
