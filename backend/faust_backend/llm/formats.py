@@ -707,22 +707,45 @@ def parse_json_object(text: str) -> dict[str, Any]:
     raise ValueError("模型返回里找不到 JSON 对象")
 
 
-async def ainvoke_json(model: Any, messages: list[Any], api_format: str) -> dict[str, Any]:
+async def ainvoke_json(
+    model: Any,
+    messages: list[Any],
+    api_format: str,
+    *,
+    temperature: float | None = None,
+) -> dict[str, Any]:
     """按格式发起一次「要求 JSON 输出」的调用并解析结果。
 
     `response_format={"type": "json_object"}` 只有 OpenAI Chat Completions 支持；
     直接把它 bind 到 Anthropic/Gemini/Responses 上会被上游拒绝（400 或
     unsupported parameter）。其余格式改为「只在 prompt 里要求 JSON + 本地解析」，
     仍然严格校验，解析失败就抛错。
+
+    ``temperature`` 缺省保持历史行为：OpenAI Chat 用 0.1，其余格式不绑温度。
+    显式传值时所有格式都绑该温度（候选生成需要更高的多样性）。
     """
     runnable = model
+    bind_kwargs: dict[str, Any] = {}
     if api_format == "openai_chat":
+        bind_kwargs["temperature"] = 0.1 if temperature is None else float(temperature)
+        bind_kwargs["response_format"] = {"type": "json_object"}
+    elif temperature is not None:
+        bind_kwargs["temperature"] = float(temperature)
+
+    if bind_kwargs:
         try:
-            runnable = model.bind(
-                temperature=0.1, response_format={"type": "json_object"}
-            )
-        except Exception as exc:  # noqa: BLE001 - 网关不支持就退回纯 prompt 约束
-            log.debug("模型不支持 response_format=json_object，改用 prompt 约束: %s", exc)
+            runnable = model.bind(**bind_kwargs)
+        except Exception as exc:  # noqa: BLE001 - 网关不支持就逐步退回纯 prompt 约束
+            log.debug("模型不支持 %s，改用最小约束: %s", sorted(bind_kwargs), exc)
+            fallback_kwargs = {
+                key: value
+                for key, value in bind_kwargs.items()
+                if key != "response_format"
+            }
+            try:
+                runnable = model.bind(**fallback_kwargs) if fallback_kwargs else model
+            except Exception:  # noqa: BLE001 - 连温度都不支持时退回原模型
+                runnable = model
     response = await runnable.ainvoke(messages)
     from faust_backend.core.message import message_content_to_text
 

@@ -110,3 +110,49 @@ def test_ui_settings_onboarding_only_no_reload(monkeypatch, tmp_path):
     ui_settings.save_ui_settings({"widgets": {}})
     ui_settings.save_ui_settings({"widgets": {}, "onboarding": {"done": True}})
     assert calls == []
+
+
+# ── VNG（视觉小说）模式开关 ──
+
+
+def test_ui_settings_vng_defaults_false(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    assert ui_settings.get_vng_enabled() is False
+
+
+def test_ui_settings_vng_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    ui_settings.set_vng_enabled(True)
+    assert ui_settings.get_vng_enabled() is True
+    assert ui_settings.load_ui_settings()["vng"] == {"enabled": True}
+
+
+def test_ui_settings_vng_preserved_when_widgets_only(tmp_path, monkeypatch):
+    """前端只回存 widgets 时，vng 开关不能被清掉"""
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    ui_settings.set_vng_enabled(True)
+    ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": False}}})
+    assert ui_settings.get_vng_enabled() is True
+
+
+def test_ui_settings_vng_only_keeps_widgets(tmp_path, monkeypatch):
+    """只切换 vng 时不能丢 widgets"""
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": True}}})
+    ui_settings.set_vng_enabled(True)
+    settings = ui_settings.load_ui_settings()
+    assert settings["widgets"] == {"text-chat-bar": {"hidden": True}}
+    assert settings["vng"] == {"enabled": True}
+
+
+def test_ui_settings_vng_only_no_reload(monkeypatch, tmp_path):
+    """仅 vng 变化不触发前端重载"""
+    import faust_backend.core.frontend.api as b2f
+
+    monkeypatch.setattr(ui_settings, "UI_SETTINGS_PATH", tmp_path / "ui-settings.json")
+    calls = []
+    monkeypatch.setattr(b2f, "FrontEndReloadSettings", lambda: calls.append(1))
+    ui_settings.save_ui_settings({"widgets": {"text-chat-bar": {"hidden": True}}})
+    calls.clear()
+    ui_settings.set_vng_enabled(True)
+    assert calls == []

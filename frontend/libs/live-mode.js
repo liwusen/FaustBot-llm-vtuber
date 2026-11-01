@@ -1,7 +1,7 @@
 // 直播模式模块 — 定时轮询直播状态，切换文字输入栏显隐
-// 用法: const live = initLiveMode(); live.start();
+// 用法: const live = initLiveMode({ onLiveModeChange }); live.start();
 
-export function initLiveMode() {
+export function initLiveMode({ onLiveModeChange } = {}) {
   const textChatBar = document.getElementById('textChatBar');
   let lastLiveModeState = false;
   let timer = null;
@@ -15,6 +15,13 @@ export function initLiveMode() {
         lastLiveModeState = isLive;
         if (textChatBar) {
           textChatBar.style.display = isLive ? 'none' : '';
+        }
+        if (typeof onLiveModeChange === 'function') {
+          try {
+            onLiveModeChange(isLive);
+          } catch (e) {
+            console.warn('onLiveModeChange failed', e);
+          }
         }
       }
     } catch (e) {

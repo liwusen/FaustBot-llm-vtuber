@@ -293,6 +293,36 @@ async def _dispatch_runtime_command(websocket: WebSocket | None, factory) -> tup
     return True, None
 
 
+async def _set_vng_mode(enabled: bool, websocket: WebSocket | None = None) -> str:
+    """切换 VNG（视觉小说）模式：持久化 + 向会话末尾追加模式通知。
+
+    刻意**不**调用 ``makeup_init_prompt`` / ``_seed_system_prompt`` / ``rebuild_runtime``：
+    系统提示与工具 schema 保持逐字节不变，历史前缀缓存不被破坏。模式规则由一条
+    尾部 HumanMessage 承载，``ensure_vng_notice`` 在每轮调用前兜底。
+    """
+    from faust_backend.agent import vng as vng_mode
+    from faust_backend.core.ui_settings import get_vng_enabled, set_vng_enabled
+    from faust_backend.live.mode import is_live_mode
+
+    if enabled and is_live_mode():
+        return "直播模式下无法进入 VNG 模式。"
+    if get_vng_enabled() == enabled:
+        if websocket is not None:
+            await _safe_send(
+                websocket, _main_event_payload("vng_mode", enabled=enabled)
+            )
+        return "已在 VNG 模式（/vng off 退出）。" if enabled else "当前不在 VNG 模式。"
+
+    set_vng_enabled(enabled)
+    try:
+        await vng_mode.append_vng_notice(state.agent, enabled)
+    except Exception as exc:  # noqa: BLE001 - 通知写失败不应让命令失败，下一轮会补
+        log.warning("写入 VNG 模式通知失败（将在下一轮补写）: %s", exc)
+    if websocket is not None:
+        await _safe_send(websocket, _main_event_payload("vng_mode", enabled=enabled))
+    return "已进入 VNG（视觉小说）模式。" if enabled else "已退出 VNG 模式。"
+
+
 async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -> tuple[bool, str | None]:
     if not _is_slash_command(text) or text.startswith("/skill:"):
         return False, ""
@@ -309,6 +339,13 @@ async def _handle_slash_command(text: str, websocket: WebSocket | None = None) -
     if name == "effort":
         return await _dispatch_runtime_command(
             websocket, lambda: _set_reasoning_effort(arg)
+        )
+    if name == "vng":
+        lowered = arg.lower()
+        if lowered not in {"", "on", "off"}:
+            return True, "用法: /vng 或 /vng off"
+        return await _dispatch_runtime_command(
+            websocket, lambda: _set_vng_mode(lowered != "off", websocket)
         )
     if name == "status":
         return True, await _collect_status_summary()
@@ -519,6 +556,14 @@ async def _run_agent_stream(websocket: WebSocket, text: str, agent=None, origin:
             await pm._call_pluggy_hook('agent_event_sent', event=done_payload, current_history=[], ctx=None)
         await websocket.send_text(json.dumps(done_payload, ensure_ascii=False))
         return ""
+    # VNG 模式通知幂等校正：冷启动 / /clear / 压缩后都能保证 Agent 知道当前模式。
+    # 在调度器回合内、已持锁，aupdate_state 安全；失败只记录，不打断本轮。
+    try:
+        from faust_backend.agent import vng as vng_mode
+
+        await vng_mode.ensure_vng_notice(agent if agent is not None else state.agent)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("VNG 模式通知校验失败（继续本轮）: %s", exc)
     try:
         current_history: list[dict] = []
         agen = stream_chat_agent_events(

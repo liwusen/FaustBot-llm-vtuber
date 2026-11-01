@@ -107,6 +107,18 @@
     <pre id="logContent"><div class="log-placeholder">等待后端日志…</div></pre>
   </div>
   <div id="textChatBar">
+    <div id="vngPanel" hidden>
+      <div class="vng-head">
+        <span class="vng-badge">VNG</span>
+        <span id="vngHintText" class="vng-hint">视觉小说模式</span>
+        <button id="vngExitBtn" type="button" class="vng-exit" title="退出 VNG 模式">退出</button>
+      </div>
+      <div id="vngChoices" class="vng-choices"></div>
+      <div class="vng-foot">
+        <button id="vngRerollBtn" type="button" class="vng-btn">换一批</button>
+        <button id="vngFreeBtn" type="button" class="vng-btn">自由输入</button>
+      </div>
+    </div>
     <div id="textChatAttachments"></div>
     <textarea id="textChatInput" rows="1" placeholder="输入内容，/ 调用指令"></textarea>
     <div id="textChatBarFooter">

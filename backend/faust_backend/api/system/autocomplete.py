@@ -71,6 +71,16 @@ BASE_COMMANDS = [
         "detail":"设置思考模式为高。",
         "insert_text":"/effort high",
     },
+    {
+        "label": "vng",
+        "detail": "进入 VNG（视觉小说）模式：由 LLM 生成三个玩家候选台词。",
+        "insert_text": "/vng",
+    },
+    {
+        "label": "vng off",
+        "detail": "退出 VNG（视觉小说）模式。",
+        "insert_text": "/vng off",
+    },
 ]
 
 
@@ -88,6 +98,8 @@ async def autocomplete(payload: dict):
     items: list[dict] = []
 
     lower_cmd = cmd_text.lower()
+    # 空白归一化后比较：输入 "/vng " 时仍应提示 "vng off"（否则空格一打就丢候选）
+    cmd_key = " ".join(lower_cmd.split())
 
     # ── Base command autocomplete ──
     if not cmd_text:
@@ -103,7 +115,8 @@ async def autocomplete(payload: dict):
 
     for command in BASE_COMMANDS:
         label = str(command["label"])
-        if label.startswith(lower_cmd):
+        label_key = " ".join(label.lower().split())
+        if label_key.startswith(cmd_key):
             items.append({
                 "type": "command",
                 "label": label,

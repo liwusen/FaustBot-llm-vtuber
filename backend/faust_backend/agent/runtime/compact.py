@@ -520,7 +520,10 @@ class CompactMiddleware(SummarizationMiddleware):
     # ── 写回 ──
 
     def _build_replacement(
-        self, messages: list[AnyMessage], summary: str
+        self,
+        messages: list[AnyMessage],
+        summary: str,
+        preserved: list[AnyMessage] | tuple[AnyMessage, ...] = (),
     ) -> list[AnyMessage]:
         """构造压缩后的消息列表：唯一 System（并入摘要）+ 保留消息。
 
@@ -530,6 +533,10 @@ class CompactMiddleware(SummarizationMiddleware):
         **多条 SystemMessage 必须合并成一条**：Gemini 只认第一条 system
         instruction，其余会被丢弃；Anthropic 也要求 system 是单独参数。
         合并时保留原有顺序与内容（各自剥掉上一轮的摘要段），摘要追加在末尾。
+
+        VNG（视觉小说）模式通知必须跨压缩保留：它是一条普通 HumanMessage，
+        若落在被丢弃的段落里，Agent 会立刻忘记自己仍处于该模式。这里把它
+        重新插在 System/摘要之后、保留轮次之前；`ensure_vng_notice` 仍是下一轮兜底。
         """
         system_messages = [m for m in messages if isinstance(m, SystemMessage)]
         if system_messages:
@@ -547,18 +554,31 @@ class CompactMiddleware(SummarizationMiddleware):
             merged = head.model_copy(
                 update={"content": _wrap_summary(merged_text, summary)}
             )
-            return [merged]
-        # Subagent：system prompt 由 create_agent 在模型调用时注入，不在 state 中。
-        # 此时没有可并入的 System，退化为把摘要作为首条 HumanMessage。
-        return [
-            HumanMessage(
-                content=(
-                    "以下是此前对话的压缩摘要（背景资料，不是新的用户请求）：\n\n"
-                    f"{summary}"
-                ),
-                additional_kwargs={"lc_source": "faust_compact"},
-            )
-        ]
+            replacement: list[AnyMessage] = [merged]
+        else:
+            # Subagent：system prompt 由 create_agent 在模型调用时注入，不在 state 中。
+            # 此时没有可并入的 System，退化为把摘要作为首条 HumanMessage。
+            replacement = [
+                HumanMessage(
+                    content=(
+                        "以下是此前对话的压缩摘要（背景资料，不是新的用户请求）：\n\n"
+                        f"{summary}"
+                    ),
+                    additional_kwargs={"lc_source": "faust_compact"},
+                )
+            ]
+
+        try:
+            from faust_backend.agent import vng as vng_mode
+
+            notice = vng_mode.latest_vng_notice_message(messages)
+            if notice is not None and not any(
+                vng_mode.is_vng_notice(message) for message in preserved
+            ):
+                replacement.append(notice)
+        except Exception as exc:  # noqa: BLE001 - 通知保留失败不应影响压缩
+            log.debug("VNG 模式通知跨压缩保留跳过: %s", exc)
+        return replacement
 
     @override
     async def abefore_model(
@@ -612,7 +632,7 @@ class CompactMiddleware(SummarizationMiddleware):
         return {
             "messages": [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *self._build_replacement(messages, summary),
+                *self._build_replacement(messages, summary, preserved),
                 *preserved,
             ]
         }
@@ -649,7 +669,7 @@ class CompactMiddleware(SummarizationMiddleware):
         return {
             "messages": [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *self._build_replacement(messages, summary),
+                *self._build_replacement(messages, summary, preserved),
                 *preserved,
             ]
         }

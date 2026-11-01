@@ -325,6 +325,7 @@ class _JsonModel:
         self.supports_response_format = supports_response_format
         self.bound: dict | None = None
         self.calls: list = []
+        self.bind_calls: list[dict] = []
 
     def bind(self, **kwargs):
         if not self.supports_response_format and "response_format" in kwargs:
@@ -332,6 +333,8 @@ class _JsonModel:
         clone = _JsonModel(self.content, supports_response_format=self.supports_response_format)
         clone.bound = kwargs
         clone.calls = self.calls
+        clone.bind_calls = self.bind_calls
+        self.bind_calls.append(dict(kwargs))
         return clone
 
     async def ainvoke(self, messages):
@@ -368,3 +371,30 @@ def test_ainvoke_json_falls_back_when_response_format_rejected():
         llm_formats.ainvoke_json(model, [HumanMessage(content="x")], "openai_chat")
     )
     assert result == {"ok": 1}
+
+
+def test_ainvoke_json_temperature_override_binds_all_formats():
+    """VNG 候选生成需要更高温度：显式传值时 OpenAI/Anthropic 都要绑定。"""
+    from langchain_core.messages import HumanMessage
+
+    chat_model = _JsonModel('{"ok": true}')
+    asyncio.run(
+        llm_formats.ainvoke_json(
+            chat_model, [HumanMessage(content="x")], "openai_chat", temperature=0.9
+        )
+    )
+    assert chat_model.bind_calls[-1] == {
+        "temperature": 0.9,
+        "response_format": {"type": "json_object"},
+    }
+
+    anthropic_model = _JsonModel('{"ok": true}')
+    asyncio.run(
+        llm_formats.ainvoke_json(
+            anthropic_model,
+            [HumanMessage(content="x")],
+            "anthropic_messages",
+            temperature=0.9,
+        )
+    )
+    assert anthropic_model.bind_calls[-1] == {"temperature": 0.9}

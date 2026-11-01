@@ -8,6 +8,7 @@ import { initHilApproval } from './libs/hil-approval.js';
 import { initVRMConfigPanel } from './libs/vrm-config-panel.js';
 import { initAudioPlayback } from './libs/audio-playback.js';
 import { initAutocomplete } from './libs/autocomplete.js';
+import { initVng } from './libs/vng.js';
 import { initChatComposer } from './libs/chat-composer.js';
 import { initContextMeter } from './libs/context-meter.js';
 import { createUiWidgetManager } from './libs/ui-widget-manager.js';
@@ -26,6 +27,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   const defaultModel = '2D/hiyori_pro_zh/hiyori_pro_t11.model3.json';
   const ADMIN_RUNTIME_ENDPOINT = 'http://127.0.0.1:13900/faust/admin/runtime';
   const ADMIN_CONFIG_ENDPOINT = 'http://127.0.0.1:13900/faust/admin/config';
+  // VNG（视觉小说）模式句柄：装配在下方；提前声明，避免 ui-settings 先加载时踩 TDZ。
+  let vng = null;
 
   const modelPathInput = document.getElementById('modelPath');
   const loadBtn = document.getElementById('loadBtn');
@@ -131,13 +134,21 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     });
   }
 
+  let vngInitialEnabled = false;
+  let vngInitialLoaded = false;
+
   async function loadUiWidgetSettings() {
     if (!window.api || typeof window.api.configRequest !== 'function') return;
     try {
       const data = await window.api.configRequest('GET', '/faust/ui-setting');
-      const widgets = (data && data.settings && data.settings.widgets) || {};
+      const settings = (data && data.settings) || {};
+      const widgets = settings.widgets || {};
       persistedUiWidgetSettings = widgets;
       applyUiWidgetSettings(widgets);
+      const vngSettings = settings.vng || {};
+      vngInitialEnabled = !!vngSettings.enabled;
+      vngInitialLoaded = true;
+      if (vng) vng.setMode(vngInitialEnabled);
     } catch (e) {
       console.warn('loadUiWidgetSettings failed', e);
     }
@@ -1841,6 +1852,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   const NIMBLE_CLOSE_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/nimble/close`;
   const HIL_FEEDBACK_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/humanInLoop/feedback`;
   const SESSION_CONTEXT_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/session/context`;
+  const VNG_CHOICES_ENDPOINT = `http://${CHAT_HOST}:${CHAT_PORT}/faust/vng/choices`;
   const nimbleWin = initNimbleWindows({
     messageEndpoint: NIMBLE_MESSAGE_ENDPOINT,
     closeEndpoint: NIMBLE_CLOSE_ENDPOINT,
@@ -2383,6 +2395,11 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     try{ msg = JSON.parse(raw); }catch(e){ msg = { type: 'error', error: String(e) }; }
     if (!msg) return;
     emitAppPluginEvent('chat_message', msg);
+    // VNG 模式切换是命令回执之外的独立状态事件：只更新候选面板，不进聊天流。
+    if (msg.type === 'vng_mode') {
+      if (vng) vng.setMode(!!msg.enabled);
+      return;
+    }
     const agentId = msg.agent_id;
     // step 1: subagents 概况 → 更新摘要栏
     if (msg.agent_id === 'subagents') {
@@ -2466,6 +2483,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       // 播放闸门：记住本轮 turn_id（后端在发 done 前 arm），done 后据此回报"念完了"
       req.turnId = String(msg.turn_id || '');
       if (req.turnId) lastTurnId = req.turnId;
+      req.origin = String(msg.origin || '');
+      if (vng) vng.onTurnStart(req.origin);
       req.replyText = '';
       req.ttsChunker = null; // 新会话重置流式分块器（偏移从 0 重新累计）
       req.motionTokenBuffer = '';
@@ -2663,6 +2682,12 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       request.replyText = reply;
       request.motionTokenBuffer = '';
 
+      // VNG：用户主动回合结束后立刻生成候选（不等 TTS 尾巴，和朗读并行）。
+      // 触发器被动流、命令回合都不生成。
+      if (vng && !request.passive && String(request.origin || '') === 'user') {
+        vng.onUserTurnDone();
+      }
+
       // If there were no delta messages (entries empty), chunk the final reply
       // into TTS chunks, display them and enqueue TTS for each chunk.
       if ((!request.entries || request.entries.length === 0) && reply && reply.trim()){
@@ -2725,6 +2750,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       cancelPendingWaitingNotice();
       if (chatStatusEl) chatStatusEl.textContent = '已中断';
       if (textChatStatus) textChatStatus.textContent = '已中断';
+      if (vng) vng.onTurnAborted();
       const reqI = currentChatRequest || passiveChatRequest;
       if (reqI && !reqI.passive) agentIsProcessing = false;
       if (reqI && reqI.resumeAfter){
@@ -2751,6 +2777,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       cancelPendingWaitingNotice();
       if (chatStatusEl) chatStatusEl.textContent = '错误';
       if (textChatStatus) textChatStatus.textContent = '错误';
+      if (vng) vng.onTurnAborted();
       bubble.showResultBubble('error', '对话中断了，请重试。');
       console.warn('[chat] stream error', msg.error);
       const reqE = currentChatRequest || passiveChatRequest;
@@ -2812,13 +2839,45 @@ import { initAsrBubble } from './libs/asr-bubble.js';
     else if (textChatInput) textChatInput.value = '';
   }
 
+  // 统一提交一条用户消息：输入框、VNG 候选卡、候选面板退出按钮共用。
+  // 调用方负责先把输入框里已有的文本/附件取走；这里不做 composer 清空。
+  async function submitUserText(text, opts = {}){
+    const value = String(text || '').trim();
+    if (!value || textChatSending) return;
+    const atts = Array.isArray(opts.attachments) ? opts.attachments : [];
+    const fullText = atts.length
+      ? value + '\n' + atts.map((a) => `[附件] ${a.path}`).join('\n')
+      : value;
+    // Auto-interrupt if agent is currently processing
+    if (agentIsProcessing) {
+      await interruptAgentAndWait();
+    }
+    textChatSending = true;
+    if (composer) {
+      composer.setSending(true);
+      composer.setHint('发送中…', 'busy');
+    } else if (textChatSendBtn) {
+      textChatSendBtn.disabled = true;
+    }
+    try{
+      bubble.showResultBubble('user', fullText);
+      await sendToChat(fullText);
+    }finally{
+      textChatSending = false;
+      if (composer) {
+        composer.setSending(false);
+        composer.setHint(null); // 若刚才出错，错误提示仍在生存期内，这里不会覆盖它
+      } else if (textChatSendBtn) {
+        textChatSendBtn.disabled = false;
+      }
+      if (textChatStatus && textChatStatus.textContent === '发送中...') textChatStatus.textContent = '文字待命';
+    }
+  }
+
   async function sendTextChatMessage(){
     if (!textChatInput || !textChatSendBtn) return;
     const text = (textChatInput.value || '').trim();
     const atts = composer ? composer.getAttachments() : [];
-    const fullText = atts.length
-      ? text + '\n' + atts.map((a) => `[附件] ${a.path}`).join('\n')
-      : text;
     if (!text || textChatSending) return;
     clearTextChatInput();
     if (text === '/config') {
@@ -2854,30 +2913,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       bubble.showResultBubble(ok ? 'ai' : 'error', ok ? `已触发表情: ${name}` : `表情不存在或不可用: ${name}`);
       return;
     }
-    // Auto-interrupt if agent is currently processing
-    if (agentIsProcessing) {
-      await interruptAgentAndWait();
-    }
-    textChatSending = true;
-    if (composer) {
-      composer.setSending(true);
-      composer.setHint('发送中…', 'busy');
-    } else {
-      textChatSendBtn.disabled = true;
-    }
-    try{
-      bubble.showResultBubble('user', fullText);
-      await sendToChat(fullText);
-    }finally{
-      textChatSending = false;
-      if (composer) {
-        composer.setSending(false);
-        composer.setHint(null); // 若刚才出错，错误提示仍在生存期内，这里不会覆盖它
-      } else {
-        textChatSendBtn.disabled = false;
-      }
-      if (textChatStatus && textChatStatus.textContent === '发送中...') textChatStatus.textContent = '文字待命';
-    }
+    await submitUserText(text, { attachments: atts });
   }
 
   // ── ASR/结果气泡（已抽取到 libs/asr-bubble.js） ──
@@ -3281,6 +3317,15 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   contextMeter.refresh();
   // ── Slash-command autocomplete (extracted to libs/autocomplete.js) ──
   initAutocomplete(textChatInput, sendTextChatMessage);
+  // ── VNG（视觉小说）候选面板：与输入栏同容器，候选态替换输入区 ──
+  vng = initVng({
+    endpoint: VNG_CHOICES_ENDPOINT,
+    inputEl: textChatInput,
+    barEl: document.getElementById('textChatBar'),
+    onSendText: (text) => submitUserText(text),
+  });
+  if (vngInitialLoaded) vng.setMode(vngInitialEnabled);
+  window.__vng = vng; // 调试/CDP 验证句柄
   window.__chatComposer = composer; // 调试/CDP 验证句柄
   window.__contextMeter = contextMeter;
 
@@ -4320,7 +4365,9 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   }
 
   // ── 直播模式（已抽取到 libs/live-mode.js） ──
-  const liveModeCtrl = initLiveMode();
+  const liveModeCtrl = initLiveMode({
+    onLiveModeChange: (isLive) => { if (vng) vng.setSuppressed(!!isLive); },
+  });
   liveModeCtrl.start();
 
   // ── 常驻聊天 WebSocket ──

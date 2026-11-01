@@ -2079,3 +2079,207 @@ body.click-through .autocomplete-dropdown {
 .faust-toast-close:hover {
   color: var(--faust-text);
 }
+
+/* ── VNG（视觉小说）模式候选面板 ──
+   面板挂在 #textChatBar 内，沿用输入栏的定位/宽度；候选态隐藏输入区，
+   仅展示 3 张编号卡。配色沿用 --faust-* 亮色令牌，与 Configer 保持一致。 */
+#vngPanel {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#textChatBar.vng-mode #vngPanel {
+  display: flex;
+}
+
+/* 输入态只保留模式头（含退出按钮），候选/加载/错误态才展开卡片区 */
+#textChatBar.vng-mode:not(.vng-cards) #vngChoices,
+#textChatBar.vng-mode:not(.vng-cards) .vng-foot {
+  display: none;
+}
+
+#textChatBar.vng-cards #textChatAttachments,
+#textChatBar.vng-cards #textChatInput,
+#textChatBar.vng-cards #textChatBarFooter {
+  display: none;
+}
+
+.vng-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.vng-badge {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--faust-blue);
+  background: var(--faust-blue-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.vng-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--faust-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vng-exit {
+  flex: none;
+  border: 1px solid var(--faust-line);
+  background: var(--faust-panel);
+  color: var(--faust-muted);
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.vng-exit:hover {
+  color: var(--faust-accent);
+  border-color: var(--faust-accent);
+}
+
+.vng-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vng-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--faust-line);
+  background: var(--faust-panel-strong);
+  color: var(--faust-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.vng-card:hover,
+.vng-card:focus-visible {
+  border-color: var(--faust-blue);
+  background: var(--faust-blue-soft);
+  outline: none;
+}
+
+.vng-card:active {
+  transform: scale(0.995);
+}
+
+.vng-card-index {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--faust-blue-soft);
+  color: var(--faust-blue);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.vng-card-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.vng-card.is-action .vng-card-text {
+  color: var(--faust-muted);
+  font-style: italic;
+}
+
+.vng-card-tag {
+  display: inline-block;
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--faust-muted);
+  border: 1px solid var(--faust-line);
+  border-radius: 999px;
+  padding: 0 6px;
+  vertical-align: 1px;
+}
+
+.vng-card-skeleton {
+  cursor: default;
+  pointer-events: none;
+}
+
+.vng-skeleton-line {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(190, 201, 217, 0.22),
+    rgba(190, 201, 217, 0.5),
+    rgba(190, 201, 217, 0.22)
+  );
+  background-size: 200% 100%;
+  animation: vng-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes vng-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.vng-error {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--faust-line);
+  color: var(--faust-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.vng-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.vng-btn {
+  border: 1px solid var(--faust-line);
+  background: var(--faust-panel);
+  color: var(--faust-muted);
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.vng-btn:hover:not(:disabled) {
+  color: var(--faust-blue);
+  border-color: var(--faust-blue);
+  background: var(--faust-blue-soft);
+}
+
+.vng-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
