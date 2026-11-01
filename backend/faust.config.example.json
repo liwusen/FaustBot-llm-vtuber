@@ -11,7 +11,6 @@
     "RERANK_TOP_K": 5,
     "ARAYA_ENABLED": true,
     "ARAYA_IDLE_MINUTES": 30,
-    "MM_BRIDGE_MAX_SCAN": 6,
     "MC_OPERATOR_URL": "ws://127.0.0.1:18901",
     "MC_EVENT_TRIGGER_ENABLED": true,
     "mcp_servers": {

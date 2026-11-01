@@ -155,16 +155,37 @@ def test_bridge_injects_only_unbridged_sources(isolated_output_store):
     assert len(out["messages"]) == 1
     assert _image_urls(out["messages"])
 
+def test_bridge_scans_all_messages_without_scan_limit(isolated_output_store):
+    """回归：早期图片（超出旧 MAX_SCAN 窗口）也必须被桥接。
+
+    旧实现从最近一条往回只扫 6 条 ToolMessage；更早的图片会永远进不了上下文。
+    """
+    artifact_id = _put_image(isolated_output_store)
+    messages = [
+        HumanMessage(content="看图", id="u1"),
+        _ref_message(artifact_id, tool_call_id="c0", message_id="t0"),
+    ]
+    for i in range(1, 7):
+        messages.append(
+            ToolMessage(content="普通工具结果", tool_call_id=f"c{i}", id=f"t{i}")
+        )
+
+    out = MultimodalBridgeMiddleware().before_model({"messages": messages}, None)
+
+    assert out is not None
+    assert len(out["messages"]) == 1
+    assert _image_urls(out["messages"])
+
+
 # ── 跨格式兼容：桥接产出的 image_url 块必须能被 Anthropic / Gemini 接受 ──
 # 桥接统一产出 OpenAI 风格的 {"type": "image_url"}；官方 SDK 会各自转换
 # （Anthropic -> image/source，Gemini -> inline_data）。这里锁住这个假设，
 # 避免以后有人「按格式手写图片块」反而引入不兼容结构。
 
 
-def test_bridge_message_converts_to_anthropic_image_block(isolated_output_store, monkeypatch):
+def test_bridge_message_converts_to_anthropic_image_block(isolated_output_store):
     from langchain_anthropic import ChatAnthropic
 
-    monkeypatch.setattr(conf, "MM_BRIDGE_MAX_SCAN", 6)
     store = isolated_output_store
     artifact_id = _put_image(store)
     state = _state(artifact_id)
@@ -180,10 +201,9 @@ def test_bridge_message_converts_to_anthropic_image_block(isolated_output_store,
     assert image_blocks[0]["source"]["media_type"] == "image/png"
 
 
-def test_bridge_message_converts_to_gemini_inline_data(isolated_output_store, monkeypatch):
+def test_bridge_message_converts_to_gemini_inline_data(isolated_output_store):
     import langchain_google_genai.chat_models as google_chat_models
 
-    monkeypatch.setattr(conf, "MM_BRIDGE_MAX_SCAN", 6)
     store = isolated_output_store
     artifact_id = _put_image(store)
     state = _state(artifact_id)

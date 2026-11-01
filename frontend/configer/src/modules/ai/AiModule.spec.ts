@@ -26,7 +26,6 @@ function defaultPublicConfig(): Record<string, unknown> {
     COMPACT_COST_CONTROL_ENABLED: false,
     COMPACT_MAX_OUTPUT_TOKENS: 0,
     COMPACT_MAX_INPUT_TOKENS: 0,
-    MM_BRIDGE_MAX_SCAN: 8,
     MM_BRIDGE_MAX_PIXELS: 2000000,
   };
 }
@@ -142,7 +141,7 @@ describe('AiModule page', () => {
     expect(wrapper.text()).toContain('自动');
     expect(wrapper.text()).toContain('默认 128K');
     expect(wrapper.find('.table-pager').isVisible()).toBe(false);
-    expect(wrapper.text()).toContain('展开（2 项）');
+    expect(wrapper.text()).toContain('展开（1 项）');
   });
 
   it('shows the first-run empty state when no provider exists', async () => {

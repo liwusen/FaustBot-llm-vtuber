@@ -17,9 +17,11 @@ key），``before_model`` 只注入「上下文中还没有对应桥接消息」
 重启、重复扫描、压缩丢弃桥接消息后重新注入，都不会产生重复图片块。
 
 Config keys (in faust.config.json, AI Provider section):
-    MM_BRIDGE_MAX_SCAN  (int, default 6)   — max ToolMessages scanned per turn
     MM_BRIDGE_MAX_PIXELS (int, default 2_000_000) — resize images whose total pixel count
         (width × height) exceeds this threshold before sending to the LLM. 0 disables resizing.
+
+扫描范围固定为请求中的**全量消息**：不再有「每轮最多回看 N 条工具结果」的上限，
+避免较早的图片因为超出窗口而永远无法进入模型上下文。
 """
 from __future__ import annotations
 
@@ -65,19 +67,16 @@ class MultimodalBridgeMiddleware(AgentMiddleware):
         if not messages:
             return None
 
-        max_scan = max(1, int(getattr(conf, 'MM_BRIDGE_MAX_SCAN', 6) or 6))
         self._max_pixels = max(0, int(getattr(conf, 'MM_BRIDGE_MAX_PIXELS', 2000000) or 2000000))
         bridged = self._bridged_source_keys(messages)
 
-        scanned = 0
         additions: list[HumanMessage] = []
 
+        # 始终扫描全量消息：较早的图片也要有机会进入模型上下文。
+        # 幂等去重让已桥接的源几乎零成本跳过，真正昂贵的取图/缩放只发生在未桥接项上。
         for msg in reversed(messages):
             if not isinstance(msg, ToolMessage):
                 continue
-            scanned += 1
-            if scanned > max_scan:
-                break
 
             tool_key = self._tool_message_key(msg)
             if tool_key in bridged:
