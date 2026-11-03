@@ -220,8 +220,8 @@ Agile System 是一套**你可以自行编程的功能模块**,可以动态地�
 
 你有以下 Subagent 工具：
 
-- `newSubagent(name, toolset_names, sysPrompt, model=None)`：创建一个新的 Subagent。若 `sysPrompt` 以 `path:` 开头，会读取对应文件或 `memory://` 文档内容作为提示词。`model` 可选，格式 `provider::model`；不传用默认 Subagent 模型（subagent_models 第一个，空则回退主模型）。可用模型列表见 `read("faustbot://ava_subagent_models")`。
-- **注意**：`model` 只能从 `subagent_models` 白名单（或等于主模型）中选择;创建前先 `read("faustbot://ava_subagent_models")` 确认可用列表。
+- `newSubagent(name, toolset_names, sysPrompt, model=None)`：创建一个新的 Subagent。若 `sysPrompt` 以 `path:` 开头，会读取对应文件或 `memory://` 文档内容作为提示词。`model` 可选，格式 `provider::model`；不传用默认 Subagent 模型（subagent_models 第一个可用项，空则回退主模型）。可用模型列表见 `read("faustbot://ava_subagent_models")`。
+- **注意**：`model` 只能从 `subagent_models` 白名单（或等于主模型）中选择;创建前先 `read("faustbot://ava_subagent_models")` 确认可用列表。服务商下线/改名某个模型后，白名单里的旧条目会被自动剔除（配置器不再显示它），以该文档读取到的内容为准。
 - `invokeSubagent(name, message)`：异步投递任务给已有 Subagent，不会阻塞你当前回复。
 - `wait_for_subagent(agent_name_list)`：等待一个或多个 Subagent 完成当前任务，适合在你需要读取它们的最终输出前使用。
 - `stopSubagent(name)`：停止一个正在运行的 Subagent。

@@ -474,3 +474,41 @@ export function removeProviderSelection(
     subagentModels: (selection.subagentModels || []).filter((s) => !s.startsWith(prefix)),
   };
 }
+
+/**
+ * 剔除「服务商已不再提供」的子模型选择，返回被剔除项。
+ *
+ * 「从服务商拉取模型」会整表替换 `models`（后端 force=True）：服务商下线/改名某个
+ * 模型后，旧选择就成了孤儿。模型表只渲染 `models` 里的行，孤儿既看不见也无法取消
+ * 勾选，还会随每次保存写回配置；重建时它作为默认子模型必然构建失败（omen-alpha
+ * 事故），所以必须在模型列表变化的入口就地清掉。
+ *
+ * 与后端 `llm.provider.prune_model_selection` 同一语义：Provider 还没加载过模型
+ * （`models` 为空）时不做判定，避免首次配置被整份误删。只清子模型，主模型保持不动
+ * （清空主模型会直接让用户失去对话模型，改由界面提示重选）。
+ */
+export function pruneModelSelection(
+  selection: ModelSelection,
+  providers: ProviderConfig[] | null | undefined,
+): { selection: ModelSelection; removed: string[] } {
+  const modelsByProvider = new Map<string, Set<string>>();
+  for (const provider of providers || []) {
+    modelsByProvider.set(provider.name, new Set(provider.models || []));
+  }
+  const usable = (spec: string): boolean => {
+    const { provider, model } = splitModelSpec(spec);
+    const models = modelsByProvider.get(provider);
+    if (!models) return false;
+    return models.size === 0 || models.has(model);
+  };
+  const subagentModels = selection.subagentModels || [];
+  const removed = subagentModels.filter((spec) => !usable(spec));
+  if (!removed.length) return { selection, removed: [] };
+  return {
+    selection: {
+      mainModel: selection.mainModel,
+      subagentModels: subagentModels.filter((spec) => usable(spec)),
+    },
+    removed,
+  };
+}

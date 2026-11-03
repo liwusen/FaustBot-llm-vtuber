@@ -52,6 +52,12 @@
 状态：`providers`、`mainModel`、`subagentModels`、`resolvedFormats`、`providerCatalog`、`providersDirty`、`mainModelDirty`、`subagentModelsDirty`、`allModelEntries`、`loaded`。
 方法：`loadProviders()`、`ensureProviders()`（仅首次加载，避免非持久 AI 页切回时冲掉草稿）、`setBundle(data)`、`findProvider(name)`、`markProvidersDirty()`、`markModelsDirty()`、`resetDirty()`、`anyDirty()`、`dirtyCount()`。
 
+不变量：`mainModel` / `subagentModels` 里的 spec 必须属于某个 Provider 的 `models`。
+
+- 后端在加载 `provider.private.json`、以及「从服务商拉取模型」（force 刷新）后，用 `llm.provider.prune_model_selection` 剔除指向已下线模型的选择并回写；
+- 前端在 `setBundle` 与 `applyLoadModelsResult` 之后同样调用 `pruneModelSelection`（`providerOps.ts`），因为模型表只渲染 `models` 里的行，孤儿选择既不可见也无法取消勾选；
+- 孤儿若成为 `subagent_models[0]`，重建时默认子模型构建会失败并让整个运行时降级——这条链见 `agent/runtime/rebuild.py::_rebuild_subagent_safely`（现在会回退主模型，不再陪葬主 Agent）。
+
 ### `useModulesStore`（`src/stores/modules.ts`）
 
 状态：`activeModule`、`allModules`、`currentModule`、`reloadEpoch`、`nonce`。

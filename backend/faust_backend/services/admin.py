@@ -240,7 +240,15 @@ def save_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         if "main_model" in payload:
             mp.main_model = payload.get("main_model") or None
         if "subagent_models" in payload:
+            from faust_backend.llm.provider import prune_model_selection
+
             mp.subagent_models = payload.get("subagent_models") or None
+            # 配置器可能把「服务商已下线」的模型一起提交上来：落盘前剔除，
+            # 否则它会成为默认子模型，重建时把整个运行时降级（详见
+            # llm/provider.prune_model_selection）。
+            dropped = prune_model_selection(mp)
+            if dropped:
+                log.warning("已忽略失效的 Subagent 模型选择: %s", ", ".join(dropped))
         dumps(mp, conf.PROVIDER_CONFIG_PATH)
 
     public_cfg = get_public_config()

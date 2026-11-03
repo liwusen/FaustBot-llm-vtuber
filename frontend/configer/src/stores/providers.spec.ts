@@ -76,6 +76,14 @@ describe('providers store loading', () => {
     expect(store.findProvider('q')?.models).toEqual(['m3']);
     expect(store.findProvider('missing')).toBeUndefined();
   });
+
+  it('drops orphan subagent selections while loading the bundle', () => {
+    const store = useProvidersStore();
+    // 服务商下线了 m9，后端还没自愈（旧配置）：加载时不得让孤儿隐形留存。
+    store.setBundle(makeBundle({ subagent_models: ['p::m2', 'p::m9', 'ghost::m1'] }));
+    expect(store.subagentModels).toEqual(['p::m2']);
+    expect(store.anyDirty()).toBe(false);
+  });
 });
 
 describe('providers store dirty flags', () => {

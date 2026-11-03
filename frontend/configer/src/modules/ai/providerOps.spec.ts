@@ -15,6 +15,7 @@ import {
   keyStatus,
   newProviderRecord,
   parseContextLength,
+  pruneModelSelection,
   removeModelSelection,
   removeProviderSelection,
   renameModelConfig,
@@ -300,6 +301,48 @@ describe('model selection sync', () => {
       mainModel: 'q::b',
       subagentModels: [],
     });
+  });
+});
+
+describe('pruneModelSelection', () => {
+  const providers = [
+    makeProvider({ models: ['m1'] }),
+    makeProvider({ name: 'q', models: [] }),
+  ];
+
+  it('drops subagent specs whose model left the provider list', () => {
+    const result = pruneModelSelection(
+      { mainModel: 'p::m1', subagentModels: ['p::m1', 'p::gone'] },
+      providers,
+    );
+    expect(result.removed).toEqual(['p::gone']);
+    expect(result.selection.subagentModels).toEqual(['p::m1']);
+    expect(result.selection.mainModel).toBe('p::m1');
+  });
+
+  it('keeps specs of providers whose model list is not loaded yet', () => {
+    const result = pruneModelSelection(
+      { mainModel: '', subagentModels: ['q::whatever'] },
+      providers,
+    );
+    expect(result.removed).toEqual([]);
+    expect(result.selection.subagentModels).toEqual(['q::whatever']);
+  });
+
+  it('drops specs of providers that no longer exist and never touches the main model', () => {
+    const result = pruneModelSelection(
+      { mainModel: 'gone::m', subagentModels: ['gone::m', 'q::whatever'] },
+      providers,
+    );
+    expect(result.removed).toEqual(['gone::m']);
+    expect(result.selection).toEqual({ mainModel: 'gone::m', subagentModels: ['q::whatever'] });
+  });
+
+  it('returns the same selection when nothing is orphaned', () => {
+    const selection = { mainModel: 'p::m1', subagentModels: ['p::m1'] };
+    const result = pruneModelSelection(selection, providers);
+    expect(result.removed).toEqual([]);
+    expect(result.selection).toBe(selection);
   });
 });
 

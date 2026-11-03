@@ -127,6 +127,10 @@ async def admin_auto_load_models(name: str):
         models = await auto_load_model_for_provider(provider, force=True)
     except Exception as exc:  # noqa: BLE001 - 网络/API 错误转 502
         raise HTTPException(status_code=502, detail=f"模型加载失败: {exc}")
+    # 模型列表整表替换后，选择列表里的下线模型就成了孤儿：就地剔除并在下面一并持久化。
+    from faust_backend.llm.provider import prune_model_selection
+
+    dropped_selection = prune_model_selection(mp)
     catalog_info: dict[str, Any] = {}
     try:
         catalog = await models_dev.ensure_catalog(allow_network=True)
@@ -149,6 +153,7 @@ async def admin_auto_load_models(name: str):
         "model_thinking_caps": provider.model_thinking_caps or {},
         "formats": describe_provider_formats(provider),
         "catalog": catalog_info,
+        "dropped_selection": dropped_selection,
     }
 
 
@@ -212,11 +217,32 @@ async def admin_catalog_match(name: str, payload: CatalogMatchPayload | None = N
 
 @router.post("/faust/admin/model/select")
 async def admin_select_model(payload: ModelSelectPayload):
-    """设置主/Subagent 模型并触发运行时重建（双通道之一）。"""
+    """设置主/Subagent 模型并触发运行时重建（双通道之一）。
+
+    写入前校验：Provider 必须存在，且该 Provider 已加载模型时 spec 的模型必须在
+    列表里。否则重建时必然抛 "Model 'x' not found for provider 'y'"，把运行时
+    整体降级——这里直接 400 说明，不让脏配置落盘。
+    """
+    from faust_backend.llm.provider import is_model_spec_usable
+
     mp = _get_mp()
+
+    def _check(spec: str, field: str) -> None:
+        if not is_model_spec_usable(mp, spec):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{field} 中的模型 '{spec}' 不可用：请确认 Provider 存在，"
+                    "且该模型已在服务商的模型列表中（可先「从服务商拉取模型」）"
+                ),
+            )
+
     if payload.main_model is not None:
+        _check(payload.main_model, "main_model")
         mp.main_model = payload.main_model
     if payload.subagent_models is not None:
+        for spec in payload.subagent_models:
+            _check(spec, "subagent_models")
         mp.subagent_models = list(payload.subagent_models)
     conf.save_model_providers()
     try:

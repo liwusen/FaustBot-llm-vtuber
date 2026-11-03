@@ -414,9 +414,41 @@ async def test_rebuild_inside_exclusive_turn_seeds_prompt_without_self_lock(monk
     assert not state.agent_lock.locked()
 
 
+async def test_rebuild_survives_broken_subagent_model(monkeypatch):
+    """子模型失效只降级子代理，不得把主 Agent 一起打挂（omen-alpha 事故回归）。
+
+    修复前：``subagent_models[0]`` 指向服务商已下线的模型 → 构建抛 ValueError →
+    被 rebuild 的兜底 except 捕获 → ``state.agent = None``、status 变
+    waiting_for_config，主模型明明可用却全线不可对话。
+    """
+    import faust_backend.llm.provider as provider
+
+    _stub_rebuild_deps(monkeypatch)
+    monkeypatch.setattr(
+        provider, "get_default_subagent_model", lambda providers: "test::missing"
+    )
+
+    calls: list[str] = []
+
+    async def _fail_first(*, model_name):
+        calls.append(model_name)
+        if model_name == "test::missing":
+            raise ValueError("Model 'missing' not found for provider 'test'.")
+
+    monkeypatch.setattr(rebuild, "_rebuild_subagent_manager", _fail_first)
+    monkeypatch.setattr(state, "RUNTIME_READY", state.RUNTIME_READY)
+    monkeypatch.setattr(state, "RUNTIME_STATUS", state.RUNTIME_STATUS)
+    monkeypatch.setattr(state, "RUNTIME_ERROR", state.RUNTIME_ERROR)
+
+    info = await rebuild_runtime(reset_dialog=True, no_initial_chat=False)
+
+    assert info["ready"] is True, info
+    assert info["status"] == "ready", info
+    assert state.agent is not None
+    assert calls == ["test::missing", "test::model"], "必须回退主模型重建 SubagentManager"
+
+
 # ── 角色 Prompt 植入（reset_dialog 的引导步骤） ──
-
-
 async def test_seed_system_prompt_writes_on_empty_checkpoint(monkeypatch):
     from langchain_core.messages import SystemMessage
 

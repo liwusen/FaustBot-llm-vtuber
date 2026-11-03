@@ -22,6 +22,7 @@ import {
   catalogSummary,
   cloneProviders,
   newProviderRecord,
+  pruneModelSelection,
   type AiCatalogEntry,
   type LoadModelsResult,
   type ProviderForm,
@@ -139,12 +140,24 @@ async function loadModels(): Promise<void> {
     const next = cloneProviders(store.providers);
     applyLoadModelsResult(next, targetName, result);
     store.setProviders(next);
+    // 拉取会整表替换 models：指向已下线模型的子模型选择必须同步剔除，否则它会
+    // 隐形留存、随保存写回配置，并在重建时作为默认子模型把运行时打挂。
+    const pruned = pruneModelSelection(
+      { mainModel: store.mainModel, subagentModels: store.subagentModels },
+      next,
+    );
+    if (pruned.removed.length) {
+      store.setSubagentModels(pruned.selection.subagentModels);
+    }
     if (result.catalog) catalogText.value = catalogResultText(result.catalog);
     const routed = (result.catalog && result.catalog.routed) || 0;
     ui.showBanner(
       'success',
       `拉取到 ${(result.models || []).length} 个模型`
         + (routed ? `，${routed} 个已按模型目录确定接口格式` : '')
+        + (pruned.removed.length
+          ? `；已移除 ${pruned.removed.length} 个失效的子模型选择（${pruned.removed.join('、')}）`
+          : '')
         + '（回到页面点「保存」写入配置）',
     );
   } catch (err) {

@@ -340,6 +340,74 @@ def test_subagent_model_validation():
     assert get_default_subagent_model(p) == "deepseek::deepseek-v4-pro"  # 回退 main_model
 
 
+def test_prune_model_selection_drops_offline_models():
+    """服务商下线模型后，选择列表里的孤儿必须被剔除（omen-alpha 事故回归）。"""
+    from faust_backend.llm.provider import prune_model_selection
+
+    p = make_providers()
+    p.providers[0].models = ["deepseek-v4-pro", "deepseek-v4"]
+    p.providers[1].models = ["qwen-7b-chat"]
+    p.subagent_models = [
+        "deepseek::deepseek-v4",
+        "deepseek::omen-alpha",
+        "nope::x",
+        "qwen::qwen-7b-chat",
+        "",
+    ]
+
+    assert prune_model_selection(p) == ["deepseek::omen-alpha", "nope::x"]
+    assert p.subagent_models == ["deepseek::deepseek-v4", "qwen::qwen-7b-chat"]
+    assert prune_model_selection(p) == []  # 幂等
+
+
+def test_prune_model_selection_keeps_unloaded_providers():
+    """Provider 还没拉过模型（models 为空）时不做判定，避免首次配置被整份误删。"""
+    from faust_backend.llm.provider import prune_model_selection
+
+    p = make_providers()
+    p.subagent_models = ["deepseek::whatever", "qwen::anything"]
+
+    assert prune_model_selection(p) == []
+    assert p.subagent_models == ["deepseek::whatever", "qwen::anything"]
+
+
+def test_default_subagent_model_skips_offline_model():
+    """默认子模型跳过孤儿；全部失效时回退主模型，绝不返回不可构建的 spec。"""
+    from faust_backend.llm.provider import get_default_subagent_model
+
+    p = make_providers()
+    p.providers[0].models = ["deepseek-v4-pro", "deepseek-v4"]
+    p.providers[1].models = ["qwen-7b-chat"]
+
+    p.subagent_models = ["deepseek::omen-alpha", "qwen::qwen-7b-chat"]
+    assert get_default_subagent_model(p) == "qwen::qwen-7b-chat"
+
+    p.subagent_models = ["deepseek::omen-alpha", "nope::x"]
+    assert get_default_subagent_model(p) == "deepseek::deepseek-v4-pro"
+
+
+def test_config_loader_heals_orphan_subagent_selection(tmp_path, monkeypatch):
+    """加载配置时自愈：孤儿选择被剔除并回写文件。"""
+    import faust_backend.core.config as conf
+
+    data = {
+        "providers": [{"name": "x", "base_url": "http://x/v1", "key": "k", "models": ["m1"]}],
+        "main_model": "x::m1",
+        "subagent_models": ["x::gone", "x::m1"],
+    }
+    path = tmp_path / "provider.private.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(path))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+
+    mp = conf.ensure_model_providers_loaded()
+
+    assert mp.subagent_models == ["x::m1"]
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["subagent_models"] == ["x::m1"]
+
+
 def test_no_chat_global_references():
     """全后端不应再引用 CHAT_MODEL/CHAT_API_BASE/CHAT_API_KEY 全局。"""
     root = Path(__file__).resolve().parents[2] / "backend" / "faust_backend"
@@ -419,6 +487,9 @@ def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
     client.post("/faust/admin/providers", json={
         "name": "test", "base_url": "http://test/v1", "key": "k1"
     })
+    mp = conf.ensure_model_providers_loaded()
+    mp.subagent_models = ["test::gone", "test::fresh"]
+    conf.save_model_providers()
 
     calls = []
 
@@ -432,6 +503,11 @@ def test_load_models_route_forces_refresh(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["models"] == ["fresh"]
     assert calls == [True]
+    # 模型列表整表替换后，指向已下线模型的子模型选择必须同步剔除并落盘
+    assert r.json()["dropped_selection"] == ["test::gone"]
+    assert conf.MODEL_PROVIDERS.subagent_models == ["test::fresh"]
+    saved = json.loads((tmp_path / "provider.private.json").read_text(encoding="utf-8"))
+    assert saved["subagent_models"] == ["test::fresh"]
 
 
 def test_select_model_switches(tmp_path, monkeypatch):
@@ -464,6 +540,30 @@ def test_select_model_switches(tmp_path, monkeypatch):
     # 持久化
     assert conf.MODEL_PROVIDERS.main_model == "a::m1"
     assert conf.MODEL_PROVIDERS.subagent_models == ["a::m1", "a::m2"]
+
+
+def test_select_model_rejects_offline_model(tmp_path, monkeypatch):
+    """写入脏 spec 会直接 400，而不是等到重建时把整个运行时打挂。"""
+    from fastapi.testclient import TestClient
+    import faust_backend.core.config as conf
+    from faust_backend.llm.provider import new_provider
+
+    monkeypatch.setattr(conf, "CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setattr(conf, "PROVIDER_CONFIG_PATH", str(tmp_path / "provider.private.json"))
+    monkeypatch.setattr(conf, "MODEL_PROVIDERS", None)
+    mp = conf.ensure_model_providers_loaded()
+    new_provider(mp, "a", "http://a/v1", "k")
+    mp.providers[0].models = ["m1"]
+    mp.main_model = "a::m1"
+    conf.save_model_providers()
+
+    client = TestClient(_make_provider_app())
+    r = client.post("/faust/admin/model/select", json={"subagent_models": ["a::m1", "a::gone"]})
+    assert r.status_code == 400
+    assert "a::gone" in r.json()["detail"]
+    # 拒绝时不得写脏配置
+    assert conf.MODEL_PROVIDERS.subagent_models is None
+    assert conf.MODEL_PROVIDERS.main_model == "a::m1"
 
 
 def test_save_config_with_providers(tmp_path, monkeypatch):

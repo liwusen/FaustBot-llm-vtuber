@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { API } from '@/api/endpoints';
 import { cfgApi } from '@/api/ipc';
 import type { ModelEntry, ProviderBundle, ProviderConfig } from '@/config/types';
+import { pruneModelSelection } from '@/modules/ai/providerOps';
 import type { AiCatalog, AiCatalogEntry, AiResolvedFormats } from '@/modules/ai/providerOps';
 
 /**
@@ -45,7 +46,12 @@ export const useProvidersStore = defineStore('configer-providers', () => {
   function setBundle(data: Partial<ProviderBundle>): void {
     providers.value = data.providers || [];
     mainModel.value = data.main_model || '';
-    subagentModels.value = data.subagent_models || [];
+    // 后端加载时会自愈孤儿选择；这里再兜一层（旧后端 / 并发写盘），避免它们
+    // 在模型表里隐形存活、再被保存写回去。剔除不算「用户改动」，不标 dirty。
+    subagentModels.value = pruneModelSelection(
+      { mainModel: mainModel.value, subagentModels: data.subagent_models || [] },
+      providers.value,
+    ).selection.subagentModels;
     resolvedFormats.value = (data.resolved_formats || {}) as unknown as AiResolvedFormats;
     providerCatalog.value = (data.catalog || {}) as unknown as AiCatalog;
   }

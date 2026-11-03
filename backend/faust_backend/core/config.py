@@ -443,12 +443,33 @@ def reload_configs():
 MODEL_PROVIDERS = None  # 惰性加载的 ModelProviders 单例
 
 
+def _heal_model_selection(providers, path: str) -> None:
+    """加载期自愈：剔除 subagent_models 里的孤儿模型并回写配置。
+
+    服务商下线/改名某个模型后，旧选择会留在 provider.private.json 里；配置器的
+    模型表不显示这些孤儿，用户无法手动取消，而重建时它作为默认子模型会直接抛
+    "Model 'x' not found for provider 'y'"，把整个运行时降级。这里在加载时清掉
+    并落盘，让配置与「服务商实际提供什么」始终一致。
+    """
+    from faust_backend.llm.provider import dumps, prune_model_selection
+
+    dropped = prune_model_selection(providers)
+    if not dropped:
+        return
+    print(f"[config_loader] 已移除失效的 Subagent 模型选择: {', '.join(dropped)}")
+    try:
+        dumps(providers, path)
+    except Exception as exc:  # noqa: BLE001 - 自愈失败不能阻断启动
+        print(f"[config_loader] 回写 provider.private.json 失败: {exc}")
+
+
 def ensure_model_providers_loaded() -> 'ModelProviders':
     """加载（或首次自动创建）ModelProviders 单例，并执行旧配置迁移。
 
     文件不存在时自动创建空实例；若旧 CHAT_MODEL/CHAT_API_BASE/CHAT_API_KEY
     存在而 provider 文件不存在，则自动创建名为 ORIGIONAL 的 provider 并
     设为 main_model，随后清除旧字段（迁移）。
+    加载成功后会剔除失效的 Subagent 模型选择并回写（见 `_heal_model_selection`）。
     """
     global MODEL_PROVIDERS
     if MODEL_PROVIDERS is not None:
@@ -460,9 +481,11 @@ def ensure_model_providers_loaded() -> 'ModelProviders':
     if os.path.exists(path):
         try:
             MODEL_PROVIDERS = loads(path)
-            return MODEL_PROVIDERS
         except Exception as exc:  # noqa: BLE001 - 损坏文件回退到空实例
             print(f"[config_loader] provider.private.json 解析失败，使用空实例: {exc}")
+        else:
+            _heal_model_selection(MODEL_PROVIDERS, path)
+            return MODEL_PROVIDERS
 
     MODEL_PROVIDERS = ModelProviders()
 

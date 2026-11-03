@@ -534,10 +534,59 @@ def get_model_api_format(providers: ModelProviders, spec: str) -> str:
 
 
 
+def is_model_spec_usable(providers: ModelProviders, spec: str) -> bool:
+    """spec 指向的 Provider 存在，且该 Provider 已加载模型时模型在列表里。
+
+    `provider.models` 为空表示「还没拉过模型」（新建 / 离线 / 旧配置迁移），此时
+    不做判定——否则首次配置会被整份误删。
+    """
+    try:
+        provider_name, model_name = parse_spec(spec)
+    except ValueError:
+        return False
+    provider = next(
+        (p for p in (getattr(providers, "providers", None) or []) if p.name == provider_name),
+        None,
+    )
+    if provider is None:
+        return False
+    return not provider.models or model_name in provider.models
+
+
+def prune_model_selection(providers: ModelProviders) -> list[str]:
+    """剔除 subagent_models 里指向「已不存在的 Provider / 模型」的条目，返回被剔除项。
+
+    模型列表被 force 刷新时（`auto_load_model_for_provider(force=True)`），按模型名
+    索引的字典会被裁剪，但这份**选择列表**不会：服务商下线或改名某个模型后，旧选择
+    就成了孤儿。孤儿在配置器模型表里不可见（只渲染 provider.models 里的行），用户无法
+    取消勾选，而且 `subagent_models[0]` 是默认子模型——构建它必然失败，会把整个运行时
+    打进 waiting_for_config（见 agent/runtime/rebuild.py）。
+    """
+    kept: list[str] = []
+    dropped: list[str] = []
+    for raw in providers.subagent_models or []:
+        spec = str(raw or "").strip()
+        if not spec:
+            continue
+        if is_model_spec_usable(providers, spec) and spec not in kept:
+            kept.append(spec)
+        else:
+            dropped.append(spec)
+    if dropped:
+        providers.subagent_models = kept or None
+    return dropped
+
+
 def get_default_subagent_model(providers: ModelProviders) -> str:
-    """返回默认 Subagent 模型 spec：subagent_models[0]，空则回退 main_model。"""
-    if providers.subagent_models:
-        return providers.subagent_models[0]
+    """返回默认 Subagent 模型 spec：subagent_models 里第一个可用项，否则回退 main_model。
+
+    跳过「指向已下线模型」的孤儿条目：默认子模型用主模型顶替完全够用，比整个运行时
+    起不来好得多。主模型本身是否可用由构建主 Agent 时校验。
+    """
+    for raw in providers.subagent_models or []:
+        spec = str(raw or "").strip()
+        if spec and is_model_spec_usable(providers, spec):
+            return spec
     if providers.main_model:
         return providers.main_model
     raise ValueError("No subagent model configured: set subagent_models or main_model.")

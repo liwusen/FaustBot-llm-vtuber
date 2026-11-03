@@ -171,17 +171,13 @@ async def _rebuild_runtime_locked(
                 state.checkpointer = InMemorySaver()
             log.info("Checkpoint 已为重建就绪")
             from faust_backend.agent.runtime import state as runtime_state
-            from faust_backend.llm.provider import get_default_subagent_model
+
             _providers = runtime_state.get_model_providers()
             state.agent = await _create_agent_with_extensions(
                 model_name=_providers.main_model,
                 checkpointer=state.checkpointer,
             )
-            try:
-                _sub_model = get_default_subagent_model(_providers)
-            except ValueError:
-                _sub_model = _providers.main_model
-            await _rebuild_subagent_manager(model_name=_sub_model)
+            await _rebuild_subagent_safely(_providers)
             log.debug("Agent 已为重建重新创建")
             checkpoint_exists = (not args.save_in_memory) and state.has_checkpoint_db(
                 state.AGENT_ROOT
@@ -272,6 +268,42 @@ async def _rebuild_runtime_locked(
         "status": state.RUNTIME_STATUS,
         "error": "",
     }
+
+
+async def _rebuild_subagent_safely(providers) -> str:
+    """重建 SubagentManager；子模型不可用时回退主模型，绝不拖垮主运行时。
+
+    子模型列表里可能残留服务商已下线的模型（见 `llm.provider.prune_model_selection`）：
+    `subagent_models[0]` 是默认子模型，构建它会抛 ValueError。子代理只是一项可选能力，
+    不是启动前提，因此这里降级：先跳过失效条目取第一个可用子模型，仍然失败就回退
+    `main_model`，最后才放弃 SubagentManager 本身——主 Agent 保持 ready。
+
+    Returns:
+        实际用于 SubagentManager 的模型 spec；空串表示本次没有可用的子模型。
+    """
+    from faust_backend.llm.provider import get_default_subagent_model
+
+    try:
+        model_name = get_default_subagent_model(providers)
+    except ValueError as exc:
+        log.warning("没有可用的 Subagent 模型，跳过 SubagentManager 重建: %s", exc)
+        return ""
+
+    try:
+        await _rebuild_subagent_manager(model_name=model_name)
+        return model_name
+    except Exception as exc:  # noqa: BLE001 - 子代理失败不应让主 Agent 陪葬
+        log.warning("SubagentManager 重建失败（模型 %s）: %s", model_name, exc)
+
+    fallback = str(getattr(providers, "main_model", "") or "")
+    if fallback and fallback != model_name:
+        try:
+            await _rebuild_subagent_manager(model_name=fallback)
+            log.warning("SubagentManager 已回退到主模型 %s", fallback)
+            return fallback
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SubagentManager 回退主模型也失败: %s", exc)
+    return ""
 
 
 async def refresh_models_dev_catalog(*, force: bool = False) -> dict:

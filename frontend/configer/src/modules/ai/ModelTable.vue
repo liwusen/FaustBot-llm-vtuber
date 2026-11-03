@@ -31,6 +31,22 @@ const pageRows = computed<ModelEntry[]>(() => {
 
 const subagentSet = computed(() => new Set(store.subagentModels || []));
 
+// 选择里指向「模型表里不存在」的 spec：模型表只渲染 models 里的行，这类条目
+// 平时完全隐形（既看不到也取消不了勾选），必须单独提示并提供移除入口。
+const knownSpecs = computed(() => new Set(store.allModelEntries.map((entry) => entry.spec)));
+const staleSubagents = computed(
+  () => (store.subagentModels || []).filter((spec) => !knownSpecs.value.has(spec)),
+);
+const staleMainModel = computed(
+  () => Boolean(store.mainModel) && !knownSpecs.value.has(store.mainModel),
+);
+
+function clearStaleSubagents(): void {
+  const stale = new Set(staleSubagents.value);
+  store.setSubagentModels((store.subagentModels || []).filter((spec) => !stale.has(spec)));
+  ui.showBanner('success', `已移除 ${stale.size} 个失效的子模型选择（点窗口顶部「保存」写入配置）`);
+}
+
 // 旧实现会在渲染时把越界页码夹回合法范围（state.aiTable.page）。
 watchEffect(() => {
   if (tableState.value.page > totalPages.value) tableState.value.page = totalPages.value;
@@ -98,6 +114,16 @@ function openSettings(entry: ModelEntry): void {
         @input="onSearch"
       />
     </div>
+
+    <div v-if="staleSubagents.length" class="toolbar compact">
+      <span class="form-hint">
+        已失效的子模型选择（服务商不再提供）：{{ staleSubagents.join('、') }}
+      </span>
+      <button class="btn btn-ghost" type="button" @click="clearStaleSubagents">移除</button>
+    </div>
+    <p v-else-if="staleMainModel" class="form-hint">
+      主模型 {{ store.mainModel }} 不在服务商的模型列表里，请重新选择主模型。
+    </p>
 
     <table class="simple-table ai-table">
       <thead>
