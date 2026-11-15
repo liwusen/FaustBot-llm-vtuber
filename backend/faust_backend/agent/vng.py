@@ -247,7 +247,7 @@ async def generate_choices() -> dict[str, Any]:
     """生成候选。返回值直接作为 HTTP 响应体（status 见 api/vng.py）。"""
     from faust_backend.agent.runtime import state
     from faust_backend.agent.runtime.turn.session_stats import get_checkpoint_messages
-    from faust_backend.llm.formats import ainvoke_json, close_chat_model
+    from faust_backend.llm.formats import ainvoke_json
     from faust_backend.llm.provider import build_main_chat_model, get_model_api_format
 
     try:
@@ -274,9 +274,12 @@ async def generate_choices() -> dict[str, Any]:
         log.error("VNG 候选提示词构建失败: %s", exc, exc_info=True)
         return {"status": "error", "error": str(exc)}
 
-    model = None
     started = time.monotonic()
     try:
+        # 这个模型用完**不能关闭**：它的 HTTP 客户端是 langchain 按
+        # (base_url, timeout) 进程级缓存的共享实例，与主 Agent / Araya / 压缩
+        # 模型同一个连接池，关掉会让它们之后的请求永久失败
+        # （见 llm.formats.close_chat_model 的 ownership 门禁）。
         model = await build_main_chat_model(providers, intensity=None)
         api_format = get_model_api_format(providers, str(providers.main_model))
         data = await asyncio.wait_for(
@@ -289,12 +292,6 @@ async def generate_choices() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.error("VNG 候选生成失败: %s", exc, exc_info=True)
         return {"status": "error", "error": str(exc)}
-    finally:
-        if model is not None:
-            try:
-                await close_chat_model(model)
-            except Exception as exc:  # noqa: BLE001 - 关闭失败不影响结果
-                log.debug("关闭 VNG 候选模型失败: %s", exc)
 
     items = normalize_choices(data)
     elapsed_ms = int((time.monotonic() - started) * 1000)

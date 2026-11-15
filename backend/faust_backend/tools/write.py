@@ -22,42 +22,19 @@ log = get_logger("faust.tools.write")
 @register
 @tool
 async def write(path: str, content: str) -> str:
-    """Create or overwrite a file on disk or in the memory store.
+    r"""创建或覆盖文件；路径前缀决定写到哪。
 
-    This is your PRIMARY tool for writing content.  It replaces the old
-    writeTextFileTool and kbWriteTool.  The path prefix determines the backend.
+    - 普通路径 → 磁盘。相对路径基于 agent 工作目录，父目录自动创建；
+      只允许写项目/配置根目录内，越界会被拒绝。
+    - memory:// → 记忆库（自动分块 + 嵌入 + 索引，之后可被 search 语义检索）。
+    - faustbot:// → 触发节点 write_handler；handler 返回非空字符串时会以换行 + `↳ ` 追加到
+      工具输出，这是插件向你回执的唯一通道（例如提交任务后拿到 task id）。
 
-    FILESYSTEM WRITES (bare path):
-    - `write("notes/summary.md", "# Summary\\n...")` → writes to disk.
-    - Paths are relative to the project directory.
-    - Parent directories are created automatically.
-    - Security: writes outside the project/config root are rejected.
-    - Use this when: saving code, config files, notes, or any persistent file.
-
-    MEMORY STORE WRITES (memory:// prefix):
-    - `write("memory://notes/math", "勾股定理: a²+b²=c²")` → writes to memory.
-    - The content is automatically chunked, embedded, and indexed for search.
-    - Use this when: storing knowledge you want to retrieve later via search()
-      or read("memory://...").  This is better than filesystem writes for
-      information you'll need to semantic-search later.
-
-    FAUSTBOT NODE WRITES (faustbot:// prefix) AND ACK:
-    - `write("faustbot://agents/opencode/submit", "<任务>")` 触发该节点的 write_handler。
-    - handler 若返回非空字符串，会以换行 + `↳ ` 追加到本工具输出（例如提交任务后拿到
-      task id）；返回 None 或其它类型则不追加。写节点是插件向 Agent 回执的唯一通道。
-
-    CHOOSING BETWEEN FILESYSTEM AND MEMORY:
-    - Use filesystem (bare path) when: the file needs to be executed, imported,
-      or accessed by other programs; or when the content is code/config.
-    - Use memory (memory://) when: storing notes, knowledge, facts, summaries
-      that you want to search semantically later.
+    怎么选：要被别的程序读/执行（代码、配置）→ 磁盘；只是给自己以后检索的知识 → memory://。
 
     Args:
-        path: Target path. memory:// prefix writes to memory store.
-        content: Full content to write (plain text).
-
-    Returns:
-        Confirmation with path and byte count.
+        path (str): 目标路径；memory:// 或 faustbot:// 前缀切换后端。
+        content (str): 完整内容（纯文本，覆盖式写入）。
     """
     path_str = str(path or "").strip()
     if not path_str:

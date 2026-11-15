@@ -103,6 +103,7 @@ PUBLIC_CONFIG_DEFAULTS = {
     "PTT_MODE": True,
     "AUTO_IMAGE_ATTACH_ENABLED": True,
     "TTS_MODE": "gpt-sovits",
+    "TTS_SOVITS_MODEL": "v5turbo",
     "ASR_MODE": "whisper",
     "OPENAI_TTS_BASE_URL": "https://api.openai.com/v1",
     "OPENAI_TTS_MODEL": "gpt-4o-mini-tts",

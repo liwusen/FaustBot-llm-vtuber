@@ -75,6 +75,7 @@ describe('SpeechModule smoke', () => {
     const wrapper = mount(SpeechModule);
     const keys = cardKeys(wrapper);
     expect(keys).toContain('TTS_MODE');
+    expect(keys).toContain('TTS_SOVITS_MODEL');
     expect(keys).toContain('WHISPER_MODEL');
     expect(keys).toContain('TTS_REFER_WAV_PATH');
     expect(keys).not.toContain('EDGE_TTS_VOICE');

@@ -102,6 +102,7 @@ class InstallRequest(BaseModel):
     torch_variant: str | None = None      # funasr 专用
     use_aliyun_mirror: bool = False       # funasr 专用
     tts_variant: str | None = None        # tts 专用
+    tts_action: str | None = None         # tts 专用: install | upgrade
 
 
 class InstallResponse(BaseModel):
@@ -112,6 +113,16 @@ class InstallResponse(BaseModel):
 @router.post("/faust/components/install")
 async def start_install(req: InstallRequest) -> InstallResponse:
     """启动组件下载/安装。返回 task_id，客户端可通过 SSE 获取进度。"""
+    if req.component == "tts":
+        action = str(req.tts_action or "install").strip().lower()
+        if action not in {"install", "upgrade"}:
+            raise HTTPException(status_code=400, detail=f"未知 TTS 安装动作: {req.tts_action}")
+        req.tts_action = action
+
+    for existing in _tasks.values():
+        if existing.component == req.component and existing.status in {"pending", "running"}:
+            raise HTTPException(status_code=409, detail=f"{req.component} 已有安装任务进行中")
+
     task_id = str(uuid.uuid4())
     task = ComponentTask(
         task_id=task_id,
@@ -202,9 +213,22 @@ async def _install_funasr(task: ComponentTask, req: InstallRequest, cancel_check
         raise RuntimeError(result.get("error", "安装失败"))
 
 
+async def _wait_port_free(port: int, timeout: float = 15.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if service_manager.find_process_by_port(port) is None:
+            return
+        await asyncio.sleep(0.2)
+    raise RuntimeError(f"端口 {port} 仍被占用，无法安全替换 TTS 文件")
+
+
 async def _install_tts(task: ComponentTask, req: InstallRequest, cancel_check) -> None:
-    """下载并解压 TTS 包。"""
+    """下载 V5 全量包，或把 V5 增量包覆盖到现有安装。"""
     import download_tts
+    from faust_backend.services import tts_install
+
+    action = str(req.tts_action or "install").strip().lower()
 
     def _progress(stage: str, percent: float | None, message: str) -> None:
         cancel_check()
@@ -214,7 +238,23 @@ async def _install_tts(task: ComponentTask, req: InstallRequest, cancel_check) -
         if message:
             task.log_lines.append(message)
 
-    await download_tts.download_tts_async(req.tts_variant or "standard", _progress, cancel_check)
+    if action == "upgrade":
+        install = tts_install.find_tts_install()
+        if install is None:
+            raise RuntimeError("未检测到可升级的 GPT-SoVITS 安装，请先下载 V5 全量包")
+        if install.is_v5:
+            raise RuntimeError("当前安装已是 V5，无需增量升级")
+
+    _progress("preparing", 0.0, "停止 TTS 服务以替换文件...")
+    service_manager.stop_service("tts")
+    await _wait_port_free(5000)
+
+    await download_tts.download_tts_async(
+        req.tts_variant or "standard",
+        _progress,
+        cancel_check,
+        action=action,
+    )
 
 
 # ── C3: SSE 进度流 ──

@@ -230,25 +230,149 @@ function tap(perf, t, extra = {}) {
   assert.strictEqual(longPress.payload.duration_ms, 800);
   assert.deepStrictEqual(longPress.payload.position, { x: 0.4, y: 0.7 });
 
-  // 拖动累计 ≥120px：在 move 时即判定，up 不重复上报
-  h.perf.onPointer('down', { t: 20000, dx: 0, dy: 0 });
-  const stroke = h.perf.onPointer('move', { t: 20100, dx: 130, dy: 0 });
+  // 来回抚摸：move 阶段即时判定，up 不重复上报
+  h.perf.onPointer('down', { t: 20000, dx: 0, dy: 0, buttons: 1 });
+  const strokeMoves = [
+    { t: 20060, dx: 60, dy: 0 },
+    { t: 20120, dx: 60, dy: 0 },
+    { t: 20180, dx: -60, dy: 0 },
+    { t: 20240, dx: -60, dy: 0 },
+    { t: 20300, dx: 60, dy: 0 },
+  ];
+  let stroke = null;
+  for (const step of strokeMoves) {
+    const judged = h.perf.onPointer('move', { ...step, buttons: 1 });
+    if (judged) stroke = judged;
+  }
   assert.strictEqual(stroke.tier, 'heavy');
   assert.strictEqual(stroke.payload.kind, 'stroke');
-  assert.strictEqual(stroke.payload.distance_px, 130);
-  assert.strictEqual(h.perf.onPointer('up', { t: 20200, dx: 0, dy: 0 }), null, '已上报的拖动不得重复上报');
+  assert.strictEqual(stroke.payload.distance_px, 300);
+  assert.strictEqual(stroke.payload.excursion_px, 120);
+  assert.strictEqual(stroke.payload.reversals, 2);
+  assert.strictEqual(h.perf.onPointer('up', { t: 20400, dx: 0, dy: 0, buttons: 0 }), null, '已上报的抚摸不得重复上报');
 
   // 位移 <6px 且 300~800ms：不判定
-  h.perf.onPointer('down', { t: 30000, dx: 0, dy: 0 });
-  assert.strictEqual(h.perf.onPointer('up', { t: 30500, dx: 2, dy: 1 }), null);
+  h.perf.onPointer('down', { t: 30000, dx: 0, dy: 0, buttons: 1 });
+  assert.strictEqual(h.perf.onPointer('up', { t: 30500, dx: 2, dy: 1, buttons: 0 }), null);
 
-  // hover → light，无本地反应
-  const hover = h.perf.onPointer('hover', { t: 40000, hitArea: 'Body', position: { x: 0.2, y: 0.3 } });
+  // hover → 必须驻留 ≥600ms（掠过包围盒不算），且有 10s 冷却
+  fakeNow = 0;
+  assert.strictEqual(h.perf.onPointer('hover', { t: 0, hitArea: 'Body', position: { x: 0.2, y: 0.3 } }), null,
+    '进入瞬间不算交互');
+  fakeNow = 599;
+  assert.strictEqual(h.perf.tick(fakeNow / 1000), null, '驻留不足不得上报');
+  fakeNow = 600;
+  const hover = h.perf.tick(fakeNow / 1000);
   assert.strictEqual(hover.tier, 'light');
   assert.strictEqual(hover.payload.kind, 'hover');
   assert.strictEqual(hover.payload.duration_ms, 0);
-  assert.strictEqual(hover.payload.summary, '用户的鼠标掠过了你');
-  console.log('分级 OK: tap/light, multi_tap+long_press+stroke/heavy, hover/light');
+  assert.strictEqual(hover.payload.summary, '用户盯着你看了好一会');
+  // 冷却窗内再次驻留：不重复上报
+  h.perf.onPointer('hover', { t: 0, hitArea: 'Body' });
+  fakeNow = 2000;
+  assert.strictEqual(h.perf.tick(fakeNow / 1000), null, 'hover 冷却窗内不得重复上报');
+  // 冷却结束后恢复
+  h.perf.onPointer('hover', { t: 0, hitArea: 'Body' });
+  fakeNow = 11700;
+  assert.ok(h.perf.tick(fakeNow / 1000), '冷却结束后可再次上报');
+  // hoverend / 按压都会取消驻留
+  h.perf.onPointer('hover', { t: 0, hitArea: 'Body' });
+  h.perf.onPointer('hoverend', { t: 0 });
+  fakeNow = 30000;
+  assert.strictEqual(h.perf.tick(fakeNow / 1000), null, 'hoverend 后不得上报');
+  h.perf.onPointer('hover', { t: 0, hitArea: 'Body' });
+  h.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 });
+  fakeNow = 40000;
+  assert.strictEqual(h.perf.tick(fakeNow / 1000), null, '按压期间不得上报 hover');
+  console.log('分级 OK: tap/light, multi_tap+long_press+stroke/heavy, hover 需驻留+冷却');
+}
+
+// ── 交互误报回归：拖动 / 手抖 / up 丢失 / 连发 ──
+{
+  // ① 慢起手拖动（搬模型）：第一帧只有 3px，过去会被判成 tap 并吞掉整次拖动
+  {
+    const h = makeHarness({ motions: ['Idle'] });
+    const results = [
+      h.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 }),
+      h.perf.onPointer('move', { t: 16, dx: 3, dy: 2, buttons: 1 }),
+      h.perf.onPointer('move', { t: 32, dx: 8, dy: 2, buttons: 1 }),
+      h.perf.onPointer('move', { t: 48, dx: 40, dy: 0, buttons: 1 }),
+      h.perf.onPointer('move', { t: 64, dx: 60, dy: 0, buttons: 1 }),
+      h.perf.onPointer('up', { t: 200, dx: 0, dy: 0, buttons: 0 }),
+    ];
+    assert.deepStrictEqual(results.filter(Boolean), [], '单向拖动（搬模型）不得上报任何交互');
+  }
+  // ② 快起手单向拖动 130px：过去直接判成 stroke（heavy → 打断 agent）
+  {
+    const h = makeHarness({ motions: ['Idle'] });
+    h.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 });
+    assert.strictEqual(h.perf.onPointer('move', { t: 16, dx: 30, dy: 0, buttons: 1 }), null);
+    assert.strictEqual(h.perf.onPointer('move', { t: 32, dx: 50, dy: 0, buttons: 1 }), null);
+    assert.strictEqual(h.perf.onPointer('move', { t: 48, dx: 50, dy: 0, buttons: 1 }), null);
+    assert.strictEqual(h.perf.onPointer('up', { t: 120, dx: 0, dy: 0, buttons: 0 }), null, '130px 单向拖动不是抚摸');
+  }
+  // ③ 长按 + 手抖 4px → long_press（不是 stroke）
+  {
+    const h = makeHarness({});
+    h.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 });
+    assert.strictEqual(h.perf.onPointer('move', { t: 100, dx: 3, dy: 1, buttons: 1 }), null);
+    const longPress = h.perf.onPointer('up', { t: 1500, dx: 0, dy: 0, buttons: 0 });
+    assert.strictEqual(longPress.payload.kind, 'long_press');
+  }
+  // ④ 长按 + 手抖 11px：过去判成 stroke（heavy），现在不判定（宁可不报）
+  {
+    const h = makeHarness({});
+    h.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 });
+    h.perf.onPointer('move', { t: 100, dx: 10, dy: 0, buttons: 1 });
+    h.perf.onPointer('move', { t: 1500, dx: 1, dy: 1, buttons: 1 });
+    assert.strictEqual(h.perf.onPointer('up', { t: 2000, dx: 0, dy: 0, buttons: 0 }), null, '11px 抖动不得判成 stroke');
+  }
+  // ⑤ up 丢失（窗口外松手）：move 的 buttons === 0 直接丢弃脏状态
+  {
+    const h = makeHarness({});
+    h.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 });
+    assert.strictEqual(h.perf.onPointer('move', { t: 16, dx: 10, dy: 0, buttons: 1 }), null);
+    assert.strictEqual(h.perf.onPointer('move', { t: 9000, dx: 1, dy: 0, buttons: 0 }), null, 'up 丢失后不得判成 stroke');
+    assert.strictEqual(h.perf.onPointer('move', { t: 9016, dx: 2, dy: 0, buttons: 0 }), null);
+    assert.strictEqual(h.perf.onPointer('up', { t: 9100, dx: 0, dy: 0, buttons: 0 }), null);
+  }
+  // ⑥ 没有 buttons 信息时用按住时长兜底
+  {
+    const h = makeHarness({});
+    h.perf.onPointer('down', { t: 0, dx: 0, dy: 0 });
+    assert.strictEqual(h.perf.onPointer('move', { t: 40000, dx: 1, dy: 0 }), null, '按住超时视为 up 丢失');
+  }
+  // ⑦ 1.5s 内三次重定位：过去第三次变成 multi_tap（heavy → 打断 agent）
+  {
+    const h = makeHarness({ motions: ['Idle'] });
+    const results = [];
+    for (let i = 0; i < 3; i += 1) {
+      const base = i * 500;
+      results.push(h.perf.onPointer('down', { t: base, dx: 0, dy: 0, buttons: 1 }));
+      results.push(h.perf.onPointer('move', { t: base + 16, dx: 3, dy: 1, buttons: 1 }));
+      results.push(h.perf.onPointer('move', { t: base + 32, dx: 50, dy: 0, buttons: 1 }));
+      results.push(h.perf.onPointer('up', { t: base + 300, dx: 0, dy: 0, buttons: 0 }));
+    }
+    assert.deepStrictEqual(results.filter(Boolean), [], '连续搬模型不得凑出 multi_tap');
+  }
+  // ⑧ 真实三连击仍然成立（release-only 不影响 multi_tap 聚合）
+  {
+    const h = makeHarness({ motions: ['Idle'] });
+    assert.strictEqual(tap(h.perf, 0).payload.kind, 'tap');
+    assert.strictEqual(tap(h.perf, 300).payload.kind, 'tap');
+    const third = tap(h.perf, 600);
+    assert.strictEqual(third.payload.kind, 'multi_tap');
+    assert.strictEqual(third.tier, 'heavy');
+  }
+  // ⑨ clearAll 清空多击历史：换模型后不继承上一份模型的连击
+  {
+    const h = makeHarness({ motions: ['Idle'] });
+    tap(h.perf, 0);
+    tap(h.perf, 300);
+    h.perf.clearAll();
+    assert.strictEqual(tap(h.perf, 600).payload.kind, 'tap', 'clearAll 后连击重新计数');
+  }
+  console.log('误报回归 OK: 拖动不上报 / 手抖不判 stroke / up 丢失自愈 / 连发不凑 multi_tap');
 }
 
 // ── tap 反应三级回退 ──
@@ -281,10 +405,12 @@ function tap(perf, t, extra = {}) {
   assert.strictEqual(pulse.perf.resolveNativeAnimation(null), null, '③ 无 tap 组 → 不占原生槽');
   assert.deepStrictEqual(pulse.manualWrites, [{ browInnerUp: 0.25, headY: -0.08 }], '③ FACS 脉冲');
 
-  // stroke 脉冲方向随拖动
+  // stroke 脉冲方向随拖动（净位移向左 → 往左偏头/看）
   const stroke = makeHarness({ motions: [] });
-  stroke.perf.onPointer('down', { t: 0, dx: 0, dy: 0 });
-  stroke.perf.onPointer('move', { t: 100, dx: -130, dy: 0 });
+  stroke.perf.onPointer('down', { t: 0, dx: 0, dy: 0, buttons: 1 });
+  for (const step of [{ t: 60, dx: -60 }, { t: 120, dx: -60 }, { t: 180, dx: 60 }, { t: 240, dx: 60 }, { t: 300, dx: -60 }]) {
+    stroke.perf.onPointer('move', { t: step.t, dx: step.dx, dy: 0, buttons: 1 });
+  }
   assert.deepStrictEqual(stroke.manualWrites, [{ headZ: 0.12, gazeX: -0.3 }]);
 
   // 图片模型：只换图

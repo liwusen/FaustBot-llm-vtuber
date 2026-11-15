@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { API } from '@/api/endpoints';
 import { getBackendBaseUrl, cfgApi } from '@/api/ipc';
 import { formatApiError } from '@/api/errors';
+import { useUiStore } from '@/stores/ui';
 import {
   adminServiceKey,
   buildInstallBody,
@@ -105,6 +106,7 @@ export const useComponentsStore = defineStore('configer-components', () => {
       pollService(displayKey);
     } catch (err) {
       console.warn('启动服务失败', err);
+      useUiStore().showBanner('error', `启动服务失败: ${formatApiError(err)}`);
     }
   }
 
@@ -114,6 +116,7 @@ export const useComponentsStore = defineStore('configer-components', () => {
       pollService(displayKey);
     } catch (err) {
       console.warn('停止服务失败', err);
+      useUiStore().showBanner('error', `停止服务失败: ${formatApiError(err)}`);
     }
   }
 
@@ -211,6 +214,10 @@ export const useComponentsStore = defineStore('configer-components', () => {
     }
   }
 
+  async function upgradeTts(): Promise<void> {
+    await startInstall('tts', { ttsAction: 'upgrade' });
+  }
+
   async function cancelInstall(): Promise<void> {
     const taskId = installTaskId.value;
     if (!taskId) return;
@@ -250,6 +257,7 @@ export const useComponentsStore = defineStore('configer-components', () => {
     stopAllPolling,
     fetchServiceLog,
     startInstall,
+    upgradeTts,
     cancelInstall,
     dispose,
   };

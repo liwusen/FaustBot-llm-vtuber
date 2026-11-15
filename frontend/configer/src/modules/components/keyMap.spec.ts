@@ -17,6 +17,7 @@ import {
   TTS_VARIANTS,
   ttsInstallText,
   ttsVariantText,
+  ttsVersionText,
 } from './keyMap';
 
 describe('组件服务的 admin key 映射', () => {
@@ -70,13 +71,19 @@ describe('FunASR / TTS 状态文案', () => {
     expect(ttsInstallText({ installed: false })).toBe('未安装');
     expect(ttsVariantText({ variant: 'nvidia50' })).toBe('nvidia50');
     expect(ttsVariantText({})).toBe('standard');
+    expect(ttsVersionText({ installed: true, is_v5: true, version: 'v5' })).toBe('V5');
+    expect(ttsVersionText({ installed: true, is_v5: false, version: 'v5-incomplete' }))
+      .toBe('V5（权重缺失）');
+    expect(ttsVersionText({ installed: true, is_v5: false, version: 'legacy' }))
+      .toBe('旧版（V2Pro 及更早）');
+    expect(ttsVersionText({ installed: false })).toBe('未安装');
   });
 
   it('下拉选项与旧实现一致', () => {
     expect(FUNASR_VARIANTS.map((item) => item.value)).toEqual(['cu128', 'cu121', 'cu130', 'cpu']);
     expect(TTS_VARIANTS).toEqual([
-      { value: 'standard', label: 'Standard' },
-      { value: 'nvidia50', label: 'NVIDIA 50 系列' },
+      { value: 'standard', label: 'Standard (V5)' },
+      { value: 'nvidia50', label: 'NVIDIA 50 系列 (V5)' },
     ]);
   });
 });
@@ -99,6 +106,11 @@ describe('安装请求体', () => {
     expect(buildInstallBody('tts', { ttsVariant: 'nvidia50' })).toEqual({
       component: 'tts',
       tts_variant: 'nvidia50',
+    });
+    expect(buildInstallBody('tts', { ttsAction: 'upgrade' })).toEqual({
+      component: 'tts',
+      tts_variant: undefined,
+      tts_action: 'upgrade',
     });
   });
 });

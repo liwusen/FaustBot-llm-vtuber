@@ -22,39 +22,20 @@ log = get_logger("faust.tools.edit")
 @register
 @tool
 async def edit(path: str, old_str: str, new_str: str) -> str:
-    """Replace an exact text snippet in a file with new content.
+    r"""把文件里的一段文本精确替换成新内容。old_str 必须恰好匹配 1 处，否则整体失败、文件不动。
 
-    Reads the file, finds ALL occurrences of old_str, and replaces it with
-    new_str ONLY if old_str matches exactly once. This guarantees you never
-    accidentally corrupt unrelated parts of the file.
-
-    MATCH RULES (strict):
-    - old_str must match the file content EXACTLY, character for character:
-      including indentation, trailing spaces, quotes, and comments.
-    - Content copied from `read` output may include line-number prefixes or
-      anchors (e.g. "42|", "->") — strip them; they are display-only.
-    - If old_str appears MORE THAN ONCE, the edit FAILS. Include more
-      surrounding lines in old_str to make it unique.
-    - To create a new file, use the write tool instead. To append, include
-      the anchor line in old_str.
-
-    TYPICAL WORKFLOW:
-    1. read("src/main.py") to see the file content.
-    2. edit("src/main.py", "def foo():\\n    return 1", "def foo():\\n    return 2")
-
-    **Editing memory documents:**
-    - `edit("memory://notes/todo", "old line", "new line")` — same rules apply.
-
-    **faustbot:// NODES (ACK):**
-    - `edit("faustbot://agents/opencode/permissions/req_1.md", "old", "new")` 走节点的
-      edit_handler，handler 收到的是替换后的**完整新内容**（不是 diff）。
-    - handler 若返回非空字符串，会以换行 + `↳ ` 追加到本工具输出（这是节点向 Agent
-      回执的唯一通道）；返回 None 或其它类型则不追加。
+    - 逐字符匹配：缩进、行尾空格、全角/半角、引号都要一致。
+    - 从 read 输出复制的内容可能带行号前缀，先去掉，那只是显示用的。
+    - old_str 是普通字符串不是正则；多行直接写真实换行，不要写转义符。
+    - 匹配到多处时，在 old_str 前后多带几行上下文让它唯一。
+    - 追加内容时 old_str 必须包含文件末尾的锚点行；新建文件用 write。
+    - 支持 memory:// 与 faustbot://（后者走节点 edit_handler，handler 拿到的是替换后的完整新内容，
+      返回值以 `↳ ` 追加，是节点回执的唯一通道）。
 
     Args:
-        path: File path (relative to project root), memory:// or faustbot:// URI.
-        old_str: Exact text to replace. Must be unique in the file.
-        new_str: Replacement text (empty string deletes old_str).
+        path (str): 文件路径 / memory:// / faustbot:// URI。
+        old_str (str): 要被替换的原文，必须唯一匹配且不能为空串。
+        new_str (str): 替换后的内容；空串表示删除 old_str。
     """
     from faust_backend.core.config import WORKDIR_ROOT
 

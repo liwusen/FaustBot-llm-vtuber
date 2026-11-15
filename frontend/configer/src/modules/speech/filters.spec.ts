@@ -65,6 +65,7 @@ describe('公共键过滤（gpt-sovits + whisper 默认组合）', () => {
 
   it('保留基础键、Whisper 与本地参考音频', () => {
     expect(keys).toContain('TTS_MODE');
+    expect(keys).toContain('TTS_SOVITS_MODEL');
     expect(keys).toContain('TTS_CHUNK_IDEAL_TOKENS');
     expect(keys).toContain('ASR_MODE');
     expect(keys).toContain('WHISPER_MODEL');
@@ -108,6 +109,7 @@ describe('公共键过滤（OpenAI 组合）', () => {
     expect(keys).not.toContain('TTS_REFER_WAV_PATH');
     expect(keys).not.toContain('TTS_PROMPT_TEXT');
     expect(keys).not.toContain('TTS_PROMPT_LANGUAGE');
+    expect(keys).not.toContain('TTS_SOVITS_MODEL');
   });
 
   it('只开 OpenAI TTS 时 ASR 参数仍隐藏', () => {
@@ -242,10 +244,12 @@ describe('单键判定与旧实现逐条对齐', () => {
 
   it('本地参考音频只在 gpt-sovits 下可见', () => {
     expect(filterSpeechPublicKey('TTS_REFER_WAV_PATH', flags)).toBe(true);
+    expect(filterSpeechPublicKey('TTS_SOVITS_MODEL', flags)).toBe(true);
     const openai = flagsOf({ TTS_MODE: 'openai' });
     expect(filterSpeechPublicKey('TTS_REFER_WAV_PATH', openai)).toBe(false);
     expect(filterSpeechPublicKey('TTS_PROMPT_TEXT', openai)).toBe(false);
     expect(filterSpeechPublicKey('TTS_PROMPT_LANGUAGE', openai)).toBe(false);
+    expect(filterSpeechPublicKey('TTS_SOVITS_MODEL', openai)).toBe(false);
   });
 
   it('私有键：OpenAI 前缀 / MiMo 密钥 / Cloud 服务密钥', () => {

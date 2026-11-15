@@ -27,13 +27,22 @@ export function createAvatarPerformance({
   ];
 
   // ── 交互分级阈值（唯一判定点；需要调参时只改这里） ──
+  // tap / long_press 只在"抬起"时判定：按下阶段任何一次小位移都不足以证明这是点击，
+  // 否则正常拖动的第一帧（1~6px）就会把整次拖动判成 tap 并把后续事件全部吞掉。
   const TAP_MAX_MS = 300;
-  const TAP_MAX_MOVE_PX = 6;
+  const TAP_MAX_MOVE_PX = 6;           // 抬起时的累计路径上限（手抖容差）
   const MULTI_TAP_WINDOW_MS = 1500;
   const MULTI_TAP_COUNT = 3;
   const LONG_PRESS_MS = 800;
-  const STROKE_MIN_PX = 120;
-  const STROKE_MIN_MS = 1000;
+  // stroke（抚摸）必须是"来回"：单向拖动是在搬模型，不是抚摸
+  const STROKE_MIN_PX = 120;           // 累计路径下限
+  const STROKE_MIN_EXCURSION_PX = 60;  // 离开按下点的最大距离下限：原地抖动不算抚摸
+  const STROKE_MIN_REVERSALS = 2;      // 沿主运动轴的方向反转次数下限
+  const STROKE_DIR_DEADBAND_PX = 4;    // 方向判定死区
+  const STROKE_MIN_MS = 250;
+  const MAX_PRESS_MS = 30000;          // 按住超过此值视为 up 丢失（窗口外松手 / 失焦）
+  const HOVER_MIN_DWELL_MS = 600;      // 鼠标停留多久才算"在看"
+  const HOVER_COOLDOWN_MS = 10000;     // 两次 hover 上报的最小间隔
   const TAP_PULSE_MS = 600;
   const DEFAULT_TOOL_HOLD_MS = 3000;
   const VAD_APPLY_AMOUNT = 0.65;
@@ -50,9 +59,9 @@ export function createAvatarPerformance({
   };
   const SUMMARIES = {
     tap: '用户戳了你一下',
-    stroke: '用户拖动/抚摸了你',
+    stroke: '用户来回抚摸了你的模型',
     long_press: '用户长按了你',
-    hover: '用户的鼠标掠过了你',
+    hover: '用户盯着你看了好一会',
   };
 
   // ── 覆盖状态 ──
@@ -65,12 +74,20 @@ export function createAvatarPerformance({
   const pointer = {
     active: false,
     startAt: 0,
-    moved: 0,
-    netDx: 0,
+    path: 0,        // 累计路径（逐事件 hypot 之和）
+    netDx: 0,       // 相对按下点的净位移
     netDy: 0,
+    excursion: 0,   // 相对按下点的最大距离：区分"来回抚摸"与"原地抖动"
+    reversals: 0,   // 沿主运动轴的方向反转次数（带死区）
+    dirSign: 0,     // 当前主运动方向（1 / -1 / 0）
     done: false,
     tapTimes: [],  // 跨 down/up 周期保留，用于 multi_tap 窗口判定
   };
+
+  // hover 驻留：pointerover 只记起点，由 tick() 按驻留时长结算（鼠标掠过包围盒不算交互）
+  // area 在进入瞬间求值并缓存字符串：PIXI 的 FederatedPointerEvent 是池化对象，不能长期持有
+  const hover = { active: false, startedAt: 0, area: 'unknown', position: null };
+  let lastHoverReportAt = -Infinity;
 
   // rAF 时钟：与 soullinkTick 的 nowSeconds 同基准（tick 内部换算成毫秒）
   function clockMs() {
@@ -253,8 +270,25 @@ export function createAvatarPerformance({
     if (facsChanged) syncFacsLayer();
   }
 
+  // hover 驻留结算：停留够久才算"在看"，且冷却窗内只报一次。
+  // 时钟基准必须是 clockMs()（performance.now），与 pointerover 记下的 startedAt 一致。
+  function settleHover(nowMs) {
+    if (!hover.active || pointer.active) return null;
+    if (nowMs - hover.startedAt < HOVER_MIN_DWELL_MS) return null;
+    if (nowMs - lastHoverReportAt < HOVER_COOLDOWN_MS) {
+      hover.active = false;
+      return null;
+    }
+    hover.active = false;
+    lastHoverReportAt = nowMs;
+    // at 字段用墙钟（后端会以自己的时钟覆盖，但载荷里不能是页面相对时间）
+    return emit('hover', Date.now(), { path: 0, duration: 0 }, { hitArea: hover.area, position: hover.position });
+  }
+
   function tick(nowSeconds) {
-    releaseExpired(Number(nowSeconds) * 1000);
+    const nowMs = Number(nowSeconds) * 1000;
+    releaseExpired(nowMs);
+    return settleHover(nowMs);
   }
 
   function clearAll(scope = 'all') {
@@ -270,6 +304,9 @@ export function createAvatarPerformance({
       if (hadNative) releaseNativeImmediately();
     }
     resetPointer();
+    // 多击历史属于"上一份模型/上一段会话"，切换模型后不得继续累计
+    pointer.tapTimes = [];
+    hover.active = false;
     syncFacsLayer();
   }
 
@@ -391,19 +428,47 @@ export function createAvatarPerformance({
   function resetPointer() {
     pointer.active = false;
     pointer.startAt = 0;
-    pointer.moved = 0;
+    pointer.path = 0;
     pointer.netDx = 0;
     pointer.netDy = 0;
+    pointer.excursion = 0;
+    pointer.reversals = 0;
+    pointer.dirSign = 0;
     pointer.done = false;
   }
 
-  function classify(moved, duration) {
-    if (moved <= TAP_MAX_MOVE_PX) {
-      if (duration >= LONG_PRESS_MS) return 'long_press';
-      if (duration <= TAP_MAX_MS) return 'tap';
-      return null;  // 6px 内移动但按住 300~800ms：既不是 tap 也不是长按
+  // 累加一段位移：路径、净位移、最大偏离、主运动轴方向反转
+  function accumulate(dx, dy) {
+    pointer.path += Math.hypot(dx, dy);
+    pointer.netDx += dx;
+    pointer.netDy += dy;
+    const excursion = Math.hypot(pointer.netDx, pointer.netDy);
+    if (excursion > pointer.excursion) pointer.excursion = excursion;
+    // 主运动轴取本次位移较大的轴；死区避免手抖被反复记成反转
+    const axis = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+    if (axis >= STROKE_DIR_DEADBAND_PX) {
+      if (pointer.dirSign < 0) pointer.reversals += 1;
+      pointer.dirSign = 1;
+    } else if (axis <= -STROKE_DIR_DEADBAND_PX) {
+      if (pointer.dirSign > 0) pointer.reversals += 1;
+      pointer.dirSign = -1;
     }
-    if (moved >= STROKE_MIN_PX || duration >= STROKE_MIN_MS) return 'stroke';
+  }
+
+  // 抚摸 = 走得够远 + 真的离开过按下点 + 来回至少两次。
+  // 单向拖动（把模型从 A 搬到 B）路径再长也不成立——那是布局操作，不是抚摸。
+  function isStroke(duration) {
+    return duration >= STROKE_MIN_MS
+      && pointer.path >= STROKE_MIN_PX
+      && pointer.excursion >= STROKE_MIN_EXCURSION_PX
+      && pointer.reversals >= STROKE_MIN_REVERSALS;
+  }
+
+  // 抬起时的离散判定：tap（几乎没动且很快松手）/ long_press（按住不动）。
+  // 300~800ms 且几乎没动：既不是 tap 也不是长按，不判定。
+  function classifyRelease(duration) {
+    if (pointer.path <= TAP_MAX_MOVE_PX && duration <= TAP_MAX_MS) return 'tap';
+    if (pointer.excursion <= TAP_MAX_MOVE_PX && duration >= LONG_PRESS_MS) return 'long_press';
     return null;
   }
 
@@ -477,7 +542,9 @@ export function createAvatarPerformance({
     return String(value || '').trim() || 'unknown';
   }
 
-  function emit(kind, t, distance, duration, info, dx, dy) {
+  // gesture = {path, duration, dx, dy, excursion, reversals}
+  function emit(kind, t, gesture, info) {
+    const g = gesture || {};
     let finalKind = kind;
     let count = 1;
     if (kind === 'tap') {
@@ -489,7 +556,7 @@ export function createAvatarPerformance({
         pointer.tapTimes = [];
       }
     }
-    const ctx = { dx, dy, area: resolveHitArea(info) };
+    const ctx = { dx: Number(g.dx) || 0, dy: Number(g.dy) || 0, area: resolveHitArea(info) };
     if (kind !== 'hover') pointer.done = true;
     applyReaction(finalKind, ctx);
 
@@ -500,8 +567,11 @@ export function createAvatarPerformance({
         tier,
         kind: finalKind,
         count,
-        duration_ms: Math.max(0, Math.round(duration)),
-        distance_px: Math.max(0, Math.round(distance)),
+        duration_ms: Math.max(0, Math.round(Number(g.duration) || 0)),
+        distance_px: Math.max(0, Math.round(Number(g.path) || 0)),
+        // 手势形状：搬模型（excursion 大、reversals 0）与抚摸（来回）靠这两项区分
+        excursion_px: Math.max(0, Math.round(Number(g.excursion) || 0)),
+        reversals: Math.max(0, Math.round(Number(g.reversals) || 0)),
         area: ctx.area,
         position: normalizePosition(info && info.position),
         model_type: modelType() || 'unknown',
@@ -511,49 +581,85 @@ export function createAvatarPerformance({
     };
   }
 
-  // kind ∈ {down, move, up, upoutside, hover}；metrics = {t, dx, dy, hitArea, position}
+  // kind ∈ {down, move, up, upoutside, hover, hoverend}；metrics = {t, dx, dy, buttons, hitArea, position}
   // hitArea 可为字符串或惰性函数（app.js 传函数）；返回 {tier, payload}（交互已完成）或 null。
-  // 本地反应已在内部执行。
+  // 本地反应已在内部执行。tap / long_press 只在抬起时判定；move 阶段只可能产出 stroke。
   function onPointer(kind, metrics) {
     const info = metrics || {};
     const rawT = Number(info.t);
     const t = Number.isFinite(rawT) ? rawT : Date.now();
     const action = String(kind || '').toLowerCase();
 
-    if (action === 'hover') return emit('hover', t, 0, 0, info, 0, 0);
+    if (action === 'hover') {
+      // 只记驻留起点，由 tick() 结算：鼠标掠过模型包围盒（含大片透明区）不算交互
+      hover.active = true;
+      hover.startedAt = clockMs();
+      hover.area = resolveHitArea(info);
+      hover.position = info.position;
+      return null;
+    }
+    if (action === 'hoverend') {
+      hover.active = false;
+      return null;
+    }
     if (action === 'down') {
+      resetPointer();
+      hover.active = false;
       pointer.active = true;
       pointer.startAt = t;
-      pointer.moved = 0;
-      pointer.netDx = 0;
-      pointer.netDy = 0;
-      pointer.done = false;
       return null;
     }
     if (!pointer.active) return null;
 
+    const dx = Number(info.dx) || 0;
+    const dy = Number(info.dy) || 0;
+    const duration = t - pointer.startAt;
+
+    // up 丢失自愈：move 时指针已经松开（buttons === 0，窗口外松手 / 失焦）说明我们没收到
+    // pointerup——这次按压的状态是脏的，直接丢弃，绝不用陈旧的 startAt 去判定长按/抚摸。
+    // 只在 move 上判定：pointerup 自身的 buttons 恒为 0，不能拿它当"丢失"信号。
+    if (action === 'move' && info.buttons === 0) {
+      resetPointer();
+      return null;
+    }
+    if (duration > MAX_PRESS_MS) {
+      resetPointer();
+      return null;
+    }
+
     if (action === 'move') {
-      pointer.moved += Math.hypot(Number(info.dx) || 0, Number(info.dy) || 0);
-      pointer.netDx += Number(info.dx) || 0;
-      pointer.netDy += Number(info.dy) || 0;
       if (pointer.done) return null;
-      const duration = t - pointer.startAt;
-      const judged = classify(pointer.moved, duration);
-      if (!judged) return null;
-      return emit(judged, t, pointer.moved, duration, info, pointer.netDx, pointer.netDy);
+      accumulate(dx, dy);
+      // 抚摸在移动过程中即时判定（本地反应要跟手）；tap / long_press 一律等抬起
+      if (!isStroke(duration)) return null;
+      return emit('stroke', t, {
+        path: pointer.path,
+        duration,
+        dx: pointer.netDx,
+        dy: pointer.netDy,
+        excursion: pointer.excursion,
+        reversals: pointer.reversals,
+      }, info);
     }
 
     if (action === 'up' || action === 'upoutside') {
-      const duration = t - pointer.startAt;
-      const moved = pointer.moved;
-      const dx = pointer.netDx;
-      const dy = pointer.netDy;
       const alreadyDone = pointer.done;
+      // 抬起事件自带的最后一段位移也要计入，否则快速拖动会少算
+      if (!alreadyDone) accumulate(dx, dy);
+      const verdict = alreadyDone
+        ? null
+        : (isStroke(duration) ? 'stroke' : classifyRelease(duration));
+      const gesture = {
+        path: pointer.path,
+        duration,
+        dx: pointer.netDx,
+        dy: pointer.netDy,
+        excursion: pointer.excursion,
+        reversals: pointer.reversals,
+      };
       resetPointer();
-      if (alreadyDone) return null;
-      const judged = classify(moved, duration);
-      if (!judged) return null;
-      return emit(judged, t, moved, duration, info, dx, dy);
+      if (!verdict) return null;
+      return emit(verdict, t, gesture, info);
     }
 
     return null;

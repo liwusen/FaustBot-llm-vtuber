@@ -14,6 +14,7 @@ import {
   serviceTone,
   ttsInstallText,
   ttsVariantText,
+  ttsVersionText,
 } from './keyMap';
 
 defineOptions({ name: 'module-components' });
@@ -74,6 +75,15 @@ function installFunasr(): void {
 
 function installTts(): void {
   void store.startInstall('tts', { ttsVariant: ttsVariant.value });
+}
+
+function upgradeTts(): void {
+  const path = tts.value?.path || '';
+  const ok = window.confirm(
+    `升级会停止 TTS 服务，并把 V5 代码与权重覆盖到：\n${path}\n\n` +
+      '需要下载约 1.5GB，继续？',
+  );
+  if (ok) void store.upgradeTts();
 }
 
 onMounted(async () => {
@@ -172,6 +182,10 @@ onBeforeUnmount(() => {
         <span class="v">{{ ttsInstallText(tts) }}</span>
       </div>
       <div class="service-row">
+        <span class="k">版本</span>
+        <span class="v">{{ ttsVersionText(tts) }}</span>
+      </div>
+      <div class="service-row">
         <span class="k">TTS GPU 类型</span>
         <span class="v">{{ ttsVariantText(tts) }}</span>
       </div>
@@ -185,8 +199,22 @@ onBeforeUnmount(() => {
             {{ option.label }}
           </option>
         </select>
-        <button class="btn btn-primary" type="button" @click="installTts">
-          <Icon name="refresh" :size="13" /><span>重新下载</span>
+        <button
+          v-if="tts.installed && !tts.is_v5"
+          class="btn btn-primary"
+          type="button"
+          :disabled="store.installTaskId !== null"
+          @click="upgradeTts"
+        >
+          <Icon name="refresh" :size="13" /><span>升级到 V5（约 1.5GB）</span>
+        </button>
+        <button
+          class="btn btn-primary"
+          type="button"
+          :disabled="store.installTaskId !== null"
+          @click="installTts"
+        >
+          <Icon name="refresh" :size="13" /><span>下载/重装 V5</span>
         </button>
         <button class="btn btn-ghost" type="button" @click="store.startService('tts')">
           <Icon name="play" :size="13" /><span>启动服务</span>

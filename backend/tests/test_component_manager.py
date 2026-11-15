@@ -114,9 +114,6 @@ class TestDetectComponents:
             assert result["minecraft_bridge"]["is_running"] is False
 
 
-# ── Test Torch Variants ──
-
-
 class TestTorchVariants:
     def test_all_variants_have_expected_keys(self):
         from faust_backend.services.components import TORCH_VARIANTS
@@ -298,6 +295,130 @@ class TestConfigChangeTrigger:
                 mock_guard.return_value = guard
                 await check_and_manage_services(old, new)
                 mock_stop.assert_called_once_with("asr")
+
+
+# ── Test TTS V5 install integration ──
+
+
+class TestTtsV5Install:
+    def test_detect_components_uses_tts_install_status(self):
+        from faust_backend.services import components, tts_install
+        from faust_backend.services import manager as service_manager
+
+        fake = {
+            "installed": True,
+            "path": "tts-hub/GPT-SoVITS-v5",
+            "variant": "standard",
+            "version": "v5",
+            "is_v5": True,
+            "available_models": ["v5turbo", "v5dev"],
+        }
+        with patch.object(tts_install, "tts_status", return_value=fake), \
+             patch.object(service_manager, "service_status", return_value={"is_running": False}):
+            result = components.detect_components()
+
+        assert result["tts"] == fake
+
+    def test_build_service_env_injects_v5_root_and_model(self, tmp_path, monkeypatch):
+        from faust_backend.services import manager, tts_install
+        import faust_backend.core.config as conf
+
+        fake = tts_install.TtsInstall(
+            root=tmp_path,
+            version="v5",
+            variant="standard",
+            available_models=("v5turbo",),
+        )
+        monkeypatch.setattr(tts_install, "find_tts_install", lambda *args, **kwargs: fake)
+        monkeypatch.setattr(conf, "TTS_SOVITS_MODEL", "v5dev")
+
+        env = manager.build_service_env("tts")
+
+        assert env is not None
+        assert env["FAUST_TTS_ROOT"] == str(tmp_path)
+        assert env["FAUST_TTS_V5_MODEL"] == "v5dev"
+        assert manager.build_service_env("asr") is None
+
+    def test_build_service_env_raises_without_install(self, monkeypatch):
+        from faust_backend.services import manager, tts_install
+
+        monkeypatch.setattr(tts_install, "find_tts_install", lambda *args, **kwargs: None)
+
+        with pytest.raises(FileNotFoundError, match="未检测到 GPT-SoVITS"):
+            manager.build_service_env("tts")
+
+    @pytest.mark.asyncio
+    async def test_v5_model_change_restarts_running_tts(self):
+        from faust_backend.services import components
+        from faust_backend.services import manager as service_manager
+
+        old = {"TTS_MODE": "gpt-sovits", "TTS_SOVITS_MODEL": "v5turbo"}
+        new = {"TTS_MODE": "gpt-sovits", "TTS_SOVITS_MODEL": "v5dev"}
+
+        with patch.object(service_manager, "service_status", return_value={"is_running": True}), \
+             patch.object(service_manager, "restart_service") as mock_restart:
+            await components.check_and_manage_services(old, new)
+
+        mock_restart.assert_called_once_with("tts")
+
+    @pytest.mark.asyncio
+    async def test_v5_model_change_does_not_start_stopped_tts(self):
+        from faust_backend.services import components
+        from faust_backend.services import manager as service_manager
+
+        old = {"TTS_MODE": "gpt-sovits", "TTS_SOVITS_MODEL": "v5turbo"}
+        new = {"TTS_MODE": "gpt-sovits", "TTS_SOVITS_MODEL": "v5dev"}
+
+        with patch.object(service_manager, "service_status", return_value={"is_running": False}), \
+             patch.object(service_manager, "restart_service") as mock_restart:
+            await components.check_and_manage_services(old, new)
+
+        mock_restart.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_install_rejects_unknown_tts_action(self):
+        from fastapi import HTTPException
+        from faust_backend.api.components import InstallRequest, start_install
+
+        with pytest.raises(HTTPException) as excinfo:
+            await start_install(InstallRequest(component="tts", tts_action="remove"))
+
+        assert excinfo.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_install_tts_upgrade_stops_service_and_calls_downloader(
+        self, tmp_path, monkeypatch
+    ):
+        import download_tts
+        from faust_backend.api.components import ComponentTask, InstallRequest, _install_tts
+        from faust_backend.services import manager as service_manager
+        from faust_backend.services import tts_install
+
+        fake = tts_install.TtsInstall(
+            root=tmp_path,
+            version="legacy",
+            variant="standard",
+            available_models=(),
+        )
+        monkeypatch.setattr(tts_install, "find_tts_install", lambda *args, **kwargs: fake)
+        stop = MagicMock()
+        monkeypatch.setattr(service_manager, "stop_service", stop)
+        monkeypatch.setattr(service_manager, "find_process_by_port", lambda port: None)
+
+        called: dict[str, str] = {}
+
+        async def _fake_download(variant, progress, cancel_check, action="install"):
+            called["variant"] = variant
+            called["action"] = action
+
+        monkeypatch.setattr(download_tts, "download_tts_async", _fake_download)
+
+        task = ComponentTask(task_id="t", component="tts")
+        req = InstallRequest(component="tts", tts_action="upgrade", tts_variant="nvidia50")
+        await _install_tts(task, req, lambda: None)
+
+        stop.assert_called_once_with("tts")
+        assert called == {"variant": "nvidia50", "action": "upgrade"}
 
 
 # ── Test download_torch module ──

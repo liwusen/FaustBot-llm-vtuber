@@ -26,40 +26,19 @@ log = get_logger("faust.tools.search")
 @register
 @tool
 async def search(pattern: str, *, paths: list[str] | str | None = None, max_file_walks_fs: int = 1000) -> str:
-    """Search content across filesystem and memory store in one call.
+    r"""跨文件系统与记忆库搜索内容；paths 决定后端，可以混用，结果合并。
 
-    The `paths` argument determines which backend to use.
+    - memory:// → 语义 + BM25 混合检索，返回带相关度的片段。
+    - memory://notes → 只在该目录范围内检索。
+    - 普通路径（src/ tests/）→ 正则搜索，返回 `文件:行号` 与命中行。
 
-    SEARCHING MEMORY (memory://):
-    - `search("勾股定理", paths=["memory://"])` → semantic + BM25 hybrid search
-      across all memory documents.  Returns snippets with relevance scores.
-    - `search("physics", paths=["memory://notes"])` → search only within
-      the /notes/ scope in memory.
-    - Use this when: looking up facts, notes, or knowledge you previously stored
-      with write("memory://...").
-
-    SEARCHING FILESYSTEM (bare paths):
-    - `search("def main", paths=["src/"])` → regex search across all files
-      under src/.  Returns matching lines with file paths and line numbers.
-    - `search("class Agent", paths=["src/", "tests/"])` → search multiple dirs.
-    - Use this when: finding where a function/class is defined, locating
-      specific code patterns, or searching documentation files.
-
-    COMBINED SEARCH:
-    - `search("setup instructions", paths=["memory://notes", "README.md"])` →
-      searches both memory and filesystem, merging results.
-
-    TIP: search() returns summaries.  After finding something interesting,
-    use read() with the specific path:line to see the full context.
+    结果是摘要：命中后用 read("路径:行号-行号") 去看真实上下文，不要凭摘要下结论。
+    文件系统模式最多遍历 max_file_walks_fs 个文件（默认 1000），到上限会停止并提示。
 
     Args:
-        pattern: Regex (filesystem) or natural language query (memory).
-        paths: List of paths/URIs. memory:// for memory store, bare paths for filesystem.
-        max_file_walks_fs: 文件系统模式下最多遍历文件数（默认 1000），避免在超大目录上
-                          遍历过多文件；达到上限即停止并提示。
-
-    Returns:
-        Summarized results grouped by backend with paths, snippets, and scores.
+        pattern (str): 文件系统模式是正则；memory 模式是自然语言查询。
+        paths (list|str): 路径或 URI 列表；memory:// 走记忆库，其余走文件系统。
+        max_file_walks_fs (int): 文件系统遍历文件数上限，默认 1000。
     """
     pattern = str(pattern or "").strip()
     if not pattern:

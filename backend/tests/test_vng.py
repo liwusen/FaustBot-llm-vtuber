@@ -173,10 +173,16 @@ def test_build_choice_messages_contains_persona_and_transcript():
 # ── 生成 ──
 
 
+# 候选生成不得关闭模型：模型共用 langchain 的进程级 httpx 客户端，关掉它会让
+# 主 Agent / Araya 之后的请求永久失败（"client has been closed"）。
+_CLOSED_MODELS: list[object] = []
+
+
 def _patch_generation(monkeypatch, *, result=None, delay=0.0, providers=None):
     from faust_backend.llm import formats as llm_formats
     from faust_backend.llm import provider as llm_provider
 
+    _CLOSED_MODELS.clear()
     monkeypatch.setattr(runtime_state, "get_model_providers", lambda: providers or _FakeProviders())
     monkeypatch.setattr(vng, "_read_role", lambda: "角色设定")
 
@@ -191,14 +197,14 @@ def _patch_generation(monkeypatch, *, result=None, delay=0.0, providers=None):
             await asyncio.sleep(delay)
         return result
 
-    async def _fake_close(model):
-        return None
+    async def _record_close(model):
+        _CLOSED_MODELS.append(model)
 
     monkeypatch.setattr(session_stats, "get_checkpoint_messages", _fake_messages)
     monkeypatch.setattr(llm_provider, "build_main_chat_model", _fake_build)
     monkeypatch.setattr(llm_provider, "get_model_api_format", lambda *a, **k: "openai_chat")
     monkeypatch.setattr(llm_formats, "ainvoke_json", _fake_ainvoke)
-    monkeypatch.setattr(llm_formats, "close_chat_model", _fake_close)
+    monkeypatch.setattr(llm_formats, "close_chat_model", _record_close)
 
 
 def test_generate_choices_ok(monkeypatch):
@@ -210,6 +216,8 @@ def test_generate_choices_ok(monkeypatch):
     assert result["status"] == "ok"
     assert len(result["items"]) == 3
     assert result["model"] == "test::model"
+    # 回归守卫：候选生成绝不能关闭共享客户端
+    assert _CLOSED_MODELS == []
 
 
 def test_generate_choices_empty_output(monkeypatch):

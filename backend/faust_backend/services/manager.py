@@ -1,9 +1,11 @@
+import os
 import psutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 import faust_backend.core.config as conf
+import faust_backend.services.tts_install as tts_install
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.service")
@@ -39,10 +41,10 @@ SERVICES: List[Dict[str, Any]] = [
     {
         'key': 'tts',
         'name': 'TTS Service',
-        'description': '语音合成后端',
+        'description': '语音合成后端（GPT-SoVITS V5）',
         'port': 5000,
         'script': 'TTS.bat',
-        'log_file': 'tts-hub/GPT-SoVITS-Bundle/log_tts.log'
+        'log_file': 'log_tts.log'
     },
     {
         'key': 'asr',
@@ -109,6 +111,23 @@ def read_log_tail(log_path: Path | None, lines: int = TAIL_LOG_LINES) -> str:
         return f'Error reading log file: {str(e)}'
 
 
+def build_service_env(service_key: str) -> Dict[str, str] | None:
+    """TTS 子进程启动环境：注入安装根与 V5 底模选择。"""
+    if service_key != 'tts':
+        return None
+
+    install = tts_install.find_tts_install()
+    if install is None:
+        raise FileNotFoundError(
+            '未检测到 GPT-SoVITS 安装：请先在配置器「组件」页下载 V5 全量包或执行增量升级'
+        )
+
+    env = os.environ.copy()
+    env['FAUST_TTS_ROOT'] = str(install.root)
+    env['FAUST_TTS_V5_MODEL'] = tts_install.normalize_v5_model(conf.TTS_SOVITS_MODEL)
+    return env
+
+
 def start_service(service_key: str, wait: bool = False):
     service = get_service_definition(service_key)
     existing = find_process_by_port(service['port'])
@@ -120,11 +139,13 @@ def start_service(service_key: str, wait: bool = False):
     if not cmd.exists():
         raise FileNotFoundError(f"启动脚本不存在: {cmd}")
 
+    env = build_service_env(service_key)
     _service_states[service_key] = "starting"
 
     subprocess.Popen(
         ['cmd', '/c', str(cmd)],
         cwd=str(cmd.parent),
+        env=env,
         creationflags=subprocess.CREATE_NO_WINDOW,
         shell=False,
     )

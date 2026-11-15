@@ -23,41 +23,17 @@ log = get_logger("faust.tools.find")
 @register
 @tool
 async def find(patterns: list[str], *, max_file_walks_fs: int = 1000) -> str:
-    """Find files matching glob patterns — the universal file locator.
+    r"""按 glob 找文件（只给路径，不含内容）；支持文件系统 / memory:// / faustbot://，可混用。
 
-    FILESYSTEM GLOBBING:
-    - `find(["src/**/*.py"])` → all Python files under src/.
-    - `find(["tests/**/*.py", "docs/**/*.md"])` → multiple patterns.
-    - `find(["*.json"])` → all JSON files in the project root.
-    - Results are sorted by modification time (newest first).
-    - Use this when: locating all files of a certain type, listing a directory
-      tree, or finding recently modified files.
+    - find(["src/**/*.py"]) — 文件系统，`**` 递归；结果按修改时间倒序（最新在前）。
+    - find(["memory://notes/*"]) — 记忆库文档树。
+    - find(["faustbot://plugins/"]) — VFS 节点。
 
-    MEMORY GLOBBING:
-    - `find(["memory://notes/*"])` → list documents under memory://notes/.
-    - `find(["memory://*"])` → list all memory documents.
-    - Use this when: browsing your memory store structure.
-
-    FAUSTBOT VFS GLOBBING:
-    - `find(["faustbot://plugins/"])` → list all nodes under faustbot://plugins/.
-    - `find(["faustbot://agile/*"])` → list all agile mirror nodes.
-    - `find(["faustbot://**/*.md"])` → list all .md nodes across the VFS.
-    - Use this when: locating virtual nodes (plugin data, agile mirrors, resources).
-
-    COMBINED:
-    - `find(["src/**/*.py", "memory://notes/*", "faustbot://plugins/"])` → all backends.
-
-    TIP: The output may be long.  Use read() to inspect specific files found.
+    要看内容用 read；文件系统模式最多遍历 max_file_walks_fs 个文件（默认 1000）。
 
     Args:
-        patterns: List of glob patterns. Supports ** for recursive matching
-                  and memory:// / faustbot:// prefixes for virtual stores.
-        max_file_walks_fs: 文件系统模式下最多遍历文件数（默认 1000），避免在超大目录上
-                          遍历过多文件；达到上限即停止并提示。
-
-    Returns:
-        Sorted list of matching paths, newest first.
-
+        patterns (list[str]): glob 列表，支持 `**` 递归与 memory:// / faustbot:// 前缀。
+        max_file_walks_fs (int): 文件系统遍历文件数上限，默认 1000。
     """
     log.info("find INPUT patterns=%s", patterns)
     fs_globs: list[str] = []

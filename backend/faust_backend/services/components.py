@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 import faust_backend.core.config as conf
 import faust_backend.services.manager as service_manager
+import faust_backend.services.tts_install as tts_install
 from faust_backend.core.log import get_logger
 
 log = get_logger("faust.component")
@@ -140,20 +141,8 @@ def detect_components() -> dict[str, Any]:
 
     components["funasr"] = funasr
 
-    # TTS — 检查 tts-hub 目录
-    tts: dict[str, Any] = {"installed": False, "path": None, "variant": None}
-    tts_hub = BACKEND_DIR / "tts-hub"
-    if tts_hub.is_dir():
-        for d in tts_hub.iterdir():
-            if d.is_dir() and d.name.startswith("GPT-SoVITS-v2pro"):
-                tts["installed"] = True
-                tts["path"] = str(d.relative_to(BACKEND_DIR))
-                if "nvidia50" in d.name:
-                    tts["variant"] = "nvidia50"
-                else:
-                    tts["variant"] = "standard"
-                break
-    components["tts"] = tts
+    # TTS — 扫描 tts-hub，识别 V5 / 旧版
+    components["tts"] = tts_install.tts_status(BACKEND_DIR / "tts-hub")
 
     # Minecraft 桥（无条件启用，MC_BRIDGE_ENABLED 配置已删除）
     mc_status = service_manager.service_status("mc_operator")
@@ -345,5 +334,15 @@ async def check_and_manage_services(old_config: dict, new_config: dict) -> None:
         elif old_local and not new_local:
             log.info("Stopping TTS service due to config change (%s -> %s)...", old_tts, new_tts)
             service_manager.stop_service("tts")
+    elif old_tts == "gpt-sovits" and new_tts == "gpt-sovits":
+        old_model = tts_install.normalize_v5_model(old_config.get("TTS_SOVITS_MODEL"))
+        new_model = tts_install.normalize_v5_model(new_config.get("TTS_SOVITS_MODEL"))
+        if old_model != new_model:
+            running = service_manager.service_status("tts").get("is_running")
+            if running:
+                log.info("Restarting TTS service due to V5 model change (%s -> %s)...", old_model, new_model)
+                service_manager.restart_service("tts")
+            else:
+                log.info("TTS V5 model changed to %s; will apply on next start", new_model)
 
     # MC_BRIDGE_ENABLED 配置已删除：mc-operator 无条件随服务启动

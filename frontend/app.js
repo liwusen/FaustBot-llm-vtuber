@@ -972,6 +972,8 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       t: Date.now(),
       dx,
       dy,
+      // 按键状态：performance.js 用它在 pointermove 上识别"up 已丢失"（窗口外松手/失焦）
+      buttons: e ? e.buttons : undefined,
       hitArea: () => resolveHitArea(e, targetModel),
       position: { x: global.x / width, y: global.y / height },
     };
@@ -981,25 +983,38 @@ import { initAsrBubble } from './libs/asr-bubble.js';
   const INTERACTION_INTENT_EMOTIONS = { multi_tap: 'surprised', long_press: 'confused', stroke: 'shy' };
 
   // 交互上报：重度且 agent 正在输出时先打断再上报（本地反应已在 onPointer 内完成）
+  // 重手势连发保护：2s 内只打扰 agent 一次，避免事件风暴把对话打断成碎片
+  const HEAVY_REPORT_MIN_INTERVAL_MS = 2000;
+  let lastHeavyReportAt = 0;
   async function reportAvatarInteraction(result){
     const payload = result && result.payload;
     if (!payload) return;
-    if (result.tier === 'heavy') {
-      const emotion = INTERACTION_INTENT_EMOTIONS[payload.kind];
+    const kind = String(payload.kind || '');
+    const heavy = result.tier === 'heavy';
+    if (heavy) {
+      const now = Date.now();
+      if (now - lastHeavyReportAt < HEAVY_REPORT_MIN_INTERVAL_MS) return;
+      lastHeavyReportAt = now;
+    }
+    if (heavy) {
+      const emotion = INTERACTION_INTENT_EMOTIONS[kind];
       if (emotion) {
         soullinkTriggerIntent({ emotion, intensity: 0.7, contextTags: ['avatar_interaction'] }, 'avatar_interaction');
       }
     }
-    if (result.tier === 'heavy' && agentIsProcessing) {
+    if (heavy && agentIsProcessing) {
       try { await interruptAgentAndWait(); } catch (e) { /* 忽略 */ }
     }
     if (!window.faustAppUI || typeof window.faustAppUI.communicate !== 'function') return;
-    // 感知上报：宠物交互时间戳 → desktop-mood（fire-and-forget，插件缺失时静默忽略）
-    window.faustAppUI.communicate('desktop-mood', {
-      action: 'report',
-      source: 'faust_ui',
-      fields: { pet_interaction_at: Math.floor(Date.now() / 1000), interaction: payload },
-    }).catch(() => {});
+    // 感知上报：只有真实触摸才更新"最近互动"。hover 只是鼠标停在包围盒里，
+    // 写 pet_interaction_at 会让 agent 误以为用户刚摸过它（dm_external 会当真）。
+    if (kind !== 'hover') {
+      window.faustAppUI.communicate('desktop-mood', {
+        action: 'report',
+        source: 'faust_ui',
+        fields: { pet_interaction_at: Math.floor(Date.now() / 1000), interaction: payload },
+      }).catch(() => {});
+    }
     try{
       const response = await window.faustAppUI.communicate('avatar-performance', { action: 'interaction', interaction: payload });
       if (response && response.status === 'error') console.warn('[avatar] 交互上报被拒绝:', response.detail);
@@ -1335,17 +1350,20 @@ import { initAsrBubble } from './libs/asr-bubble.js';
 
   function soullinkTick(nowMs){
     soullinkTickRaf = requestAnimationFrame(soullinkTick);
+    const nowSeconds = nowMs / 1000;
+    // 表演覆盖层 TTL + hover 驻留结算：与引擎是否就绪无关（图片模型没有表演层，也必须跑）
+    if (avatarPerformance) {
+      const hoverResult = avatarPerformance.tick(nowSeconds);
+      if (hoverResult) reportAvatarInteraction(hoverResult);
+    }
     if (!soullinkLayer || !soullinkInjection || modelType !== 'live2d' || !currentModel) {
       lastSoullinkTick = 0;
       return;
     }
-    const nowSeconds = nowMs / 1000;
     const dt = lastSoullinkTick ? Math.min(nowSeconds - lastSoullinkTick, 0.1) : 1 / 60;
     lastSoullinkTick = nowSeconds;
     try {
       const snapshot = soullinkLayer.update(nowSeconds, dt);
-      // 覆盖层 TTL 释放（不新增定时器，复用本 rAF 循环）
-      if (avatarPerformance) avatarPerformance.tick(nowSeconds);
       // 原生动画的唯一落地：agent 覆盖 > 交互脉冲 > 引擎
       const engineNative = snapshot.nativeAnimation || null;
       const nativeDirective = avatarPerformance ? avatarPerformance.resolveNativeAnimation(engineNative) : engineNative;
@@ -3745,6 +3763,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
       markLayoutDirty('model');
     });
     sprite.on('pointerover', (e) => { reportAvatarPointer('hover', e, sprite); });
+    sprite.on('pointerout', (e) => { reportAvatarPointer('hoverend', e, sprite); });
 
     app.stage.addChild(sprite);
     clearOverlay();
@@ -3872,6 +3891,7 @@ import { initAsrBubble } from './libs/asr-bubble.js';
         markLayoutDirty('model');
       });
       model.on('pointerover', (e) => { reportAvatarPointer('hover', e, model); });
+      model.on('pointerout', (e) => { reportAvatarPointer('hoverend', e, model); });
 
       app.stage.addChild(model);
       clearOverlay();

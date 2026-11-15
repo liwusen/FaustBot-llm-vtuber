@@ -329,13 +329,30 @@ def test_invalid_format_base_url_raises():
 # ── 关闭客户端 ──
 
 
-def test_close_chat_model_handles_all_formats():
+def test_close_chat_model_does_not_close_shared_default_client():
+    """关一个模型不得关掉 langchain 的进程级共享客户端。
+
+    langchain_openai / langchain_anthropic 都按 (base_url, timeout) 用 lru_cache
+    缓存默认 httpx 客户端：同一 provider 的所有模型共用同一个连接池。历史实现
+    在 VNG 候选生成后 close 掉它，导致主 Agent / Araya 之后所有请求都抛
+    "Cannot send a request, as the client has been closed"（只有重启才恢复）。
+    """
     providers, _ = _providers()
 
     async def _run():
-        for spec in ("GW::chat-model", "GW::gpt-model", "GW::claude-model", "GW::gemini-model"):
-            model = await build_chat_model_from_spec(providers, spec=spec)
-            await close_chat_model(model)
+        first = await build_chat_model_from_spec(providers, spec="GW::chat-model")
+        second = await build_chat_model_from_spec(providers, spec="GW::chat-model")
+        # 共用同一个底层客户端是这件事成立的前提（访问私有属性：测的就是这层共享）
+        assert first.root_async_client._client is second.root_async_client._client
+
+        await close_chat_model(first)
+        assert second.root_async_client.is_closed() is False
+
+        # 各格式都要能安全走一遍关闭路径（含 None），不得抛错
+        for spec in ("GW::gpt-model", "GW::claude-model", "GW::gemini-model"):
+            await close_chat_model(
+                await build_chat_model_from_spec(providers, spec=spec)
+            )
         await close_chat_model(None)
 
     asyncio.run(_run())

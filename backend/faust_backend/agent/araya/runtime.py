@@ -695,7 +695,12 @@ class ArayaRuntime:
         )
 
     async def _close_model(self) -> None:
-        """关闭模型持有的 HTTP 客户端（格式无关，统一交给 llm_formats）。"""
+        """释放模型引用；只关自己持有的客户端（共享默认客户端不能关）。
+
+        主模型的 HTTP 客户端是 langchain 的进程级共享实例（与主 Agent / 压缩模型
+        同一个连接池），关掉会让所有后续请求永久失败 —— 门禁在
+        ``llm.formats.close_chat_model``，这里只负责丢弃引用。
+        """
         if self._chat_model is None:
             return
         from faust_backend.llm.formats import close_chat_model
@@ -703,8 +708,6 @@ class ArayaRuntime:
         try:
             await close_chat_model(self._chat_model)
         finally:
-            # 置 None 防止 GC 时 openai SDK 的 __del__ 对已关闭的 AsyncClient
-            # 再次 create_task(aclose())，导致 "Event loop is closed" 警告
             self._chat_model = None
 
     async def trigger_run(self, reason: str = "manual") -> dict[str, Any]:

@@ -74,143 +74,32 @@ async def read(
     show_line_number: bool = False,
     with_metadata: bool = True,
 ) -> str:
-    """Read a file, directory, tool output, or memory document — the universal read tool.
+    r"""读取文件/目录/记忆/工具输出/系统资源/图片的统一入口；uri 决定读哪个后端。
 
-    This is your PRIMARY tool for inspecting anything on disk or in memory.
-    URI FORMATS AND WHEN TO USE THEM:
+    选择器（追加在 uri 后面）：
+    - `:50-100` / `:42` — 按绝对行号读。源码文件默认只给结构化摘要（def/class/import 行），
+      摘要里看到的声明，用行号范围去读它的本体。
+    - `:raw` — 关闭结构摘要返回原文（长于 300 行仍会截断，剩余用行号读）。
 
-    **Reading code files (structured summary mode):**
-    - `read("src/main.py")` → returns only declarations (def/class/import lines)
-      with line numbers. The body of functions is hidden to save context space.
-      This is the default for .py, .ts, .js, .rs, .go, .java, .cpp files.
-    - `read("src/main.py:raw")` → returns the file verbatim, WITHOUT the structural
-      summary. Works on every scheme (`skill://demo/scripts/a.py:raw`,
-      `sourceCode://backend/main.py:raw`). Files longer than 300 lines are still
-      truncated — use a line range for the remainder.
-    - Use this when: exploring a codebase, finding a function, checking imports;
-      or use `:raw` when you need the real body of a short file.
+    目录：目录一律自动列举（结尾 `/` 可省）。默认每条附 `[大小, 行数, 日期]`
+    （VFS 节点则是 `[用途描述]`）；不需要这行噪音时用 with_metadata=False。
 
-    **Reading specific line ranges:**
-    - `read("src/main.py:50-100")` → returns lines 50 through 100 verbatim.
-    - `read("src/main.py:42")` → returns only line 42.
-    - Use this when: you saw a declaration in the summary and need to read its body,
-      or when you need to verify a specific section.
+    图片：图片会作为 image 块附进对话（只有视觉模型看得见）；非视觉模型必须
+    force_plain_text=True。工具结果里只留 artifact:// 引用，需要时再 read 它。
 
-    **Listing a directory:**
-    - `read("src/")` or `read(".")` → returns a list of files and subdirectories.
-    - The trailing `/` is optional: when the resolved target IS a directory, the
-      listing is returned anyway. This holds for every scheme — `read("memory://notes")`,
-      `read("faustbot://plugins")`, `read("skill://demo")`, `read("sourceCode://backend")`
-      all list when the target is a directory.
-    - Use this when: exploring what files exist, finding a file whose name you forgot.
-
-    **Listing with metadata (default):**
-    - `read("src/")` → each file entry gains an indented metadata line:
-      `  [3KB, 400 lines, 03/16]` (size, line count, mtime).
-      Directories never get a metadata line.
-    - `read("faustbot://")` → each VFS node gains its `[description]`;
-      `read("skill://")` and `read("sourceCode://backend/")` behave like plain
-      directory listings.
-    - Line counts are shown only for known source files (≤2MB, valid UTF-8);
-      other files still show size/date.
-    - Use `read("src/", with_metadata=False)` for a bare name listing when the
-      metadata noise is not needed.
-    - Use this when: you need a file's size, recency, or line count before
-      deciding whether to read it.
-
-    **Reading tool outputs (artifact://):**
-    - `read("artifact://shell_3")` → full output of a previous tool execution.
-    - `read("artifact://shell_3:50-100")` → lines 50-100 of that output.
-    - Practical flow: execute("shell", "dir") returns a summary with artifact ID,
-      then use read("artifact://<id>") to see the full output.
-    - Use this when: a tool returned truncated output and you need to see more.
-
-    **Reading memory documents (memory://):**
-    - `read("memory://notes/math")` → read a document from the memory store.
-    - `read("memory://notes/math:50-100")` → read a range of that document.
-    - `read("memory://")` → list all documents in the memory tree.
-    - `read("memory://notes")` → list that directory (also when it has no trailing `/`).
-    - Use this when: checking your knowledge base, reviewing past notes or diaries.
-
-    **Reading system resources (faustbot://):**
-    - `read("faustbot://")` → list all available faustbot resources (index.md, tool_use.md, mc.md, pc_info).
-    - `read("faustbot://index.md")` → read the faustbot index.
-    - `read("faustbot://pc_info")` → read system information.
-    - Use this when: you need system info or tool usage guides.
-
-    **Reading project source code (sourceCode://):**
-    - `read("sourceCode://")` → list the repository root.
-    - `read("sourceCode://backend/")` → list a source directory (auto listdir).
-    - `read("sourceCode://backend/faust_backend/tools/read.py")` → read a source file
-      (structured summary for code, same as plain file reads).
-    - `read("sourceCode://backend/main.py:50-100")` → read a line range of a source file.
-    - Use this when: you need to inspect FaustBot's own source code.
-      (This replaces the old `faustbot://source/{PATH}` form.)
-
-    **Reading skills (skill://):**
-    - `read("skill://")` → list all available skill names.
-    - `read("skill://{name}")` or `read("skill://{name}/")` → list files in that skill directory.
-    - `read("skill://{name}/SKILL.md")` → read a skill's main file (must be stated explicitly).
-    - `read("skill://{name}/subdir")` → list that subdirectory (no trailing `/` needed).
-    - `read("skill://{name}/subdir/file.md")` → read a file in a skill subdirectory.
-    - Use this when: you need to check available skills or read skill instructions.
-
-    **Reading image sources (img_source://):**
-    - `read("img_source://")` → list available image sources (screenshot, camera).
-    - `read("img_source://screenshot")` → take a screenshot and see it directly.
-    - `read("img_source://camera_0")` → capture from camera #0.
-    - `read("img_source://screenshot?grid=true&scale=0.5")` → screenshot with grid overlay at 50% scale.
-    - Use this when: you need visual information from the screen or a camera.
-
-    **Reading images (multimodal vs plain text):**
-    - `read("screenshot.png")` → the picture is attached to the conversation as an image
-      block, so vision-capable models actually see it. If you are not a vision-capable
-      model, you MUST NOT use this.
-    - The tool result itself only carries the file description and an `artifact://` ID
-      (the image bytes never enter your text context); re-read it with `read("artifact://<id>")`.
-    - `read("screenshot.png", force_plain_text=True)` → returns only the file metadata
-      (name, size) as plain text, WITHOUT attaching the image.
-    - Use `force_plain_text=True` when: you only need the image metadata, or when
-      you know the current model cannot process images and you want to save context.
-
-    **Showing line numbers:**
-    - `read("src/main.py:50-100", show_line_number=True)` → returns lines 50-100
-      with each line prefixed by its ABSOLUTE line number in the original file:
-      `50:def foo():`, `51:    return 1`.
-    - Line numbers are always absolute (line 1 = first line of the file), even
-      when the selector is a negative offset or the result is truncated.
-    - Works without a range too: `read("src/main.py:raw", show_line_number=True)`
-      numbers the whole file (the `[... 已截断]` notice line stays unnumbered).
-      Applies to memory documents, text artifacts and faustbot:// nodes as well.
-    - Use this when: you need to reference or edit exact lines later (e.g. with
-      the edit tool), or when a range's absolute position matters.
+    后端：
+    - 普通路径 / sourceCode://{PATH} — 文件与项目源码（目录自动列出）
+    - memory:// — 记忆库文档；`read("memory://")` 是列目录
+    - skill:// — 技能文件，必须显式写 `SKILL.md`
+    - faustbot:// — 系统资源与插件节点（index.md / tool_use.md / desktop-mood/ 等）
+    - artifact://{id} — 某次工具输出的完整内容（输出被截断时用）
+    - img_source:// — 截屏 / 摄像头
 
     Args:
-        uri: Path or URI with optional selector suffix (`:50-100` line range,
-             `:raw` 关闭结构化摘要).
-        force_plain_text: If True, images and multimodal artifacts return only
-                          the text description (no image attached). Defaults to False.
-        show_line_number: If True, prefix each output line with its absolute
-                          line number (e.g. "36:print(xxx)"). Applies to any
-                          text output: a line range, a whole-file read, or
-                          `:raw`. Defaults to False.
-        with_metadata: If True (default), directory listings add per-entry
-                       metadata (size, line count, mtime), VFS nodes add their
-                       description, and memory documents add date/lines/tags.
-                       Only applies to listings; single-file reads ignore it.
-
-    Returns:
-        For files: structural summary (code) or first 300 lines; or specified range;
-            `:raw` returns the file content without the structural summary.
-        For images: description + artifact:// reference, with the picture attached
-        to the conversation as an image block (unless force_plain_text=True).
-        For directories: list of entries.
-        For artifacts: full or ranged tool output.
-        For memory: document content or file tree.
-        For faustbot://: system resources.
-        For sourceCode://: FaustBot repository source files and directory listings.
-        For skill://: skill files and directory listings.
-        For img_source://: screenshot or camera images (attached as image blocks).
+        uri (str): 路径或 URI，可带 `:N` / `:N-M` / `:raw` 选择器。
+        force_plain_text (bool): 图片只返回元数据，不附加图像块。
+        show_line_number (bool): 每行前置绝对行号（配合 edit 用；总是文件里的绝对行号）。
+        with_metadata (bool): 目录列举是否带大小/行数/日期，默认 True。
     """
     log.info(
         "read INPUT uri=%s force_plain_text=%s show_line_number=%s with_metadata=%s",

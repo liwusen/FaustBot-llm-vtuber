@@ -37,6 +37,9 @@ export interface TtsState {
   installed?: boolean;
   path?: string | null;
   variant?: string | null;
+  version?: string | null;
+  is_v5?: boolean;
+  available_models?: string[];
 }
 
 export interface MinecraftBridgeState {
@@ -59,6 +62,7 @@ export interface InstallForm {
   torchVariant?: string;
   useAliyunMirror?: boolean;
   ttsVariant?: string;
+  ttsAction?: 'install' | 'upgrade';
 }
 
 export interface InstallBody {
@@ -66,6 +70,7 @@ export interface InstallBody {
   torch_variant?: string;
   use_aliyun_mirror?: boolean;
   tts_variant?: string;
+  tts_action?: string;
 }
 
 export interface InstallProgressEvent {
@@ -126,6 +131,13 @@ export function ttsVariantText(data: TtsState | null | undefined): string {
   return data?.variant || 'standard';
 }
 
+export function ttsVersionText(data: TtsState | null | undefined): string {
+  if (!data?.installed) return '未安装';
+  if (data.is_v5) return 'V5';
+  if (data.version === 'v5-incomplete') return 'V5（权重缺失）';
+  return '旧版（V2Pro 及更早）';
+}
+
 export const FUNASR_VARIANTS = [
   { value: 'cu128', label: 'cu128 (CUDA 12.8)' },
   { value: 'cu121', label: 'cu121 (CUDA 12.1)' },
@@ -134,8 +146,8 @@ export const FUNASR_VARIANTS = [
 ] as const;
 
 export const TTS_VARIANTS = [
-  { value: 'standard', label: 'Standard' },
-  { value: 'nvidia50', label: 'NVIDIA 50 系列' },
+  { value: 'standard', label: 'Standard (V5)' },
+  { value: 'nvidia50', label: 'NVIDIA 50 系列 (V5)' },
 ] as const;
 
 /** 旧 startComponentInstall 的请求体：funasr 带 torch 变体与镜像开关，tts 带变体。 */
@@ -147,7 +159,9 @@ export function buildInstallBody(component: InstallComponent, form: InstallForm 
       use_aliyun_mirror: Boolean(form.useAliyunMirror),
     };
   }
-  return { component: 'tts', tts_variant: form.ttsVariant };
+  const body: InstallBody = { component: 'tts', tts_variant: form.ttsVariant };
+  if (form.ttsAction) body.tts_action = form.ttsAction;
+  return body;
 }
 
 /** SSE 任务的相对路径。 */

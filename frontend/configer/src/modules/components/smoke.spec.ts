@@ -12,7 +12,13 @@ const STATUS = {
   },
   components: {
     funasr: { installed: true, version: '1.2.0', torch_version: '2.4.0', torch_variant: 'cu128' },
-    tts: { installed: true, path: 'tts-hub/GPT-SoVITS-v2pro', variant: 'nvidia50' },
+    tts: {
+      installed: true,
+      path: 'tts-hub/GPT-SoVITS-v2pro',
+      variant: 'nvidia50',
+      version: 'legacy',
+      is_v5: false,
+    },
     minecraft_bridge: { is_running: true },
   },
   services: {
@@ -56,14 +62,35 @@ describe('Components module smoke', () => {
     expect(text).toContain('2.4.0 (cu128)');
     expect(text).toContain('TTS GPU 类型');
     expect(text).toContain('nvidia50');
+    expect(text).toContain('旧版（V2Pro 及更早）');
     expect(text).toContain('Minecraft 操作桥');
     expect(text).toContain('启动中 端口 25566');
     expect(text).toContain('后端启动时自动运行，无需下载');
     expect(text).toContain('终止');
 
     expect(wrapper.findAll('button').map((button) => button.text())).toEqual(
-      expect.arrayContaining(['启动服务', '停止服务', '日志', '安装/重装', '重新下载']),
+      expect.arrayContaining(['启动服务', '停止服务', '日志', '安装/重装', '下载/重装 V5', '升级到 V5（约 1.5GB）']),
     );
+  });
+
+  it('submits the V5 upgrade action for legacy installs', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const wrapper = mount(ComponentsModule, { global: { plugins: [pinia] } });
+    await flushPromises();
+    const api = window.api as unknown as { configRequest: ReturnType<typeof vi.fn> };
+
+    const upgrade = wrapper.findAll('button').find((button) => button.text() === '升级到 V5（约 1.5GB）');
+    await upgrade?.trigger('click');
+    await flushPromises();
+
+    const call = api.configRequest.mock.calls.find(
+      ([method, path]) => method === 'POST' && path === '/faust/components/install',
+    );
+    expect(call?.[2]).toEqual({
+      component: 'tts',
+      tts_variant: undefined,
+      tts_action: 'upgrade',
+    });
   });
 
   it('submits funasr install with the detected variant', async () => {

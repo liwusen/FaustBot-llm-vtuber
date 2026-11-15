@@ -755,10 +755,22 @@ async def ainvoke_json(
 # ── 关闭客户端 ──
 
 async def close_chat_model(model: Any) -> None:
-    """关闭模型持有的 HTTP 客户端（不同格式的模型类实现不同）。
+    """关闭模型**自己持有**的 HTTP 客户端；langchain 的共享默认客户端一律不动。
 
-    不关闭会在 GC 时触发 openai SDK 的 `__del__` → `create_task(aclose())`，
-    事件循环关闭后表现为 "Event loop is closed" 报错。
+    两个 provider 包都把默认客户端放进模块级 ``lru_cache``，键里只有
+    ``(base_url, timeout, ...)``：
+
+    - ``langchain_openai.chat_models._client_utils._cached_async_httpx_client``
+    - ``langchain_anthropic._client_utils._get_default_async_httpx_client``
+
+    因此同一 provider 下的主 Agent / Araya / 压缩模型 / VNG 候选模型共用同一个
+    httpx 连接池。关掉它等于关掉**所有**模型的传输层，且缓存条目不会被驱逐，
+    之后任何请求都会在 httpx 层抛
+    ``RuntimeError: Cannot send a request, as the client has been closed``
+    （被 openai 包成 ``APIConnectionError``），只有重启进程才能恢复。
+
+    所以只有调用方显式注入的 ``http_async_client`` / ``http_client``（模型私有）
+    才允许关闭；默认共享客户端的生命周期由 langchain 的缓存管理，不属于模型。
     """
     if model is None:
         return
@@ -766,26 +778,20 @@ async def close_chat_model(model: Any) -> None:
         from langchain_openai import ChatOpenAI
 
         if isinstance(model, ChatOpenAI):
-            async_client = model.root_async_client
-            sync_client = model.root_client
-            if async_client is not None and not async_client.is_closed():
-                await async_client.close()
-            if sync_client is not None and not sync_client.is_closed():
-                sync_client.close()
+            if model.http_async_client is not None:
+                async_client = model.root_async_client
+                if async_client is not None and not async_client.is_closed():
+                    await async_client.close()
+            if model.http_client is not None:
+                sync_client = model.root_client
+                if sync_client is not None and not sync_client.is_closed():
+                    sync_client.close()
             return
     except Exception as exc:  # noqa: BLE001 - 关闭失败不应影响调用方
         log.debug("关闭 ChatOpenAI 客户端失败: %s", exc)
 
-    try:
-        from langchain_anthropic import ChatAnthropic
-
-        if isinstance(model, ChatAnthropic):
-            client = model._async_client
-            if client is not None:
-                await client.close()
-            return
-    except Exception as exc:  # noqa: BLE001
-        log.debug("关闭 ChatAnthropic 客户端失败: %s", exc)
+    # ChatAnthropic 的 `_async_client` 永远取自 langchain_anthropic 的 lru_cache，
+    # 没有任何注入私有客户端的入口 —— 任何情况下都不能关，故此处不处理。
 
 
 def summarize_route_sources(

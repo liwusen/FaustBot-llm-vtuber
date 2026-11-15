@@ -69,21 +69,17 @@ async def kbChangedNodesTool(since_ts: float, scope: str = "", tags_json: str = 
 async def memorySearchTool(query: str, scope: str = "", top_k: int = 5,
                            return_mode: str = "compact", tags_json: str = "[]",
                            use_graph: bool = True) -> str:
-    """
-    Description:
-        增强记忆搜索。默认返回 compact JSON（path, line_count, description），
-        并自动扩展相邻节点。你可以根据 path 自行读取文件内容。
-        设置 return_mode='snippets' 可切回传统带片段的结果。
-        但我们建议你使用 compact 模式并自行读取，能获得更好的上下文和更快的响应。
+    r"""增强记忆搜索。默认返回 compact JSON（path, line_count, description, score）并自动扩展
+    相邻节点，你再按 path 用 read 取正文——这比直接要片段更快、上下文更完整。
+    return_mode='snippets' 可切回传统片段结果。
+
     Args:
-        query (str): 搜索查询,支持自然语言。
-        scope (str): 限定目录范围,如果不确定可留空。
+        query (str): 查询，支持自然语言。
+        scope (str): 限定目录范围，不确定就留空。
         top_k (int): 返回数量，默认 5。
-        return_mode (str): compact/snippets/paths/full。
+        return_mode (str): compact / snippets / paths / full。
         tags_json (str): JSON 标签数组，按标签过滤。
-        use_graph (bool): 是否启用图谱增强搜索,建议始终启用。
-    Returns:
-        str(json): 搜索结果列表。compact 模式下每项含 path, line_count, description, score。
+        use_graph (bool): 图谱增强检索，建议始终开启。
     """
     return await _memorySearchTool(query, scope, top_k, return_mode, tags_json, use_graph)
 

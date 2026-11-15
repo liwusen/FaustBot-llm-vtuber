@@ -95,67 +95,28 @@ async def _resolve_path_html(spec: str) -> str:
 @register
 @tool
 async def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_text: str = "用户仍在处理这个灵动窗口，请查看用户是否已完成操作。", lifespan: int = 1800, metadata_json: str = "{}", persistent: bool = False, persistent_id: str = "") -> str:
-    """
-    Description:
-        非阻塞地创建一个"灵动交互"窗口，并显示在前端虚拟形象旁边。
+    r"""非阻塞地创建一个 HTML 交互窗口（显示在虚拟形象旁），用于确认、表单、小游戏。
 
-        这是处理复杂任务确认、表单填写、选项确认、小游戏对弈等场景的核心工具。
-        调用后不会阻塞当前对话，也不会等待用户立即完成操作。它会：
-        1. 在前端显示一个独立的 HTML 窗口（窗口以小组件形式注册，可被用户拖动/缩放）；
-        2. 自动绑定 expire trigger（到期自动关闭窗口）；
-        3. 在 VFS 注册该窗口的双向通信节点（见下方"双向通信"）。
+    html 可直接传字符串，或用 `path:{URI}` 加载；内置模板：
+    `path:skill://nimble-window/tictactoe.html`（三子棋）/ `gomoku.html` / `wordle.html`（你出题）。
 
-        HTML 来源（两种方式）：
-        - 直接传入 HTML 字符串；
-        - 传入 `path:{URI}` 从文件加载，例如：
-          `path:skill://nimble-window/tictactoe.html`（skill 内置三子棋模板）、
-          `path:skill://nimble-window/gomoku.html`（五子棋）、
-          `path:skill://nimble-window/wordle.html`（Wordle 猜词，你出题、用户猜）、
-          `path:sourceCode://frontend/xxx.html`、`path:memory://notes/x`、`path:D:/tmp/a.html`。
+    窗口通过 VFS 双向通信，全部走 console：
+    - `faustbot://nimble/{callback_id}/console` — 追加式记录。前端发来的消息是 `Frontend>` 行；
+      你 write 该路径即成为 `You>` 行并实时送达页面。
+    - `/summary` 窗口概览（可 write 覆写）、`/code-readonly` 窗口源码。
+    保留命令（写 console 生效）：`close-window` / `set-scale{scale}` / `set-coord{x,y}`。
 
-        双向通信（核心机制，全部走 console）：
-        - faustbot://nimble/{callback_id}/summary — 窗口概览（工具自动生成，你可用 write 覆写）；
-        - faustbot://nimble/{callback_id}/console — 终端式对话记录，格式为：
-            Frontend>{"result":"hello"}
-            You>{"command":"do-something"}
-          前端 sendMessage 的消息会追加 `Frontend>` 行；
-          你用 write 工具写入该路径，内容会追加为 `You>` 行并实时发给窗口内 JS 处理；
-        - faustbot://nimble/{callback_id}/code-readonly — 窗口 HTML 源码（只读）。
+    你自己关掉的窗口不会再唤醒你；用户点 × 关闭会唤醒一次。
+    persistent=true 时窗口重启后自动恢复，callback_id 固定为 `persistent_{persistent_id}`。
 
-        窗口内 HTML 可用的 JS API（每个窗口独立注入 `nimble` 对象，脚本内直接用）：
-        - `nimble.sendMessage(createEventTrigger, payload)` — 向后端发消息。
-          createEventTrigger=true 时会用 trigger 唤醒你；false 时只记录到 console 不唤醒。
-        - `nimble.setMessageHandler(func)` — 设置消息回调，func(payload) 接收你写入 console 的消息。
-        - `nimble.resize(width, height)` / `nimble.setFullscreen(enabled)` / `nimble.getConfig()`。
-
-        你可以通过向 console 写入保留命令来控制窗口（前端运行时拦截，不会进 messageHandler）：
-        - `{"type":"command","command":"close-window","args":{}}` — 关闭窗口；
-        - `{"type":"command","command":"set-scale","args":{"scale":1.2}}` — 设置缩放；
-        - `{"type":"command","command":"set-coord","args":{"x":0.5,"y":0.5}}` — 设置屏幕坐标（0~1）。
-        你自己关掉的窗口（命令或 closeNimbleWindowTool）不会再唤醒你；用户手动关闭会唤醒你一次。
-
-        HTML 元素上添加 class="nimble-pass-through" 可让该区域在点击穿透模式下不阻挡桌面操作，
-        适合全屏叠加（setFullscreen(true)）中的背景装饰、文字显示等非交互区域。
-
-        设置 persistent=true 可以创建持久化窗口（含 console 历史），程序重启后自动恢复。
-        持久化窗口需要 persistent_id（唯一标识），callback_id 固定为 persistent_{persistent_id}。
-
-        现成的游戏模板与协议示例见 read("skill://nimble-window/SKILL.md")。
-
-        注意：
-        - 这是非阻塞工具，调用后你不应假设用户已经给出答案；
-        - 前端消息会通过 trigger 在后续唤醒你，届时先读 console 了解完整上下文再回复。
+    完整协议、JS API、模板与配色：read("skill://nimble-window/SKILL.md")
 
     Args:
-        html (str): 要展示的 HTML 内容，或 `path:{URI}` 形式的内容来源。
+        html (str): HTML 内容，或 `path:{URI}` 来源。
         title (str): 窗口标题。
-        recall_text (str): 窗口用途描述（用于窗口概览与过期提示）。
-        lifespan (int): 窗口生命周期（秒）。
-        metadata_json (str): 额外元数据 JSON 字符串。
-        persistent (bool): 是否为持久化窗口（重启后自动恢复）。
-        persistent_id (str): 持久化窗口唯一标识（persistent=True 时必填）。
-    Returns:
-        str: 创建结果说明，包含 callback_id 和 VFS 通信路径。
+        recall_text (str): 窗口用途，用于概览与过期提示。
+        lifespan (int): 生命周期（秒），默认 1800。
+        persistent (bool) / persistent_id (str): 持久化窗口及其唯一标识（persistent=True 时必填）。
     """
     try:
         if str(html or "").strip().startswith("path:"):
@@ -204,18 +165,14 @@ async def showNimbleWindowTool(html: str, title: str = "灵动交互", recall_te
 @register
 @tool
 async def closeNimbleWindowTool(callback_id: str, reason: str = "closed_by_agent") -> str:
-    """
-    Description:
-        主动关闭一个已存在的灵动交互窗口，并清理其关联的 trigger 与 VFS 通信节点
-        （faustbot://nimble/{callback_id}/ 目录会被删除）。
-        当你确认这个窗口已不再需要，或者任务已经结束、用户已取消时，应调用此工具清理资源。
-        这是"你自己关的窗口"：不会再产生 trigger 唤醒你（用户手动点 × 关闭才会唤醒你），
-        所以关闭前该对用户说的话要先说完。
+    r"""关闭一个灵动窗口，并清理它的 trigger 与 VFS 节点（faustbot://nimble/{callback_id}/ 会消失）。
+
+    这是"你自己要关"的窗口：不会再有 trigger 唤醒你，所以该对用户说的话要先说完
+    （用户手动点 × 关闭则会唤醒你一次）。
+
     Args:
-        callback_id (str): 需要关闭的灵动窗口 callback_id。
+        callback_id (str): 要关闭的窗口 callback_id。
         reason (str): 关闭原因。
-    Returns:
-        str: 关闭结果。
     """
     try:
         session = await nimble.finalize_close(callback_id, reason=reason)

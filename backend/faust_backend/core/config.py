@@ -241,6 +241,7 @@ def load_configs():
     global SECURITY_SYS_ENABLED
     global TEXT_CHAT_BAR_Y_FACTOR, FRONTEND_QUICK_CONTROLLER_X_OFFSET
     global TTS_MODE, ASR_MODE, OPENAI_TTS_BASE_URL, OPENAI_TTS_MODEL, OPENAI_TTS_VOICE, OPENAI_TTS_RESPONSE_FORMAT, OPENAI_TTS_SPEED, OPENAI_TTS_INSTRUCTIONS
+    global TTS_SOVITS_MODEL
     global OPENAI_ASR_BASE_URL, OPENAI_ASR_MODEL, OPENAI_ASR_LANGUAGE, OPENAI_ASR_PROMPT, OPENAI_ASR_RESPONSE_FORMAT, OPENAI_ASR_TEMPERATURE, OPENAI_ASR_TIMESTAMP_GRANULARITIES
     global OPENAI_ASR_ENERGY_THRESHOLD, OPENAI_ASR_SILENCE_MS, OPENAI_ASR_MIN_SPEECH_MS, OPENAI_ASR_PREROLL_MS
     global WHISPER_MODEL, WHISPER_LANGUAGE, WHISPER_INITIAL_PROMPT
@@ -297,6 +298,10 @@ def load_configs():
     # 兼容旧配置：local TTS 已更名为 gpt-sovits
     if TTS_MODE == 'local':
         TTS_MODE = 'gpt-sovits'
+    # 本地 GPT-SoVITS V5 底模：v5turbo（4 步，默认）/ v5dev（32 步，较慢）
+    TTS_SOVITS_MODEL = str(config.get('TTS_SOVITS_MODEL', 'v5turbo') or 'v5turbo').strip().lower()
+    if TTS_SOVITS_MODEL not in ('v5turbo', 'v5dev'):
+        TTS_SOVITS_MODEL = 'v5turbo'
     ASR_MODE = str(config.get('ASR_MODE', 'whisper') or 'whisper').strip().lower()
     # 兼容旧配置：local ASR 已更名为 funasr
     if ASR_MODE == 'local':

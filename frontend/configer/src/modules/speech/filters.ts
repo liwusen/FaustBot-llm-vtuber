@@ -39,6 +39,7 @@ export function filterSpeechPublicKey(key: string, flags: SpeechModeFlags): bool
   if (key.startsWith('MIMO_ASR_') && flags.modeAsr !== 'mimo') return false;
   if (key.startsWith('WHISPER_') && !flags.isWhisperAsr) return false;
   if (key.startsWith('EDGE_TTS_') && flags.modeTts !== 'edge-tts') return false;
+  if (key.startsWith('TTS_SOVITS_') && !flags.isLocalTts) return false;
   if (key.startsWith('FAUSTBOT_CLOUD_') && !flags.isCloud) return false;
   if (
     (key === 'TTS_REFER_WAV_PATH' || key === 'TTS_PROMPT_TEXT' || key === 'TTS_PROMPT_LANGUAGE')
